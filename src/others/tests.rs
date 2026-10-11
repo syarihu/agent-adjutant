@@ -87,6 +87,7 @@ fn ai(status: &str) -> Option<AiRead> {
         terminal: None,
         error: None,
         counts: None,
+        mode: None,
         stale: false,
         extra: Default::default(),
     })

@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::drafts::{MAX_DRAFT_CHARS, MAX_DRAFTS, MAX_DRAFTS_BYTES, MAX_PATH_CHARS, json_bytes};
+use super::model::ReadMode;
 
 /// The file a read-through is handed in as can be no bigger than this.
 pub const MAX_READ_BYTES: usize = 2 * 1024 * 1024;
@@ -248,13 +249,23 @@ pub struct Stored {
 }
 
 impl Stored {
-    /// The checked input with `id`, `madeAt` and `session` put in front of it.
-    pub fn of(id: &str, made_at: &str, session: Option<&str>, read: &ReadThrough) -> Self {
-        let rest = match serde_json::to_value(read) {
+    /// The checked input with `id`, `madeAt` and `session` put in front of it, and `"mode":
+    /// "split"` for a split proposal. A read-through carries no mode.
+    pub fn of(
+        id: &str,
+        made_at: &str,
+        session: Option<&str>,
+        read: &ReadThrough,
+        mode: ReadMode,
+    ) -> Self {
+        let mut rest = match serde_json::to_value(read) {
             Ok(serde_json::Value::Object(map)) => map,
             // A struct of this shape serialises to an object.
             _ => serde_json::Map::new(),
         };
+        if let Some(mode) = mode.wire() {
+            rest.insert("mode".to_string(), mode.into());
+        }
         Stored {
             id: id.to_string(),
             made_at: made_at.to_string(),
@@ -443,6 +454,68 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
         }
     }
 
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems)
+    }
+}
+
+/// What a split proposal must be on top of a valid read-through: the proposal is `overall.body`
+/// (the body of a pending review) and nothing else is taken from it. `three` is still required;
+/// the lines of the diff were not read, so there is nothing to annotate or draft on, and a PR the
+/// person has not read has no earlier review to compare with. Empty means it is acceptable.
+pub fn validate_split(read: &ReadThrough) -> Result<(), Vec<String>> {
+    let mut problems: Vec<String> = Vec::new();
+    match &read.overall {
+        Some(overall) if !blank(&overall.body) => {}
+        _ => problems.push(
+            "this is a split proposal: overall.body must hold the proposal, not blank".to_string(),
+        ),
+    }
+    if !read.annotations.is_empty() {
+        problems.push(
+            "this is a split proposal: annotations must be [] (the diff's lines were not read)"
+                .to_string(),
+        );
+    }
+    if !read.drafts.is_empty() {
+        problems.push(
+            "this is a split proposal: drafts must be [] (the proposal is overall.body)"
+                .to_string(),
+        );
+    }
+    if read.since_review.is_some() {
+        problems.push("this is a split proposal: sinceReview must be null".to_string());
+    }
+    // Nothing was read line by line, so there is nothing to put in these.
+    for (name, empty) in [
+        ("points", read.points.is_empty()),
+        ("order", read.order.is_empty()),
+        ("deleted", read.deleted.is_empty()),
+        ("decisions", read.decisions.is_empty()),
+        ("unwritten", read.unwritten.is_empty()),
+        (
+            "tests",
+            read.tests.covered.is_empty() && read.tests.not_covered.is_empty(),
+        ),
+    ] {
+        if !empty {
+            problems.push(format!(
+                "this is a split proposal: {name} must be empty (the proposal is overall.body)"
+            ));
+        }
+    }
+    if read
+        .overall
+        .as_ref()
+        .is_some_and(|o| o.suggestion.is_some())
+    {
+        problems.push(
+            "this is a split proposal: overall.suggestion must be left out (no verdict is drawn from the structure)"
+                .to_string(),
+        );
+    }
     if problems.is_empty() {
         Ok(())
     } else {

@@ -3056,6 +3056,24 @@ fn the_reader_reads_through_adj_and_never_writes_to_the_pull_request() {
 }
 
 #[test]
+fn the_reader_has_a_split_proposal_section_that_reads_no_diff_lines() {
+    let text = render(find("adj-reviewer").unwrap(), "");
+    assert!(text.contains("## Split proposal"));
+    let section = &text[text.find("## Split proposal").unwrap()..];
+    // The material, the order, and what is left empty.
+    assert!(section.contains("`hunks.patch`"));
+    assert!(section.contains("no `diff.patch`"));
+    assert!(section.contains("in the order they should be merged"));
+    assert!(section.contains("`overall.body`"));
+    // The steps that read the diff yield to it.
+    assert!(text.contains("unless the summary says `mode: split`"));
+    // The prompt the reader is started with names the section, and the section exists under that name.
+    assert!(!section.contains("gh pr review"));
+    let hub = render(find("adj-review-hub").unwrap(), "");
+    assert!(hub.contains("adj review request --pr <PR URL or owner/repo#N> --split"));
+}
+
+#[test]
 fn the_review_hub_queues_reads_through_adj_and_starts_nothing_itself() {
     let text = render(find("adj-review-hub").unwrap(), "");
     assert!(text.contains("adj review request --pr"));

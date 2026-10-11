@@ -3,7 +3,7 @@ use super::launch_reader::launch_reader_with;
 use super::request::request_with;
 use super::*;
 use crate::infra::terminal::Performed;
-use crate::others::{self, Claim, Requested};
+use crate::others::{self, Claim, ReadMode, Requested};
 use crate::registry::{self, Context, Liveness};
 use crate::testing::Sandbox;
 
@@ -225,11 +225,11 @@ fn asking_is_refused_while_the_hub_is_down_or_no_reader_can_be_opened() {
     put(&root, 1, None, "");
     let pr = others::pr_of("acme/widget#1").unwrap();
     assert_eq!(
-        request_with(&root, &pr, NOW, false, true),
+        request_with(&root, &pr, NOW, ReadMode::Read, false, true),
         Err(AskError::HubStopped)
     );
     assert_eq!(
-        request_with(&root, &pr, NOW, true, false),
+        request_with(&root, &pr, NOW, ReadMode::Read, true, false),
         Err(AskError::NotStartable)
     );
     // A refusal wrote nothing.
@@ -239,19 +239,45 @@ fn asking_is_refused_while_the_hub_is_down_or_no_reader_can_be_opened() {
             .contains("\"ai\"")
     );
     assert!(matches!(
-        request_with(&root, &pr, NOW, true, true),
+        request_with(&root, &pr, NOW, ReadMode::Read, true, true),
         Ok(Requested::Queued(_))
     ));
     assert_eq!(status_of(&root, 1), "queued");
     assert!(matches!(
-        request_with(&root, &pr, NOW, true, true),
+        request_with(&root, &pr, NOW, ReadMode::Read, true, true),
         Ok(Requested::Already(_))
     ));
     let missing = others::pr_of("acme/widget#9").unwrap();
     assert_eq!(
-        request_with(&root, &missing, NOW, true, true),
+        request_with(&root, &missing, NOW, ReadMode::Read, true, true),
         Err(AskError::NoRecord)
     );
+}
+
+#[test]
+fn asking_passes_the_mode_to_the_queue_and_a_takeover_takes_the_new_one() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    put(&root, 1, None, "");
+    let pr = others::pr_of("acme/widget#1").unwrap();
+    let mode_of = || {
+        others::list(&root)
+            .into_iter()
+            .find(|r| r.id == "acme/widget#1")
+            .and_then(|r| r.ai)
+            .and_then(|ai| ai.mode)
+    };
+    assert!(matches!(
+        request_with(&root, &pr, NOW, ReadMode::Split, true, true),
+        Ok(Requested::Queued(_))
+    ));
+    assert_eq!(mode_of().as_deref(), Some("split"));
+    // Asking for a read while it is queued is Already, and the mode stays.
+    assert!(matches!(
+        request_with(&root, &pr, NOW, ReadMode::Read, true, true),
+        Ok(Requested::Already(_))
+    ));
+    assert_eq!(mode_of().as_deref(), Some("split"));
 }
 
 #[test]
@@ -431,10 +457,19 @@ fn ask_again(
 ) -> (Result<Requested, AskError>, usize) {
     let stopped = std::cell::Cell::new(0usize);
     let pr = others::pr_of("acme/widget#1").unwrap();
-    let asked = request_taking_over(root, &pr, NOW, true, true, &|_, _| alive, &|_| {
-        stopped.set(stopped.get() + 1);
-        stop.clone()
-    });
+    let asked = request_taking_over(
+        root,
+        &pr,
+        NOW,
+        ReadMode::Read,
+        true,
+        true,
+        &|_, _| alive,
+        &|_| {
+            stopped.set(stopped.get() + 1);
+            stop.clone()
+        },
+    );
     (asked, stopped.get())
 }
 
@@ -506,6 +541,7 @@ fn a_reader_that_has_not_run_too_long_is_not_looked_at() {
         &root,
         &pr,
         NOW + 60,
+        ReadMode::Read,
         true,
         true,
         &|_, _| panic!("a reader that is young was looked at"),

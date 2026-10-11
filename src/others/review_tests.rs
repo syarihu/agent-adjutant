@@ -1,6 +1,7 @@
 //! The queue of readers, what they hand in, and the material they read.
 
 use super::model::{MyReview, is_stale};
+use super::read_context::hunk_headers;
 use super::read_through::MAX_READ_BYTES;
 use super::request_read::HUNG_READER_SECS;
 use super::store;
@@ -53,6 +54,7 @@ fn blank_ai() -> AiRead {
         terminal: None,
         error: None,
         counts: None,
+        mode: None,
         stale: false,
         extra: Default::default(),
     }
@@ -92,7 +94,8 @@ fn asking_queues_the_read_and_keeps_what_an_earlier_one_made() {
     put(root.path(), r);
     store::write_read(root.path(), &store::stem(&pr(1)), &json!({"id": "x"})).unwrap();
 
-    let Requested::Queued(r) = request_read(root.path(), &pr(1), NOW).unwrap() else {
+    let Requested::Queued(r) = request_read(root.path(), &pr(1), NOW, ReadMode::Read).unwrap()
+    else {
         panic!("not queued");
     };
     let ai = r.ai.unwrap();
@@ -123,7 +126,7 @@ fn asking_again_while_queued_or_running_writes_nothing() {
                 .join(format!("others/acme~widget~{number}.json")),
         )
         .unwrap();
-        let got = request_read(root.path(), &pr(number), NOW + 500).unwrap();
+        let got = request_read(root.path(), &pr(number), NOW + 500, ReadMode::Read).unwrap();
         assert!(matches!(got, Requested::Already(_)), "{state}");
         let after = std::fs::read(
             root.path()
@@ -141,11 +144,11 @@ fn asking_for_a_done_or_unknown_pr_is_refused_and_writes_nothing() {
     done.pr_state = PrOpenState::Merged;
     put(root.path(), done);
     assert_eq!(
-        request_read(root.path(), &pr(1), NOW),
+        request_read(root.path(), &pr(1), NOW, ReadMode::Read),
         Err(RequestError::Done)
     );
     assert_eq!(
-        request_read(root.path(), &pr(2), NOW),
+        request_read(root.path(), &pr(2), NOW, ReadMode::Read),
         Err(RequestError::NoRecord)
     );
     assert!(load(root.path(), 1).ai.is_none());
@@ -656,7 +659,7 @@ fn a_re_read_waiting_in_line_keeps_its_place_when_the_old_reader_hands_in() {
     put(root.path(), running(1, "sid-a"));
     // Asked again while the first reader is still there; the failure frees nothing here.
     fail_read(root.path(), &pr(1), Some("sid-a"), "x", NOW).unwrap();
-    request_read(root.path(), &pr(1), NOW + 10).unwrap();
+    request_read(root.path(), &pr(1), NOW + 10, ReadMode::Read).unwrap();
     // A person's file is accepted and the re-read stays queued.
     submit(root.path(), 1, &valid(), None).unwrap();
     assert_eq!(status(root.path(), 1), "queued");
@@ -677,7 +680,7 @@ fn a_superseded_reader_is_refused_and_writes_nothing() {
     let mut r = running(2, "sid-a");
     store::save(root.path(), &mut r).unwrap();
     fail_read(root.path(), &pr(2), Some("sid-a"), "x", NOW).unwrap();
-    request_read(root.path(), &pr(2), NOW + 5).unwrap();
+    request_read(root.path(), &pr(2), NOW + 5, ReadMode::Read).unwrap();
     assert_eq!(load(root.path(), 2).ai.unwrap().session_id, None);
     assert_eq!(
         submit(root.path(), 2, &valid(), Some("sid-a")).unwrap_err(),
@@ -789,6 +792,10 @@ struct Gh {
     diff_fails: bool,
     /// `gh pr view` returns a hundred commits.
     many_commits: bool,
+    /// What `gh pr diff` prints, when it is not the one-line diff.
+    diff_text: Option<String>,
+    /// What the files endpoint prints (a list of files with their patches); it fails when none.
+    files_answer: Option<String>,
 }
 
 impl Gh {
@@ -798,6 +805,8 @@ impl Gh {
             compare_fails: false,
             diff_fails: false,
             many_commits: false,
+            diff_text: None,
+            files_answer: None,
         }
     }
 
@@ -831,7 +840,20 @@ impl Gh {
                     stderr: "the diff is too large".to_string(),
                 });
             }
-            return ok("diff --git a/x b/x\n".to_string());
+            return ok(self
+                .diff_text
+                .clone()
+                .unwrap_or_else(|| "diff --git a/x b/x\n".to_string()));
+        }
+        if joined.ends_with("/files") {
+            return match &self.files_answer {
+                Some(text) => ok(text.clone()),
+                None => Ok(GhRun {
+                    ok: false,
+                    stdout: String::new(),
+                    stderr: "files refused".to_string(),
+                }),
+            };
         }
         if joined.contains("/comments") {
             // Two pages, printed back to back.
@@ -1123,7 +1145,7 @@ fn a_reader_that_cannot_finish_ends_its_read_and_frees_the_place() {
     // Failed, so it can be asked for again, and the place is free for the next in line.
     assert_eq!(status(root.path(), 1), "failed");
     assert!(matches!(
-        request_read(root.path(), &pr(1), NOW + 1),
+        request_read(root.path(), &pr(1), NOW + 1, ReadMode::Read),
         Ok(Requested::Queued(_))
     ));
 }
@@ -1141,7 +1163,7 @@ fn a_running_read_is_never_replaced_by_asking_alone_and_a_hung_one_is_named() {
     let late = NOW + HUNG_READER_SECS + 1;
     // However long it has run, asking is `Already`: the old reader has not been looked at.
     assert!(matches!(
-        request_read(root.path(), &pr(1), late),
+        request_read(root.path(), &pr(1), late, ReadMode::Read),
         Ok(Requested::Already(_))
     ));
     assert_eq!(
@@ -1169,7 +1191,9 @@ fn a_read_is_taken_over_only_from_the_reader_that_was_checked() {
     put(root.path(), running(1, "sid-old"));
     let late = NOW + HUNG_READER_SECS + 1;
     // The session was replaced since it was looked at: nothing changes.
-    let Ok(Requested::Already(_)) = take_over_read(root.path(), &pr(1), late, "sid-other") else {
+    let Ok(Requested::Already(_)) =
+        take_over_read(root.path(), &pr(1), late, "sid-other", ReadMode::Read)
+    else {
         panic!("took over another reader's read");
     };
     assert_eq!(
@@ -1177,7 +1201,9 @@ fn a_read_is_taken_over_only_from_the_reader_that_was_checked() {
         Some("sid-old")
     );
     // The one that was checked is replaced, and can no longer hand in.
-    let Ok(Requested::Queued(r)) = take_over_read(root.path(), &pr(1), late, "sid-old") else {
+    let Ok(Requested::Queued(r)) =
+        take_over_read(root.path(), &pr(1), late, "sid-old", ReadMode::Read)
+    else {
         panic!("not taken over");
     };
     let ai = r.ai.unwrap();
@@ -1191,7 +1217,7 @@ fn a_read_is_taken_over_only_from_the_reader_that_was_checked() {
     );
     // Taken over already: the second finds no running read under it.
     assert!(matches!(
-        take_over_read(root.path(), &pr(1), late, "sid-old"),
+        take_over_read(root.path(), &pr(1), late, "sid-old", ReadMode::Read),
         Ok(Requested::Already(_))
     ));
     // A done PR is not.
@@ -1199,7 +1225,7 @@ fn a_read_is_taken_over_only_from_the_reader_that_was_checked() {
     done.pr_state = PrOpenState::Merged;
     put(root.path(), done);
     assert_eq!(
-        take_over_read(root.path(), &pr(2), late, "sid-x"),
+        take_over_read(root.path(), &pr(2), late, "sid-x", ReadMode::Read),
         Err(RequestError::Done)
     );
 }
@@ -1728,6 +1754,10 @@ fn drafts_that_break_the_contract_are_refused_whole_and_leave_nothing() {
         ("a wrong version", Box::new(|v| v["version"] = json!(2))),
         ("a short fromSha", Box::new(|v| v["fromSha"] = json!("abc"))),
         (
+            "an unknown fromMode",
+            Box::new(|v| v["fromMode"] = json!("summary")),
+        ),
+        (
             "a bad source",
             Box::new(|v| v["drafts"][0]["source"] = json!("ai")),
         ),
@@ -1855,6 +1885,7 @@ fn drafts_are_saved_whole_and_read_back_with_the_servers_keys() {
     assert_eq!(saved["id"], "acme/widget#1");
     assert_eq!(saved["savedAt"], STAMP);
     assert_eq!(saved["fromSha"], SHA);
+    assert!(saved.get("fromMode").is_none());
     assert_eq!(saved["drafts"][0]["side"], "right");
     assert_eq!(saved["drafts"][2]["body"], "");
     assert_eq!(saved["overall"], json!({"body": "fine"}));
@@ -2166,4 +2197,496 @@ fn a_removed_record_takes_its_diff_with_it_and_a_list_does_not_read_diffs_as_rec
     store::remove(root.path(), &store::stem(&pr(1))).unwrap();
     assert_eq!(diff_text(root.path(), 1), None);
     assert!(store::list(root.path()).is_empty());
+}
+
+// ── a split proposal ─────────────────────────────────────────────────
+
+fn split_asked(number: u64, session: &str) -> Record {
+    let mut r = running(number, session);
+    r.ai.as_mut().unwrap().mode = Some("split".to_string());
+    r
+}
+
+#[test]
+fn asking_for_a_split_sets_the_mode_a_read_clears_it_and_a_takeover_takes_the_new_one() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let Requested::Queued(r) = request_read(root.path(), &pr(1), NOW, ReadMode::Split).unwrap()
+    else {
+        panic!("not queued");
+    };
+    assert_eq!(r.ai.as_ref().unwrap().mode.as_deref(), Some("split"));
+    assert_eq!(
+        load(root.path(), 1).ai.unwrap().mode.as_deref(),
+        Some("split")
+    );
+    // Asking while it is queued answers Already and changes nothing, the mode included.
+    let Requested::Already(r) = request_read(root.path(), &pr(1), NOW + 5, ReadMode::Read).unwrap()
+    else {
+        panic!("not already");
+    };
+    assert_eq!(r.ai.unwrap().mode.as_deref(), Some("split"));
+    // A read asked for after the proposal is over clears the mode.
+    let mut ready = load(root.path(), 1);
+    ready.ai.as_mut().unwrap().status = "ready".to_string();
+    put(root.path(), ready);
+    let Requested::Queued(r) = request_read(root.path(), &pr(1), NOW + 9, ReadMode::Read).unwrap()
+    else {
+        panic!("not queued");
+    };
+    assert_eq!(r.ai.unwrap().mode, None);
+    // A takeover of a hung reader queues the mode of the new request.
+    put(root.path(), running(2, "sid-old"));
+    let late = NOW + HUNG_READER_SECS + 10;
+    let Ok(Requested::Queued(r)) =
+        take_over_read(root.path(), &pr(2), late, "sid-old", ReadMode::Split)
+    else {
+        panic!("not taken over");
+    };
+    assert_eq!(r.ai.unwrap().mode.as_deref(), Some("split"));
+    put(root.path(), split_asked(3, "sid-old"));
+    let Ok(Requested::Queued(r)) =
+        take_over_read(root.path(), &pr(3), late, "sid-old", ReadMode::Read)
+    else {
+        panic!("not taken over");
+    };
+    assert_eq!(r.ai.unwrap().mode, None);
+}
+
+#[test]
+fn the_mode_survives_what_a_reader_does_to_its_read_and_is_read_from_the_record() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), split_asked(1, "sid-a"));
+    note_reader(root.path(), &pr(1), "sid-a", 42, None, None).unwrap();
+    assert_eq!(
+        load(root.path(), 1).ai.unwrap().mode.as_deref(),
+        Some("split")
+    );
+    fail_read(root.path(), &pr(1), Some("sid-a"), "boom", NOW).unwrap();
+    assert_eq!(
+        load(root.path(), 1).ai.unwrap().mode.as_deref(),
+        Some("split")
+    );
+    // A mode this binary does not know is a read-through, and a record with one keeps it.
+    let path = root.path().join("others/acme~widget~1.json");
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    raw["ai"]["mode"] = json!("summary");
+    raw["ai"]["futureKey"] = json!(7);
+    std::fs::write(&path, raw.to_string()).unwrap();
+    let r = load(root.path(), 1);
+    assert_eq!(ReadMode::of(r.ai.as_ref()), ReadMode::Read);
+    put(root.path(), r);
+    let raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(raw["ai"]["mode"], "summary");
+    assert_eq!(raw["ai"]["futureKey"], 7);
+}
+
+#[test]
+fn a_mode_on_the_wire_is_read_split_or_absent_and_nothing_else() {
+    assert_eq!(ReadMode::from_wire(None), Some(ReadMode::Read));
+    assert_eq!(ReadMode::from_wire(Some("read")), Some(ReadMode::Read));
+    assert_eq!(ReadMode::from_wire(Some("split")), Some(ReadMode::Split));
+    for bad in ["", "Split", "summary", " split"] {
+        assert_eq!(ReadMode::from_wire(Some(bad)), None, "{bad:?}");
+    }
+}
+
+const BIG_DIFF: &str = "\
+diff --git a/src/a.rs b/src/a.rs
+index 111..222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,2 +1,2 @@ fn a() {
+ keep
+-old
++new
+@@ -40 +40,2 @@ impl B {
+-gone
++x
++y
+\\ No newline at end of file
+diff --git a/src/b.rs b/src/b.rs
+new file mode 100644
+index 000..333
+--- /dev/null
++++ b/src/b.rs
+@@ -0,0 +1,2 @@
++first
++second
+diff --git a/old.bin b/new.bin
+similarity index 90%
+rename from old.bin
+rename to new.bin
+Binary files a/old.bin and b/new.bin differ
+";
+
+#[test]
+fn hunk_headers_keeps_the_headers_and_none_of_the_lines() {
+    let kept = hunk_headers(BIG_DIFF);
+    assert_eq!(
+        kept,
+        "\
+diff --git a/src/a.rs b/src/a.rs
+index 111..222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,2 +1,2 @@ fn a() {
+@@ -40 +40,2 @@ impl B {
+diff --git a/src/b.rs b/src/b.rs
+new file mode 100644
+index 000..333
+--- /dev/null
++++ b/src/b.rs
+@@ -0,0 +1,2 @@
+diff --git a/old.bin b/new.bin
+similarity index 90%
+rename from old.bin
+rename to new.bin
+Binary files a/old.bin and b/new.bin differ
+"
+    );
+}
+
+#[test]
+fn hunk_headers_reads_a_hunk_by_its_counts_not_by_what_a_line_looks_like() {
+    // A deleted line that starts `-- ` shows as `--- `, an added `++ ` as `+++ `, and an added line
+    // can start `diff --git`: all are lines of the hunk, and none is a header.
+    let diff = "\
+diff --git a/x.sql b/x.sql
+--- a/x.sql
++++ b/x.sql
+@@ -1,2 +1,3 @@
+--- a comment
++++ b comment
++diff --git a/fake b/fake
+ context
+@@ -9,2 +9,0 @@
+-a
+-b
+";
+    let kept = hunk_headers(diff);
+    assert!(!kept.contains("a comment"), "{kept}");
+    assert!(!kept.contains("b comment"), "{kept}");
+    assert!(!kept.contains("fake"), "{kept}");
+    assert_eq!(
+        kept,
+        "diff --git a/x.sql b/x.sql\n--- a/x.sql\n+++ b/x.sql\n@@ -1,2 +1,3 @@\n@@ -9,2 +9,0 @@\n"
+    );
+    // A missing count is one line, a stripped blank context line is still one, and nothing panics on a cut diff.
+    let one = "@@ -5 +5 @@\n-a\n+b\n@@ -7,2 +7,2 @@\n\n x\n--- file after\n";
+    assert_eq!(
+        hunk_headers(one),
+        "@@ -5 +5 @@\n@@ -7,2 +7,2 @@\n--- file after\n"
+    );
+    // A diff that ends inside a hunk says so.
+    assert_eq!(
+        hunk_headers("@@ -1,5 +1,5 @@\n a\n"),
+        "@@ -1,5 +1,5 @@\n# note: the diff was cut inside a hunk; hunks.patch may be incomplete\n"
+    );
+    assert_eq!(hunk_headers(""), "");
+}
+
+fn split_material_for(
+    number: u64,
+    gh: &Gh,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Result<ContextSummary, String>,
+) {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), split_asked(number, "sid-a"));
+    let out = reader_dir(root.path(), &pr(number));
+    let got = read_context_with(root.path(), &pr(number), &out, Some("sid-a"), &|args, _| {
+        gh.run(args)
+    });
+    (root, out, got)
+}
+
+#[test]
+fn the_material_of_a_split_is_pr_json_and_hunks_and_nothing_of_the_diff_or_the_comments() {
+    let mut gh = Gh::new();
+    gh.diff_text = Some(BIG_DIFF.to_string());
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), reviewed_record("abc1234"));
+    let mut r = load(root.path(), 1);
+    r.ai = split_asked(1, "sid-a").ai;
+    put(root.path(), r);
+    // What an earlier read left behind is gone.
+    let out = own(root.path());
+    std::fs::create_dir_all(&out).unwrap();
+    for name in [
+        "diff.patch",
+        "review-comments.json",
+        "reviews.json",
+        "my-last-review.json",
+        "since-review.patch",
+    ] {
+        std::fs::write(out.join(name), "old").unwrap();
+    }
+    let summary = read_context_with(root.path(), &pr(1), &out, Some("sid-a"), &|args, _| {
+        gh.run(args)
+    })
+    .unwrap();
+    assert_eq!(summary.mode, "split");
+    assert!(!summary.rereview);
+    assert_eq!(summary.written, ["pr.json", "hunks.patch"]);
+    assert_eq!(
+        std::fs::read_to_string(out.join("hunks.patch")).unwrap(),
+        hunk_headers(BIG_DIFF)
+    );
+    for name in [
+        "diff.patch",
+        "review-comments.json",
+        "reviews.json",
+        "my-last-review.json",
+        "since-review.patch",
+    ] {
+        assert!(!out.join(name).exists(), "{name}");
+    }
+    // The comments and the reviews are not even asked for.
+    assert!(
+        gh.calls()
+            .iter()
+            .all(|c| !c.join(" ").contains("/comments") && !c.join(" ").contains("/reviews"))
+    );
+    // pr.json is the usual one, with the head the hand-in is checked against.
+    let pr_json: Value =
+        serde_json::from_slice(&std::fs::read(out.join("pr.json")).unwrap()).unwrap();
+    assert_eq!(pr_json["headRefOid"], SHA);
+}
+
+#[test]
+fn a_read_removes_the_hunks_of_an_earlier_split_and_says_read() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let out = own(root.path());
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(out.join("hunks.patch"), "old").unwrap();
+    let summary = context(root.path(), &Gh::new(), &out).unwrap();
+    assert_eq!(summary.mode, "read");
+    assert!(!out.join("hunks.patch").exists());
+}
+
+#[test]
+fn when_gh_will_not_give_the_diff_the_hunks_come_from_the_files_list() {
+    let mut gh = Gh::new();
+    gh.diff_fails = true;
+    gh.files_answer = Some(
+        json!([{"filename": "src/a.rs", "status": "modified", "additions": 3, "deletions": 1,
+                "patch": "@@ -1,3 +1,2 @@ fn a()\n-x\n+y\n ctx\n--- not a header\n"},
+               {"filename": "src/new.rs", "previous_filename": "src/old.rs", "status": "renamed",
+                "additions": 0, "deletions": 0}])
+        .to_string()
+            + &json!([{"filename": "src/huge.rs", "status": "added", "additions": 9000, "deletions": 0}])
+                .to_string(),
+    );
+    let (_root, out, got) = split_material_for(1, &gh);
+    let summary = got.unwrap();
+    let hunks = std::fs::read_to_string(out.join("hunks.patch")).unwrap();
+    assert_eq!(
+        hunks,
+        "diff --git a/src/a.rs b/src/a.rs\n# status: modified +3 -1\n@@ -1,3 +1,2 @@ fn a()\n\
+         diff --git a/src/old.rs b/src/new.rs\nrename from src/old.rs\nrename to src/new.rs\n\
+         # status: renamed +0 -0\n\
+         diff --git a/src/huge.rs b/src/huge.rs\n# status: added +9000 -0\n"
+    );
+    assert!(
+        summary
+            .notes
+            .iter()
+            .any(|n| n == "hunk headers of src/huge.rs are not available")
+    );
+    assert!(
+        summary
+            .notes
+            .iter()
+            .any(|n| n.contains("made from the files list"))
+    );
+    // Only GET requests, as everywhere else.
+    assert!(gh.calls().iter().all(|c| !c.contains(&"-X".to_string())));
+    assert!(
+        gh.calls()
+            .iter()
+            .any(|c| c.join(" ").contains("--paginate") && c.join(" ").ends_with("/files"))
+    );
+}
+
+#[test]
+fn when_neither_the_diff_nor_the_files_list_comes_the_split_has_a_note_and_no_hunks() {
+    let mut gh = Gh::new();
+    gh.diff_fails = true;
+    let (_root, out, got) = split_material_for(1, &gh);
+    let summary = got.unwrap();
+    assert!(!out.join("hunks.patch").exists());
+    assert_eq!(summary.written, ["pr.json"]);
+    assert!(
+        summary
+            .notes
+            .iter()
+            .any(|n| n.contains("hunks.patch could not be made"))
+    );
+}
+
+fn split_read() -> Value {
+    json!({
+        "version": 1,
+        "sha": SHA,
+        "three": {"purpose": "p", "approach": "a", "impact": "i", "essence": "e"},
+        "overall": {"body": "PR 1: the schema\nPR 2: the code"}
+    })
+}
+
+#[test]
+fn a_split_proposal_is_accepted_stored_as_split_and_keeps_no_diff() {
+    let root = tempfile::tempdir().unwrap();
+    // The record has an earlier read-through and its diff, and a review of the person's on an older head.
+    let mut r = split_asked(1, "sid-a");
+    r.my_review = Some(MyReview {
+        state: ReviewState::Commented,
+        submitted_at: "20261002T000000Z".to_string(),
+        commit: "abc1234".to_string(),
+    });
+    put(root.path(), r);
+    store::write_diff(
+        root.path(),
+        &store::stem(&pr(1)),
+        &StoredDiff {
+            sha: SHA.to_string(),
+            saved_at: "s".to_string(),
+            bytes: 1,
+            diff: Some("old".to_string()),
+        },
+    )
+    .unwrap();
+    material(root.path(), 1, SHA, None);
+    // No sinceReview needed: a proposal compares nothing with the earlier review.
+    submit(root.path(), 1, &split_read(), Some("sid-a")).unwrap();
+    let stored = read_through(root.path(), &pr(1)).unwrap().unwrap();
+    assert_eq!(stored["mode"], "split");
+    assert_eq!(
+        stored["overall"]["body"],
+        "PR 1: the schema\nPR 2: the code"
+    );
+    assert_eq!(diff_text(root.path(), 1), None);
+    let ai = load(root.path(), 1).ai.unwrap();
+    assert_eq!(ai.status, "ready");
+    assert_eq!(ai.mode.as_deref(), Some("split"));
+    assert_eq!(
+        ai.counts.map(|c| (c.attention, c.check, c.drafts)),
+        Some((0, 0, 0))
+    );
+}
+
+#[test]
+fn a_split_proposal_that_is_not_one_is_refused_whole() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), split_asked(1, "sid-a"));
+    let cases: Vec<(&str, Change, &str)> = vec![
+        (
+            "no overall",
+            Box::new(|v| {
+                v.as_object_mut().unwrap().remove("overall");
+            }),
+            "overall.body",
+        ),
+        (
+            "blank overall",
+            Box::new(|v| v["overall"]["body"] = json!("  \n")),
+            "must not be blank",
+        ),
+        (
+            "a draft",
+            Box::new(|v| v["drafts"] = json!([{"path": "a.rs", "line": 1, "body": "b"}])),
+            "drafts must be []",
+        ),
+        (
+            "an annotation",
+            Box::new(|v| {
+                v["annotations"] =
+                    json!([{"path": "a.rs", "anchor": "x", "kind": "tr", "text": "t"}])
+            }),
+            "annotations must be []",
+        ),
+        (
+            "a sinceReview",
+            Box::new(|v| v["sinceReview"] = json!({"commit": "abc1234"})),
+            "sinceReview must be null",
+        ),
+        (
+            "a point",
+            Box::new(|v| {
+                v["points"] = json!([{"level": "info", "path": "a.rs", "title": "t", "why": "w"}])
+            }),
+            "points must be empty",
+        ),
+        (
+            "an order",
+            Box::new(|v| v["order"] = json!([{"path": "a.rs", "category": "logic"}])),
+            "order must be empty",
+        ),
+        (
+            "a deleted file",
+            Box::new(|v| v["deleted"] = json!([{"path": "a.rs", "reason": "r", "question": null}])),
+            "deleted must be empty",
+        ),
+        (
+            "a decision",
+            Box::new(|v| v["decisions"] = json!([{"decision": "d", "gains": "g", "costs": "c"}])),
+            "decisions must be empty",
+        ),
+        (
+            "an unwritten",
+            Box::new(|v| v["unwritten"] = json!(["q"])),
+            "unwritten must be empty",
+        ),
+        (
+            "a test",
+            Box::new(|v| v["tests"] = json!({"covered": ["x"], "notCovered": []})),
+            "tests must be empty",
+        ),
+        (
+            "a suggestion",
+            Box::new(|v| v["overall"]["suggestion"] = json!("Request changes")),
+            "overall.suggestion must be left out",
+        ),
+    ];
+    for (what, change, says) in cases {
+        let mut v = split_read();
+        change(&mut v);
+        let Err(SubmitError::Invalid(problems)) = submit(root.path(), 1, &v, Some("sid-a")) else {
+            panic!("{what} accepted");
+        };
+        assert!(
+            problems.iter().any(|p| p.contains(says)),
+            "{what}: {problems:?}"
+        );
+        nothing_changed(root.path(), 1);
+    }
+}
+
+#[test]
+fn a_read_through_is_not_held_to_the_proposal_and_a_proposal_is_what_the_record_says_it_is() {
+    let root = tempfile::tempdir().unwrap();
+    // The record asked for a read: a file with drafts and no overall is fine.
+    put(root.path(), running(1, "sid-a"));
+    let mut v = valid();
+    v["overall"] = json!(null);
+    submit(root.path(), 1, &v, Some("sid-a")).unwrap();
+    let stored = read_through(root.path(), &pr(1)).unwrap().unwrap();
+    assert!(stored.get("mode").is_none());
+}
+
+#[test]
+fn the_mode_of_the_read_the_drafts_came_from_is_kept_when_given() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let mut input = drafts_input();
+    input["fromMode"] = json!("split");
+    let saved = save(root.path(), 1, &input).unwrap();
+    assert_eq!(saved["fromMode"], "split");
+    assert_eq!(drafts(root.path(), &pr(1)).unwrap(), Some(saved));
+    // A save without it is a file of a read-through, and the old key does not linger.
+    let saved = save(root.path(), 1, &drafts_input()).unwrap();
+    assert!(saved.get("fromMode").is_none());
 }

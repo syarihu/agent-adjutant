@@ -228,12 +228,55 @@ pub struct AiRead {
     /// What the stored read-through holds, for the row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counts: Option<AiCounts>,
+    /// What the latest request asked for: `split` for a split proposal, absent for a read-through.
+    /// Text like `status`, so a mode a later binary adds does not make this one drop the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     /// Derived: the read-through was made at another head than the PR has now. Read from disk
     /// only so the key is not caught by `extra`; every load and save overwrites it.
     #[serde(default)]
     pub stale: bool,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What a request for a read asks the reader to make.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReadMode {
+    /// A read-through of the whole PR.
+    #[default]
+    Read,
+    /// A split proposal for a PR too large to read, drafted from its file structure only.
+    Split,
+}
+
+impl ReadMode {
+    /// The mode a request names: absent and `read` are a read-through, `split` a split proposal.
+    /// Anything else is `None`: refused by the caller rather than read as the default.
+    pub fn from_wire(text: Option<&str>) -> Option<ReadMode> {
+        match text {
+            None | Some("read") => Some(ReadMode::Read),
+            Some("split") => Some(ReadMode::Split),
+            Some(_) => None,
+        }
+    }
+
+    /// The mode the record's latest request asked for. A `mode` this binary does not know is a
+    /// read-through.
+    pub fn of(ai: Option<&AiRead>) -> ReadMode {
+        match ai.and_then(|ai| ai.mode.as_deref()) {
+            Some("split") => ReadMode::Split,
+            _ => ReadMode::Read,
+        }
+    }
+
+    /// The text kept in `AiRead::mode`: nothing for a read-through.
+    pub fn wire(self) -> Option<&'static str> {
+        match self {
+            ReadMode::Read => None,
+            ReadMode::Split => Some("split"),
+        }
+    }
 }
 
 /// The counts of a read-through that the row shows, taken when it was handed in. Stored in the

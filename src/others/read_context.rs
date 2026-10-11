@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::task::PrRef;
 
 use super::github::{Gh, answer, viewer};
+use super::model::ReadMode;
 use super::reader_dir::reader_dir;
 use super::store;
 
@@ -22,7 +23,16 @@ const CONTEXT_TIMEOUT: Duration = Duration::from_secs(60);
 /// The files this writes only sometimes. They are removed before anything is written, so a
 /// directory used for an earlier read (an earlier head, a review you have since made) cannot
 /// leave one behind to be read as this PR's.
-const OPTIONAL_FILES: [&str; 3] = ["diff.patch", "my-last-review.json", "since-review.patch"];
+const OPTIONAL_FILES: [&str; 4] = [
+    "diff.patch",
+    "hunks.patch",
+    "my-last-review.json",
+    "since-review.patch",
+];
+
+/// The files a split proposal does not read, which a read-through writes every time: removed for
+/// the same reason when the read is a split, so an earlier read's comments are not taken for it.
+const NOT_FOR_A_SPLIT: [&str; 2] = ["review-comments.json", "reviews.json"];
 
 /// How many files or commits `gh pr view` returns at most; a list this long may be cut.
 const VIEW_LIMIT: usize = 100;
@@ -42,6 +52,8 @@ pub struct ContextSummary {
     pub written: Vec<String>,
     /// Whether this is a PR the person has reviewed and that has moved since.
     pub rereview: bool,
+    /// `read` for a read-through, `split` for a split proposal: the record's, not the reader's.
+    pub mode: &'static str,
     /// What could not be collected and was left out, which is not a failure.
     pub notes: Vec<String>,
 }
@@ -92,8 +104,14 @@ pub(crate) fn read_context_with(
         );
     }
     std::fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
+    let mode = ReadMode::of(record.ai.as_ref());
     for name in OPTIONAL_FILES {
         crate::infra::fs::remove_if_present(&out.join(name))?;
+    }
+    if mode == ReadMode::Split {
+        for name in NOT_FOR_A_SPLIT {
+            crate::infra::fs::remove_if_present(&out.join(name))?;
+        }
     }
 
     let deadline = Instant::now() + CONTEXT_TIMEOUT;
@@ -133,6 +151,20 @@ pub(crate) fn read_context_with(
     }
     view["myReview"] = serde_json::to_value(&record.my_review).map_err(|e| e.to_string())?;
     put_json(&out, "pr.json", &view, &mut written)?;
+
+    if mode == ReadMode::Split {
+        // The proposal is drafted from the structure alone: the diff's lines, the comments and
+        // the earlier review are not fetched, and the files are not written.
+        split_material(gh, &url, &api, &out, deadline, &mut written, &mut notes)?;
+        return Ok(ContextSummary {
+            head_sha: head,
+            files,
+            written,
+            mode: "split",
+            rereview: false,
+            notes,
+        });
+    }
 
     // A diff that cannot be fetched (too big for GitHub to give) is not the end of the read: the
     // reader still has the files and the messages, and says what it could not see.
@@ -182,9 +214,155 @@ pub(crate) fn read_context_with(
         head_sha: head,
         files,
         written,
+        mode: "read",
         rereview,
         notes,
     })
+}
+
+/// Write `hunks.patch`: the file headers and the `@@` lines of the PR's diff, and none of its
+/// lines. GitHub refuses to give a diff this large in one piece (it is what puts a PR out of
+/// review), so when `gh pr diff` fails the headers are taken from the patches of the files list.
+fn split_material(
+    gh: Gh,
+    url: &str,
+    api: &str,
+    out: &Path,
+    deadline: Instant,
+    written: &mut Vec<String>,
+    notes: &mut Vec<String>,
+) -> Result<(), String> {
+    let diff_error = match get(gh, &["pr", "diff", url], deadline) {
+        Ok(diff) => return put_text(out, "hunks.patch", &hunk_headers(&diff), written),
+        Err(why) => why,
+    };
+    match paginated(gh, &format!("{api}/files"), deadline) {
+        Ok(files) => {
+            let (text, missing) = headers_from_files(&files);
+            for path in missing {
+                notes.push(format!("hunk headers of {path} are not available"));
+            }
+            notes.push(format!(
+                "hunks.patch was made from the files list, not the diff ({diff_error})"
+            ));
+            put_text(out, "hunks.patch", &text, written)
+        }
+        Err(why) => {
+            notes.push(format!(
+                "hunks.patch could not be made: the diff ({diff_error}) and the files list ({why}) were both refused; draft the proposal from the file list in pr.json alone, and say so in the proposal"
+            ));
+            Ok(())
+        }
+    }
+}
+
+/// What the `files` endpoint gives as hunks.patch lines, and the paths whose `patch` it left out
+/// (GitHub omits it for a file that is too large or binary).
+fn headers_from_files(files: &Value) -> (String, Vec<String>) {
+    let mut text = String::new();
+    let mut missing = Vec::new();
+    for file in files.as_array().into_iter().flatten() {
+        let Some(path) = file.get("filename").and_then(Value::as_str) else {
+            continue;
+        };
+        let number = |key: &str| file.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let status = file
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("changed");
+        // A renamed file names where it came from, as a diff does.
+        let old = file
+            .get("previous_filename")
+            .and_then(Value::as_str)
+            .filter(|old| *old != path);
+        text.push_str(&format!("diff --git a/{} b/{path}\n", old.unwrap_or(path)));
+        if let Some(old) = old {
+            text.push_str(&format!("rename from {old}\nrename to {path}\n"));
+        }
+        text.push_str(&format!(
+            "# status: {status} +{} -{}\n",
+            number("additions"),
+            number("deletions")
+        ));
+        match file.get("patch").and_then(Value::as_str) {
+            Some(patch) => text.push_str(&hunk_headers(patch)),
+            // A pure rename has no hunk to be missing.
+            None if number("additions") + number("deletions") > 0 => missing.push(path.to_string()),
+            None => {}
+        }
+    }
+    (text, missing)
+}
+
+/// The lines of a unified diff that say which file and which lines, without the lines.
+///
+/// A hunk is read by its counts (`@@ -a,b +c,d @@`, a missing count is 1), not by what a line
+/// looks like: a deleted line whose text starts `-- ` shows as `--- ...`, and an added line may
+/// start `diff --git`, and neither is a header.
+pub(crate) fn hunk_headers(diff: &str) -> String {
+    const KEPT: [&str; 13] = [
+        "diff --git ",
+        "old mode ",
+        "new mode ",
+        "new file mode ",
+        "deleted file mode ",
+        "similarity index ",
+        "dissimilarity index ",
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+        "index ",
+        "Binary files ",
+    ];
+    let mut out = String::new();
+    // Lines of the current hunk still to come: old side, new side.
+    let (mut old, mut new) = (0u64, 0u64);
+    for line in diff.lines() {
+        if old > 0 || new > 0 {
+            match line.as_bytes().first() {
+                Some(b'-') => old = old.saturating_sub(1),
+                Some(b'+') => new = new.saturating_sub(1),
+                // A context line; one with its trailing space stripped is empty.
+                Some(b' ') | None => {
+                    old = old.saturating_sub(1);
+                    new = new.saturating_sub(1);
+                }
+                // `\ No newline at end of file` is no line of either side.
+                Some(_) => {}
+            }
+            continue;
+        }
+        if let Some((o, n)) = hunk_counts(line) {
+            (old, new) = (o, n);
+            out.push_str(line);
+            out.push('\n');
+        } else if line.starts_with("--- ")
+            || line.starts_with("+++ ")
+            || KEPT.iter().any(|prefix| line.starts_with(prefix))
+        {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if old > 0 || new > 0 {
+        out.push_str("# note: the diff was cut inside a hunk; hunks.patch may be incomplete\n");
+    }
+    out
+}
+
+/// The old and new line counts of a `@@ -a,b +c,d @@` line; `None` for any other line.
+fn hunk_counts(line: &str) -> Option<(u64, u64)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, _) = rest.split_once(" @@")?;
+    let (old, new) = ranges.split_once(" +")?;
+    let count = |range: &str| -> Option<u64> {
+        match range.split_once(',') {
+            Some((_, n)) => n.parse().ok(),
+            None => range.parse::<u64>().ok().map(|_| 1),
+        }
+    };
+    Some((count(old)?, count(new)?))
 }
 
 /// `out` made absolute, when it is the reader directory of this very PR, `<state>/review/<stem>/`

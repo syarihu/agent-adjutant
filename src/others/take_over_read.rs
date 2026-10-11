@@ -10,7 +10,7 @@ use crate::infra::clock::utc_stamp;
 use crate::infra::terminal::SessionTerminal;
 use crate::task::PrRef;
 
-use super::model::State;
+use super::model::{ReadMode, State};
 use super::request_read::{HUNG_READER_SECS, RequestError, Requested, queue_afresh};
 use super::store;
 
@@ -53,12 +53,13 @@ pub fn hung_reader(root: &Path, pr: &PrRef, now: i64) -> Result<Option<HungReade
 /// Queue the read of `pr` afresh in place of the running one of `session_id`, the reader that was
 /// checked. Asked again under the record's lock: when the read is no longer running under that
 /// session (it handed in, failed, or was taken over already) nothing is changed and the answer is
-/// `Already`.
+/// `Already`. The new request's `mode` wins over the old reader's.
 pub fn take_over_read(
     root: &Path,
     pr: &PrRef,
     now: i64,
     session_id: &str,
+    mode: ReadMode,
 ) -> Result<Requested, RequestError> {
     let _lock = store::lock(root, &store::stem(pr)).map_err(RequestError::Failed)?;
     let mut record = match store::load(root, pr) {
@@ -76,7 +77,7 @@ pub fn take_over_read(
     if !same {
         return Ok(Requested::Already(record));
     }
-    queue_afresh(&mut record, now);
+    queue_afresh(&mut record, now, mode);
     store::save(root, &mut record).map_err(RequestError::Failed)?;
     Ok(Requested::Queued(record))
 }

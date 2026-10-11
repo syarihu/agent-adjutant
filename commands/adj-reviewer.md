@@ -43,7 +43,9 @@ stop, and write nothing more, no file and no message. Do not try again.
    ```
 
    It writes these into the current directory and prints a short summary (the head SHA, the files
-   with their `+`/`-`, what was written, and whether this is a re-review):
+   with their `+`/`-`, what was written, whether this is a re-review, and `mode`: `read`, or `split`
+   when you were asked for a split proposal, in which case the material is different and the steps
+   below are replaced by "Split proposal" at the end):
 
    - `pr.json` — title, body, author, base and head, `headRefOid`, files, commits (with messages),
      and `myReview` when the person has reviewed this PR before
@@ -58,7 +60,8 @@ stop, and write nothing more, no file and no message. Do not try again.
    what is behind a note. Say in `unwritten` (or in a `points` entry of level `check`) what you
    could not see, and read only what you have.
 
-2. **Read it.** Use Read with offsets for a big `diff.patch`. Read the body and the commit messages
+2. **Read it** (unless the summary says `mode: split`: then go to "Split proposal"). Use Read with
+   offsets for a big `diff.patch`. Read the body and the commit messages
    first: the reasons for a change are there, not in the diff.
 
    **Whether this is a re-review** is in the summary (`rereview`) and in `pr.json` (`myReview` is
@@ -67,7 +70,7 @@ stop, and write nothing more, no file and no message. Do not try again.
    no `commentId` that is not in `my-last-review.json`. When it is not a re-review, `sinceReview` is
    `null`.
 
-3. **Write `./read-through.json`** to the schema below. Order `points` from the most dangerous, and
+3. **Write `./read-through.json`** to the schema below (unless the summary says `mode: split`). Order `points` from the most dangerous, and
    `order` in the order the person should read the files. `points` must be in the order attention,
    then check, then info: the file is refused otherwise.
 
@@ -166,3 +169,48 @@ A small example:
   "sinceReview": null
 }
 ```
+
+## Split proposal
+
+Your prompt says to draft a split proposal, and the summary of `adj review context` says
+`mode: split`: the person asked for it for a pull request whose change is too large to read line by
+line (one file changed by more than 1,500 lines). You do not read this PR. You propose how to cut
+it into pull requests that can each be reviewed.
+
+The material is different, and is all there is; do not ask for more and do not try to get it:
+
+- `pr.json` — title, body, author, base and head, `headRefOid`, files with their `+`/`-`, commits
+  with messages, and `myReview`
+- `hunks.patch` — only the file headers and the `@@` lines of the diff (which files, which hunks and
+  what each hunk is around), and none of the changed lines. When the summary has a note that it was
+  made from the files list, or that the hunk headers of a file are not available, say so in the
+  proposal and do not guess what is in that file
+- no `diff.patch`, no `review-comments.json`, no `reviews.json`, and no re-review files: nothing is
+  compared with your earlier review
+
+Do steps 1 and 4 as above (collect, hand in), and in place of steps 2 and 3:
+
+1. Read the body and the commit messages, then `hunks.patch`, and decide how the change falls into
+   parts that stand on their own: by feature, by layer, by directory, by a move that can come first.
+   Which files are too large is from the files with their `+`/`-`: the files changed by more than
+   1,500 lines (additions plus deletions), not counting files deleted whole and generated files,
+   which are, exactly as the board counts them (the file name, case ignored): `cargo.lock`,
+   `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `gemfile.lock`, `poetry.lock`,
+   `composer.lock`, `go.sum` or any name ending `.lock`; names ending `.snap`, `.map`, `.min.js`,
+   `.min.css`, `.pb.go` or `.g.dart`, ending `_pb2.py` or containing `.generated.`; and anything
+   under a directory named `__snapshots__`, `vendor`, `node_modules` or `dist`.
+2. Write `./read-through.json` with exactly these:
+   - `version`, `sha` and `three` as in the schema (write `three` from the title, the body and the
+     structure; say in `essence` that this is a proposal made without reading the lines)
+   - `overall.body`: the proposal, in Japanese, as the body of a review comment: which files are too
+     large and by how much; the proposed pull requests **in the order they should be merged**, each
+     with a title, the files it holds, and what it carries by the hunk headers; and what to do with
+     the generated or very large files (leave them out, generate them in the last pull request, or
+     ask the author). It is the text the person may edit and put in their pending review, so write
+     it to the author, in a plain tone, and as a suggestion
+   - `points`, `order`, `deleted`, `decisions`, `unwritten`, `annotations` and `drafts` empty
+     (`[]`), `tests` empty, `overall.suggestion` left out, and `sinceReview` `null`
+3. Hand it in with `adj review submit --pr <id> --file read-through.json`. It is refused when
+   `overall.body` is blank, or when `drafts`, `annotations` or `sinceReview` is not empty.
+
+You stay in the window afterwards as in step 5.

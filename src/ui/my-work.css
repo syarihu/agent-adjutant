@@ -308,6 +308,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .ov-row.dim .wk-title, .ov-row.dim .wk-meta { color: var(--md-sys-color-on-surface-variant); }
 .ov-line.dim { color: var(--md-sys-color-outline); font-family: inherit; }
 .ov-line { font-family: inherit; }
+.ov-oor-line { font-family: inherit; color: var(--md-sys-color-warning); }
 .ov-new { margin-right: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 800; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 .ov-size { font-weight: 800; }
 .ov-act {

@@ -6,12 +6,13 @@
 use std::path::Path;
 
 use super::args::{
-    ReviewContextArgs, ReviewFailArgs, ReviewPrArgs, ReviewRunArgs, ReviewSayArgs, ReviewSubmitArgs,
+    ReviewContextArgs, ReviewFailArgs, ReviewRequestArgs, ReviewRunArgs, ReviewSayArgs,
+    ReviewSubmitArgs,
 };
 use crate::board::review::{self, RequestRefused};
 use crate::infra::env::REVIEW_SESSION_ENV;
 use crate::lifecycle;
-use crate::others::{self, Requested, SubmitError};
+use crate::others::{self, ReadMode, Requested, SubmitError};
 use crate::registry;
 use crate::task::PrRef;
 use crate::transport::wording::{queue_warning, review_refusal};
@@ -21,10 +22,15 @@ fn pr_named(text: &str) -> Result<PrRef, String> {
         .ok_or_else(|| format!("not a pull request: {text} (a pull request URL or owner/repo#N)"))
 }
 
-pub fn review_request(args: &ReviewPrArgs) -> Result<(), String> {
+pub fn review_request(args: &ReviewRequestArgs) -> Result<(), String> {
     let root = registry::state_root(None);
     pr_named(&args.pr)?;
-    let record = match review::request(&root, &args.pr) {
+    let mode = if args.split {
+        ReadMode::Split
+    } else {
+        ReadMode::Read
+    };
+    let record = match review::request(&root, &args.pr, mode) {
         Ok(asked) => {
             if let Some(why) = &asked.queue_error {
                 eprintln!("adjutant: {}", queue_warning(why));

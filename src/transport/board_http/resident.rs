@@ -16,7 +16,7 @@ use crate::board::review::RequestRefused;
 use crate::board::view::{boards, others, work};
 use crate::lifecycle::hub::TabOutcome;
 use crate::lifecycle::review::AskError;
-use crate::others::{PushError, Requested, SaveDraftsError, SyncError};
+use crate::others::{PushError, ReadMode, Requested, SaveDraftsError, SyncError};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -170,7 +170,8 @@ pub(super) fn route_resident(
     }
 }
 
-/// `POST /api/others/ai`: queue a read-through of a PR, and start the readers next in line.
+/// `POST /api/others/ai`: queue a read-through of a PR (or, with `mode` split, a split proposal),
+/// and start the readers next in line.
 fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
     let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
     let Some(id) = input.get("id").and_then(serde_json::Value::as_str) else {
@@ -180,7 +181,20 @@ fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std
             &json!({ "error": "an id is required" }).to_string(),
         );
     };
-    match crate::board::review::request(&resident.root, id) {
+    // Refused before anything is written, like an id that names no PR.
+    // A `mode` that is not text is as unknown as a word that is not one of the two.
+    let wire = match input.get("mode") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(value.as_str().unwrap_or("")),
+    };
+    let Some(mode) = ReadMode::from_wire(wire) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": crate::transport::wording::unknown_read_mode() }).to_string(),
+        );
+    };
+    match crate::board::review::request(&resident.root, id, mode) {
         Ok(asked) => {
             let (Requested::Queued(record) | Requested::Already(record)) = asked.requested;
             // `warning` is set when the queue could not be worked after the request was taken.

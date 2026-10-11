@@ -135,15 +135,15 @@ async function syncOthers() {
 
 /* ── AI 下読み and the code-review hub ── */
 
-/* Ask for a read-through of one PR. One request per PR at a time; the answer is read back either way, since a refusal (the hub
-   stopped, the PR done) is also something the list now shows. */
-async function othersRequestAi(id) {
+/* Ask for a read-through of one PR, or with `mode` 'split' for a split proposal. One request per PR at a time; the answer is read
+   back either way, since a refusal (the hub stopped, the PR done) is also something the list now shows. */
+async function othersRequestAi(id, mode) {
   if (!multiBoard || others.asking.has(id)) return;
   others.asking.add(id);
   renderOthersList(true);
   prRedraw();
   try {
-    const res = await boardApi('', '/api/others/ai', { method: 'POST', body: JSON.stringify({ id }) });
+    const res = await boardApi('', '/api/others/ai', { method: 'POST', body: JSON.stringify(mode ? { id, mode } : { id }) });
     // The request stands; this is what the queue could not do after it.
     if (res?.warning) note('adj review request', true, res.warning);
   } catch (e) {
@@ -193,15 +193,20 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
     `<span class="ov-size" title="変更の大きさ（追加と削除の行数の合計）">${othersSize(rec)}</span>`,
     when_ ? `<span title="${esc(when(rec.requestedAt))}">${esc(when_)}</span>` : '',
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
-  const split = othersOutOfReview(rec);
+  // A PR too large to read is offered 「分割案」 where it would be offered 「AI 下読み」, and 「AI 下読み」 is not offered on its row.
+  const oor = OTHERS_LIVE.includes(rec.state) ? othersOutOfReview(rec) : null;
   const ai = othersAiView(rec, records, nowEst);
   const asking = others.asking.has(rec.id);
   // Disabled for good while a read cannot be asked for (the hub is down, or no reader can be opened), with why as the title; while a request is out it only ignores the click.
-  const aiButton = ai.action && !split
-    ? `<button type="button" class="ov-act" data-ov-ai="${esc(rec.id)}"${hubView.canRead ? '' : ` disabled title="${esc(hubView.why || OTHERS_SYNC_WHY)}"`}${asking ? ' aria-disabled="true"' : ''}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span>${esc(asking ? '依頼中…' : ai.action)}</button>` : '';
+  const askAttrs = `${hubView.canRead ? '' : ` disabled title="${esc(hubView.why || OTHERS_SYNC_WHY)}"`}${asking ? ' aria-disabled="true"' : ''}`;
+  // What a button asks for follows whether the PR is out of review now (`othersAiView` words it so), not what was asked before.
+  const aiButton = ai.action && !oor
+    ? `<button type="button" class="ov-act" data-ov-ai="${esc(rec.id)}"${askAttrs}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span>${esc(asking ? '依頼中…' : ai.action)}</button>` : '';
+  const splitButton = ai.action && oor
+    ? `<button type="button" class="ov-act" data-ov-split="${esc(rec.id)}"${askAttrs}><span class="material-symbols-outlined" aria-hidden="true">call_split</span>${esc(asking ? '依頼中…' : '分割案')}</button>` : '';
   const acts = [
     aiButton,
-    split ? `<button type="button" class="ov-act" data-ov-split="${esc(rec.id)}"><span class="material-symbols-outlined" aria-hidden="true">call_split</span>分割案</button>` : '',
+    splitButton,
     isNew ? `<button type="button" class="wk-act" data-ov-read="${esc(rec.id)}" aria-label="既読にする" title="既読にする"><span class="material-symbols-outlined" aria-hidden="true">done</span></button>` : '',
   ].filter(Boolean).join('');
   const dim = othersStateOf(rec)[2] === 'ov-dim' ? ' dim' : '';
@@ -211,7 +216,8 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
       ${othersGlyphHtml(rec)}<span class="wk-main">
         <span class="wk-title">${isNew ? '<span class="ov-new">新着</span>' : ''}${esc(rec.title)}</span>
         <span class="wk-meta">${meta}</span>
-        <span class="wk-line ov-line${line.cls ? ` ${line.cls}` : ''}">${esc(line.text)}</span>
+        <span class="wk-line ov-line${line.cls ? ` ${line.cls}` : ''}">${esc(line.text)}</span>${oor ? `
+        <span class="wk-line ov-oor-line">${esc(othersOutOfReviewLine(oor))}</span>` : ''}
       </span></button>${acts ? `<span class="wk-acts">${acts}</span>` : ''}
   </div>`;
 }
@@ -342,8 +348,12 @@ wk('ov-groups').addEventListener('click', e => {
     if (b.getAttribute('aria-disabled') === 'true') return;
     return othersStartHub();
   }
-  // 分割案 is a later issue's, and the hub's row opens nothing.
-  if (e.target.closest('[data-ov-split], [data-ov-hub]')) return;
+  if ((b = e.target.closest('[data-ov-split]'))) {
+    if (b.disabled || b.getAttribute('aria-disabled') === 'true') return;
+    return othersRequestAi(b.dataset.ovSplit, 'split');
+  }
+  // The hub's row opens nothing.
+  if (e.target.closest('[data-ov-hub]')) return;
   if ((b = e.target.closest('.ov-row[data-ov]'))) {
     const rec = othersById(b.dataset.ov);
     if (rec) othersSelect(rec);

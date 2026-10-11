@@ -37,6 +37,10 @@ pub struct DraftsInput {
     /// The head of the read-through the reader's drafts were last taken from.
     #[serde(default)]
     pub from_sha: Option<String>,
+    /// What that read-through was: `read` or `split`; absent is `read`. A change of mode with the
+    /// same head is a new read-through to the page, which offers what it brought.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_mode: Option<String>,
     #[serde(default)]
     pub drafts: Vec<DraftItem>,
     #[serde(default)]
@@ -114,7 +118,7 @@ impl StoredDrafts {
 }
 
 /// The keys of `DraftsInput`: what `StoredDrafts::input` reads out of the rest of the file.
-const INPUT_KEYS: [&str; 4] = ["version", "fromSha", "drafts", "overall"];
+pub(super) const INPUT_KEYS: [&str; 5] = ["version", "fromSha", "fromMode", "drafts", "overall"];
 
 /// What adj has put into the person's pending review on GitHub: the top-level `pending` of the
 /// drafts file. Keys this binary does not know are kept (rule 10).
@@ -199,6 +203,13 @@ pub fn validate(input: &DraftsInput) -> Vec<String> {
         && !is_sha(sha)
     {
         problems.push("fromSha must be 40 lower-case hex digits, or null".to_string());
+    }
+    if input
+        .from_mode
+        .as_deref()
+        .is_some_and(|mode| !matches!(mode, "read" | "split"))
+    {
+        problems.push("fromMode must be \"read\" or \"split\", or null".to_string());
     }
     if input.drafts.len() > MAX_DRAFTS {
         problems.push(format!(

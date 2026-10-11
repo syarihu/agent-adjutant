@@ -42,7 +42,7 @@ function world() {
   });
   vm.runInContext([
     read('util.js'), read('my-work-seen.js'), read('my-work-others.js'),
-    read('pr-read.js'),
+    read('pr-read.js'), read('pr-diff.js'),
     cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m),
     cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m),
     cut(read('task-view.js'), /^const HISTORY_LOADING = [^\n]*;/m), cut(read('task-view.js'), /^const DIFF_LOADING = [^\n]*;/m),
@@ -50,7 +50,7 @@ function world() {
     cut(read('pr-panel.js'), /^const prBoxFocused = [^\n]*;/m),
     fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
     cut(read('pr-dialog.js'), /^const prDialogDrawn = [^\n]*;/m),
-    cut(read('pr-dialog.js'), /^const PR_DIALOG_GONE = [^\n]*;\nconst PR_DIALOG_NO_READ = [^\n]*;/m),
+    cut(read('pr-dialog.js'), /^const PR_DIALOG_GONE = [^\n]*;\nconst PR_DIALOG_NO_READ = [^\n]*;\nconst PR_DIALOG_NO_SPLIT = [^\n]*;/m),
     "cardDialog.mode = 'review'; cardDialog.subject = 'pr:acme/widget#12';",
   ].join('\n'), c);
   const sync = (...a) => { c.args = a; return vm.runInContext('prDialogSync(...args)', c); };

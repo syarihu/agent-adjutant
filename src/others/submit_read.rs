@@ -6,8 +6,8 @@ use crate::infra::clock::utc_stamp;
 use crate::task::PrRef;
 
 use super::diff_get::{MAX_DIFF_BYTES, StoredDiff};
-use super::model::{AiCounts, Record};
-use super::read_through::{Level, MAX_READ_BYTES, ReadThrough, Stored, validate};
+use super::model::{AiCounts, ReadMode, Record};
+use super::read_through::{Level, MAX_READ_BYTES, ReadThrough, Stored, validate, validate_split};
 use super::store;
 
 /// What a hand-in came to.
@@ -83,9 +83,17 @@ pub(crate) fn submit_read_with(
         return Err(SubmitError::Superseded);
     }
 
+    // What was asked for, as the record has it under the lock, not what the file says it is.
+    let mode = ReadMode::of(record.ai.as_ref());
+    if mode == ReadMode::Split {
+        validate_split(&read).map_err(SubmitError::Invalid)?;
+    }
+
     // A PR you reviewed that has moved is a re-review, and a re-review says what became of your
-    // comments. `sha` is the head the reader read, `commit` the one you reviewed.
-    if let Some(mine) = &record.my_review
+    // comments. `sha` is the head the reader read, `commit` the one you reviewed. A split
+    // proposal compares nothing with it.
+    if mode == ReadMode::Read
+        && let Some(mine) = &record.my_review
         && read.since_review.is_none()
         && mine.commit != read.sha
     {
@@ -177,7 +185,12 @@ pub(crate) fn submit_read_with(
         extra: Default::default(),
     };
     // Read before the first write, so that an unreadable `diff.patch` refuses the hand-in whole.
-    let diff = reader_diff(root, pr, &read.sha, &stamp).map_err(SubmitError::Failed)?;
+    // A split proposal keeps no diff: the reader did not read one, so the 差分 tab has nothing
+    // of this head to show and an earlier diff is removed below.
+    let diff = match mode {
+        ReadMode::Read => reader_diff(root, pr, &read.sha, &stamp).map_err(SubmitError::Failed)?,
+        ReadMode::Split => None,
+    };
     let previous = store::load_read(root, &stem).map_err(SubmitError::Failed)?;
     let previous_diff = store::load_diff(root, &stem).map_err(SubmitError::Failed)?;
     // The diff goes with the read-through or not at all: one of another head is never left to be
@@ -187,8 +200,11 @@ pub(crate) fn submit_read_with(
         None => store::remove_diff(root, &stem),
     }
     .map_err(SubmitError::Failed)?;
-    if let Err(e) = store::write_read(root, &stem, &Stored::of(&record.id, &stamp, session, &read))
-    {
+    if let Err(e) = store::write_read(
+        root,
+        &stem,
+        &Stored::of(&record.id, &stamp, session, &read, mode),
+    ) {
         return Err(SubmitError::Failed(
             match store::restore_diff(root, &stem, previous_diff.as_deref()) {
                 Ok(()) => e,

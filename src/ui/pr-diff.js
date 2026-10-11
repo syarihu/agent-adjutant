@@ -147,7 +147,7 @@ const prdParts = path => {
 const PRD_LOCKS = ['cargo.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'gemfile.lock', 'poetry.lock', 'composer.lock', 'go.sum'];
 
 /* Lock files, snapshots, minified and generated files, vendored code: what nobody reads by hand. (A later issue's "not counted"
-   rule is this one.) */
+   rule is this one.) commands/adj-reviewer.md ("Split proposal") repeats these lists for the reader: keep them in step. */
 function prDiffIsGenerated(path) {
   const { dirs, lower } = prdParts(path);
   if (PRD_LOCKS.includes(lower) || lower.endsWith('.lock')) return true;

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::infra::clock::now_secs;
 use crate::lifecycle::hub::hub_startable;
-use crate::others::{self, HungReader, RequestError, Requested};
+use crate::others::{self, HungReader, ReadMode, RequestError, Requested};
 use crate::registry;
 use crate::registry::Liveness;
 use crate::task::PrRef;
@@ -36,7 +36,7 @@ pub struct Asked {
 /// Ask for a read-through of `pr`, and start the readers that are next in line, this one
 /// included when a place is free. Refused while the code-review hub is not up: a request would
 /// only wait, and the hub is also where a reader reports to.
-pub fn request(root: &Path, pr: &PrRef) -> Result<Asked, AskError> {
+pub fn request(root: &Path, pr: &PrRef, mode: ReadMode) -> Result<Asked, AskError> {
     let ctx = registry::review_context(root).map_err(AskError::Failed)?;
     let hub_up = registry::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name).present;
     let startable = hub_startable(&ctx.settings.terminal);
@@ -45,6 +45,7 @@ pub fn request(root: &Path, pr: &PrRef) -> Result<Asked, AskError> {
         root,
         pr,
         now,
+        mode,
         hub_up,
         startable,
         &registry::hub_process_liveness,
@@ -74,6 +75,7 @@ pub(crate) fn request_with(
     root: &Path,
     pr: &PrRef,
     now: i64,
+    mode: ReadMode,
     hub_up: bool,
     startable: bool,
 ) -> Result<Requested, AskError> {
@@ -83,7 +85,7 @@ pub(crate) fn request_with(
     if !startable {
         return Err(AskError::NotStartable);
     }
-    others::request_read(root, pr, now).map_err(|e| match e {
+    others::request_read(root, pr, now, mode).map_err(|e| match e {
         RequestError::NoRecord => AskError::NoRecord,
         RequestError::Done => AskError::Done,
         RequestError::Failed(why) => AskError::Failed(why),
@@ -95,16 +97,18 @@ pub(crate) fn request_with(
 /// gone. A reader that is alive (and recorded when it started) is stopped; one that cannot be told
 /// alive or dead, or cannot be stopped, is left running and the answer is `Already`: starting a
 /// second beside it would put more than the allowed number of readers at work.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn request_taking_over(
     root: &Path,
     pr: &PrRef,
     now: i64,
+    mode: ReadMode,
     hub_up: bool,
     startable: bool,
     alive: &dyn Fn(u32, Option<&str>) -> Liveness,
     stop: &dyn Fn(&HungReader) -> Result<(), String>,
 ) -> Result<Requested, AskError> {
-    let asked = request_with(root, pr, now, hub_up, startable)?;
+    let asked = request_with(root, pr, now, mode, hub_up, startable)?;
     let Requested::Already(_) = &asked else {
         return Ok(asked);
     };
@@ -113,7 +117,7 @@ pub(crate) fn request_taking_over(
         return Ok(asked);
     };
     // The session is asked again under the record's lock: it may have ended since it was looked at.
-    others::take_over_read(root, pr, now, &reader.session_id).map_err(|e| match e {
+    others::take_over_read(root, pr, now, &reader.session_id, mode).map_err(|e| match e {
         RequestError::NoRecord => AskError::NoRecord,
         RequestError::Done => AskError::Done,
         RequestError::Failed(why) => AskError::Failed(why),

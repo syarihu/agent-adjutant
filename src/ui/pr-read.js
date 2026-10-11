@@ -17,6 +17,7 @@ const PR_STATE_PILL = { 'ov-requested': 'pill-warn', 'ov-reading': 'pill-blue', 
 const PR_DIFF_PLACEHOLDER = 'この PR の差分はまだここに表示できません。GitHub で開いて読んでください。';
 const PR_NO_READ_WHY = 'AI 下読みのあとに使えます';
 const PR_NO_DIFF_WHY = '差分はまだ表示できません';
+const PR_SPLIT_NO_DIFF_WHY = '分割案では差分を読んでいません';
 
 const prSha7 = sha => String(sha || '').slice(0, 7);
 const prSubText = rec => `${rec?.repo || ''} #${rec?.number ?? ''}`;
@@ -49,7 +50,7 @@ function prTabsHtml(rec, read, pane, draftCount = 0, diffOn = false) {
   const dot = OTHERS_LIVE.includes(rec?.state) && rec?.events?.pushed ? '<span class="tp-dot" role="img" aria-label="前回のレビューのあとに push されました" title="前回のレビューのあとに push されました"></span>' : '';
   const badge = draftCount > 0 ? `<span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${draftCount}</span>` : '';
   return tab('detail', '下読み', dot, '')
-    + tab('diff', '差分', '', !has ? PR_NO_READ_WHY : !diffOn ? PR_NO_DIFF_WHY : '')
+    + tab('diff', '差分', '', !has ? PR_NO_READ_WHY : read?.mode === 'split' ? PR_SPLIT_NO_DIFF_WHY : !diffOn ? PR_NO_DIFF_WHY : '')
     + tab('drafts', '下書き', badge, !has ? PR_NO_READ_WHY : '');
 }
 
@@ -197,17 +198,25 @@ function prFooter(rec, read, ai, hubView, asking = false) {
   const stale = !!rec?.ai?.stale;
   const made = read.madeAt ? ` · ${esc(when(read.madeAt))}` : '';
   const under = ai && ['queued', 'running', 'hung', 'failed'].includes(ai.kind) ? `<div class="tp-muted">${esc(ai.text)}</div>` : '';
-  const again = stale ? ` <span class="m3-pill pill-warn" title="PR の head が、下読みしたときから動いています">head は ${esc(prSha7(rec.headSha))}</span> <button type="button" class="btn-m3-tonal pr-reread" data-pr-reread${prAskAttrs(hubView, asking)}>${esc(asking ? '依頼中…' : '下読みし直す')}</button>` : '';
+  // The card of a PR out of review has the buttons for this already.
+  const oorNow = !!othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state);
+  // A proposal is no read of a PR that is not out of review now, however current: the usual button is offered (`ai.action`).
+  const readButton = `<button type="button" class="btn-m3-tonal pr-reread" data-pr-reread${prAskAttrs(hubView, asking)}>${esc(asking ? '依頼中…' : ai?.action)}</button>`;
+  const again = oorNow ? '' : !stale ? (read.mode === 'split' && ai?.action ? ` ${readButton}` : '') : ` <span class="m3-pill pill-warn" title="PR の head が、下読みしたときから動いています">head は ${esc(prSha7(rec.headSha))}</span> <button type="button" class="btn-m3-tonal pr-reread" data-pr-reread${prAskAttrs(hubView, asking)}>${esc(asking ? '依頼中…' : '下読みし直す')}</button>`;
   return { key: 'footer', label: '下読みの時点',
     html: `<div class="tp-muted">下読みした時点: <code>${esc(prSha7(read.sha))}</code>${made}</div>${again ? `<div class="pr-foot-acts">${again}</div>` : ''}${under}` };
 }
 
 /* Before a read-through: the GitHub facts are all there is, and one button. What a read in progress or failed says is
-   `othersAiView`'s; `asking` is a request of this page that is not answered yet. Called by the page only when
-   `othersOutOfReview` has nothing to say (a later issue draws its own buttons for a PR that is out of review). */
+   `othersAiView`'s; `asking` is a request of this page that is not answered yet. A view of a split proposal (`mode`, set only while the PR is out of review) asks for
+   another proposal. Not drawn by the page for a PR that is out of review before it has a read: `prOorActions` has its buttons. */
 function prAiButtonHtml(ai, hubView, asking) {
   if (!ai?.action) return '';
+  if (ai.mode === 'split') return prSplitButtonHtml(ai.action, hubView, asking);
   return `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(asking ? '依頼中…' : ai.action)}</span></button>`;
+}
+function prSplitButtonHtml(label, hubView, asking) {
+  return `<button type="button" class="btn-m3-tonal pr-ai" data-pr-split${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">call_split</span><span>${esc(asking ? '依頼中…' : label)}</span></button>`;
 }
 function prBeforeRead(rec, records, hubView, nowSecs, asking = false) {
   const ai = othersAiView(rec, records, nowSecs);
@@ -216,15 +225,72 @@ function prBeforeRead(rec, records, hubView, nowSecs, asking = false) {
   return { key: 'top:ai', label: 'AI 下読み', html: `<div class="tp-line">${esc(text)}</div>${prAiButtonHtml(ai, hubView, asking)}` };
 }
 
+/* ── a PR whose change is too large to read ── */
+
+const PR_OOR_TEXT = `1 ファイルの変更が ${OTHERS_OUT_OF_REVIEW_LINES.toLocaleString('en-US')} 行を超えているため、行ごとのレビューには向きません（丸ごと削除したファイル、lock・スナップショット・生成ファイルは数えません）。`;
+
+/* The files that are over the limit, one line each. */
+function prOorFilesHtml(oor) {
+  const items = oor.files.map(f => prLi(`<code class="pr-loc">${esc(f.path)}</code> +${f.additions} −${f.deletions}（計 ${f.additions + f.deletions} 行）`));
+  return `<ul class="pr-list">${items.join('')}</ul>`;
+}
+
+/* The buttons of a PR out of review, as labels (null for one that is not offered): 「分割を提案する」 unless a split proposal is
+   stored (made again when its head has moved), and 「それでも AI 下読み」 unless a read-through of the whole PR is stored and its
+   head has not moved. None while a read is under way (a reader that has hung is not under way: asking again takes it over), and
+   none on a PR that waits for nothing of the person. `read` is the stored read-through (undefined while it is being fetched, which
+   offers nothing). `ai` is `othersAiView`'s. */
+function prOorActions(rec, read, ai, readError = false) {
+  const none = { split: null, full: null };
+  if (!OTHERS_LIVE.includes(rec?.state) || ['queued', 'running'].includes(ai?.kind)) return none;
+  // A read-through that could not be fetched is no reason to offer nothing: the request does not depend on it.
+  if (read === undefined && rec?.ai?.sha && !readError) return none;
+  const stale = !!rec?.ai?.stale;
+  const isSplit = read?.mode === 'split';
+  return {
+    // A proposal that failed or whose reader hung is asked for again even if the stored one is current.
+    split: isSplit ? (stale || ['failed', 'hung'].includes(ai?.kind) ? '分割を提案し直す' : null) : '分割を提案する',
+    full: read && !isSplit && !stale ? null : 'それでも AI 下読み',
+  };
+}
+
+/* The two buttons, and what 「それでも AI 下読み」 costs. */
+function prOorButtonsHtml(actions, hubView, asking) {
+  const split = actions.split ? prSplitButtonHtml(actions.split, hubView, asking) : '';
+  const full = actions.full
+    ? `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(asking ? '依頼中…' : actions.full)}</span></button>` : '';
+  const note = actions.full ? '<div class="tp-muted">差分を全部読むので時間がかかります。分割案の下書きは、編集していなければ下読みの下書きに置き換わります。</div>' : '';
+  return `${split || full ? `<div class="pr-foot-acts">${split}${full}</div>` : ''}${note}`;
+}
+
+/* 「レビュー対象外」: the files over the limit and the two ways on, in the 下読み tab and in 「拡大」. Null for a PR that is not out
+   of review, and for one that waits for nothing of the person. `ai` is `othersAiView`'s. */
+function prOutOfReview(rec, read, ai, hubView, asking = false, readError = false) {
+  const oor = othersOutOfReview(rec);
+  if (!oor || !OTHERS_LIVE.includes(rec?.state)) return null;
+  const under = ['queued', 'running', 'hung', 'failed'].includes(ai?.kind) && ai.text ? `<div class="tp-line">${esc(ai.text)}</div>` : '';
+  return { key: 'top:oor', label: 'レビュー対象外',
+    html: `<div class="tp-line">${esc(PR_OOR_TEXT)}</div>${prOorFilesHtml(oor)}${under}${prOorButtonsHtml(prOorActions(rec, read, ai, readError), hubView, asking)}` };
+}
+
+/* The split proposal of a read-through made as one: its overall comment, as text. It is in the drafts too, where it is edited. */
+function prSplitProposal(read) {
+  if (read?.mode !== 'split') return null;
+  return { key: 'top:split', label: '分割案',
+    html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">下書きタブで編集・コピー・pending review に積めます。</div>` };
+}
+
 /* The sections of the 下読み tab, in the issue's order. `opts`: `diff` (the annotated diff is there), `asking`, `readError`. */
 function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
   const ai = othersAiView(rec, records, nowSecs);
   const hasRead = !!read;
   return [
     prFacts(rec, nowSecs),
+    prOutOfReview(rec, read, ai, hubView, opts.asking, !!opts.readError),
     prSince(rec, read),
-    !hasRead && read !== undefined && !othersOutOfReview(rec) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking) : null,
+    !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking) : null,
     prThree(read),
+    prSplitProposal(read),
     prPoints(read, { diff: opts.diff }),
     prOrder(read, rec, { diff: opts.diff }),
     prDecisions(read),
@@ -250,9 +316,19 @@ function prDetailHtml(rec, read, records, hubView, nowSecs, opts = {}) {
 /* ── the middle, before there is a terminal in it ── */
 
 function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
-  // A PR that is out of review gets its own buttons here, from a later issue.
-  if (othersOutOfReview(rec)) return '';
   const ai = othersAiView(rec, records, nowSecs);
+  const oor = othersOutOfReview(rec);
+  // A PR that is out of review offers its two ways on until a reader is at work on it, in either mode. `opts.read` is the stored
+  // read-through, which says whether a proposal is there already.
+  // Also for a reader that has hung, and for a read-through that is stale or whose window cannot be opened.
+  const offers = ['none', 'failed', 'stale', 'hung'].includes(ai.kind) || opts.ended != null || (ai.kind === 'done' && !prReaderOpen(rec));
+  if (oor && OTHERS_LIVE.includes(rec?.state) && offers) {
+    const why = ai.kind !== 'none' && ai.text ? `<div class="tp-line">${esc(ai.text)}</div>` : '';
+    const gone = opts.ended != null ? '<div class="tp-muted">worker は終わっています。</div>' : '';
+    return `<div class="tp-ph-head">レビュー対象外</div>${prOorFilesHtml(oor)}${why}${gone}`
+      + '<div class="tp-muted">worker はファイルの構成と hunk の見出しだけを読んで、この PR の分割案を下書きにします。</div>'
+      + prOorButtonsHtml(prOorActions(rec, opts.read, ai, !!opts.readError), hubView, opts.asking);
+  }
   if (opts.ended != null) {
     return '<div class="tp-ph-head">AI 下読みの worker は終わっています</div><div class="tp-muted">下読みはパネルに残っています。</div>'
       + '<button type="button" class="btn-m3-tonal" data-pr-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>'
@@ -265,7 +341,7 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   }
   const mountable = prReaderOpen(rec);
   const note = mountable ? '接続しています…'
-    : ['done', 'stale'].includes(ai.kind) ? '下読みは右のパネルにあります。worker の画面は開けません。'
+    : ['done', 'stale'].includes(ai.kind) ? `${ai.mode === 'split' ? '分割案' : '下読み'}は右のパネルにあります。worker の画面は開けません。`
     : ai.kind === 'running' || ai.kind === 'hung' ? 'worker の画面は開けません（tmux のウィンドウが記録されていません）。' : '';
   return `<div class="tp-ph-head">${esc(ai.text)}</div>${note ? `<div class="tp-muted">${esc(note)}</div>` : ''}${mountable ? '' : prAiButtonHtml(ai, hubView, opts.asking)}`;
 }
@@ -275,7 +351,7 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
 /* The drafts as the page holds them until the first edit: the reader's, as if they were the file. */
 function prSeedDrafts(read) {
   return {
-    version: 1, fromSha: read?.sha ?? null,
+    version: 1, fromSha: read?.sha ?? null, ...(read?.mode === 'split' ? { fromMode: 'split' } : {}),
     drafts: (read?.drafts || []).map((d, i) => ({ key: `r${i + 1}`, source: 'reader', ...d })),
     overall: { body: read?.overall?.body || '' },
   };
@@ -296,6 +372,22 @@ function prNewReaderDrafts(doc, read) {
     out.push({ key, source: 'reader', ...d });
   });
   return out;
+}
+
+/* Whether the drafts `doc` were taken from another read-through than `read`: another head, or the other mode at the same head
+   (`fromMode` is absent for a read-through, in files from before it). */
+function prFromElsewhere(doc, read) {
+  return doc?.fromSha !== read?.sha || (doc?.fromMode || 'read') !== (read?.mode === 'split' ? 'split' : 'read');
+}
+
+/* The overall comment of a split proposal when `doc` does not hold it already (one made after the person's file exists): the text,
+   else null. A read-through's own overall comment is a summary the person writes over, so it is not offered again. It is offered
+   to be added, never put over what the person wrote. */
+function prNewReaderOverall(doc, read) {
+  if (read?.mode !== 'split') return null;
+  const body = prNormComment(read?.overall?.body);
+  if (body === '') return null;
+  return prNormComment(doc?.overall?.body).includes(body) ? null : read.overall.body;
 }
 
 /* The first `<prefix><n>` that no draft of `doc` uses. */
@@ -402,7 +494,7 @@ ${esc(doc?.overall?.body || '')}</textarea>
 /* ── 「拡大」 ── */
 
 /* The groups of the dialog, in the issue's order, for `cardDialogTaskHtml`: 前回のレビューから, 要点, 見るポイント, 読む順,
-   設計判断・テスト・書かれていないこと, 差分. A group with no card is left out; before a read-through only the first two
+   設計判断・テスト・書かれていないこと, 差分 (not for a split proposal). A group with no card is left out; before a read-through only the first two
    can be there. The annotated diff's cards (`opts`): `diffFileHtml(path)` for a file, `diffPaths` the files in the order to show
    (the reader's order, then the record's files, until there are any), `diffHeadHtml` a first card (key `diff-bar`), and
    `diffLabel(path)` the index's `{ label, title }` of a file. The footer joins 要点, where 「下読みし直す」 can be found. */
@@ -413,12 +505,13 @@ function prDialogGroups(rec, read, records, hubView, nowSecs, opts = {}) {
   const group = (key, label, cards, badge = '') => ({ key, label, badge, cards: cards.filter(Boolean) });
   const groups = [
     group('since', '前回のレビューから', [card(of('since:list'))], of('since:list')?.badge || ''),
-    group('top', '要点', [card(of('top:facts')), card(of('top:ai')), card(of('top:three')), card(of('footer'))]),
+    group('top', '要点', [card(of('top:facts')), card(of('top:oor')), card(of('top:ai')), card(of('top:three')), card(of('top:split')), card(of('footer'))]),
     group('points', '見るポイント', [card(of('points:list'), true)], of('points:list')?.badge || ''),
     group('order', '読む順', [card(of('order:list'), true)]),
     group('more', '設計判断・テスト・書かれていないこと', [card(of('more:decisions')), card(of('more:tests')), card(of('more:unwritten'))]),
   ];
-  if (read) {
+  // A split proposal did not read the diff: there is none to show.
+  if (read && read.mode !== 'split') {
     let paths = opts.diffPaths;
     if (!paths) {
       paths = [];

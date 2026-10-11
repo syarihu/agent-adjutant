@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::lifecycle::hub::{HubStart, TabOutcome, start_hub};
 use crate::lifecycle::review::{self, AskError, Asked};
-use crate::others::pr_of;
+use crate::others::{ReadMode, pr_of};
 use crate::registry;
 
 mod reader_window;
@@ -23,10 +23,10 @@ pub enum RequestRefused {
 }
 
 /// Ask for a read-through of the PR `id` names (a URL or `owner/repo#N`), and start the readers
-/// that are next in line.
-pub fn request(root: &Path, id: &str) -> Result<Asked, RequestRefused> {
+/// that are next in line, for a read-through or, in `mode` split, a split proposal.
+pub fn request(root: &Path, id: &str, mode: ReadMode) -> Result<Asked, RequestRefused> {
     let pr = pr_of(id).ok_or(RequestRefused::BadId)?;
-    review::request(root, &pr).map_err(RequestRefused::Refused)
+    review::request(root, &pr, mode).map_err(RequestRefused::Refused)
 }
 
 /// Start the code-review hub in a new window, as `adj hub --review --tab` would.

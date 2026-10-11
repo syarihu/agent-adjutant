@@ -112,7 +112,7 @@ pub(crate) enum Commands {
 #[derive(Subcommand)]
 pub(crate) enum ReviewAction {
     /// Ask for a read-through of a PR (AI 下読み); it waits for a place when three are running
-    Request(ReviewPrArgs),
+    Request(ReviewRequestArgs),
     /// Write what a reader reads of a PR into a directory: the diff, the body, the review comments
     Context(ReviewContextArgs),
     /// Hand in the read-through a reader wrote, checked against the schema in `adj-reviewer`
@@ -127,10 +127,13 @@ pub(crate) enum ReviewAction {
 }
 
 #[derive(Args)]
-pub(crate) struct ReviewPrArgs {
+pub(crate) struct ReviewRequestArgs {
     /// The pull request: its URL, or `owner/repo#N`
     #[arg(long)]
     pub(crate) pr: String,
+    /// Ask for a split proposal only (for a PR whose change is too large to read)
+    #[arg(long)]
+    pub(crate) split: bool,
 }
 
 #[derive(Args)]

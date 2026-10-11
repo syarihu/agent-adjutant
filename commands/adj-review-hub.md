@@ -53,6 +53,10 @@ before the hub went down waits, and it starts, in order, once the hub is back.
   adj review request --pr <PR URL or owner/repo#N>
   ```
 
+  For a PR whose change is too large to read, the person may ask for a split proposal instead
+  (`adj review request --pr <PR URL or owner/repo#N> --split`): a reader then drafts how to cut it
+  into pull requests, from the file structure only, and its report means the same as any reader's.
+
   It refuses a PR adj does not have a record for (the list is filled by 「同期」 on the board), and a
   PR that is done. Say so as it says it. A PR that is already queued or being read is not an error:
   tell the person where it stands.

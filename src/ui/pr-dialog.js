@@ -6,6 +6,7 @@
 
 const PR_DIALOG_GONE = 'パネルからこの PR がなくなりました（最後に表示した内容です）';
 const PR_DIALOG_NO_READ = 'AI 下読みすると下書きの候補が入ります。';
+const PR_DIALOG_NO_SPLIT = '分割を提案すると、下書きに分割案が入ります。';
 
 /* A control of the column, found again after the column is drawn anew: by the first `data-pr-*` attribute it has. */
 function prFocusSel(el) {
@@ -111,6 +112,7 @@ function prDialogSync(force = false, initial = false) {
   const html = cardDialogTaskHtml(groups);
   const col = cardDialogDockEl();
   const dockHtml = prHasRead(rec, read) ? prDraftsBodyHtml(rec, read, 'dock')
+    : othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state) ? `<div class="tp-muted">${esc(PR_DIALOG_NO_SPLIT)}</div>`
     : `<div class="tp-muted">${esc(PR_DIALOG_NO_READ)}</div>${prAiButtonHtml(othersAiView(rec, records, nowSecs), hubView, asking)}`;
   const sig = `${html.index}\u0000${html.content}`;
   cardDialog.groups = groups;

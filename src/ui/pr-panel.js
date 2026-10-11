@@ -145,7 +145,7 @@ function prEnsureDrafts(id) {
 const PR_DRAFT_KEYS = ['key', 'source', 'path', 'line', 'startLine', 'side', 'body', 'sentAt'];
 function prSaveBody(doc) {
   return {
-    version: doc.version ?? 1, fromSha: doc.fromSha ?? null,
+    version: doc.version ?? 1, fromSha: doc.fromSha ?? null, ...(doc.fromMode ? { fromMode: doc.fromMode } : {}),
     drafts: (doc.drafts || []).map(d => Object.fromEntries(PR_DRAFT_KEYS.filter(k => d[k] !== undefined && d[k] !== null).map(k => [k, d[k]]))),
     overall: doc.overall ? { body: doc.overall.body ?? '' } : null,
   };
@@ -234,7 +234,7 @@ function prDraftsBodyHtml(rec, read, place) {
   }
   const doc = prDoc(rec.id, read);
   // After a re-read the person's drafts stay; the reader's new ones are offered.
-  const notice = e.saved && read && doc.fromSha !== read.sha ? prNewReaderDrafts(doc, read).length : 0;
+  const notice = e.saved && read && prFromElsewhere(doc, read) ? prNewReaderDrafts(doc, read).length + (prNewReaderOverall(doc, read) ? 1 : 0) : 0;
   return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e), pend: { sending: e.pending, result: e.pendResult, prUrl: rec.url } });
 }
 
@@ -290,7 +290,8 @@ function renderPrPanel() {
   const hubView = othersHubView(others.doc?.hub, records);
   const read = prReadOf(rec);
   const hasRead = prHasRead(rec, read);
-  const pane = prPaneOf(nav.pane, hasRead, !!PR_HOOKS.diff);
+  // A split proposal did not read the diff, so there is no annotated one.
+  const pane = prPaneOf(nav.pane, hasRead, !!PR_HOOKS.diff && read?.mode !== 'split');
   const entry = prDraftsEntry(id);
   const draftCount = entry.loaded && hasRead ? prDoc(id, read).drafts.length : 0;
   setPanelPart('head', tp('tp-head'), prHeadHtml(rec));
@@ -411,8 +412,10 @@ function prAct(e, { inDialog = false } = {}) {
     else if (prDraftsEntry(id).pending) note('下書き', true, 'pending review に積んでいるあいだは、下書きを変えられません');
   };
   let b;
-  if ((b = hit('[data-pr-ai], [data-pr-reread]'))) {
-    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id);
+  if ((b = hit('[data-pr-ai], [data-pr-split], [data-pr-reread]'))) {
+    // 「下読みし直す」 asks for a proposal again only for a proposal of a PR that is still out of review.
+    const mode = b.matches('[data-pr-split]') || (b.matches('[data-pr-reread]') && read?.mode === 'split' && othersOutOfReview(rec) && OTHERS_LIVE.includes(rec.state)) ? 'split' : undefined;
+    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id, mode);
     return true;
   }
   if ((b = hit('[data-pr-ask]'))) {
@@ -457,10 +460,15 @@ function prAct(e, { inDialog = false } = {}) {
   if (hit('[data-pr-take-new]') || hit('[data-pr-keep]')) {
     const take = !!hit('[data-pr-take-new]');
     const fresh = take && read ? prNewReaderDrafts(doc(), read)[0] : null;
+    const overall = take && read ? prNewReaderOverall(doc(), read) : null;
     edited(d => {
       if (take && read) d.drafts.push(...prNewReaderDrafts(d, read));
+      // The reader's overall comment is put after what the person has written, never over it.
+      const o = take && read ? prNewReaderOverall(d, read) : null;
+      if (o != null) d.overall = { ...(d.overall || {}), body: String(d.overall?.body ?? '').trim() === '' ? o : `${d.overall.body}\n\n${o}` };
       d.fromSha = read?.sha ?? d.fromSha ?? null;
-    }, fresh ? boxSel(fresh.key) : null);
+      if (read) { if (read.mode === 'split') d.fromMode = 'split'; else delete d.fromMode; }
+    }, fresh ? boxSel(fresh.key) : overall != null ? '[data-pr-overall]' : null);
     return true;
   }
   if ((b = hit('[data-pr-goto-diff]'))) {
@@ -533,6 +541,16 @@ tp('task-panel').addEventListener('focusout', e => prFocusOut(e, tp('task-panel'
 /* The middle for a PR. It uses the work view's terminal slot, but not `syncTermSlot`, which needs a session of a board: the
    socket is the reader's (`/api/others/terminal`), resolved on the server from the record. The slot is kept while the record
    still names the same reader and disposed when it names another (a re-read) or the PR changes. */
+/* What the middle says while there is no live terminal in it (or over one that has ended). The stored read-through goes in, since
+   what a PR out of review is offered depends on it (`undefined` while it is being fetched). */
+function prMiddleText(rec, hubView) {
+  if (!rec) return `<div class="tp-muted">${esc(prMissingText(others.doc, others.error))}</div>`;
+  if (workTerm.term && workTerm.ended == null) return '';
+  const opts = { asking: others.asking.has(rec.id), read: prReadOf(rec), readError: !!prReadEntry(rec.id)?.error };
+  if (workTerm.term) opts.ended = workTerm.ended;
+  return prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), opts);
+}
+
 function renderPrTerm(rec) {
   if (view !== 'work') return;
   const head = rec ? `<div class="wk-term-title">${esc(rec.title)}</div><div class="wk-term-sub">${esc(prSubText(rec))} · AI 下読みの worker</div>` : '';
@@ -562,10 +580,7 @@ function renderPrTerm(rec) {
   // Over a terminal that has ended, so the screen of a dead window is not taken for a live one.
   ph.hidden = !!workTerm.term && workTerm.ended == null;
   const hubView = othersHubView(others.doc?.hub, othersRecords());
-  const text = !rec ? `<div class="tp-muted">${esc(prMissingText(others.doc, others.error))}</div>`
-    : workTerm.term && workTerm.ended == null ? ''
-    : workTerm.term ? prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), { ended: workTerm.ended, asking: others.asking.has(rec.id) })
-    : prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), { asking: others.asking.has(rec.id) });
+  const text = prMiddleText(rec, hubView);
   setWorkTermPart('ph', ph, text);
 }
 
@@ -573,8 +588,8 @@ wk('wk-term-ph').addEventListener('click', e => {
   if (!isPrRef(nav.task)) return;
   const id = prIdOfRef(nav.task);
   let b;
-  if ((b = e.target.closest('[data-pr-ai]'))) {
-    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id);
+  if ((b = e.target.closest('[data-pr-ai], [data-pr-split]'))) {
+    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id, b.matches('[data-pr-split]') ? 'split' : undefined);
     return;
   }
   if (e.target.closest('[data-pr-reconnect]')) {

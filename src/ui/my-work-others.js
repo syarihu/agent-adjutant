@@ -32,6 +32,8 @@ const OTHERS_SIZE = [[200, 'S'], [1000, 'M']];
 const OTHERS_HUNG_SECS = 1800;
 /* How many AI 下読み the code-review hub runs at once, when the hub does not say. */
 const OTHERS_AI_MAX = 3;
+/* A PR is out of review when the change of ONE file (additions plus deletions) is over this many lines. */
+const OTHERS_OUT_OF_REVIEW_LINES = 1500;
 /* Where this browser keeps its read marks: record id to { read }, in server seconds. */
 const OTHERS_SEEN_KEY = 'adj.seenOthers';
 
@@ -163,32 +165,47 @@ function othersAiView(rec, records, nowSecs) {
   const ai = rec?.ai;
   const live = ['requested', 'ai-ready', 'pushed'].includes(rec?.state);
   if (!ai) return { kind: 'none', text: '', action: live && rec.state !== 'ai-ready' ? 'AI 下読み' : null };
+  // A split proposal says its own words. Its buttons ask for another proposal (`mode`) only while the PR is out of review now: a PR
+  // that has become small is read in the usual way, whatever the stored read-through is.
+  const split = ai.mode === 'split';
+  const asksSplit = split && !!othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state);
+  const view = (kind, text, action, splitAction) => asksSplit ? { kind, text, action: action && splitAction, mode: 'split' } : { kind, text, action };
   switch (ai.status) {
     case 'queued': {
       const place = othersQueuePlace(rec, records);
-      return { kind: 'queued', text: place ? `AI 下読みの順番待ち（${place} 番目）` : 'AI 下読みの順番待ち', action: null };
+      const what = split ? '分割案' : 'AI 下読み';
+      return view('queued', place ? `${what}の順番待ち（${place} 番目）` : `${what}の順番待ち`, null, null);
     }
     case 'running': {
       const launched = stampSecs(ai.launchedAt);
+      const what = split ? '分割案を作成中' : 'AI 下読み中';
       if (Number.isFinite(nowSecs) && launched != null && nowSecs - launched > OTHERS_HUNG_SECS) {
-        return { kind: 'hung', text: 'AI 下読み中（30 分以上たっています）', action: live || rec.state === 'ai-reading' ? 'もう一度 AI 下読み' : null };
+        return view('hung', `${what}（30 分以上たっています）`, live || rec.state === 'ai-reading' ? 'もう一度 AI 下読み' : null, 'もう一度 分割案');
       }
-      return { kind: 'running', text: 'AI 下読み中', action: null };
+      return view('running', what, null, null);
     }
     case 'ready': {
       if (ai.stale) {
         const sha = ai.sha ? String(ai.sha).slice(0, 7) : '';
-        return { kind: 'stale', text: `下読み済み（前の push 時点${sha ? ` ${sha}` : ''}）`, action: live ? '下読みし直す' : null };
+        return view('stale', split ? `分割案あり（前の push 時点${sha ? ` ${sha}` : ''}）` : `下読み済み（前の push 時点${sha ? ` ${sha}` : ''}）`,
+          live ? '下読みし直す' : null, '分割案を作り直す');
       }
+      // A proposal of a PR that is not out of review now is no read of it: the usual button is offered.
+      if (split) return asksSplit ? view('done', '分割案あり', null, null) : { kind: 'done', text: '分割案あり', action: live ? 'AI 下読み' : null };
       const c = ai.counts;
       const parts = [['要注意', c?.attention], ['確認', c?.check], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
       return { kind: 'done', text: ['下読み済み', ...parts].join(' · '), action: null };
     }
     case 'failed':
-      return { kind: 'failed', text: `AI 下読みに失敗しました${ai.error ? `: ${ai.error}` : ''}`, action: live ? 'もう一度 AI 下読み' : null };
+      return view('failed', `${split ? '分割案の作成に失敗しました' : 'AI 下読みに失敗しました'}${ai.error ? `: ${ai.error}` : ''}`, live ? 'もう一度 AI 下読み' : null, 'もう一度 分割案');
     default:
       return { kind: 'none', text: '', action: null };
   }
+}
+
+/* What the latest request of a record asked for: `split` for a split proposal, else `read`. */
+function othersReadMode(rec) {
+  return rec?.ai?.mode === 'split' ? 'split' : 'read';
 }
 
 /* The line a row says about its state: `{cls, text}`, `cls` 'dim' for what asks nothing of the person. `records` gives a
@@ -222,9 +239,25 @@ function othersStateLine(rec, records, nowSecs) {
   }
 }
 
-/* The row's own 「分割案」, for a PR that is out of review. Nothing yet: a later issue says when. */
+/* Whether the PR is too large to read, and what makes it so: `{ limit, files }`, `files` being each file whose change is over the
+   limit, `{ path, additions, deletions }`, the largest first (then by path), or null. Not counted: a file deleted whole, and a lock
+   file, a snapshot or any other generated file (`prDiffIsGenerated`). The total of the PR is not counted. It is judged from the
+   files the sync read (`rec.files`): past 1,000 files, from those it has. The row, the middle and the 下読み tab all ask it. */
 function othersOutOfReview(rec) {
-  return null;
+  const files = (rec?.files || [])
+    .filter(f => f && f.change !== 'deleted' && !prDiffIsGenerated(f.path))
+    .map(f => ({ path: f.path, additions: Number(f.additions) || 0, deletions: Number(f.deletions) || 0 }))
+    .filter(f => f.additions + f.deletions > OTHERS_OUT_OF_REVIEW_LINES)
+    .sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return files.length ? { limit: OTHERS_OUT_OF_REVIEW_LINES, files } : null;
+}
+
+/* The row's line for a PR that is out of review: the largest file, and how many more are over the limit. */
+function othersOutOfReviewLine(oor) {
+  const f = oor?.files?.[0];
+  if (!f) return '';
+  const more = oor.files.length - 1;
+  return `レビュー対象外 · ${f.path}（+${f.additions} −${f.deletions}）${more > 0 ? ` ほか ${more} 件` : ''}`;
 }
 
 /* The code-review hub's row: `hub` is the `hub` of the document (absent from an older server). An absent or stopped hub is
@@ -252,7 +285,7 @@ function othersHubView(hub, records) {
    (times are shown to the minute), so a poll that changes none of them draws nothing. */
 function othersSig(doc, nowEst) {
   const recs = (doc?.records || []).map(r => [r.id, r.title, r.author, r.repo, r.registered, r.state, r.doneReason, r.rerequest, r.additions, r.deletions,
-    r.changedFiles, r.requestedAt, r.commitsSinceReview, r.myReview?.state, r.events, r.ai, r.ai?.stale, r.url]);
+    r.changedFiles, othersOutOfReview(r), r.requestedAt, r.commitsSinceReview, r.myReview?.state, r.events, r.ai, r.ai?.stale, r.url]);
   const ls = doc?.lastSync;
   return JSON.stringify([recs, ls ? [ls.at, ls.complete, ls.truncated, (ls.failed || []).length, ls.error, ls.errorAt] : null, doc?.hub ?? null,
     Math.floor(nowEst / 60), othersStale(ls, nowEst)]);

@@ -7,12 +7,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ctx = vm.createContext({});
-for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js']) {
+for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersStaleMinutes, othersGroups, othersRepoChips,
-  othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView } = ctx;
+  othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
+  othersOutOfReviewLine, othersReadMode } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -241,4 +242,114 @@ test('the signature changes with what is drawn and with the minute, and not with
   assert.notEqual(othersSig({ ...doc, hub: { state: 'running' } }, T0 + 10), othersSig({ ...doc, hub: { state: 'stopped' } }, T0 + 10));
   // The stale flag is part of it, so the banner appears on time.
   assert.notEqual(othersSig(doc, T0 + 1801), othersSig(doc, T0 + 1799));
+});
+
+/* ── a PR whose change is too large to read ── */
+
+const file = (path, additions, deletions = 0, change = 'modified') => ({ path, additions, deletions, change });
+
+test('a PR is out of review when one file is strictly over 1,500 lines, and the files over are listed largest first', () => {
+  const big = rec(1, { files: [file('src/small.rs', 100, 50), file('src/b.rs', 1000, 501), file('src/a.rs', 1500, 100), file('src/c.rs', 1000, 501)] });
+  assert.deepStrictEqual(plain(othersOutOfReview(big)), {
+    limit: 1500,
+    files: [{ path: 'src/a.rs', additions: 1500, deletions: 100 }, { path: 'src/b.rs', additions: 1000, deletions: 501 }, { path: 'src/c.rs', additions: 1000, deletions: 501 }],
+  });
+  // Exactly 1,500 is not out of review; 1,501 is.
+  assert.strictEqual(othersOutOfReview(rec(1, { files: [file('a.rs', 1000, 500)] })), null);
+  assert.strictEqual(plain(othersOutOfReview(rec(1, { files: [file('a.rs', 1000, 501)] }))).files.length, 1);
+  assert.strictEqual(othersOutOfReview(rec(1, { files: [] })), null);
+  assert.strictEqual(othersOutOfReview(rec(1, { files: undefined })), null);
+});
+
+test('a file deleted whole, and lock files, snapshots and vendored code, are not counted; nor is the total of the PR', () => {
+  const files = [file('old.rs', 0, 5000, 'deleted'), file('Cargo.lock', 4000, 10), file('src/__snapshots__/x.snap', 3000, 0), file('vendor/lib/x.js', 2000, 0)];
+  assert.strictEqual(othersOutOfReview(rec(1, { files })), null);
+  // Many files, none over the limit, however large the PR is.
+  const many = Array.from({ length: 10 }, (_, i) => file(`src/f${i}.rs`, 1000, 400));
+  assert.strictEqual(othersOutOfReview(rec(1, { files: many, additions: 10000, deletions: 4000 })), null);
+});
+
+test('the row\'s line names the largest file, and how many more are over', () => {
+  const one = othersOutOfReview(rec(1, { files: [file('src/a.rs', 1200, 400)] }));
+  assert.strictEqual(othersOutOfReviewLine(one), 'レビュー対象外 · src/a.rs（+1200 −400）');
+  const three = othersOutOfReview(rec(1, { files: [file('src/a.rs', 1200, 400), file('src/b.rs', 2000, 0), file('src/c.rs', 1600, 0)] }));
+  assert.strictEqual(othersOutOfReviewLine(three), 'レビュー対象外 · src/b.rs（+2000 −0） ほか 2 件');
+  assert.strictEqual(othersOutOfReviewLine(null), '');
+});
+
+test('a split proposal says its own words and asks for another proposal', () => {
+  const view = (ai, extra = {}, records) => plain(othersAiView(rec(1, { state: 'requested', files: [file('src/big.rs', 2000)], ai: { mode: 'split', ...ai }, ...extra }), records));
+  assert.deepStrictEqual(view({ status: 'queued' }, { state: 'ai-reading' }), { kind: 'queued', text: '分割案の順番待ち', action: null, mode: 'split' });
+  assert.equal(view({ status: 'queued', startedAt: stamp(T0) }, { state: 'ai-reading' }, [rec(1, { ai: { status: 'queued', startedAt: stamp(T0) } })]).text, '分割案の順番待ち（1 番目）');
+  assert.deepStrictEqual(view({ status: 'running' }, { state: 'ai-reading' }), { kind: 'running', text: '分割案を作成中', action: null, mode: 'split' });
+  const hung = plain(othersAiView(rec(1, { state: 'ai-reading', files: [file('src/big.rs', 2000)], ai: { mode: 'split', status: 'running', launchedAt: stamp(T0) } }), [], T0 + 1801));
+  assert.deepStrictEqual(hung, { kind: 'hung', text: '分割案を作成中（30 分以上たっています）', action: 'もう一度 分割案', mode: 'split' });
+  assert.deepStrictEqual(view({ status: 'ready', sha: 'a'.repeat(40) }, { state: 'ai-ready' }), { kind: 'done', text: '分割案あり', action: null, mode: 'split' });
+  assert.deepStrictEqual(view({ status: 'ready', sha: 'abcdef0123', stale: true }, { state: 'ai-ready' }),
+    { kind: 'stale', text: '分割案あり（前の push 時点 abcdef0）', action: '分割案を作り直す', mode: 'split' });
+  assert.deepStrictEqual(view({ status: 'failed', error: 'boom' }), { kind: 'failed', text: '分割案の作成に失敗しました: boom', action: 'もう一度 分割案', mode: 'split' });
+  // A read-through carries no mode, and the mode of a record is read or split.
+  assert.ok(!('mode' in plain(othersAiView(rec(1, { ai: { status: 'running' }, state: 'ai-reading' })))));
+  assert.deepStrictEqual([othersReadMode(rec(1)), othersReadMode(rec(1, { ai: { status: 'ready' } })), othersReadMode(rec(1, { ai: { status: 'ready', mode: 'split' } }))], ['read', 'read', 'split']);
+});
+
+test('the signature changes when only the files change', () => {
+  const doc = files => ({ now: T0 + 10, lastSync: { at: stamp(T0) }, records: [rec(1, { files })] });
+  assert.notEqual(othersSig(doc([file('a.rs', 100)]), T0 + 10), othersSig(doc([file('a.rs', 2000)]), T0 + 10));
+});
+
+/* The row is drawn by my-work-others-view.js, which touches the page when it is loaded: its function is cut out and given what it reads. */
+function rowOf(rec, { canRead = true, asking = false } = {}) {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'my-work-others-view.js'), 'utf8');
+  const m = src.match(/^function othersRowHtml[\s\S]*?\n\}/m);
+  assert.ok(m);
+  Object.assign(ctx, { others: { asking: new Set(asking ? [rec.id] : []) }, nav: { task: null }, PR_REF: 'pr:', OTHERS_SYNC_WHY: 'why', othersGlyphHtml: () => '' });
+  vm.runInContext(m[0], ctx);
+  return ctx.othersRowHtml(rec, false, { canRead, why: 'hub is down' }, T0 + 60, [rec]);
+}
+
+test('the row of a PR out of review says so, offers 分割案 and not AI 下読み', () => {
+  const big = rec(1, { files: [file('src/a.rs', 1200, 400), file('src/b.rs', 2000, 0)] });
+  const html = rowOf(big);
+  assert.ok(html.includes('ov-oor-line') && html.includes('レビュー対象外 · src/b.rs（+2000 −0） ほか 1 件'));
+  assert.ok(html.includes('data-ov-split="acme/widget#1"') && html.includes('call_split'));
+  assert.ok(!html.includes('data-ov-ai') && !html.includes('AI 下読み</button>') && !html.includes('menu_book'));
+  // Disabled while no read can be asked for, and only marked so while the request is out.
+  assert.match(rowOf(big, { canRead: false }), /data-ov-split="acme\/widget#1" disabled title="hub is down"/);
+  const asking = rowOf(big, { asking: true });
+  assert.ok(asking.includes('aria-disabled="true"') && asking.includes('依頼中…'));
+  // A PR that is not out of review keeps its AI 下読み, and has no such line.
+  const plainRow = rowOf(rec(1, { files: [file('src/a.rs', 100)] }));
+  assert.ok(plainRow.includes('data-ov-ai') && !plainRow.includes('data-ov-split') && !plainRow.includes('ov-oor-line'));
+  // Waiting on its author, the row has neither the line nor a button.
+  const waiting = rowOf(rec(1, { state: 'waiting-on-author', files: [file('src/a.rs', 5000)] }));
+  assert.ok(!waiting.includes('data-ov-split') && !waiting.includes('ov-oor-line'));
+  // While a read is at work there is no button, whichever mode.
+  const reading = rowOf(rec(1, { state: 'ai-reading', ai: { status: 'running', mode: 'split' }, files: [file('src/a.rs', 5000)] }));
+  assert.ok(reading.includes('分割案を作成中') && !reading.includes('data-ov-split') && !reading.includes('data-ov-ai'));
+});
+
+test('what a button asks for follows whether the PR is out of review now, not the mode of the stored proposal', () => {
+  const small = [file('src/a.rs', 100)];
+  // Out of review now: the proposal is asked for again.
+  const big = rowOf(rec(1, { files: [file('src/big.rs', 2000)], ai: { status: 'failed', mode: 'split', error: 'x' } }));
+  assert.ok(big.includes('data-ov-split') && !big.includes('data-ov-ai'));
+  // Small now (the author pushed): the usual button, in the usual words, though the status line keeps speaking of the proposal.
+  const failed = rowOf(rec(1, { files: small, ai: { status: 'failed', mode: 'split', error: 'x' } }));
+  assert.ok(failed.includes('data-ov-ai') && failed.includes('もう一度 AI 下読み') && failed.includes('分割案の作成に失敗しました') && !failed.includes('data-ov-split'));
+  const stale = rowOf(rec(1, { state: 'ai-ready', files: small, ai: { status: 'ready', mode: 'split', stale: true, sha: 'abcdef0123' } }));
+  assert.ok(stale.includes('data-ov-ai') && stale.includes('下読みし直す') && stale.includes('分割案あり') && !stale.includes('data-ov-split'));
+  assert.deepStrictEqual(plain(othersAiView(rec(1, { state: 'ai-ready', files: small, ai: { status: 'ready', mode: 'split', stale: true, sha: 'abcdef0123' } }))),
+    { kind: 'stale', text: '分割案あり（前の push 時点 abcdef0）', action: '下読みし直す' });
+});
+
+test('a current proposal of a PR that is not out of review now offers the usual read, and one of a PR that is keeps no button', () => {
+  const ai = { status: 'ready', mode: 'split', stale: false, sha: 'abcdef0123' };
+  const small = rowOf(rec(1, { state: 'ai-ready', files: [file('src/a.rs', 100)], ai }));
+  assert.ok(small.includes('data-ov-ai') && small.includes('分割案あり') && !small.includes('data-ov-split'));
+  assert.deepStrictEqual(plain(othersAiView(rec(1, { state: 'ai-ready', files: [file('src/a.rs', 100)], ai }))), { kind: 'done', text: '分割案あり', action: 'AI 下読み' });
+  const big = rowOf(rec(1, { state: 'ai-ready', files: [file('src/big.rs', 2000)], ai }));
+  assert.ok(!big.includes('data-ov-ai') && !big.includes('data-ov-split'));
+  // Waiting on its author: nothing is offered.
+  assert.strictEqual(othersAiView(rec(1, { state: 'waiting-on-author', files: [], ai })).action, null);
 });

@@ -421,7 +421,7 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `doneReason` | only while `state` is `done`: `approved`, `merged`, `closed` or `withdrawn` |
 | `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later |
 | `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review (when it is later than the review, else the sync's time) when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
-| `ai` | the AI read-through: `{status, sha, startedAt, finishedAt, launchedAt, readFrom, sessionId, pid, psStarted, terminal, error, counts, stale}`; absent until one was asked for. `status` is `queued`, `running`, `ready` or `failed`. `startedAt` is when the person asked, which is the place in the queue; `launchedAt` is when the reader was started; `sessionId` is the reader whose hand-in is taken; `sha` and `counts` (`{attention, check, drafts}`) are those of the stored read-through and are kept when a re-read is asked for; `error` is why the last read failed, as one line of at most 300 characters. `readFrom` is when the stored read-through's material was taken at the latest: the `launchedAt` of the reader that handed it in, or the hand-in time when no reader was launched. `stale` is derived on every load and save and never trusted from disk: it is true when `sha` is not `headSha` and the sync saw that head (`headSeenAt`) at or after `readFrom`, or when either is missing. The hand-in time is not used, since a reader that read A, a push of B stored by a sync, and then a hand-in of A is stale. A reader reads the PR's live head, which can be newer than the last sync's, so a read of a head the sync has not seen yet is not stale, and the sync that brings it makes `sha` and `headSha` equal |
+| `ai` | the AI read-through: `{status, sha, startedAt, finishedAt, launchedAt, readFrom, sessionId, pid, psStarted, terminal, error, counts, mode, stale}`; absent until one was asked for. `status` is `queued`, `running`, `ready` or `failed`. `mode` is `split` when the latest request was for a split proposal (see [The read-through](#the-read-through)), absent for a read-through; a value this binary does not know is a read-through. `startedAt` is when the person asked, which is the place in the queue; `launchedAt` is when the reader was started; `sessionId` is the reader whose hand-in is taken; `sha` and `counts` (`{attention, check, drafts}`) are those of the stored read-through and are kept when a re-read is asked for; `error` is why the last read failed, as one line of at most 300 characters. `readFrom` is when the stored read-through's material was taken at the latest: the `launchedAt` of the reader that handed it in, or the hand-in time when no reader was launched. `stale` is derived on every load and save and never trusted from disk: it is true when `sha` is not `headSha` and the sync saw that head (`headSeenAt`) at or after `readFrom`, or when either is missing. The hand-in time is not used, since a reader that read A, a push of B stored by a sync, and then a hand-in of A is stale. A reader reads the PR's live head, which can be newer than the last sync's, so a read of a head the sync has not seen yet is not stale, and the sync that brings it makes `sha` and `headSha` equal |
 | `pendingReviewAt` | time adj last put drafts into your pending review on GitHub (`POST /api/others/pending`); absent until then. Acting on the row, like starting a read: the page reads it with `ai.startedAt` to take the row off 新着. Not an event |
 | `firstSeenAt`, `readAt` | the first sync that recorded it, and the last that read it |
 
@@ -474,7 +474,16 @@ first. A diff over 2000 rows is drawn file by file as each comes near the screen
   `stopped`, `running` and `queued` count the records by `ai.status`, `max` is 3, `startable` is true when it is stopped and
   `terminal.preset` is `tmux`, and `canRead` is true when it is running and `terminal.preset` is `tmux` (a reader cannot be opened
   otherwise, and a request answers 409 `not-startable`). 「hub を起動」 is `POST /api/others/hub/start` (200 `{started: true, description}`, or `{started: false, running: true, pid}` when it is already up; 400 for a `start` that is not `auto`, `new` or `resume`; 500 when the start itself failed, for example a terminal that is not tmux or a window that closed at once). An older server sends no `hub`, and the page then shows
-  it as stopped. What puts a record out of review is a later issue's.
+  it as stopped.
+- **Out of review.** A PR is out of review when the change of **one file** (`additions` plus `deletions`) is strictly over 1,500 lines
+  (1,500 itself is not), judged by `othersOutOfReview` in `my-work-others.js` from `files`, the one place the rule is written: the row, the
+  middle and the 下読み tab all ask it, and the server only learns the mode of a request. Not counted: a file deleted whole
+  (`change` is `deleted`), and a lock file, a snapshot or any other generated file (`prDiffIsGenerated` in `pr-diff.js`); the PR's total is not
+  counted. Past 1,000 files `filesComplete` is false and the files that were read are what it is judged from. On a PR that waits for you
+  such a row says `レビュー対象外 · <the largest file>（+A −D）` (and `ほか N 件`) and offers 「分割案」 in place of 「AI 下読み」: it asks for a
+  split proposal at once. The middle and the 下読み tab list the files over the limit and offer 「分割を提案する」 and 「それでも AI 下読み」
+  (a read of the whole PR, as before) until a reader is at work. A proposal that is stored and not stale is not offered again; one made for an
+  older head is offered as 「分割を提案し直す」, and what a button asks for follows whether the PR is out of review now (and live), never the mode of the stored read-through: a PR that has become small is read in the usual way, also after a proposal, and a proposal is asked for again only while it is out of review.
 
 ### The read-through
 
@@ -484,8 +493,8 @@ name is `adjutant-review`. `identity::resolve_in` answers it before it asks git,
 MCP tools from any directory. It is not in 「ボード」: `registry::note_board` skips it. Its working directory is `<state>/review`,
 which `lifecycle::hub::ensure_home` makes.
 
-A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>"}`, or `adj review request --pr <url|id>`), never by a
-sync. The answers: 200 `{record, warning}` when it is queued or already queued or running (`warning` is `null`, or says that the queue could not be worked after the request was taken; the request stands and the job tries again, and `adj review request|submit|fail` print it on stderr); 409 `{error, why}` with `why` `hub-stopped` or
+A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>", "mode": "read"|"split"}`, `mode` optional, or `adj review request --pr <url|id> [--split]`), never by a
+sync. `mode` `split` asks for a split proposal of a PR too large to read (see below); it is stored as `ai.mode`, and a reader's mode is always the record's, never its own word. The server does not refuse a split of a PR that is in review. A `mode` that is not `read`, `split` or absent is a 400 `{"error": "mode must be \"read\" or \"split\""}` before anything is written. A request for a read that is already queued or running changes nothing, its mode included; a takeover queues the mode of the new request. The answers: 200 `{record, warning}` when it is queued or already queued or running (`warning` is `null`, or says that the queue could not be worked after the request was taken; the request stands and the job tries again, and `adj review request|submit|fail` print it on stderr); 409 `{error, why}` with `why` `hub-stopped` or
 `not-startable` (nothing is written); 404 for a PR with no record; 400 for a bad id or a done PR. Readers start only while the hub is
 up. `others::claim_reads` runs under `others/review.lock`: it first fails a queued read whose PR is done (`the PR is no longer open`), then counts the `running` records, and marks as `running` the first
 `MAX_READING` (3) minus those of the `queued`, ordered by `(ai.startedAt, id)`, each under its record's lock. `lifecycle::review::dispatch`
@@ -499,22 +508,23 @@ also while the hub is down; only starting a reader needs the hub.
 
 The reader is read-only. It has no checkout and no `gh`: `adj review context --pr <id> --out <dir>` (`<dir>` must be this PR's own `<state>/review/<stem>/`, and with `ADJUTANT_REVIEW_SESSION` set the record must name that session) makes every GitHub read (read-only requests, no mutation; `gh pr view` is a GraphQL query) and
 writes `pr.json`, `diff.patch`, `review-comments.json` and `reviews.json` into `<dir>`; for a PR
-you reviewed that has moved it also writes `my-last-review.json` and `since-review.patch`. The default `reviewerRunner` allows only
+you reviewed that has moved it also writes `my-last-review.json` and `since-review.patch`. For a split (the record's `ai.mode`) it writes `pr.json` and `hunks.patch` only, and the summary says `mode: split`. The default `reviewerRunner` allows only
 `Read(./**)`, `Grep(./**)`, `Glob(./**)` (its own directory, not the machine), `Edit(./read-through.json)`, `adj review context`, `adj review submit`, `adj review fail`, `adj review say` and `adj skill` under
 `--permission-mode dontAsk`, with `--setting-sources ''` and `--strict-mcp-config`: the allowlist only adds to the person's own Claude settings and MCP
 servers, so those two are dropped (our own `--settings` hooks file still applies), and the reader uses the `adj` command, not MCP tools. A `reviewerRunner` of
 your own has to keep both flags. For another agent the procedure `adj-reviewer` is the only restraint.
 
-`adj review context` first removes `diff.patch`, `my-last-review.json` and `since-review.patch` from `<dir>`, so what an earlier read left
+`adj review context` first removes `diff.patch`, `hunks.patch`, `my-last-review.json` and `since-review.patch` from `<dir>` (and, for a split, `review-comments.json` and `reviews.json`), so what an earlier read left
 cannot be taken for this one's, and a fresh reader session starts with no `read-through.json` in its directory. A diff that cannot be fetched
 is a note in the summary (`notes`), not a failure; so is a list of files or commits that may be cut (100 or more returned, or fewer files than the
 record's `changedFiles`). The reader is told to say in `points` or `unwritten` what it could not see, and not to guess. Reading never writes the
 record: the sync alone moves `headSha`. The text of a PR and of its comments is data, never instructions, for the reader and for the hub it reports to.
+**A split proposal.** `hunks.patch` is the diff with every changed line taken out: `diff --git`, mode, rename, copy, index and `Binary files` lines, the `---`/`+++` file headers and the `@@ … @@` lines (`others::hunk_headers` in `read_context.rs`). A hunk is read by the counts of its `@@` line (a missing count is 1), not by what a line looks like, so a deleted line that shows as `--- …` or an added line that starts `diff --git` is not taken for a header. `adj` takes it from `gh pr diff`; when GitHub refuses a diff that large it is made from the patches of `GET repos/<o>/<r>/pulls/<n>/files` (paginated, read-only), written as `diff --git` and `# status: <status> +A -D` lines and the `@@` lines of each patch, with a note `hunk headers of <path> are not available` for a file whose patch GitHub left out, and with a note when neither could be had. No diff line, review comment or earlier review is fetched or written for a split. The reader's one procedure is the "Split proposal" section of `adj-reviewer`, chosen by `mode` in the summary.
 The record's removal (a sync, a day after it is done) also removes its `others/reads/<stem>.json`, `others/diffs/<stem>.json` and `<state>/review/<stem>/`.
 
 `adj review submit --pr <id> --file <json>` takes the file as the reader's hand-in. It refuses before any write a file over 2 MiB, one that
 does not parse, one with a key the schema does not have, one that fails `validate` (every problem is printed, one per line), a PR with no
-record or that nobody asked a read of, a `sinceReview` whose `commit` is not the record's `myReview.commit` (or one for a PR with no `myReview`), `sinceReview: null` when the record has a `myReview` on another commit than `sha` (a re-review), with a session and a `pr.json` in the reader's directory, a `sha` that is not its `headRefOid`; and, when `my-last-review.json` is there, a `commentId` that is not in it, a comment of it that has no `in_reply_to_id` and no entry in `sinceReview.comments`, or one with two entries (checked only when the file exists), and, when `ADJUTANT_REVIEW_SESSION` is set, a session that is not the record's `ai.sessionId` (a
+record or that nobody asked a read of, a `sinceReview` whose `commit` is not the record's `myReview.commit` (or one for a PR with no `myReview`), `sinceReview: null` when the record has a `myReview` on another commit than `sha` (a re-review), with a session and a `pr.json` in the reader's directory, a `sha` that is not its `headRefOid`; and, when `my-last-review.json` is there, a `commentId` that is not in it, a comment of it that has no `in_reply_to_id` and no entry in `sinceReview.comments`, or one with two entries (checked only when the file exists), and, for a record whose `ai.mode` is `split`, a file that is not a proposal (`validate_split`: `overall.body` not blank, `annotations` and `drafts` empty, `sinceReview` null; the re-review check above is not made, and no diff is kept, so an earlier one is removed), and, when `ADJUTANT_REVIEW_SESSION` is set, a session that is not the record's `ai.sessionId` (a
 superseded reader). It then writes `others/reads/<stem>.json`, and sets `ai.sha`, `ai.finishedAt`, `ai.counts`, `events.aiReady`, clears
 `ai.error`, and sets `ai.status` to `ready` unless it is `queued` (a re-read keeps its place). If the record cannot be saved the previous
 file is put back. `GET /api/others/read?id=<owner/repo#N>` answers the stored file: 200, 404 `{"error": "no read-through"}`, or 400.
@@ -532,7 +542,7 @@ bad id and 500 for a file that cannot be read. A read-through from before diffs 
 separate `gh` calls, so a push between them stores a diff of the newer head under the older `sha`: the annotations still match the diff the reader
 read, and only the page's note that the diff is of an older head can be wrong.
 
-The stored file is `{id, madeAt, session, ...the input}`; a key this binary does not know is kept. The input is one object, and an unknown
+The stored file is `{id, madeAt, session, ...the input}`; a key this binary does not know is kept. A split proposal is the same file with `"mode": "split"` added by the server (a reader does not send it): the proposal is `overall.body`, `three` is still required, and the lists are empty. The page shows it as a card 「分割案」, has no 差分 for it (the 差分 tab is disabled, saying so) and seeds its drafts from it like any read-through. The input is one object, and an unknown
 key is refused. Levels are `attention`, `check`, `info`; categories `logic`, `ui`, `doc`, `test`, `resource`; annotation kinds `tr`, `ex`;
 draft sides `right`, `left`; comment statuses `addressed`, `replied`, `untouched`.
 
@@ -599,6 +609,7 @@ and 500 for a file that cannot be read. `POST` answers 200 with the stored file,
   "savedAt": "20261011T101500Z",    // added by the server
   "version": 1,                     // absent in the input is 1
   "fromSha": "<40 hex>" | null,     // the read-through the reader's drafts were last taken from
+  "fromMode": "read|split",         // optional, absent is read: what that read-through was
   "drafts": [                       // at most 300
     { "key": "r1",                  // 1..64 of [A-Za-z0-9_-], unique in the list
       "source": "reader|person",    // reader = from the read-through; person = typed, or made from a point
@@ -621,7 +632,7 @@ and 500 for a file that cannot be read. `POST` answers 200 with the stored file,
 The input is `drafts` without `id`, `savedAt` and `pending`, and refuses unknown keys, so a GET's answer sent back as it is
 is a 400. The stored file keeps keys this binary does not know (rule 10): a save carries over the top-level keys of the existing file that are not `id`, `savedAt` or one of the input's own keys (an unreadable existing file fails the save), so a page that does not send them does not drop them. A read-through's `drafts` and `overall` are held to the same limits as the drafts file (count, path, body, and 512 KiB of JSON together, which leaves half of the 1 MiB request limit for the keys the page adds when it seeds them), so what the page seeds from a read-through can always be saved. Only top-level unknown keys are kept across a save (`pending` is one of them); keys inside a draft item or `overall` are not, so a later change that needs per-draft state must extend the schema (as `sentAt` did). A save that sends a draft without `sentAt` keeps the one stored for the same draft (the same in everything but `sentAt`: key, place and body), so a save already on its way when drafts were put into the review cannot take them back out. Until the first save the page shows the
 read-through's `drafts` as if they were the file; after a re-read it never replaces the person's drafts, and
-offers to add the new reader drafts (`fromSha` records which read-through they came from). The record's
+offers to add the new reader drafts (`fromSha` records which read-through they came from), and, for a split proposal, its overall comment when the person's file does not hold it: added after what the person wrote, never over it. A change of mode at the same head counts as a re-read: the file's optional `fromMode` (`read` or `split`, absent is `read`) says what its `fromSha` was of, so a full read-through after a proposal offers its drafts. The record's
 removal removes the file.
 
 #### Putting the drafts into a pending review
@@ -633,7 +644,7 @@ submits a review and never approves or requests changes**: no query it sends con
 Everything goes through GraphQL with `gh api graphql --input -`, the query and the variables as JSON on stdin, so nothing the person
 wrote is an argument or part of a query's text.
 
-- The operation sends what is **stored**; the page saves first (it waits for a save in flight, and makes the reader's drafts the file
+- The operation sends what is **stored**, a body with no line comment included (a split proposal is put in as the review's body alone); the page saves first (it waits for a save in flight, and makes the reader's drafts the file
   when there is none yet) and does not send if that save fails.
 - If you already have a pending review on the PR it is added to; the review is made only when there is none (and if making it
   races with another one, that one is found and added to). The review is made at the commit of the stored read-through when there is

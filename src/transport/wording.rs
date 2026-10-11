@@ -120,6 +120,11 @@ pub fn review_refusal(why: &AskError) -> String {
     }
 }
 
+/// Why a mode of a request for a read is refused, as the board says it.
+pub fn unknown_read_mode() -> &'static str {
+    "mode must be \"read\" or \"split\""
+}
+
 /// What the queue of readers could not do after a request, a hand-in or a failure was taken, as
 /// the CLI and the board both say it.
 pub fn queue_warning(why: &str) -> String {

@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::infra::clock::utc_stamp;
 use crate::task::PrRef;
 
-use super::model::{AiRead, Record, State};
+use super::model::{AiRead, ReadMode, Record, State};
 use super::store;
 
 /// How long a reader may stay `running`, in seconds, before asking again may take its place from
@@ -32,9 +32,9 @@ pub enum RequestError {
     Failed(String),
 }
 
-/// Put the read of `record` in the queue as a new one: asked now, with no reader. What an earlier
-/// read-through made (`sha`, `counts`, the file) is kept.
-pub(super) fn queue_afresh(record: &mut Record, now: i64) {
+/// Put the read of `record` in the queue as a new one: asked now, with no reader, in `mode`. What
+/// an earlier read-through made (`sha`, `counts`, the file) is kept.
+pub(super) fn queue_afresh(record: &mut Record, now: i64, mode: ReadMode) {
     let stamp = utc_stamp(now);
     let ai = record.ai.get_or_insert_with(|| AiRead {
         status: String::new(),
@@ -49,6 +49,7 @@ pub(super) fn queue_afresh(record: &mut Record, now: i64) {
         terminal: None,
         error: None,
         counts: None,
+        mode: None,
         stale: false,
         extra: Default::default(),
     });
@@ -60,12 +61,19 @@ pub(super) fn queue_afresh(record: &mut Record, now: i64) {
     ai.session_id = None;
     ai.terminal = None;
     ai.error = None;
+    ai.mode = mode.wire().map(str::to_string);
 }
 
 /// Queue a read of `pr`. The old read-through, if there is one, stays where it is, and is shown
 /// as made at the old head until the new one replaces it: its `sha`, `counts` and file are kept.
-/// `startedAt` is when the person asked, which is also the place in the queue.
-pub fn request_read(root: &Path, pr: &PrRef, now: i64) -> Result<Requested, RequestError> {
+/// `startedAt` is when the person asked, which is also the place in the queue. A request for a
+/// read that is queued or running does not change its mode.
+pub fn request_read(
+    root: &Path,
+    pr: &PrRef,
+    now: i64,
+    mode: ReadMode,
+) -> Result<Requested, RequestError> {
     // No lock file for a record that is not there.
     match store::load(root, pr) {
         Ok(Some(_)) => {}
@@ -91,7 +99,7 @@ pub fn request_read(root: &Path, pr: &PrRef, now: i64) -> Result<Requested, Requ
     {
         return Ok(Requested::Already(record));
     }
-    queue_afresh(&mut record, now);
+    queue_afresh(&mut record, now, mode);
     store::save(root, &mut record).map_err(RequestError::Failed)?;
     Ok(Requested::Queued(record))
 }

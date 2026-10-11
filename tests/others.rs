@@ -353,6 +353,34 @@ fn asking_for_a_read_while_the_hub_is_down_is_refused_and_changes_nothing() {
 }
 
 #[test]
+fn a_mode_that_is_not_read_or_split_is_refused_before_anything_is_written() {
+    let fixture = Fixture::new(QUIET);
+    register(&fixture);
+    let (path, _, _) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    resident.post("/api/others/sync", "");
+    let record = fixture.state.join("others/acme~widget~7.json");
+    let before = std::fs::read_to_string(&record).unwrap();
+    // Refused for its mode, not for the hub being down (which is a 409 for a good one).
+    for mode in [json!("x"), json!("Split"), json!(""), json!(5)] {
+        let (code, text) = resident.post(
+            "/api/others/ai",
+            &json!({"id": "acme/widget#7", "mode": mode}).to_string(),
+        );
+        assert_eq!(code, 400, "{mode}: {text}");
+        assert_eq!(body(&text)["error"], "mode must be \"read\" or \"split\"");
+        assert_eq!(std::fs::read_to_string(&record).unwrap(), before);
+    }
+    for mode in [json!("read"), json!("split"), Value::Null] {
+        let (code, _) = resident.post(
+            "/api/others/ai",
+            &json!({"id": "acme/widget#7", "mode": mode}).to_string(),
+        );
+        assert_eq!(code, 409, "{mode}");
+    }
+}
+
+#[test]
 fn a_read_asked_for_with_the_hub_up_is_started_in_a_window_of_its_own() {
     let fixture = Fixture::new(QUIET);
     register(&fixture);
@@ -420,6 +448,72 @@ fn a_read_asked_for_with_the_hub_up_is_started_in_a_window_of_its_own() {
     );
     assert_eq!(code, 200);
     assert_eq!(tmux.logged(), before);
+}
+
+#[test]
+fn a_split_asked_for_with_the_hub_up_is_queued_in_split_mode_and_started() {
+    let fixture = Fixture::new(QUIET);
+    register(&fixture);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    let (gh_path, _, _) = stub_gh(&fixture);
+    // The stub `gh` and the stub tmux are both in front of the real ones.
+    let path = format!("{}:{}", gh_path.split(':').next().unwrap(), tmux.path());
+    let resident = {
+        let log = tmux.log.to_string_lossy().to_string();
+        let panes = tmux.panes.to_string_lossy().to_string();
+        let clients = tmux.clients.to_string_lossy().to_string();
+        let home = tmux.home.to_string_lossy().to_string();
+        let screen = tmux.screen.to_string_lossy().to_string();
+        Resident::start_with(
+            &fixture,
+            &[
+                ("PATH", &path),
+                ("FAKE_TMUX_LOG", &log),
+                ("FAKE_TMUX_PANES", &panes),
+                ("FAKE_TMUX_CLIENTS", &clients),
+                ("FAKE_TMUX_HOME", &home),
+                ("FAKE_TMUX_SCREEN", &screen),
+                ("FAKE_TMUX_KILL", ""),
+            ],
+        )
+    };
+    resident.post("/api/others/sync", "");
+
+    // A live process stands in for the code-review hub.
+    let hub = Sleeper::new();
+    forge_review_hub(&fixture, &hub);
+    let state = body(&resident.get("/api/others").1);
+    assert_eq!(state["hub"]["state"], "running");
+    assert_eq!(state["hub"]["canRead"], true);
+
+    let (code, text) = resident.post(
+        "/api/others/ai",
+        &json!({"id": "acme/widget#7", "mode": "split"}).to_string(),
+    );
+    assert_eq!(code, 200, "{text}");
+    assert_eq!(body(&text)["record"]["id"], "acme/widget#7");
+    assert_eq!(body(&text)["record"]["ai"]["mode"], "split");
+    // The queue could be worked, so there is nothing to warn of.
+    assert_eq!(body(&text)["warning"], Value::Null);
+    // Started, not only queued, and in a window that runs the reader.
+    assert_eq!(record_status(&fixture), "running");
+    let record = &body(&resident.get("/api/others").1)["records"][1];
+    assert_eq!(record["state"], "ai-reading");
+    assert!(
+        record["ai"]["sessionId"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
+    let logged = tmux.logged();
+    assert!(logged.contains("new-window"), "{logged}");
+    assert!(logged.contains("review run --pr"), "{logged}");
+    assert!(logged.contains("acme/widget#7"), "{logged}");
+    assert!(fixture.state.join("review/acme~widget~7").is_dir());
+
+    // The record keeps what was asked for, which is what the reader's window reads its task from.
+    let record = &body(&resident.get("/api/others").1)["records"][1];
+    assert_eq!(record["ai"]["mode"], "split");
 }
 
 /// A live process standing in for the code-review hub, recorded the way a hub records itself.

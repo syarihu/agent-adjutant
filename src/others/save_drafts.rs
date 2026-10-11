@@ -97,7 +97,10 @@ pub fn save_drafts(
     let mut stored = StoredDrafts::of(&store::id_of(pr), saved_at, &input);
     if let Some(old) = old {
         for (key, value) in old.rest {
-            stored.rest.entry(key).or_insert(value);
+            // A key of the input that this save left out (`fromMode` of a read) is not kept: it was the input's to say.
+            if !super::drafts::INPUT_KEYS.contains(&key.as_str()) {
+                stored.rest.entry(key).or_insert(value);
+            }
         }
     }
     store::write_drafts(root, &stem, &stored).map_err(SaveDraftsError::Failed)?;

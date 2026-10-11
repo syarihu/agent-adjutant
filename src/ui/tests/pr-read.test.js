@@ -11,13 +11,14 @@ const ctx = vm.createContext({
   secTitle: text => `<div class="tp-sec-title">${text}</div>`,
   panelBtnsHtml: jump => `<div class="tp-head-btns">${jump}<button data-tp-close></button></div>`,
 });
-for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js']) {
+for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const run = expr => vm.runInContext(expr, ctx);
 const { prPaneOf, prTabsHtml, prDetailHtml, prBeforeRead, prSeedDrafts, prNewReaderDrafts, prDraftFromPoint, prDraftLocation, prCopyAllText,
-  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml, prPendable } = ctx;
+  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml, prPendable,
+  prOorActions, prOutOfReview, prSplitProposal, prNewReaderOverall, prFromElsewhere } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const A = 'a'.repeat(40);
@@ -304,4 +305,166 @@ test('a draft that starts with a newline keeps it: the markup adds the line feed
 test('the dot is for a PR that waits on you and was pushed, not for one that is done', () => {
   assert.ok(prTabsHtml(rec({ state: 'pushed', events: { pushed: '20261001T000000Z' } }), read(), 'detail', 0).includes('tp-dot'));
   assert.ok(!prTabsHtml(rec({ state: 'done', events: { pushed: '20261001T000000Z' } }), read(), 'detail', 0).includes('tp-dot'));
+});
+
+/* ── a PR whose change is too large to read ── */
+
+const BIG = [{ path: 'src/big.rs', additions: 1400, deletions: 300, change: 'modified' }, { path: 'src/ok.rs', additions: 5, deletions: 1, change: 'modified' }];
+const big = (extra = {}) => rec({ state: 'requested', ai: null, files: BIG, ...extra });
+const splitRead = (extra = {}) => read({ mode: 'split', points: [], order: [], deleted: [], decisions: [], tests: { covered: [], notCovered: [] }, unwritten: [], drafts: [], overall: { body: 'PR1: split\nPR2: <b>rest</b>' }, ...extra });
+
+test('a PR out of review has its own card right after the facts, and no AI 下読み card of the usual kind', () => {
+  const r = big();
+  const html = prDetailHtml(r, null, [r], hub, T0);
+  assert.deepStrictEqual(secKeys(html), ['top:facts', 'top:oor']);
+  assert.ok(html.includes('1 ファイルの変更が 1,500 行を超えているため'));
+  assert.ok(html.includes('<code class="pr-loc">src/big.rs</code> +1400 −300（計 1700 行）') && !html.includes('src/ok.rs</code> +5'));
+  assert.ok(html.includes('data-pr-split') && html.includes('分割を提案する') && html.includes('data-pr-ai') && html.includes('それでも AI 下読み'));
+  assert.ok(html.includes('差分を全部読むので時間がかかります'));
+  // A PR that is not out of review keeps its card, and one that waits for nothing of the person has no such card.
+  assert.deepStrictEqual(secKeys(prDetailHtml(rec({ ai: null, state: 'requested' }), null, [], hub, T0)), ['top:facts', 'top:ai']);
+  assert.strictEqual(prOutOfReview(big({ state: 'waiting-on-author' }), null, { kind: 'none' }, hub), null);
+});
+
+test('the buttons of a PR out of review: by what is stored, and none while a read is under way', () => {
+  const view = r => plain(ctx.othersAiView(r, [r], T0));
+  const labels = (r, rd) => plain(prOorActions(r, rd, view(r)));
+  assert.deepStrictEqual(labels(big(), null), { split: '分割を提案する', full: 'それでも AI 下読み' });
+  // A full read-through is stored: only the proposal is offered; once stale, the full read is offered again.
+  assert.deepStrictEqual(labels(big({ ai: { status: 'ready', sha: A, stale: false }, state: 'ai-ready' }), read()), { split: '分割を提案する', full: null });
+  assert.deepStrictEqual(labels(big({ ai: { status: 'ready', sha: A, stale: true }, state: 'ai-ready' }), read()), { split: '分割を提案する', full: 'それでも AI 下読み' });
+  // A proposal is stored: only the full read is offered; stale, the proposal is offered to be made again.
+  const proposal = { status: 'ready', sha: A, mode: 'split', stale: false };
+  assert.deepStrictEqual(labels(big({ ai: proposal, state: 'ai-ready' }), splitRead()), { split: null, full: 'それでも AI 下読み' });
+  assert.deepStrictEqual(labels(big({ ai: { ...proposal, stale: true }, state: 'ai-ready' }), splitRead()), { split: '分割を提案し直す', full: 'それでも AI 下読み' });
+  // Under way in either mode: nothing; hung: both; failed: both.
+  for (const mode of [undefined, 'split']) {
+    assert.deepStrictEqual(labels(big({ ai: { status: 'running', mode, launchedAt: '20261001T000000Z' }, state: 'ai-reading' }), null), { split: null, full: null });
+    assert.deepStrictEqual(labels(big({ ai: { status: 'queued', mode }, state: 'ai-reading' }), null), { split: null, full: null });
+  }
+  const hung = big({ ai: { status: 'running', launchedAt: '20260101T000000Z' }, state: 'ai-reading' });
+  assert.deepStrictEqual(plain(prOorActions(hung, null, plain(ctx.othersAiView(hung, [hung], T0)))), { split: '分割を提案する', full: 'それでも AI 下読み' });
+  // While the stored one is being fetched, nothing is offered.
+  assert.deepStrictEqual(labels(big({ ai: proposal, state: 'ai-ready' }), undefined), { split: null, full: null });
+});
+
+test('a request in flight greys the buttons of a PR out of review, and the hub\'s reason is their title', () => {
+  const r = big();
+  assert.match(prOutOfReview(r, null, { kind: 'none' }, hub, true).html, /data-pr-split aria-disabled="true"[\s\S]*依頼中…/);
+  assert.match(prOutOfReview(r, null, { kind: 'none' }, { canRead: false, why: 'stopped' }, false).html, /data-pr-split disabled title="stopped"/);
+});
+
+test('the middle of a PR out of review: the files, the two buttons, and what the worker reads; a read at work falls through', () => {
+  const r = big();
+  const html = prMiddleHtml(r, [r], hub, T0);
+  assert.ok(html.includes('レビュー対象外') && html.includes('src/big.rs') && html.includes('data-pr-split') && html.includes('data-pr-ai'));
+  assert.ok(html.includes('worker はファイルの構成と hunk の見出しだけを読んで、この PR の分割案を下書きにします。'));
+  const failed = big({ ai: { status: 'failed', error: 'x', mode: 'split' }, state: 'requested' });
+  assert.ok(prMiddleHtml(failed, [failed], hub, T0).includes('分割案の作成に失敗しました: x'));
+  // A reader at work, in either mode, is the usual middle, with none of these buttons.
+  for (const mode of [undefined, 'split']) {
+    const at = big({ ai: { status: 'running', mode, launchedAt: '20261001T000000Z' }, state: 'ai-reading' });
+    const h = prMiddleHtml(at, [at], hub, T0);
+    assert.ok(!h.includes('data-pr-split') && !h.includes('data-pr-ai'), h);
+    assert.ok(h.includes(mode ? '分割案を作成中' : 'AI 下読み中'));
+  }
+  // The proposal is in: its button is the usual one, and says it asks for a proposal.
+  const done = big({ ai: { status: 'ready', sha: A, mode: 'split', stale: true }, state: 'ai-ready' });
+  const stale = prMiddleHtml(done, [done], hub, T0, { read: splitRead() });
+  // A stale proposal of a live PR out of review: the same block and buttons as the 下読み tab.
+  assert.ok(stale.includes('分割案あり') && stale.includes('src/big.rs') && stale.includes('data-pr-split') && stale.includes('分割を提案し直す'));
+  // A hung reader, and a finished read whose window cannot be opened, offer the ways on too.
+  const hungOne = big({ ai: { status: 'running', launchedAt: '20260101T000000Z' }, state: 'ai-reading' });
+  assert.ok(prMiddleHtml(hungOne, [hungOne], hub, T0, { read: null }).includes('data-pr-split'));
+  const fullDone = big({ ai: { status: 'ready', sha: A, stale: false }, state: 'ai-ready' });
+  const noWindow = prMiddleHtml(fullDone, [fullDone], hub, T0, { read: read() });
+  assert.ok(noWindow.includes('data-pr-split') && !noWindow.includes('data-pr-ai'));
+});
+
+test('a split proposal is a card of its own, as text, and its read has no diff', () => {
+  const r = big({ ai: { status: 'ready', sha: A, mode: 'split', stale: false }, state: 'ai-ready' });
+  const sp = prSplitProposal(splitRead());
+  assert.strictEqual(sp.key, 'top:split');
+  assert.ok(sp.html.includes('PR1: split\nPR2: &lt;b&gt;rest&lt;/b&gt;') && !sp.html.includes('<b>rest') && sp.html.includes('下書きタブで編集・コピー・pending review に積めます。'));
+  assert.strictEqual(prSplitProposal(read()), null);
+  assert.strictEqual(prSplitProposal(null), null);
+  assert.deepStrictEqual(secKeys(prDetailHtml(r, splitRead(), [r], hub, T0)), ['top:facts', 'top:oor', 'top:three', 'top:split', 'footer']);
+  const groups = prDialogGroups(r, splitRead(), [r], hub, T0);
+  assert.deepStrictEqual(plain(groups.map(g => g.key)), ['top']);
+  assert.deepStrictEqual(plain(groups[0].cards.map(c => c.key)), ['top:facts', 'top:oor', 'top:three', 'top:split', 'footer']);
+  // A full read-through of the same PR keeps its diff group, and the card of the files over the limit.
+  const full = prDialogGroups(big({ ai: { status: 'ready', sha: A, stale: false }, state: 'ai-ready' }), read(), [], hub, T0);
+  assert.ok(full.some(g => g.key === 'diff') && full[0].cards.some(c => c.key === 'top:oor'));
+  // 差分 is disabled for a proposal, with the reason.
+  const tabs = prTabsHtml(r, splitRead(), 'detail', 0, true);
+  assert.ok(tabs.includes('分割案では差分を読んでいません'));
+});
+
+test('the overall comment of a read that the person\'s file lacks is offered, and one it holds is not', () => {
+  const doc = { drafts: [], overall: { body: '' } };
+  assert.strictEqual(prNewReaderOverall(doc, splitRead()), 'PR1: split\nPR2: <b>rest</b>');
+  assert.strictEqual(prNewReaderOverall(null, splitRead()), 'PR1: split\nPR2: <b>rest</b>');
+  assert.strictEqual(prNewReaderOverall({ overall: { body: 'mine\r\n\nPR1: split\nPR2: <b>rest</b>\n' } }, splitRead()), null);
+  assert.strictEqual(prNewReaderOverall({ overall: { body: 'mine' } }, splitRead()), 'PR1: split\nPR2: <b>rest</b>');
+  assert.strictEqual(prNewReaderOverall(doc, read({ overall: { body: '  ' } })), null);
+  assert.strictEqual(prNewReaderOverall(doc, read({ overall: null })), null);
+  // A plain re-read does not start offering a second summary.
+  assert.strictEqual(prNewReaderOverall(doc, read({ overall: { body: 'another summary' } })), null);
+  // Until the first edit the proposal stands as the overall comment of the seed.
+  assert.strictEqual(prSeedDrafts(splitRead()).overall.body, 'PR1: split\nPR2: <b>rest</b>');
+  assert.deepStrictEqual(plain(prSeedDrafts(splitRead()).drafts), []);
+});
+
+test('drafts were taken from another read-through when the head or the mode differs', () => {
+  const f = (doc, rd) => prFromElsewhere(plain(doc), rd);
+  assert.strictEqual(f({ fromSha: A }, read()), false);
+  assert.strictEqual(f({ fromSha: B }, read()), true);
+  // Same head, other mode, either way; a file from before the mode is a read.
+  assert.strictEqual(f({ fromSha: A, fromMode: 'split' }, read()), true);
+  assert.strictEqual(f({ fromSha: A }, splitRead()), true);
+  assert.strictEqual(f({ fromSha: A, fromMode: 'split' }, splitRead()), false);
+  assert.strictEqual(prSeedDrafts(splitRead()).fromMode, 'split');
+  assert.ok(!('fromMode' in plain(prSeedDrafts(read()))));
+});
+
+test('the footer asks for a read in the usual words, and a PR out of review leaves it to its card', () => {
+  const stale = rec({ headSha: B, ai: { status: 'ready', sha: A, mode: 'split', stale: true } });
+  const footer = html => html.slice(html.indexOf('data-pr-sec="footer"'));
+  // A proposal of a PR that is small now: the usual button.
+  const f = footer(prDetailHtml(stale, splitRead(), [stale], hub, T0));
+  assert.ok(f.includes('data-pr-reread') && f.includes('下読みし直す') && !f.includes('分割を提案し直す'));
+  for (const [ai, rd] of [[{ status: 'ready', sha: A, mode: 'split', stale: true }, splitRead()], [{ status: 'ready', sha: A, stale: true }, read()]]) {
+    const r = big({ headSha: B, ai, state: 'ai-ready' });
+    const html = prDetailHtml(r, rd, [r], hub, T0);
+    assert.ok(!footer(html).includes('data-pr-reread') && html.includes('data-pr-split'));
+  }
+});
+
+test('a proposal that failed or whose reader hung is offered again even when the stored one is current', () => {
+  const stored = splitRead();
+  for (const status of ['failed', 'running']) {
+    const r = big({ ai: { status, mode: 'split', sha: A, stale: false, launchedAt: '20260101T000000Z', error: 'x' }, state: 'ai-ready' });
+    const view = plain(ctx.othersAiView(r, [r], T0));
+    assert.deepStrictEqual(plain(prOorActions(r, stored, view)).split, '分割を提案し直す', status);
+  }
+});
+
+test('the footer offers the usual read for a current proposal of a PR that is not out of review now, and none while it is', () => {
+  const proposal = rec({ ai: { status: 'ready', sha: A, mode: 'split', stale: false } });
+  const footer = html => html.slice(html.indexOf('data-pr-sec="footer"'));
+  const f = footer(prDetailHtml(proposal, splitRead(), [proposal], hub, T0));
+  assert.ok(f.includes('data-pr-reread') && f.includes('AI 下読み'));
+  const r = big({ ai: { status: 'ready', sha: A, mode: 'split', stale: false }, state: 'ai-ready' });
+  assert.ok(!footer(prDetailHtml(r, splitRead(), [r], hub, T0)).includes('data-pr-reread'));
+  // A full read-through that is current has no such button.
+  assert.ok(!footer(prDetailHtml(rec(), read(), [rec()], hub, T0)).includes('data-pr-reread'));
+});
+
+test('a read-through that cannot be fetched does not hide the buttons of a PR out of review', () => {
+  const r = big({ ai: { status: 'ready', sha: A, stale: true }, state: 'ai-ready' });
+  const view = plain(ctx.othersAiView(r, [r], T0));
+  assert.deepStrictEqual(plain(prOorActions(r, undefined, view)), { split: null, full: null });
+  assert.deepStrictEqual(plain(prOorActions(r, undefined, view, true)), { split: '分割を提案する', full: 'それでも AI 下読み' });
+  assert.ok(prDetailHtml(r, undefined, [r], hub, T0, { readError: 'boom' }).includes('data-pr-split'));
+  assert.ok(prMiddleHtml(r, [r], hub, T0, { read: undefined, readError: true }).includes('data-pr-split'));
 });
