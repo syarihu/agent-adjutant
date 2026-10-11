@@ -56,6 +56,88 @@ fn every_captured_screen_reads_as_what_it_was() {
 }
 
 #[test]
+fn the_trust_dialog_is_read_with_its_directory_and_where_the_pointer_is() {
+    let claude = parse_pane_screen(fixture("claude-menu"));
+    assert_eq!(
+        trust_dialog(Agent::Claude, &claude),
+        Some(TrustDialog {
+            dir: "/home/user/project".to_string(),
+            yes_pointed: false
+        })
+    );
+    let agy = parse_pane_screen(fixture("agy-menu"));
+    assert_eq!(
+        trust_dialog(Agent::Agy, &agy),
+        Some(TrustDialog {
+            dir: "/home/user/project".to_string(),
+            yes_pointed: true
+        })
+    );
+    // Each agent's dialog is read by its own wording, and a generic agent's is not read.
+    assert_eq!(trust_dialog(Agent::Agy, &claude), None);
+    assert_eq!(trust_dialog(Agent::Generic, &claude), None);
+}
+
+#[test]
+fn no_other_captured_screen_is_a_trust_dialog() {
+    for (agent, name, _) in FIXTURES {
+        if name.ends_with("-menu") {
+            continue;
+        }
+        let screen = parse_pane_screen(fixture(name));
+        assert_eq!(trust_dialog(*agent, &screen), None, "{name}");
+    }
+}
+
+#[test]
+fn the_trust_dialog_reads_the_same_through_escapes() {
+    for (agent, name) in [(Agent::Claude, "claude-menu"), (Agent::Agy, "agy-menu")] {
+        let plain = parse_pane_screen(fixture(name));
+        let escaped = PaneScreen {
+            text: plain
+                .text
+                .lines()
+                .map(|l| format!("\x1b[1m{l}\x1b[0m"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ..plain.clone()
+        };
+        assert_eq!(
+            trust_dialog(agent, &escaped),
+            trust_dialog(agent, &plain),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_wrapped_path_is_put_back_together() {
+    let text = fixture("claude-menu").replace(
+        "/home/user/project",
+        "/home/user/a-rather-long-direc\n tory-name",
+    );
+    assert_eq!(
+        trust_dialog(Agent::Claude, &parse_pane_screen(&text)).map(|d| d.dir),
+        Some("/home/user/a-rather-long-directory-name".to_string())
+    );
+}
+
+#[test]
+fn a_question_wrapped_over_two_lines_is_still_the_dialog() {
+    let text = fixture("claude-menu").replace(
+        "Is this a project you created or one you trust",
+        "Is this a project you cre\n ated or one you trust",
+    );
+    assert!(trust_dialog(Agent::Claude, &parse_pane_screen(&text)).is_some());
+}
+
+#[test]
+fn a_dialog_that_names_no_directory_is_not_one_to_answer() {
+    let text = fixture("claude-menu").replace("Accessing workspace:", "Somewhere:");
+    assert_eq!(trust_dialog(Agent::Claude, &parse_pane_screen(&text)), None);
+}
+
+#[test]
 fn a_capture_carries_escapes_on_every_line_and_reads_the_same() {
     // The fixtures keep escapes only where the placeholder needs them; a real capture
     // has them everywhere.

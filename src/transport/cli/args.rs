@@ -124,6 +124,9 @@ pub(crate) enum ReviewAction {
     /// What a reader's window runs: record this process, then become the reader's agent
     #[command(hide = true)]
     Run(ReviewRunArgs),
+    /// What a reader's agent is watched by in its first seconds: answer the folder-trust prompt for the reader's own directory, fail the read at any other prompt
+    #[command(hide = true)]
+    Settle(ReviewSettleArgs),
 }
 
 #[derive(Args)]
@@ -189,6 +192,20 @@ pub(crate) struct ReviewRunArgs {
     pub(crate) pr: String,
     #[arg(long)]
     pub(crate) session: String,
+}
+
+#[derive(Args)]
+pub(crate) struct ReviewSettleArgs {
+    #[arg(long)]
+    pub(crate) pr: String,
+    #[arg(long)]
+    pub(crate) session: String,
+    /// The tmux pane the reader runs in
+    #[arg(long)]
+    pub(crate) pane: String,
+    /// The tmux server the pane is on, as the reader found it (default: the configured one)
+    #[arg(long)]
+    pub(crate) socket: Option<String>,
 }
 
 #[derive(Args)]

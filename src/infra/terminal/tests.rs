@@ -1153,6 +1153,18 @@ fn tmux_wake_script_generates_literal_send_and_enter() {
 }
 
 #[test]
+fn tmux_key_script_sends_a_named_key_not_text() {
+    assert_eq!(
+        tmux_key_script(Some("test-sock"), "%2", "Down"),
+        "tmux -L test-sock send-keys -t %2 Down"
+    );
+    assert_eq!(
+        tmux_key_script(None, "%2", "Enter"),
+        "tmux send-keys -t %2 Enter"
+    );
+}
+
+#[test]
 fn tmux_close_script_generates_kill_window_and_marker() {
     let script = tmux_close_script(Some("test-sock"), "@1");
     assert_eq!(

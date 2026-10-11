@@ -371,6 +371,58 @@ pub fn last_output_line(agent: Agent, screen: &PaneScreen) -> Option<String> {
     })
 }
 
+/// The question an agent asks, before it does anything, about the directory it was started in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustDialog {
+    /// The directory the dialog names, as it is drawn (a home directory may be written `~/`).
+    pub dir: String,
+    /// Whether the pointer is already on "Yes, I trust this folder" (agy's starts there,
+    /// Claude Code's starts on "No, exit").
+    pub yes_pointed: bool,
+}
+
+/// The folder-trust dialog `agent` shows on a directory it has not been told to trust, with the
+/// directory it names. `None` for any other screen, and for a dialog that names no directory:
+/// what cannot be checked is not answered. `Generic` is never read.
+///
+/// Both the dialog's own question and the `Accessing workspace:` line it puts above the
+/// directory are required, so a transcript that merely quotes one of them is not taken for it.
+pub fn trust_dialog(agent: Agent, screen: &PaneScreen) -> Option<TrustDialog> {
+    let question = match agent {
+        Agent::Claude => "Is this a project you created or one you trust",
+        Agent::Agy => "Do you trust the contents of this project",
+        Agent::Generic => return None,
+    };
+    let plain: Vec<String> = screen.text.lines().map(strip_escapes).collect();
+    // The agent wraps its own text in a narrow pane as it does the path, so the question is looked
+    // for across lines with the whitespace left out.
+    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
+    if !squeeze(&plain.join(" ")).contains(&squeeze(question)) {
+        return None;
+    }
+    let at = plain
+        .iter()
+        .position(|l| l.trim() == "Accessing workspace:")?;
+    // A long path is wrapped by the agent's own layout, which `capture-pane -J` cannot join, so
+    // the dir is the run of lines up to the next blank one, put back together without a
+    // separator.
+    let dir: String = plain[at + 1..]
+        .iter()
+        .map(|l| l.trim())
+        .skip_while(|l| l.is_empty())
+        .take_while(|l| !l.is_empty())
+        .collect();
+    if dir.is_empty() {
+        return None;
+    }
+    let yes_pointed = plain.iter().any(|l| {
+        let line = l.trim();
+        (line.starts_with('❯') || line.starts_with('>'))
+            && line.contains("Yes, I trust this folder")
+    });
+    Some(TrustDialog { dir, yes_pointed })
+}
+
 /// What the agent's screen says it is doing. `Generic` is `Idle` without looking: nothing is
 /// known of how its screen reads, and it is how the wake behaved before it looked at all.
 pub fn pane_state(agent: Agent, screen: &PaneScreen) -> PaneState {

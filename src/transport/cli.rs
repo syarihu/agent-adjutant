@@ -55,7 +55,8 @@ pub use jules::{
     start as jules_start,
 };
 pub use review::{
-    review_context, review_fail, review_request, review_run, review_say, review_submit,
+    review_context, review_fail, review_request, review_run, review_say, review_settle,
+    review_submit,
 };
 pub use review_engine::run as review_engine;
 pub use run::run;

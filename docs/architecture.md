@@ -109,7 +109,12 @@ fixtures.
   hubs and workers; plan and exec a launch, claim slots, register launches and link workers to
   tasks. `lifecycle::review` starts the readers of the code-review hub: `request`, `dispatch` (reap
   the dead, claim the next in line, open a window for each, outside every lock), `launch_reader`,
-  `run_reader` (what a reader's window runs) and `submit`. It returns values such as
+  `run_reader` (what a reader's window runs), `settle_reader` and `submit`. `run_reader` starts a
+  detached watcher (`settle_reader`) before the agent takes over: it answers the agent's
+  folder-trust prompt for the reader's own directory and no other. It fails the read, and closes
+  the reader's pane, when the agent asks to trust another directory, when the dialog is still up
+  after the answer, or when its screen is still not one adj recognises at the 20 s deadline;
+  dispatch never waits on it. `lifecycle` returns values such as
   `HubStart` and `TabOutcome` and prints nothing, and it changes other modules' records only
   through their operations.
 - `board`: the resident daemon and server, a hub's or `adj serve`'s own board (`dedicated`), the read model, the

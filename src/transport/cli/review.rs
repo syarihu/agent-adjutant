@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::args::{
     ReviewContextArgs, ReviewFailArgs, ReviewRequestArgs, ReviewRunArgs, ReviewSayArgs,
-    ReviewSubmitArgs,
+    ReviewSettleArgs, ReviewSubmitArgs,
 };
 use crate::board::review::{self, RequestRefused};
 use crate::infra::env::REVIEW_SESSION_ENV;
@@ -188,4 +188,18 @@ pub fn review_run(args: &ReviewRunArgs) -> Result<(), String> {
     let pr = pr_named(&args.pr)?;
     let root = registry::state_root(None);
     Err(lifecycle::review::run_reader(&root, &pr, &args.session))
+}
+
+/// What a reader's watcher runs: see the folder-trust prompt of the reader's agent answered, or
+/// the read failed. Prints nothing a person reads; the watcher's output goes nowhere.
+pub fn review_settle(args: &ReviewSettleArgs) -> Result<(), String> {
+    let pr = pr_named(&args.pr)?;
+    let root = registry::state_root(None);
+    lifecycle::review::settle_reader(
+        &root,
+        &pr,
+        &args.session,
+        &args.pane,
+        args.socket.as_deref(),
+    )
 }

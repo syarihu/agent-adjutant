@@ -84,6 +84,10 @@ pub const DEFAULT_HUB_RESUME_RUNNER: &str =
 /// The patterns match `adj ...` as typed, so `adj` has to be on PATH. A `reviewerRunner` of your
 /// own has to keep both isolation flags, or the reader gets whatever the person's settings give
 /// it. Another agent is held to reading by the procedure alone.
+///
+/// Claude Code and agy ask whether to trust the directory they start in, and nobody answers in a
+/// reader's window: `run_reader` starts a watcher that answers it for the reader's own directory
+/// and fails the read at any other prompt. A runner of any other agent has no watcher.
 pub const DEFAULT_REVIEWER_RUNNER: &str = "claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}";
 
 /// What the code-review hub is told on startup, in the shape of `HUB_STARTUP_PROMPT`.

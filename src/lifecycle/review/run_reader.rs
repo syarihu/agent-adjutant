@@ -1,11 +1,14 @@
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 
+use crate::infra::agent::Agent;
 use crate::infra::clock::now_secs;
 use crate::infra::env::REVIEW_SESSION_ENV;
 use crate::infra::terminal;
 use crate::kernel::runner;
+use crate::lifecycle::review::start_watcher;
 use crate::lifecycle::{agent_command, agent_hooks_for};
+use crate::mail::wake_agent;
 use crate::others::{self, ReadMode};
 use crate::registry::{self, agent_env};
 use crate::task::PrRef;
@@ -13,6 +16,11 @@ use crate::task::PrRef;
 /// Become the reader of `pr` that runs as `session`: write down this process and its window,
 /// then replace this process with the agent. Returns only when it cannot, with what to tell the
 /// person.
+///
+/// Just before the agent takes over, a detached watcher (`settle_reader`) is started for it when
+/// the reader is in a tmux pane and runs Claude Code or agy: those ask whether to trust the
+/// directory they start in, which nobody is there to answer. A `reviewerRunner` of any other
+/// agent, or a reader outside tmux, has no watcher and runs as it always did.
 ///
 /// Refused when the record no longer names this session (the read was asked for again, or it
 /// was failed), so a superseded launch starts no agent.
@@ -24,13 +32,14 @@ pub fn run_reader(root: &Path, pr: &PrRef, session: &str) -> String {
     let id = others::pr_id(pr);
     let stem = others::reader_stem(pr);
     let pid = std::process::id();
+    let location = terminal::own_location(&ctx.settings.terminal);
     if let Err(e) = others::note_reader(
         root,
         pr,
         session,
         pid,
         registry::ps_started(pid),
-        Some(terminal::own_location(&ctx.settings.terminal)),
+        Some(location.clone()),
     ) {
         return e;
     }
@@ -68,6 +77,10 @@ pub fn run_reader(root: &Path, pr: &PrRef, session: &str) -> String {
         &prompt,
         settings.as_deref(),
     );
+    let agent = wake_agent(Some(template.unwrap_or(runner::DEFAULT_REVIEWER_RUNNER)));
+    if let (Some(pane), true) = (location.pane.as_deref(), agent != Agent::Generic) {
+        start_watcher(pr, session, pane, location.socket.as_deref());
+    }
     let error = agent_command(&command).exec();
     let why = format!("cannot start the reader: {error}");
     let _ = others::fail_read(root, pr, Some(session), &why, now_secs());

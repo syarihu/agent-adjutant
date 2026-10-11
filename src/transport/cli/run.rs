@@ -103,6 +103,7 @@ fn run_review(action: &ReviewAction) -> Result<(), String> {
         ReviewAction::Say(args) => super::review_say(args),
         ReviewAction::Fail(args) => super::review_fail(args),
         ReviewAction::Run(args) => super::review_run(args),
+        ReviewAction::Settle(args) => super::review_settle(args),
     }
 }
 
