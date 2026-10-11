@@ -272,7 +272,8 @@ const PRD_BLOCKS = { c: ['/*', '*/'], markup: ['<!--', '-->'] };
 /* The lines of the comment block that line `k` belongs to, and the one the annotation goes under (`last`): `{ ks, last }`.
    A line that is not a comment is a block of itself. The block runs up and down over lines of the same side (a right-side line
    skips removed lines, a left-side one skips added lines), within the hunk, and stops at the first that is not a comment. A line
-   between an opener and a closer of `/* */` or `<!-- -->` (at most 200 lines of its side apart) is in the block from one to the other. */
+   between the opener and the closer of a C block comment or an HTML comment (at most 200 lines of its side apart) is in the block
+   from one to the other. */
 function prDiffCommentBlock(file, k, path = file.path) {
   const all = file.all;
   const at = all[k];

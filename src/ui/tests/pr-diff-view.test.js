@@ -204,7 +204,8 @@ test('a big diff is drawn file by file, as each comes near the screen, in the el
   // The dialog's observer is rooted at its own body, not at the panel.
   w.dialogOpen = true;
   c.prdOnDrawn();
-  assert.notStrictEqual(w.io.o.root, undefined);
+  assert.strictEqual(w.io.o.root, run(`cardDialogEl().querySelector('.card-dialog-body')`));
+  assert.notStrictEqual(w.io.o.root, run(`tp('tp-detail')`));
 });
 
 test('after the dialog replaced its content, the files drawn before are drawn again from the cache', async () => {
