@@ -165,6 +165,10 @@ test('the AI 下読み of a record: what it says and the one button it offers, f
     view({ ai: { status: 'failed', error: 'the reader exited' } }),
     { kind: 'failed', text: 'AI 下読みに失敗しました: the reader exited', action: 'もう一度 AI 下読み' });
   assert.equal(view({ ai: { status: 'failed' } }).text, 'AI 下読みに失敗しました');
+  // A reader that was closed says so, and not the error that closing left.
+  assert.deepStrictEqual(
+    view({ ai: { status: 'failed', error: 'the reader was closed', readerClosedAt: '20261001T000009Z' } }),
+    { kind: 'failed', text: 'AI 下読みを閉じました（途中で止めました）', action: 'もう一度 AI 下読み' });
   // A status from a newer server says and offers nothing.
   assert.deepStrictEqual(view({ ai: { status: 'brand-new' } }), { kind: 'none', text: '', action: null });
 });

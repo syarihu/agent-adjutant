@@ -15,6 +15,7 @@ const others = {
   syncError: null,    // why the last sync this page started could not be done
   sig: '',            // what the list was last drawn from
   asking: new Set(),  // ids whose AI 下読み this page asked for and the answer is not back
+  closing: new Set(), // ids whose reader this page is closing and the answer is not back
   starting: false,    // the code-review hub's start this page asked for is out
 };
 
@@ -129,6 +130,8 @@ async function syncOthers() {
   if (view === 'work') renderOthersList();
   // A notification that cannot be shown does not make a sync that worked a failed one.
   if (res) { try { ringReviewRequests(res); } catch {} }
+  // The sync stands when a reader of a merged or closed PR could not be closed; it is tried again at the next one.
+  if (res?.closeWarning) note('adj others sync', true, res.closeWarning);
   await refreshOthers(true);
   if (busyElsewhere) setTimeout(() => refreshOthers(true), 2000);
 }
@@ -153,6 +156,28 @@ async function othersRequestAi(id, mode) {
     prRedraw();
   }
   await refreshOthers(true);
+}
+
+/* Close the reader of one PR: its window goes, and the read-through, the drafts and the record stay. One close per PR at a time;
+   the answer is read back either way, since a refusal (no reader any more) is also something the list now shows. */
+async function othersCloseReader(id) {
+  if (!multiBoard || others.closing.has(id)) return;
+  others.closing.add(id);
+  prRedraw();
+  try {
+    const res = await boardApi('', '/api/others/reader/close', { method: 'POST', body: JSON.stringify({ id }) });
+    note('下読みを閉じる', false, '閉じました');
+    // The reader is closed; this is what the queue could not do after a running read gave its place up.
+    if (res?.warning) note('下読みを閉じる', true, res.warning);
+  } catch (e) {
+    note('下読みを閉じる', true, e.message);
+  } finally {
+    // Not before the records are read again: the button would be on again against the record as it was.
+    try { await refreshOthers(true); } finally {
+      others.closing.delete(id);
+      prRedraw();
+    }
+  }
 }
 
 /* Start the code-review hub in a new window. */
@@ -312,7 +337,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || prefs.workTab !== 'others') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], others.starting, nav.task]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, nav.task]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');

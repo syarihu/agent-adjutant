@@ -88,6 +88,7 @@ fn ai(status: &str) -> Option<AiRead> {
         error: None,
         counts: None,
         mode: None,
+        reader_closed_at: None,
         stale: false,
         extra: Default::default(),
     })
@@ -644,6 +645,46 @@ fn a_record_done_for_a_day_is_removed_and_a_younger_one_is_kept() {
     assert!(fake.read().is_empty());
     // And the lock file of a removed record stays.
     assert!(root.path().join("others/acme~widget~1.lock").exists());
+}
+
+/// A record done (approved) a day and more ago, whose read is `ready` and whose reader is open
+/// (or `closed`).
+fn approved_with_a_reader(root: &Path, number: u64, closed: bool) {
+    let mut r = record(number);
+    r.requested = false;
+    r.my_review = reviewed(ReviewState::Approved, "20261002T000000Z", "h1");
+    r.done_at = Some(utc_stamp(NOW - DAY - 1));
+    r.ai = Some(AiRead {
+        session_id: Some("sid".to_string()),
+        pid: Some(5),
+        reader_closed_at: closed.then(|| "20261003T000000Z".to_string()),
+        ..ai("ready").unwrap()
+    });
+    store::save(root, &mut r).unwrap();
+}
+
+#[test]
+fn a_done_record_with_an_open_reader_is_read_again_and_kept_until_it_is_closed() {
+    let root = tempfile::tempdir().unwrap();
+    approved_with_a_reader(root.path(), 7, false);
+    approved_with_a_reader(root.path(), 8, true);
+    assert_eq!(record_of(root.path(), 7).unwrap().state, State::Done);
+    let fake = Fake::new(&[]);
+    fake.set_merged(7);
+    let synced = sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    // Only the one with an open reader was read; it says it is merged now, and is kept past the cutoff.
+    assert_eq!(fake.read(), vec![7]);
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(
+        (r.pr_state, r.state, r.done_reason),
+        (PrOpenState::Merged, State::Done, Some(DoneReason::Merged))
+    );
+    assert_eq!(synced.removed, vec!["acme/widget#8"]);
+    // Closed: the next sync removes it.
+    close_read(root.path(), &pr(7), "sid", "x", NOW).unwrap();
+    let synced = sync_at(root.path(), &acme(), NOW + 60, &fake).unwrap();
+    assert_eq!(synced.removed, vec!["acme/widget#7"]);
+    assert!(record_of(root.path(), 7).is_none());
 }
 
 #[test]

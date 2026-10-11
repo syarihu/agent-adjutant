@@ -208,6 +208,7 @@ function prdCurrent() {
 function prdApply(id, e, p) {
   const cat = prdActiveCat(e, id);
   p.root.classList.toggle('prd-folded', prDiff.folded);
+  prdAskState(p.root, prReaderOpen(othersById(id)));
   p.root.querySelectorAll('[data-prd-tab]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.prdTab === cat)));
   p.root.querySelectorAll('[data-prd-fold]').forEach(b => {
     b.setAttribute('aria-pressed', String(prDiff.folded));
@@ -224,16 +225,31 @@ function prdApply(id, e, p) {
   });
 }
 
+/* Whether the annotations' 「聞く」 is on: the PR on show has a reader to type to. */
+function prdReaderOpen() {
+  const cur = prdCurrent();
+  return !cur || prReaderOpen(othersById(cur.id));
+}
+/* The annotations' 「聞く」 of what is drawn, set in place: the cached bodies are made once, and the reader can close after. */
+function prdAskState(root, open) {
+  root.querySelectorAll('[data-prd-ask]').forEach(b => {
+    b.disabled = !open;
+    if (open) b.removeAttribute('title'); else b.title = PR_ASK_OFF_WHY;
+  });
+}
+
 /* A file's body, from the cache: its lines are made once for a diff, however often the panel or the dialog is drawn again. */
 function prdFillBody(e, place, el) {
   const i = Number(el.dataset.prdBody);
   const f = e.layout.files[i];
   if (!f) return;
-  if (!e.bodies.has(i)) e.bodies.set(i, prDiffBodyHtml(f, e.resolved.files.get(f.path), e.read));
+  const open = prdReaderOpen();
+  if (!e.bodies.has(i)) e.bodies.set(i, prDiffBodyHtml(f, e.resolved.files.get(f.path), e.read, open));
   if (el.dataset.prdFilled !== String(e.gen)) {
     el.innerHTML = e.bodies.get(i);
     el.dataset.prdFilled = String(e.gen);
   }
+  prdAskState(el, open);
   e.filled[place].add(i);
 }
 

@@ -41,6 +41,8 @@ pub(crate) fn reader_window_with(
     let ai = record
         .ai
         .filter(|ai| matches!(ai.status.as_str(), "running" | "ready"))
+        // A closed reader's window is gone, whatever `terminal` still names.
+        .filter(|ai| ai.reader_closed_at.is_none())
         .ok_or(NoReaderWindow::NoReader)?;
     let terminal = ai.terminal.ok_or(NoReaderWindow::NoReader)?;
     let window = terminal
@@ -137,6 +139,21 @@ mod tests {
             assert_eq!(
                 window(root.path()),
                 Ok((Some("/tmp/tmux-1/default".to_string()), "@3".to_string())),
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_closed_reader_has_no_window() {
+        let root = tempfile::tempdir().unwrap();
+        for status in ["running", "ready"] {
+            let mut ai = reader(status, tmux("@3"));
+            ai["readerClosedAt"] = json!("20261001T000009Z");
+            put(root.path(), Some(ai));
+            assert_eq!(
+                window(root.path()),
+                Err(NoReaderWindow::NoReader),
                 "{status}"
             );
         }

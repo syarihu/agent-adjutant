@@ -333,3 +333,16 @@ test('the paths of a rename are taken as they are, with no a/ or b/ stripped', (
   const files = prParseDiff(text);
   assert.deepStrictEqual(plain(files.map(f => [f.oldPath, f.path, f.status])), [['a/old.js', 'a/new.js', 'renamed'], ['x', 'b/y', 'renamed']]);
 });
+
+test('the annotation 「聞く」 is disabled when no reader runs, and 「下書きに」 stays on', () => {
+  const files = prParseDiff(SAMPLE);
+  const read = readOf({ annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'ex', text: 'E1' }] });
+  const layout = prDiffLayout(files, read, null);
+  const res = prDiffResolve(files, read);
+  const e = layout.files.find(f => f.path === 'src/a.rs');
+  const on = prDiffBodyHtml(e, res.files.get('src/a.rs'), read, true);
+  assert.ok(/data-prd-ask="0"[^>]*>聞く/.test(on) && !/data-prd-ask="0"[^>]*disabled/.test(on));
+  const off = prDiffBodyHtml(e, res.files.get('src/a.rs'), read, false);
+  assert.match(off, /data-prd-ask="0"[^>]* disabled title="worker が動いていません">聞く/);
+  assert.ok(!/data-prd-todraft="0"[^>]*disabled/.test(off));
+});

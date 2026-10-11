@@ -232,12 +232,28 @@ pub struct AiRead {
     /// Text like `status`, so a mode a later binary adds does not make this one drop the record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// When the person (or a sync that found the PR merged or closed) closed the reader, while
+    /// the read-through, the drafts and the record stay. Cleared by the next request for a read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader_closed_at: Option<String>,
     /// Derived: the read-through was made at another head than the PR has now. Read from disk
     /// only so the key is not caught by `extra`; every load and save overwrites it.
     #[serde(default)]
     pub stale: bool,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl AiRead {
+    /// Whether a reader is open on this read: it is `running` or `ready`, names a session and a
+    /// process (one still being started has nothing to stop), and was not closed. The one rule for "a reader to close", which closing, the sync (a done
+    /// record is still read, and kept, while one is open) and `open_reader` share.
+    pub fn reader_open(&self) -> bool {
+        matches!(self.status.as_str(), "running" | "ready")
+            && self.session_id.is_some()
+            && self.pid.is_some()
+            && self.reader_closed_at.is_none()
+    }
 }
 
 /// What a request for a read asks the reader to make.

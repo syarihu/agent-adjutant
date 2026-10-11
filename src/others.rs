@@ -7,6 +7,7 @@
 //! paths under `others/` or takes the locks there.
 
 mod claim_reads;
+mod close_read;
 mod diff_get;
 mod drafts;
 mod drafts_get;
@@ -15,6 +16,7 @@ mod github;
 mod list;
 mod model;
 mod note_reader;
+mod open_reader;
 mod pr_of;
 mod push_pending;
 mod read_context;
@@ -32,12 +34,14 @@ mod sync;
 mod take_over_read;
 
 pub use claim_reads::*;
+pub use close_read::*;
 pub use diff_get::*;
 pub use drafts_get::*;
 pub use fail_read::*;
 pub use list::*;
 pub use model::*;
 pub use note_reader::*;
+pub use open_reader::*;
 pub use pr_of::*;
 pub use push_pending::*;
 pub use read_context::*;

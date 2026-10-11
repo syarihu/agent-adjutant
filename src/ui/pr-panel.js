@@ -294,7 +294,7 @@ function renderPrPanel() {
   const pane = prPaneOf(nav.pane, hasRead, !!PR_HOOKS.diff && read?.mode !== 'split');
   const entry = prDraftsEntry(id);
   const draftCount = entry.loaded && hasRead ? prDoc(id, read).drafts.length : 0;
-  setPanelPart('head', tp('tp-head'), prHeadHtml(rec));
+  setPanelPart('head', tp('tp-head'), prHeadHtml(rec, { closing: !!rec && others.closing.has(rec.id) }));
   setPanelPart('tabs', tp('tp-tabs'), prTabsHtml(rec, read, pane, draftCount, !!PR_HOOKS.diff));
   const opts = { diff: !!PR_HOOKS.diff, asking: others.asking.has(id), readError: prReadEntry(id)?.error || null };
   const html = pane === 'drafts' ? prDraftsBodyHtml(rec, read, 'panel')
@@ -493,6 +493,12 @@ function prPanelClick(e) {
     return;
   }
   if ((b = e.target.closest('[data-pr-expand]'))) return openPrDialog(b);
+  if (e.target.closest('[data-pr-close-reader]')) {
+    // Asked once, in the page: closing stops the reader, which cannot be taken back.
+    const id = isPrRef(selectedTaskId) ? prIdOfRef(selectedTaskId) : null;
+    if (id && prReaderOpen(othersById(id)) && !others.closing.has(id)) openReaderCloseDialog(id);
+    return;
+  }
   prAct(e);
 }
 
@@ -555,7 +561,8 @@ function renderPrTerm(rec) {
   if (view !== 'work') return;
   const head = rec ? `<div class="wk-term-title">${esc(rec.title)}</div><div class="wk-term-sub">${esc(prSubText(rec))} · AI 下読みの worker</div>` : '';
   setWorkTermPart('head', wk('wk-term-head'), head);
-  const subject = rec ? `${PR_REF}${rec.id}/${rec.ai?.sessionId || ''}` : null;
+  // A closed reader is part of the subject, so the slot of its terminal is disposed and a re-read does not find it.
+  const subject = rec ? `${PR_REF}${rec.id}/${rec.ai?.sessionId || ''}${rec.ai?.readerClosedAt ? '/closed' : ''}` : null;
   const mountable = prReaderOpen(rec);
   if (workTerm.taskId !== subject || (workTerm.reconnect && mountable)) disposeTermSlot(workTerm);
   workTerm.taskId = subject;

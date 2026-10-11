@@ -50,6 +50,7 @@ pub(super) fn queue_afresh(record: &mut Record, now: i64, mode: ReadMode) {
         error: None,
         counts: None,
         mode: None,
+        reader_closed_at: None,
         stale: false,
         extra: Default::default(),
     });
@@ -61,6 +62,7 @@ pub(super) fn queue_afresh(record: &mut Record, now: i64, mode: ReadMode) {
     ai.session_id = None;
     ai.terminal = None;
     ai.error = None;
+    ai.reader_closed_at = None;
     ai.mode = mode.wire().map(str::to_string);
 }
 

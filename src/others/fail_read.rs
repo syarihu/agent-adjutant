@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::infra::clock::utc_stamp;
 use crate::task::PrRef;
 
+use super::model::AiRead;
 use super::store;
 
 /// Mark the read of `pr` as `failed`, with `why`. Only a read that is `queued` or `running`
@@ -30,11 +31,16 @@ pub fn fail_read(
     if !current {
         return Ok(false);
     }
+    mark_failed(ai, why, now);
+    store::save(root, &mut record)?;
+    Ok(true)
+}
+
+/// Turn `ai` into a failed read with `why`: the one place that says what failing writes.
+pub(super) fn mark_failed(ai: &mut AiRead, why: &str, now: i64) {
     ai.status = "failed".to_string();
     ai.error = Some(one_line(why));
     ai.finished_at = Some(utc_stamp(now));
-    store::save(root, &mut record)?;
-    Ok(true)
 }
 
 /// How long the reason kept on a record may be, in characters.

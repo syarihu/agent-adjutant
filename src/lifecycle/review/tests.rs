@@ -1,3 +1,5 @@
+use super::close_reader::close_reader_with;
+use super::close_readers::{close_finished_readers_with, frees_a_place, has_finished_reader};
 use super::dispatch::dispatch_with;
 use super::launch_reader::launch_reader_with;
 use super::request::request_with;
@@ -548,4 +550,363 @@ fn a_reader_that_has_not_run_too_long_is_not_looked_at() {
         &|_| panic!("a reader that is young was stopped"),
     );
     assert!(matches!(asked, Ok(Requested::Already(_))));
+}
+
+// ── closing a reader ─────────────────────────────────────────────────
+
+/// A read in `status` whose reader `sid-old` recorded a process, on a PR in `pr_state`, with a
+/// read-through and drafts kept for it.
+fn open_reader(root: &Path, number: u64, status: &str, pr_state: &str) {
+    put(root, number, Some(status), "20261001T000001Z");
+    let path = root.join(format!("others/acme~widget~{number}.json"));
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["prState"] = json!(pr_state);
+    v["ai"]["sessionId"] = json!("sid-old");
+    v["ai"]["pid"] = json!(4242);
+    v["ai"]["psStarted"] = json!("started");
+    std::fs::write(&path, v.to_string()).unwrap();
+    for dir in ["reads", "drafts"] {
+        let dir = root.join("others").join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("acme~widget~{number}.json")),
+            "{\"kept\": true}",
+        )
+        .unwrap();
+    }
+}
+
+fn record_text(root: &Path, number: u64) -> String {
+    std::fs::read_to_string(root.join(format!("others/acme~widget~{number}.json"))).unwrap()
+}
+
+fn closed_at(root: &Path, number: u64) -> Option<String> {
+    let v: Value = serde_json::from_str(&record_text(root, number)).unwrap();
+    v["ai"]["readerClosedAt"].as_str().map(str::to_string)
+}
+
+fn close(
+    root: &Path,
+    number: u64,
+    alive: Liveness,
+    stop: Result<(), String>,
+) -> (Result<super::ClosedReader, super::CloseError>, usize) {
+    let stopped = std::cell::Cell::new(0usize);
+    let pr = others::pr_of(&format!("acme/widget#{number}")).unwrap();
+    let closed = close_reader_with(
+        root,
+        &pr,
+        NOW,
+        "the reader was closed",
+        &|_, _| alive,
+        &|_| {
+            stopped.set(stopped.get() + 1);
+            stop.clone()
+        },
+    );
+    (closed, stopped.get())
+}
+
+fn kept(root: &Path, number: u64) -> bool {
+    ["reads", "drafts"].iter().all(|dir| {
+        root.join(format!("others/{dir}/acme~widget~{number}.json"))
+            .exists()
+    })
+}
+
+#[test]
+fn a_reader_whose_process_is_gone_is_marked_closed_with_nothing_to_stop() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let (closed, stops) = close(&root, 1, Liveness::Gone, Err("must not be called".into()));
+    let closed = closed.unwrap();
+    assert!(!closed.was_running);
+    assert_eq!(stops, 0);
+    assert!(closed.record.ai.unwrap().reader_closed_at.is_some());
+    assert!(closed_at(&root, 1).is_some());
+}
+
+#[test]
+fn a_reader_that_is_alive_is_stopped_before_the_read_is_marked() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let pr = others::pr_of("acme/widget#1").unwrap();
+    let marked_when_stopped = std::cell::Cell::new(true);
+    let closed = close_reader_with(
+        &root,
+        &pr,
+        NOW,
+        "the reader was closed",
+        &|_, _| Liveness::Alive,
+        &|reader| {
+            assert_eq!(reader.session_id, "sid-old");
+            marked_when_stopped.set(closed_at(&root, 1).is_some());
+            Ok(())
+        },
+    );
+    assert!(closed.is_ok());
+    assert!(!marked_when_stopped.get(), "marked before it was stopped");
+    assert!(closed_at(&root, 1).is_some());
+}
+
+#[test]
+fn a_ready_read_stays_ready_and_its_read_through_and_drafts_stay() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    close(&root, 1, Liveness::Gone, Ok(())).0.unwrap();
+    assert_eq!(status_of(&root, 1), "ready");
+    assert_eq!(error_of(&root, 1), None);
+    assert!(kept(&root, 1));
+}
+
+#[test]
+fn a_running_read_fails_under_its_own_session_and_the_next_in_line_starts() {
+    let (sandbox, ctx) = setup();
+    let root = sandbox.state();
+    open_reader(&root, 1, "running", "open");
+    put(&root, 2, Some("queued"), "20261001T000002Z");
+    let closed = close(&root, 1, Liveness::Alive, Ok(())).0.unwrap();
+    assert!(closed.was_running);
+    assert_eq!(status_of(&root, 1), "failed");
+    assert_eq!(error_of(&root, 1).as_deref(), Some("the reader was closed"));
+    assert!(closed_at(&root, 1).is_some());
+    assert!(kept(&root, 1));
+    // The place it held is free: the queue moves on.
+    let launched = RefCell::new(Vec::new());
+    let done = dispatch_with(
+        &ctx,
+        NOW,
+        &|| true,
+        &gone,
+        &sessions(),
+        &|_, claim: &Claim| {
+            launched.borrow_mut().push(claim.id.clone());
+            Ok(())
+        },
+    );
+    assert_eq!(done.started, vec!["acme/widget#2".to_string()]);
+}
+
+#[test]
+fn a_reader_that_cannot_be_stopped_or_told_leaves_the_record_as_it_was() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "running", "open");
+    let before = record_text(&root, 1);
+    let (closed, stops) = close(&root, 1, Liveness::Alive, Err("not in a tmux pane".into()));
+    assert_eq!(
+        closed,
+        Err(super::CloseError::Failed("not in a tmux pane".to_string()))
+    );
+    assert_eq!(stops, 1);
+    assert_eq!(record_text(&root, 1), before);
+    let (closed, stops) = close(&root, 1, Liveness::CannotTell, Ok(()));
+    assert!(matches!(closed, Err(super::CloseError::Failed(_))));
+    assert_eq!(stops, 0);
+    assert_eq!(record_text(&root, 1), before);
+}
+
+#[test]
+fn there_is_no_reader_to_close_without_a_record_a_process_or_an_open_reader() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let (closed, _) = close(&root, 1, Liveness::Gone, Ok(()));
+    assert_eq!(closed, Err(super::CloseError::NoRecord));
+    // Still being started: no process recorded yet.
+    hung(&root, 1, None, None);
+    let (closed, _) = close(&root, 1, Liveness::Gone, Ok(()));
+    assert_eq!(closed, Err(super::CloseError::NoReader));
+    // Failed, queued and closed reads have none either.
+    for status in ["failed", "queued"] {
+        open_reader(&root, 1, status, "open");
+        assert_eq!(
+            close(&root, 1, Liveness::Gone, Ok(())).0,
+            Err(super::CloseError::NoReader),
+            "{status}"
+        );
+    }
+    open_reader(&root, 1, "ready", "open");
+    close(&root, 1, Liveness::Gone, Ok(())).0.unwrap();
+    assert_eq!(
+        close(&root, 1, Liveness::Gone, Ok(())).0,
+        Err(super::CloseError::NoReader)
+    );
+}
+
+fn sweep(
+    root: &Path,
+    alive: Liveness,
+    stop: impl Fn(&others::HungReader) -> Result<(), String>,
+) -> Vec<(String, String)> {
+    close_finished_readers_with(root, NOW, &|_, _| alive, &stop)
+}
+
+#[test]
+fn the_sweep_closes_the_readers_of_merged_and_closed_prs_only() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "merged");
+    open_reader(&root, 2, "running", "closed");
+    open_reader(&root, 3, "ready", "open");
+    // Approved, or the request withdrawn: done, but the PR is open, so the reader stays.
+    for (number, review) in [
+        (4, json!(null)),
+        (
+            5,
+            json!({"state": "approved", "submittedAt": "20261002T000000Z", "commit": "h1"}),
+        ),
+    ] {
+        open_reader(&root, number, "ready", "open");
+        let path = root.join(format!("others/acme~widget~{number}.json"));
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["requested"] = json!(false);
+        v["myReview"] = review;
+        std::fs::write(&path, v.to_string()).unwrap();
+        let pr = others::pr_of(&format!("acme/widget#{number}")).unwrap();
+        let state = others::record(&root, &pr).unwrap().unwrap().state;
+        assert_eq!(state, others::State::Done, "{number}");
+    }
+    let failures = sweep(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_some());
+    assert!(closed_at(&root, 2).is_some());
+    assert_eq!(status_of(&root, 2), "failed");
+    assert_eq!(
+        error_of(&root, 2).as_deref(),
+        Some("the PR is no longer open")
+    );
+    assert_eq!(status_of(&root, 1), "ready");
+    assert!(closed_at(&root, 3).is_none());
+    assert!(closed_at(&root, 4).is_none());
+    assert!(closed_at(&root, 5).is_none());
+}
+
+#[test]
+fn the_sweep_skips_a_reader_already_closed_and_goes_on_past_one_that_fails() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "merged");
+    close(&root, 1, Liveness::Gone, Ok(())).0.unwrap();
+    let before = record_text(&root, 1);
+    open_reader(&root, 2, "ready", "merged");
+    open_reader(&root, 3, "ready", "closed");
+    let failures = sweep(&root, Liveness::Alive, |_| Ok(()));
+    assert!(failures.is_empty());
+    assert_eq!(record_text(&root, 1), before, "closed again");
+    assert!(closed_at(&root, 2).is_some());
+    assert!(closed_at(&root, 3).is_some());
+
+    // One that cannot be stopped is reported, left open, and does not stop the rest.
+    open_reader(&root, 2, "ready", "merged");
+    open_reader(&root, 3, "ready", "closed");
+    let failures = sweep(&root, Liveness::Alive, |reader| {
+        let _ = reader;
+        Err("not in a tmux pane".to_string())
+    });
+    assert_eq!(failures.len(), 2);
+    assert_eq!(
+        failures[0],
+        (
+            "acme/widget#2".to_string(),
+            "not in a tmux pane".to_string()
+        )
+    );
+    assert!(closed_at(&root, 2).is_none());
+    let stopped = std::cell::RefCell::new(Vec::new());
+    let failures = sweep(&root, Liveness::Alive, |reader| {
+        stopped.borrow_mut().push(reader.session_id.clone());
+        if stopped.borrow().len() == 1 {
+            Err("stuck".to_string())
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(failures.len(), 1);
+    assert!(closed_at(&root, 2).is_none());
+    assert!(closed_at(&root, 3).is_some());
+}
+
+#[test]
+fn only_a_running_read_of_a_finished_pr_frees_a_place_for_the_next() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    assert!(!frees_a_place(&root));
+    open_reader(&root, 1, "ready", "merged");
+    open_reader(&root, 2, "running", "open");
+    assert!(!frees_a_place(&root), "handed in, or the PR still open");
+    open_reader(&root, 3, "running", "closed");
+    assert!(frees_a_place(&root));
+    close(&root, 3, Liveness::Gone, Ok(())).0.unwrap();
+    assert!(!frees_a_place(&root), "already closed");
+}
+
+#[test]
+fn a_reader_whose_pr_was_approved_is_closed_once_a_sync_has_seen_it_merged() {
+    // What the sync leaves after it reads an approved (done) PR that was merged since.
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let path = root.join("others/acme~widget~1.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["requested"] = json!(false);
+    v["myReview"] = json!({"state": "approved", "submittedAt": "20261002T000000Z", "commit": "h1"});
+    std::fs::write(&path, v.to_string()).unwrap();
+    assert!(sweep(&root, Liveness::Gone, |_| Ok(())).is_empty());
+    assert!(closed_at(&root, 1).is_none(), "open PR: kept");
+    v["prState"] = json!("merged");
+    std::fs::write(&path, v.to_string()).unwrap();
+    assert!(sweep(&root, Liveness::Gone, |_| Ok(())).is_empty());
+    assert!(closed_at(&root, 1).is_some());
+}
+
+#[test]
+fn the_sweep_has_nothing_to_do_without_a_finished_pr_with_an_open_reader() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    assert!(!has_finished_reader(&root));
+    open_reader(&root, 1, "ready", "open");
+    assert!(!has_finished_reader(&root));
+    open_reader(&root, 2, "ready", "merged");
+    assert!(has_finished_reader(&root));
+    close(&root, 2, Liveness::Gone, Ok(())).0.unwrap();
+    assert!(!has_finished_reader(&root));
+}
+
+#[test]
+fn a_stop_that_fails_because_another_closer_got_there_first_still_closes() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let pr = others::pr_of("acme/widget#1").unwrap();
+    let asked = std::cell::Cell::new(0);
+    // Alive when looked at, gone when asked again after the stop failed.
+    let alive = |_: u32, _: Option<&str>| {
+        asked.set(asked.get() + 1);
+        if asked.get() == 1 {
+            Liveness::Alive
+        } else {
+            Liveness::Gone
+        }
+    };
+    let closed = close_reader_with(
+        &root,
+        &pr,
+        NOW,
+        "x",
+        &alive,
+        &|_| Err("no such pane".into()),
+    );
+    assert!(closed.is_ok());
+    assert!(closed_at(&root, 1).is_some());
+    // Still alive after a failed stop: the failure stands and nothing is written.
+    open_reader(&root, 2, "ready", "open");
+    let pr2 = others::pr_of("acme/widget#2").unwrap();
+    let still = close_reader_with(&root, &pr2, NOW, "x", &|_, _| Liveness::Alive, &|_| {
+        Err("no pane".into())
+    });
+    assert_eq!(still, Err(super::CloseError::Failed("no pane".to_string())));
+    assert!(closed_at(&root, 2).is_none());
 }

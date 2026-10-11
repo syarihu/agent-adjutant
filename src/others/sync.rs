@@ -22,7 +22,7 @@ use super::store;
 /// round the PR poll gives itself.
 const SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long a record that is done stays, in seconds.
+/// How long a record that is done stays, in seconds, unless a reader is still open on it.
 const DONE_KEPT_SECS: i64 = 86_400;
 
 /// What a sync came to.
@@ -32,7 +32,7 @@ pub struct Synced {
     pub last_sync: LastSync,
     /// The records whose request, or re-request, is new since the last sync.
     pub arrived: Vec<String>,
-    /// The records taken away for having been done for a day.
+    /// The records taken away for having been done for a day (not one with a reader still open).
     pub removed: Vec<String>,
     pub records: Vec<Record>,
 }
@@ -71,13 +71,15 @@ pub(crate) fn sync_with(root: &Path, scope: &Scope, now: i64, gh: Gh) -> Result<
         github::search(gh, &scope.owners, deadline).map_err(whole)?
     };
 
-    // The hits, and every record that is not done: GitHub stops listing you as a reviewer once
+    // The hits, and every record that is not done (or is, with a reader still open): GitHub stops listing you as a reviewer once
     // you have reviewed, so a PR is read by number whether or not the search found it.
     let mut targets = hits;
     targets.sort_by_key(|h| store::id_of(&h.pr));
     let mut tracked: Vec<Hit> = store::list(root)
         .into_iter()
-        .filter(|r| r.state != State::Done)
+        // A done record is read again only while a reader is open on it: the PR may be merged since, and
+        // closing its reader waits for that.
+        .filter(|r| r.state != State::Done || r.ai.as_ref().is_some_and(|ai| ai.reader_open()))
         .filter_map(|r| {
             Some(Hit {
                 pr: pr_ref(&r.url, None)?,
@@ -329,8 +331,12 @@ fn apply(
 /// checked again: it may have been written, or read by a sync, since the listing.
 fn remove_done(root: &Path, now: i64) -> Vec<String> {
     let cutoff = utc_stamp(now - DONE_KEPT_SECS);
+    // A reader still open on it is kept: it is removed once the reader is closed, which a sync does
+    // when the PR is merged or closed, and which the person can do before.
     let expired = |r: &Record| {
-        r.state == State::Done && r.done_at.as_deref().is_some_and(|at| at < cutoff.as_str())
+        r.state == State::Done
+            && r.done_at.as_deref().is_some_and(|at| at < cutoff.as_str())
+            && !r.ai.as_ref().is_some_and(|ai| ai.reader_open())
     };
     let mut removed = Vec::new();
     for record in store::list(root).into_iter().filter(|r| expired(r)) {

@@ -1680,6 +1680,53 @@ mod others_drafts {
         assert_eq!(body["nothing"], true, "{body}");
     }
 
+    /// `POST /api/others/reader/close` with `body`.
+    fn close(resident: &Resident, body: &Value) -> (u16, Value) {
+        let mut req = request("POST", "/api/others/reader/close", &[]);
+        req.body = body.to_string().into_bytes();
+        let mut out = Vec::new();
+        route_resident(resident, &req, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let status = text.split(' ').nth(1).unwrap().parse().unwrap();
+        let body = text.split_once("\r\n\r\n").unwrap().1;
+        (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn closing_a_reader_answers_by_what_it_came_to() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        assert_eq!(close(&r, &json!({})).0, 400);
+        assert_eq!(close(&r, &json!({"id": "nope"})).0, 400);
+        // A PR adj has no record of.
+        assert_eq!(close(&r, &json!({"id": "acme/widget#7"})).0, 404);
+
+        // A record with no read, so no reader.
+        put_record(root.path());
+        let (status, body) = close(&r, &json!({"id": "acme/widget#7"}));
+        assert_eq!((status, body["why"].as_str()), (409, Some("no-reader")));
+        assert!(body["error"].is_string());
+
+        // A reader whose process is gone (a child that has been waited for) is closed and the read
+        // stays; a running one would fail.
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let gone = child.id();
+        child.wait().unwrap();
+        let path = root.path().join("others/acme~widget~7.json");
+        let mut record: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        record["ai"] = json!({"status": "ready", "sessionId": "sid-a", "pid": gone,
+                              "psStarted": "Thu Oct  1 00:00:02 2026"});
+        std::fs::write(&path, record.to_string()).unwrap();
+        let (status, body) = close(&r, &json!({"id": "acme/widget#7"}));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["record"]["ai"]["status"], "ready");
+        assert!(body["record"]["ai"]["readerClosedAt"].is_string());
+        assert!(body["warning"].is_null());
+        // Closed already: nothing open to close.
+        assert_eq!(close(&r, &json!({"id": "acme/widget#7"})).0, 409);
+    }
+
     /// Send a handshake to `upgrade_resident` over a real socket and say what came back.
     fn upgrade(resident: &Resident, path: &str, id: Option<&str>) -> Vec<u8> {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -412,15 +412,15 @@ function prDiffShellHtml(e, res) {
 }
 
 const PRD_ANN_LABEL = { tr: '訳', ex: '解説' };
-function prdAnnHtml(idx, ann, at) {
+function prdAnnHtml(idx, ann, at, readerOpen = true) {
   const kind = ann.kind === 'tr' ? 'tr' : 'ex';
   const acts = kind === 'ex'
-    ? `<div class="prd-ann-acts"><button type="button" class="btn-m3-text pr-act" data-prd-todraft="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}>下書きに</button><button type="button" class="btn-m3-text pr-act" data-prd-ask="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}>聞く</button></div>` : '';
+    ? `<div class="prd-ann-acts"><button type="button" class="btn-m3-text pr-act" data-prd-todraft="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}>下書きに</button><button type="button" class="btn-m3-text pr-act" data-prd-ask="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}${readerOpen ? '' : ` disabled title="${esc(PR_ASK_OFF_WHY)}"`}>聞く</button></div>` : '';
   return `<div class="prd-ann prd-ann-${kind}" data-prd-ann="${idx}"><span class="prd-ann-k">${PRD_ANN_LABEL[kind]}</span><div class="prd-ann-text">${esc(ann.text)}</div>${acts}</div>`;
 }
 
-/* A file's hunks, every line of them, with the annotations under their lines. */
-function prDiffBodyHtml(e, res, read) {
+/* A file's hunks, every line of them, with the annotations under their lines. `readerOpen` false turns the annotations' 「聞く」 off. */
+function prDiffBodyHtml(e, res, read, readerOpen = true) {
   const anns = read?.annotations || [];
   const f = e.file;
   const lost = (res?.unanchored || []).map(idx => `<div class="prd-ann prd-ann-lost"><span class="prd-ann-k">行が見つからない注釈</span> <code>${esc(anns[idx].anchor)}</code>`
@@ -436,7 +436,7 @@ function prDiffBodyHtml(e, res, read) {
     const line = `<div class="prd-l ${cls[l.kind]}${res?.tint.has(l.k) ? ' prd-tint' : ''}" data-prd-i="${l.k}"><span class="prd-no">${no}</span>`
       + `<span class="prd-sign">${l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span><span class="prd-code">${esc(l.text)}</span>`
       + `<button type="button" class="prd-plus" data-prd-plus="${e.i}:${side}:${no}" aria-label="${esc(label)}" title="この行に下書き">＋</button></div>`;
-    return line + (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx))).join('');
+    return line + (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx), readerOpen)).join('');
   }).join('')).join('');
   return `${lost}${rows}`;
 }

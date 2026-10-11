@@ -26,8 +26,11 @@ const prReadKey = rec => `${rec?.ai?.sha || ''}|${rec?.ai?.finishedAt || ''}`;
 /* Whether there is a read-through to show, or one on its way from the server: `read` is undefined while it is being fetched. */
 const prHasRead = (rec, read) => !!read || (read === undefined && !!rec?.ai?.sha);
 
-/* The reader's window can be attached to when its record says it is in a tmux window (the middle mounts it, and says so when it cannot). */
-const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && rec.ai.terminal?.backend === 'tmux' && !!rec.ai.terminal.window;
+/* The reader's window can be attached to when its record says it is in a tmux window (the middle mounts it, and says so when it cannot).
+   A reader that was closed has no window, whatever the record still names. */
+const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && !rec.ai.readerClosedAt && rec.ai.terminal?.backend === 'tmux' && !!rec.ai.terminal.window;
+/* Why 「聞く」 is off: it types into the reader's terminal. */
+const PR_ASK_OFF_WHY = 'worker が動いていません';
 /* The boxes the person types a draft in. */
 const PR_BOX_SEL = '.pr-draft-body, .pr-overall';
 /* What the panel and the middle say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
@@ -71,12 +74,14 @@ function prHeadMainHtml(rec) {
       <h2 class="tp-title">${esc(rec?.title)}</h2>
     </div>`;
 }
-/* The panel's head: 「GitHub で開く」, 「拡大」 and close (panelBtnsHtml adds the close). */
-function prHeadHtml(rec) {
+/* The panel's head: 「GitHub で開く」, 「下読みを閉じる」 (while a reader runs that has a process to stop), 「拡大」 and close (panelBtnsHtml adds the close). */
+function prHeadHtml(rec, opts = {}) {
   const url = httpUrl(rec?.url);
   const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）">GitHub で開く</a>` : '';
+  // `opts.closing`: a close of this page's is out, and it is not asked for twice.
+  const closeReader = prReaderOpen(rec) && rec.ai.pid ? `<button type="button" class="btn-m3-text tp-jump" data-pr-close-reader${opts.closing ? ' disabled' : ''} title="読み取り専用の worker を止めて、ウィンドウを閉じます">${opts.closing ? '閉じています…' : '下読みを閉じる'}</button>` : '';
   const expand = '<button type="button" class="tool-btn" data-pr-expand aria-haspopup="dialog" title="拡大" aria-label="PR 全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>';
-  return prHeadMainHtml(rec) + panelBtnsHtml(open + expand);
+  return prHeadMainHtml(rec) + panelBtnsHtml(open + closeReader + expand);
 }
 
 /* ── the sections: `{ key, label, html }`, or null when there is nothing to say ── */
@@ -137,7 +142,7 @@ function prThree(read) {
   return { key: 'top:three', label: '3行でいうと', html: `${line('目的', t.purpose)}${line('やり方', t.approach)}${line('影響', t.impact)}<p class="pr-essence"><b>この差分の本質:</b> ${esc(t.essence)}</p>` };
 }
 
-/* 見るポイント. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there). */
+/* 見るポイント. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off. */
 function prPoints(read, opts = {}) {
   const points = read?.points || [];
   if (!points.length) return null;
@@ -147,7 +152,7 @@ function prPoints(read, opts = {}) {
       <div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[p.level] || p.level)}</span>${prLoc(p.path, p.line)}</div>
       <div class="pr-point-title">${esc(p.title)}</div>
       <div class="pr-point-why">${esc(p.why)}</div>
-      <div class="pr-point-acts">${opts.diff ? `<button type="button" class="btn-m3-text pr-act" data-pr-goto-diff="${i}">差分で見る</button>` : ''}<button type="button" class="btn-m3-text pr-act" data-pr-ask="${i}">聞く</button><button type="button" class="btn-m3-text pr-act" data-pr-todraft="${i}">下書きに</button></div>
+      <div class="pr-point-acts">${opts.diff ? `<button type="button" class="btn-m3-text pr-act" data-pr-goto-diff="${i}">差分で見る</button>` : ''}<button type="button" class="btn-m3-text pr-act" data-pr-ask="${i}"${opts.readerOpen === false ? ` disabled title="${esc(PR_ASK_OFF_WHY)}"` : ''}>聞く</button><button type="button" class="btn-m3-text pr-act" data-pr-todraft="${i}">下書きに</button></div>
     </li>`;
   });
   return { key: 'points:list', label: '見るポイント', badge: String(points.length), html: `<ul class="pr-points">${items.join('')}</ul>` };
@@ -291,7 +296,7 @@ function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
     !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking) : null,
     prThree(read),
     prSplitProposal(read),
-    prPoints(read, { diff: opts.diff }),
+    prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec) }),
     prOrder(read, rec, { diff: opts.diff }),
     prDecisions(read),
     prTests(read),
@@ -325,9 +330,16 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   if (oor && OTHERS_LIVE.includes(rec?.state) && offers) {
     const why = ai.kind !== 'none' && ai.text ? `<div class="tp-line">${esc(ai.text)}</div>` : '';
     const gone = opts.ended != null ? '<div class="tp-muted">worker は終わっています。</div>' : '';
-    return `<div class="tp-ph-head">レビュー対象外</div>${prOorFilesHtml(oor)}${why}${gone}`
+    const closed = rec?.ai?.readerClosedAt ? '<div class="tp-line">AI 下読みの worker を閉じました</div>' : '';
+    return `<div class="tp-ph-head">レビュー対象外</div>${prOorFilesHtml(oor)}${why}${closed}${gone}`
       + '<div class="tp-muted">worker はファイルの構成と hunk の見出しだけを読んで、この PR の分割案を下書きにします。</div>'
       + prOorButtonsHtml(prOorActions(rec, opts.read, ai, !!opts.readError), hubView, opts.asking);
+  }
+  // Closed on purpose: nothing to reconnect to, and the read-through is all there is.
+  if (rec?.ai?.readerClosedAt) {
+    const again = OTHERS_LIVE.includes(rec.state)
+      ? `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, opts.asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(opts.asking ? '依頼中…' : '下読みし直す')}</span></button>` : '';
+    return '<div class="tp-ph-head">AI 下読みの worker を閉じました</div><div class="tp-muted">下読み・下書きはパネルに残っています。</div>' + again;
   }
   if (opts.ended != null) {
     return '<div class="tp-ph-head">AI 下読みの worker は終わっています</div><div class="tp-muted">下読みはパネルに残っています。</div>'

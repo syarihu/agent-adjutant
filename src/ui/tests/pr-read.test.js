@@ -468,3 +468,61 @@ test('a read-through that cannot be fetched does not hide the buttons of a PR ou
   assert.ok(prDetailHtml(r, undefined, [r], hub, T0, { readError: 'boom' }).includes('data-pr-split'));
   assert.ok(prMiddleHtml(r, [r], hub, T0, { read: undefined, readError: true }).includes('data-pr-split'));
 });
+
+const open = (extra = {}) => rec({ ai: { status: 'running', sha: null, launchedAt: '20261001T000000Z', sessionId: 's1', pid: 4242, terminal: { backend: 'tmux', window: '@3' }, ...extra } });
+
+test('「下読みを閉じる」 is in the head only while a reader runs that has a process, and before 「拡大」', () => {
+  const head = prHeadHtml(open());
+  assert.ok(head.includes('data-pr-close-reader') && head.includes('下読みを閉じる'));
+  assert.ok(head.indexOf('data-pr-close-reader') < head.indexOf('data-pr-expand') && head.indexOf('GitHub で開く') < head.indexOf('data-pr-close-reader'));
+  assert.ok(prHeadHtml(rec({ ai: { ...open().ai, status: 'ready' } })).includes('data-pr-close-reader'));
+  // No reader, no window, no process yet, a closed one, and a read that failed or waits.
+  assert.ok(!prHeadHtml(rec({ ai: null })).includes('data-pr-close-reader'));
+  assert.ok(!prHeadHtml(rec()).includes('data-pr-close-reader'));
+  assert.ok(!prHeadHtml(open({ pid: undefined })).includes('data-pr-close-reader'));
+  assert.ok(!prHeadHtml(open({ readerClosedAt: '20261001T000009Z' })).includes('data-pr-close-reader'));
+  assert.ok(!prHeadHtml(open({ status: 'failed' })).includes('data-pr-close-reader'));
+  assert.ok(!prHeadHtml(open({ status: 'queued' })).includes('data-pr-close-reader'));
+  assert.strictEqual(run('prReaderOpen')(open({ readerClosedAt: 'x' })), false);
+});
+
+test('the middle of a closed reader says so and offers 「下読みし直す」, and wins over an ended terminal', () => {
+  const closed = open({ status: 'ready', readerClosedAt: '20261001T000009Z' });
+  const html = prMiddleHtml(closed, [closed], hub, T0);
+  assert.ok(html.includes('AI 下読みの worker を閉じました') && html.includes('下読み・下書きはパネルに残っています。'));
+  assert.match(html, /data-pr-ai[^>]*>.*下読みし直す/s);
+  const ended = prMiddleHtml(closed, [closed], hub, T0, { ended: 4404 });
+  assert.ok(ended.includes('AI 下読みの worker を閉じました') && !ended.includes('data-pr-reconnect') && !ended.includes('終わっています'));
+  assert.ok(prMiddleHtml(closed, [closed], { canRead: false, why: 'stopped' }, T0).includes('disabled title="stopped"'));
+  assert.ok(prMiddleHtml(closed, [closed], hub, T0, { asking: true }).includes('依頼中…'));
+  // A PR that left review has nothing to ask again.
+  const done = { ...closed, state: 'done' };
+  const gone = prMiddleHtml(done, [done], hub, T0);
+  assert.ok(gone.includes('AI 下読みの worker を閉じました') && !gone.includes('data-pr-ai'));
+  // Not closed: the usual words.
+  assert.ok(!prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404 }).includes('を閉じました'));
+});
+
+test('「聞く」 is disabled while no reader runs', () => {
+  const on = prDetailHtml(open(), read(), [open()], hub, T0);
+  assert.ok(/data-pr-ask="0">聞く/.test(on) && !/data-pr-ask="0" disabled/.test(on));
+  for (const r of [rec(), open({ readerClosedAt: '20261001T000009Z' }), rec({ ai: null })]) {
+    const off = prDetailHtml(r, read(), [r], hub, T0);
+    assert.match(off, /data-pr-ask="0" disabled title="worker が動いていません">聞く/);
+    assert.match(off, /data-pr-ask="1" disabled/);
+  }
+});
+
+test('a closed reader of a PR out of review is said in its middle too, with the split buttons kept', () => {
+  const closed = big({ ai: { status: 'failed', mode: 'split', error: 'the reader was closed', readerClosedAt: '20261001T000009Z' }, state: 'requested' });
+  const html = prMiddleHtml(closed, [closed], hub, T0);
+  assert.ok(html.includes('レビュー対象外') && html.includes('AI 下読みの worker を閉じました') && html.includes('data-pr-split'));
+  assert.ok(!prMiddleHtml(big(), [big()], hub, T0).includes('を閉じました'));
+});
+
+test('「下読みを閉じる」 is disabled while this page\'s close is out', () => {
+  const head = prHeadHtml(open(), { closing: true });
+  assert.match(head, /data-pr-close-reader disabled/);
+  assert.ok(!/data-pr-close-reader disabled/.test(prHeadHtml(open())));
+  assert.ok(!/data-pr-close-reader disabled/.test(prHeadHtml(open(), { closing: false })));
+});

@@ -575,11 +575,11 @@ when you last typed into it.
 
 The PRs that asked for your review are kept apart from tasks, one record each, in the repositories of the
 owners adj has a board for. `POST /api/others/sync` (the resident only) reads them from GitHub: the open PRs that
-ask for you directly, and every record not yet done, by number. It runs only when asked, never at start or on a timer.
+ask for you directly, and every record not yet done (or done with a reader still open), by number. It runs only when asked, never at start or on a timer.
 `GET /api/others` returns `{now, lastSync, records, hub}`; each record carries the PR's title, author, branches, head
 SHA, diff size with the files, CI, reviewers, your last review and the commits pushed since, and a derived `state`
 (`requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done`). A record done for a day is removed by the next
-sync. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
+sync, unless a reader is still open on it. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
 
 **AI 下読み.** The other half of the switch lists those records, one group per repository (marked when adj has no board for it), the oldest request
 first and the done ones last, with 「同期」 and the time of the last sync, and a chip per repository to narrow the list. A row has the PR's title, number, author,
@@ -594,12 +594,12 @@ The hub's own procedure no longer lists these PRs in its terminal: it points at 
 `--hub @review`; it conflicts with `--repo`) starts it from any directory, in `<state>/review`, and 「hub を起動」 on its row
 (`POST /api/others/hub/start`, `terminal.preset: "tmux"` only) does the same. It is not in 「ボード」. A read-through is asked for
 with the row's button (`POST /api/others/ai` with `{"id": "owner/repo#N"}`, and `"mode": "split"` for a split proposal of a PR that is out of review; 409 `hub-stopped` while the hub is down, so nothing is
-queued) or `adj review request --pr <URL|owner/repo#N>` (`--split` for the proposal). Never by a sync. At most 3 readers run at once and the rest wait in the
+queued) or `adj review request --pr <URL|owner/repo#N>` (`--split` for the proposal). A sync never asks for a read, though a place it frees by closing a reader may start the next one in the queue. At most 3 readers run at once and the rest wait in the
 order asked. Each reader is a window of its own, in an empty directory, with no checkout and no `gh`: `adj review context --pr <id> --out .`
 writes the diff, the body, the commit messages and the review comments next to it (read-only requests, no mutation), and the reader hands in one
 JSON file with `adj review submit --pr <id> --file read-through.json`, checked against the schema before anything is stored (a reader that cannot finish says so with `adj review fail --pr <id> --why <text>`, which frees its place and lets the PR be asked again, and speaks to the hub only with `adj review say` (it can reach no other hub); a read stuck in `running` for 30 minutes is taken over by a new request once its old reader is gone or has been stopped (its tmux window is closed), and otherwise stays). It
 cannot push, comment or review. That is enforced for Claude by the default `reviewerRunner`; for another agent it is the `adj-reviewer`
-procedure's rule, so set a `reviewerRunner` that restricts it. `GET /api/others/read?id=<owner/repo#N>` answers the stored read-through, and `GET /api/others/diff?id=<owner/repo#N>` the diff the reader read (`{id, sha, bytes, diff}`): it is kept with the read-through at its head and removed with it, an empty diff is `""`, and one over 8 MiB is `null` with its size. When the PR gets a new head, the read-through is kept and shown as made at the old one
+procedure's rule, so set a `reviewerRunner` that restricts it. A reader stays running after it hands in, until the board's 「下読みを閉じる」 closes it (`POST /api/others/reader/close` with `{"id": "owner/repo#N"}`; 409 `no-reader` when none is open) or a sync finds its PR merged or closed; closing keeps the read-through and the drafts, and a read that was running is failed and can be asked for again. `GET /api/others/read?id=<owner/repo#N>` answers the stored read-through, and `GET /api/others/diff?id=<owner/repo#N>` the diff the reader read (`{id, sha, bytes, diff}`): it is kept with the read-through at its head and removed with it, an empty diff is `""`, and one over 8 MiB is `null` with its size. When the PR gets a new head, the read-through is kept and shown as made at the old one
 (「下読みし直す」), and nothing is read again by itself. The schema and the queue rules are in
 [docs/architecture.md](docs/architecture.md#the-read-through).
 

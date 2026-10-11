@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use crate::lifecycle::hub::{HubStart, TabOutcome, start_hub};
-use crate::lifecycle::review::{self, AskError, Asked};
-use crate::others::{ReadMode, pr_of};
+use crate::lifecycle::review::{self, AskError, Asked, CloseError, ClosedReader};
+use crate::others::{self, ReadMode, SyncError, Synced, pr_of};
 use crate::registry;
 
 mod reader_window;
@@ -27,6 +27,35 @@ pub enum RequestRefused {
 pub fn request(root: &Path, id: &str, mode: ReadMode) -> Result<Asked, RequestRefused> {
     let pr = pr_of(id).ok_or(RequestRefused::BadId)?;
     review::request(root, &pr, mode).map_err(RequestRefused::Refused)
+}
+
+/// Why a reader was not closed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloseRefused {
+    /// The text names no PR: it is neither a pull request URL nor `owner/repo#N`.
+    BadId,
+    Refused(CloseError),
+}
+
+/// Close the reader of the PR `id` names: its window goes, and its read-through, drafts and
+/// record stay.
+pub fn close(root: &Path, id: &str) -> Result<ClosedReader, CloseRefused> {
+    let pr = pr_of(id).ok_or(CloseRefused::BadId)?;
+    review::close_reader(root, &pr).map_err(CloseRefused::Refused)
+}
+
+/// Sync the PRs asked of you, and then close the readers of the ones the sync found merged or
+/// closed. The readers are closed once the sync's lock is let go: stopping one waits for its
+/// process, and a second sync must not be held up behind that.
+///
+/// The records in the answer are read again after the closes, so they carry `readerClosedAt`.
+/// The failures are the PRs whose reader could not be closed, by id, and why; the sync itself
+/// stands.
+pub fn sync(root: &Path) -> Result<(Synced, Vec<(String, String)>), SyncError> {
+    let mut synced = others::sync(root)?;
+    let failures = review::close_finished_readers(root);
+    synced.records = others::list(root);
+    Ok((synced, failures))
 }
 
 /// Start the code-review hub in a new window, as `adj hub --review --tab` would.

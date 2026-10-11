@@ -55,6 +55,7 @@ fn blank_ai() -> AiRead {
         error: None,
         counts: None,
         mode: None,
+        reader_closed_at: None,
         stale: false,
         extra: Default::default(),
     }
@@ -2702,4 +2703,111 @@ fn the_mode_of_the_read_the_drafts_came_from_is_kept_when_given() {
     // A save without it is a file of a read-through, and the old key does not linger.
     let saved = save(root.path(), 1, &drafts_input()).unwrap();
     assert!(saved.get("fromMode").is_none());
+}
+
+// ── closing a reader ─────────────────────────────────────────────────
+
+fn reader_of(status: &str, session: &str) -> Record {
+    let mut r = record(1);
+    r.ai = Some(AiRead {
+        status: status.to_string(),
+        session_id: Some(session.to_string()),
+        pid: Some(5),
+        ..blank_ai()
+    });
+    r
+}
+
+#[test]
+fn closing_a_reader_of_another_session_or_a_read_that_is_over_changes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    for status in ["running", "ready"] {
+        put(root.path(), reader_of(status, "sid-a"));
+        let before = load(root.path(), 1);
+        assert_eq!(
+            close_read(root.path(), &pr(1), "sid-b", "why", NOW),
+            Ok(ClosedRead::NotCurrent),
+            "{status}"
+        );
+        assert_eq!(load(root.path(), 1), before);
+    }
+    for status in ["queued", "failed"] {
+        put(root.path(), reader_of(status, "sid-a"));
+        assert_eq!(
+            close_read(root.path(), &pr(1), "sid-a", "why", NOW),
+            Ok(ClosedRead::NotCurrent),
+            "{status}"
+        );
+        assert_eq!(load(root.path(), 1).ai.unwrap().reader_closed_at, None);
+    }
+}
+
+#[test]
+fn closing_a_running_read_fails_it_and_a_ready_one_stays_ready() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), reader_of("running", "sid-a"));
+    let Ok(ClosedRead::Closed {
+        record,
+        was_running,
+    }) = close_read(root.path(), &pr(1), "sid-a", "the  reader\nwas closed", NOW)
+    else {
+        panic!("not closed");
+    };
+    assert!(was_running);
+    let ai = record.ai.unwrap();
+    assert_eq!(ai.status, "failed");
+    assert_eq!(ai.error.as_deref(), Some("the reader was closed"));
+    assert_eq!(ai.reader_closed_at, Some(utc_stamp(NOW)));
+    assert!(ai.finished_at.is_some());
+
+    put(root.path(), reader_of("ready", "sid-a"));
+    let Ok(ClosedRead::Closed { was_running, .. }) =
+        close_read(root.path(), &pr(1), "sid-a", "x", NOW)
+    else {
+        panic!("not closed");
+    };
+    assert!(!was_running);
+    let ai = load(root.path(), 1).ai.unwrap();
+    assert_eq!((ai.status.as_str(), ai.error), ("ready", None));
+    assert_eq!(ai.reader_closed_at, Some(utc_stamp(NOW)));
+    // A closed reader is no longer an open one.
+    assert_eq!(open_reader(root.path(), &pr(1)), Ok(None));
+}
+
+#[test]
+fn asking_again_clears_the_close_and_the_key_round_trips() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), reader_of("ready", "sid-a"));
+    close_read(root.path(), &pr(1), "sid-a", "x", NOW).unwrap();
+    let text = std::fs::read_to_string(root.path().join("others/acme~widget~1.json")).unwrap();
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["ai"]["readerClosedAt"], json!(utc_stamp(NOW)));
+    // The key is known, so it is not kept as an unknown one.
+    assert!(load(root.path(), 1).ai.unwrap().extra.is_empty());
+
+    request_read(root.path(), &pr(1), NOW + 1, ReadMode::Read).unwrap();
+    let ai = load(root.path(), 1).ai.unwrap();
+    assert_eq!(ai.reader_closed_at, None);
+    let text = std::fs::read_to_string(root.path().join("others/acme~widget~1.json")).unwrap();
+    assert!(!text.contains("readerClosedAt"));
+}
+
+#[test]
+fn a_record_from_before_the_key_loads_with_none() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), reader_of("ready", "sid-a"));
+    let text = std::fs::read_to_string(root.path().join("others/acme~widget~1.json")).unwrap();
+    assert!(!text.contains("readerClosedAt"));
+    assert_eq!(load(root.path(), 1).ai.unwrap().reader_closed_at, None);
+}
+
+#[test]
+fn a_reader_with_no_process_yet_is_not_open() {
+    let mut r = reader_of("ready", "sid-a");
+    assert!(r.ai.as_ref().unwrap().reader_open());
+    r.ai.as_mut().unwrap().pid = None;
+    assert!(!r.ai.as_ref().unwrap().reader_open());
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), r);
+    assert_eq!(open_reader(root.path(), &pr(1)), Ok(None));
 }

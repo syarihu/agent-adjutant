@@ -196,8 +196,12 @@ function othersAiView(rec, records, nowSecs) {
       const parts = [['要注意', c?.attention], ['確認', c?.check], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
       return { kind: 'done', text: ['下読み済み', ...parts].join(' · '), action: null };
     }
-    case 'failed':
-      return view('failed', `${split ? '分割案の作成に失敗しました' : 'AI 下読みに失敗しました'}${ai.error ? `: ${ai.error}` : ''}`, live ? 'もう一度 AI 下読み' : null, 'もう一度 分割案');
+    case 'failed': {
+      // Closed by the person (or a sync): the error is only that, so it is said in words of its own.
+      const text = ai.readerClosedAt ? `${split ? '分割案の作成を閉じました' : 'AI 下読みを閉じました'}（途中で止めました）`
+        : `${split ? '分割案の作成に失敗しました' : 'AI 下読みに失敗しました'}${ai.error ? `: ${ai.error}` : ''}`;
+      return view('failed', text, live ? 'もう一度 AI 下読み' : null, 'もう一度 分割案');
+    }
     default:
       return { kind: 'none', text: '', action: null };
   }

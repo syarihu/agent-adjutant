@@ -12,10 +12,10 @@ use super::assets::UI_HTML;
 use super::auth::{page_rings, refuse};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
-use crate::board::review::RequestRefused;
+use crate::board::review::{CloseRefused, RequestRefused};
 use crate::board::view::{boards, others, work};
 use crate::lifecycle::hub::TabOutcome;
-use crate::lifecycle::review::AskError;
+use crate::lifecycle::review::{AskError, CloseError};
 use crate::others::{PushError, ReadMode, Requested, SaveDraftsError, SyncError};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
@@ -144,12 +144,16 @@ pub(super) fn route_resident(
         ),
         // Run on this connection's own thread, as the resident gives each one: a sync takes up
         // to its 30 seconds without holding any other request up.
-        ("POST", "/api/others/sync") => match crate::others::sync(&resident.root) {
-            Ok(synced) => http::json(
-                out,
-                200,
-                &serde_json::to_string(&synced).unwrap_or_default(),
-            ),
+        ("POST", "/api/others/sync") => match crate::board::review::sync(&resident.root) {
+            Ok((synced, failures)) => {
+                let mut answer = serde_json::to_value(&synced).unwrap_or_default();
+                // The sync stands when a reader could not be closed: its words, not an error.
+                if !failures.is_empty() {
+                    answer["closeWarning"] =
+                        json!(crate::transport::wording::close_warning(&failures));
+                }
+                http::json(out, 200, &answer.to_string())
+            }
             Err(SyncError::Busy) => http::json(
                 out,
                 409,
@@ -160,6 +164,7 @@ pub(super) fn route_resident(
             }
         },
         ("POST", "/api/others/ai") => ask_for_read(resident, req, out),
+        ("POST", "/api/others/reader/close") => close_reader(resident, req, out),
         ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
         ("GET", "/api/others/read") => stored_read(resident, req, out),
         ("GET", "/api/others/diff") => stored_diff(resident, req, out),
@@ -221,6 +226,49 @@ fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std
                 out,
                 status,
                 &json!({ "error": crate::transport::wording::review_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// `POST /api/others/reader/close`: close the reader of a PR with `{"id": ...}`. The read-through,
+/// the drafts and the record stay; a read that was running is failed and can be asked for again.
+fn close_reader(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let Some(id) = input.get("id").and_then(serde_json::Value::as_str) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "an id is required" }).to_string(),
+        );
+    };
+    match crate::board::review::close(&resident.root, id) {
+        Ok(closed) => http::json(
+            out,
+            200,
+            &json!({
+                "record": closed.record,
+                // Set when the queue could not be worked after a running read gave up its place.
+                "warning": closed.queue_error.as_deref().map(crate::transport::wording::queue_warning),
+            })
+            .to_string(),
+        ),
+        Err(CloseRefused::BadId) => http::json(
+            out,
+            400,
+            &json!({ "error": format!("not a pull request: {id}") }).to_string(),
+        ),
+        Err(CloseRefused::Refused(why)) => {
+            let (status, because) = match &why {
+                CloseError::NoRecord => (404, None),
+                CloseError::NoReader => (409, Some("no-reader")),
+                CloseError::Failed(_) => (500, None),
+            };
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::close_refusal(&why), "why": because })
                     .to_string(),
             )
         }

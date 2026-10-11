@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
-use crate::lifecycle::review::AskError;
+use crate::lifecycle::review::{AskError, CloseError};
 use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
 use crate::registry::Context;
 use crate::task::{self, Checked, PrState};
@@ -129,4 +129,47 @@ pub fn unknown_read_mode() -> &'static str {
 /// the CLI and the board both say it.
 pub fn queue_warning(why: &str) -> String {
     format!("the queue of readers could not be worked: {why}")
+}
+
+/// Why a reader was not closed, as the board says it.
+pub fn close_refusal(why: &CloseError) -> String {
+    match why {
+        CloseError::NoRecord => {
+            "no such pull request on the list: run 「同期」 on the board first".to_string()
+        }
+        CloseError::NoReader => "no reader is open on that pull request".to_string(),
+        CloseError::Failed(why) => why.clone(),
+    }
+}
+
+/// The readers a sync found merged or closed and could not close, as the board says it: each
+/// stays open, and the next sync tries again.
+pub fn close_warning(failures: &[(String, String)]) -> String {
+    let each: Vec<String> = failures
+        .iter()
+        .map(|(id, why)| {
+            if id.is_empty() {
+                why.clone()
+            } else {
+                format!("{id}: {why}")
+            }
+        })
+        .collect();
+    format!(
+        "could not close the readers of merged or closed pull requests: {}",
+        each.join("; ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_warning;
+
+    #[test]
+    fn a_close_warning_names_each_pr_and_leaves_out_an_empty_id() {
+        let some = [("acme/widget#7".to_string(), "stuck".to_string())];
+        assert!(close_warning(&some).ends_with("pull requests: acme/widget#7: stuck"));
+        let none = [(String::new(), "no config".to_string())];
+        assert!(close_warning(&none).ends_with("pull requests: no config"));
+    }
 }
