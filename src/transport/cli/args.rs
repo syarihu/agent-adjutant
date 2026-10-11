@@ -117,7 +117,7 @@ pub(crate) enum ReviewAction {
     Context(ReviewContextArgs),
     /// Hand in the read-through a reader wrote, checked against the schema in `adj-reviewer`
     Submit(ReviewSubmitArgs),
-    /// Tell the code-review hub something from a reader (a report, or a question for the person)
+    /// Tell the code-review hub something, from a reader only (a report, or a question for the person)
     Say(ReviewSayArgs),
     /// Say that a reader cannot finish: its read is failed, so its place is freed and the PR can be asked again
     Fail(ReviewFailArgs),

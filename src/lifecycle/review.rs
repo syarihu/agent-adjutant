@@ -7,6 +7,7 @@ mod fail;
 mod launch_reader;
 mod request;
 mod run_reader;
+mod stop_reader;
 mod submit;
 #[cfg(test)]
 mod tests;
@@ -16,4 +17,5 @@ pub use fail::*;
 pub use launch_reader::*;
 pub use request::*;
 pub use run_reader::*;
+pub use stop_reader::*;
 pub use submit::*;

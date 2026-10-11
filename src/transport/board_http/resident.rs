@@ -216,7 +216,8 @@ fn start_review_hub(
             200,
             &json!({ "started": false, "running": true, "pid": status.pid }).to_string(),
         ),
-        Err(e) => http::json(out, 400, &json!({ "error": e }).to_string()),
+        // The input was fine and the start itself failed: not the caller's mistake.
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
 }
 

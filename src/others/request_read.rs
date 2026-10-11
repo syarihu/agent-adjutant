@@ -8,8 +8,9 @@ use crate::task::PrRef;
 use super::model::{AiRead, Record, State};
 use super::store;
 
-/// How long a reader may stay `running`, in seconds, before asking again takes its place from
-/// it: a reader that cannot finish and cannot say so would otherwise hold a place for ever.
+/// How long a reader may stay `running`, in seconds, before asking again may take its place from
+/// it (after the old reader has been looked at: see `take_over_read`). A reader that cannot
+/// finish and cannot say so would otherwise hold a place for ever.
 pub const HUNG_READER_SECS: i64 = 30 * 60;
 
 /// What asking came to.
@@ -31,42 +32,9 @@ pub enum RequestError {
     Failed(String),
 }
 
-/// Queue a read of `pr`. The old read-through, if there is one, stays where it is, and is shown
-/// as made at the old head until the new one replaces it: its `sha`, `counts` and file are kept.
-/// `startedAt` is when the person asked, which is also the place in the queue.
-pub fn request_read(root: &Path, pr: &PrRef, now: i64) -> Result<Requested, RequestError> {
-    // No lock file for a record that is not there.
-    match store::load(root, pr) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Err(RequestError::NoRecord),
-        Err(e) => return Err(RequestError::Failed(e)),
-    }
-    let _lock = store::lock(root, &store::stem(pr)).map_err(RequestError::Failed)?;
-    let mut record = match store::load(root, pr) {
-        Ok(Some(record)) => record,
-        Ok(None) => return Err(RequestError::NoRecord),
-        Err(e) => return Err(RequestError::Failed(e)),
-    };
-    if record.state == State::Done {
-        return Err(RequestError::Done);
-    }
-    // Stamps sort as text, so the cut-off is a stamp. A running read with no launch time is not
-    // taken for a hung one: it has not been seen to be old.
-    let hung_before = utc_stamp(now - HUNG_READER_SECS);
-    let waiting = record
-        .ai
-        .as_ref()
-        .is_some_and(|ai| match ai.status.as_str() {
-            "queued" => true,
-            "running" => ai
-                .launched_at
-                .as_deref()
-                .is_none_or(|at| at >= hung_before.as_str()),
-            _ => false,
-        });
-    if waiting {
-        return Ok(Requested::Already(record));
-    }
+/// Put the read of `record` in the queue as a new one: asked now, with no reader. What an earlier
+/// read-through made (`sha`, `counts`, the file) is kept.
+pub(super) fn queue_afresh(record: &mut Record, now: i64) {
     let stamp = utc_stamp(now);
     let ai = record.ai.get_or_insert_with(|| AiRead {
         status: String::new(),
@@ -92,6 +60,38 @@ pub fn request_read(root: &Path, pr: &PrRef, now: i64) -> Result<Requested, Requ
     ai.session_id = None;
     ai.terminal = None;
     ai.error = None;
+}
+
+/// Queue a read of `pr`. The old read-through, if there is one, stays where it is, and is shown
+/// as made at the old head until the new one replaces it: its `sha`, `counts` and file are kept.
+/// `startedAt` is when the person asked, which is also the place in the queue.
+pub fn request_read(root: &Path, pr: &PrRef, now: i64) -> Result<Requested, RequestError> {
+    // No lock file for a record that is not there.
+    match store::load(root, pr) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(RequestError::NoRecord),
+        Err(e) => return Err(RequestError::Failed(e)),
+    }
+    let _lock = store::lock(root, &store::stem(pr)).map_err(RequestError::Failed)?;
+    let mut record = match store::load(root, pr) {
+        Ok(Some(record)) => record,
+        Ok(None) => return Err(RequestError::NoRecord),
+        Err(e) => return Err(RequestError::Failed(e)),
+    };
+    if record.state == State::Done {
+        return Err(RequestError::Done);
+    }
+    // A read that is queued or running is not asked for again, however long it has been running:
+    // whether a reader that has run too long may be replaced is for `take_over_read`, which is
+    // asked only after the old reader has been looked at.
+    if record
+        .ai
+        .as_ref()
+        .is_some_and(|ai| matches!(ai.status.as_str(), "queued" | "running"))
+    {
+        return Ok(Requested::Already(record));
+    }
+    queue_afresh(&mut record, now);
     store::save(root, &mut record).map_err(RequestError::Failed)?;
     Ok(Requested::Queued(record))
 }

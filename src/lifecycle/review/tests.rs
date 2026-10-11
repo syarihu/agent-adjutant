@@ -397,3 +397,119 @@ fn a_queue_that_cannot_be_worked_is_a_warning_beside_the_result_and_not_an_error
     assert!(warning.is_some());
     assert_eq!(status_of(&root, 1), "failed");
 }
+
+// ── a reader that has run too long ───────────────────────────────────
+
+/// A read running under `sid-old` since long before `NOW`, with the process it recorded.
+fn hung(root: &Path, number: u64, pid: Option<u32>, started: Option<&str>) {
+    put(root, number, Some("running"), "20260101T000000Z");
+    let path = root.join(format!("others/acme~widget~{number}.json"));
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["ai"]["launchedAt"] = json!("20260101T000000Z");
+    v["ai"]["sessionId"] = json!("sid-old");
+    if let Some(pid) = pid {
+        v["ai"]["pid"] = json!(pid);
+    }
+    if let Some(started) = started {
+        v["ai"]["psStarted"] = json!(started);
+    }
+    std::fs::write(&path, v.to_string()).unwrap();
+}
+
+fn session_of(root: &Path, number: u64) -> Option<String> {
+    let path = root.join(format!("others/acme~widget~{number}.json"));
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    v["ai"]["sessionId"].as_str().map(str::to_string)
+}
+
+/// Ask again with the old reader's liveness and the way it is stopped handed in; the stop is
+/// counted.
+fn ask_again(
+    root: &Path,
+    alive: Liveness,
+    stop: Result<(), String>,
+) -> (Result<Requested, AskError>, usize) {
+    let stopped = std::cell::Cell::new(0usize);
+    let pr = others::pr_of("acme/widget#1").unwrap();
+    let asked = request_taking_over(root, &pr, NOW, true, true, &|_, _| alive, &|_| {
+        stopped.set(stopped.get() + 1);
+        stop.clone()
+    });
+    (asked, stopped.get())
+}
+
+#[test]
+fn a_hung_reader_whose_process_is_gone_is_taken_over() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    hung(&root, 1, Some(4242), Some("started"));
+    let (asked, stops) = ask_again(&root, Liveness::Gone, Ok(()));
+    assert!(matches!(asked, Ok(Requested::Queued(_))));
+    assert_eq!(stops, 0, "nothing to stop");
+    assert_eq!(status_of(&root, 1), "queued");
+    assert_eq!(session_of(&root, 1), None);
+}
+
+#[test]
+fn a_hung_reader_that_was_never_noted_is_taken_over_with_nothing_to_stop() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    hung(&root, 1, None, None);
+    let (asked, stops) = ask_again(&root, Liveness::Alive, Err("must not be called".into()));
+    assert!(matches!(asked, Ok(Requested::Queued(_))));
+    assert_eq!(stops, 0);
+}
+
+#[test]
+fn a_hung_reader_that_is_alive_is_stopped_and_then_taken_over() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    hung(&root, 1, Some(4242), Some("started"));
+    let (asked, stops) = ask_again(&root, Liveness::Alive, Ok(()));
+    assert!(matches!(asked, Ok(Requested::Queued(_))));
+    assert_eq!(stops, 1);
+    assert_eq!(status_of(&root, 1), "queued");
+}
+
+#[test]
+fn a_hung_reader_that_cannot_be_stopped_or_told_is_left_running() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    hung(&root, 1, Some(4242), Some("started"));
+    // Alive, and the stop fails: nothing is taken over, so no second reader starts beside it.
+    let (asked, stops) = ask_again(&root, Liveness::Alive, Err("not in a tmux pane".into()));
+    assert!(matches!(asked, Ok(Requested::Already(_))));
+    assert_eq!(stops, 1);
+    assert_eq!(status_of(&root, 1), "running");
+    assert_eq!(session_of(&root, 1).as_deref(), Some("sid-old"));
+    // Liveness cannot be told: the reader is not touched at all.
+    let (asked, stops) = ask_again(&root, Liveness::CannotTell, Ok(()));
+    assert!(matches!(asked, Ok(Requested::Already(_))));
+    assert_eq!(stops, 0);
+    assert_eq!(status_of(&root, 1), "running");
+}
+
+#[test]
+fn a_reader_that_has_not_run_too_long_is_not_looked_at() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    // Launched at NOW: running, and young.
+    put(&root, 1, Some("running"), "20261001T000000Z");
+    let path = root.join("others/acme~widget~1.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["ai"]["launchedAt"] = json!(crate::infra::clock::utc_stamp(NOW));
+    v["ai"]["sessionId"] = json!("sid-old");
+    v["ai"]["pid"] = json!(4242);
+    std::fs::write(&path, v.to_string()).unwrap();
+    let pr = others::pr_of("acme/widget#1").unwrap();
+    let asked = request_taking_over(
+        &root,
+        &pr,
+        NOW + 60,
+        true,
+        true,
+        &|_, _| panic!("a reader that is young was looked at"),
+        &|_| panic!("a reader that is young was stopped"),
+    );
+    assert!(matches!(asked, Ok(Requested::Already(_))));
+}

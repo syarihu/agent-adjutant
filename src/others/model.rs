@@ -232,14 +232,21 @@ pub struct AiRead {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// The counts of a read-through that the row shows, taken when it was handed in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The counts of a read-through that the row shows, taken when it was handed in. Stored in the
+/// record, so a count a newer binary adds is kept, and one it leaves out is read as zero rather
+/// than making the record unreadable (architecture rule 10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiCounts {
     /// Points of level `attention`.
+    #[serde(default)]
     pub attention: u32,
     /// Points of level `check`.
+    #[serde(default)]
     pub check: u32,
+    #[serde(default)]
     pub drafts: u32,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// `others/sync.json`: how the last sync went.

@@ -3097,10 +3097,7 @@ fn the_reader_has_no_verdict_to_give_and_is_told_what_to_do_with_a_note() {
 #[test]
 fn a_superseded_reader_is_told_to_stop_and_replies_are_not_entries() {
     let reader = render(find("adj-reviewer").unwrap(), "");
-    assert!(
-        reader.contains("refuses you as superseded")
-            || reader.contains("refuses you as superseded")
-    );
+    assert!(reader.contains("refuses you as superseded"));
     assert!(reader.contains("write nothing more"));
     assert!(reader.contains("replies are context for judging a comment, not entries"));
 }

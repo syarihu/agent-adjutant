@@ -23,6 +23,7 @@ mod scope;
 mod store;
 mod submit_read;
 mod sync;
+mod take_over_read;
 
 pub use claim_reads::*;
 pub use fail_read::*;
@@ -37,6 +38,7 @@ pub use reap_reads::*;
 pub use request_read::*;
 pub use submit_read::*;
 pub use sync::*;
+pub use take_over_read::*;
 
 #[cfg(test)]
 mod review_tests;

@@ -328,8 +328,15 @@ wk('ov-groups').addEventListener('click', e => {
     if (others.doc) othersWriteMarks([[b.dataset.ovRead, { read: others.doc.now }]]);
     return;
   }
-  if ((b = e.target.closest('[data-ov-ai]'))) return b.disabled ? undefined : othersRequestAi(b.dataset.ovAi);
-  if (e.target.closest('[data-ov-hub-start]')) return othersStartHub();
+  // A button that is disabled, or only marked so while its request is out, does nothing.
+  if ((b = e.target.closest('[data-ov-ai]'))) {
+    if (b.disabled || b.getAttribute('aria-disabled') === 'true') return;
+    return othersRequestAi(b.dataset.ovAi);
+  }
+  if ((b = e.target.closest('[data-ov-hub-start]'))) {
+    if (b.getAttribute('aria-disabled') === 'true') return;
+    return othersStartHub();
+  }
   // 分割案 is a later issue's, and the hub's row opens nothing.
   if (e.target.closest('[data-ov-split], [data-ov-hub]')) return;
   if ((b = e.target.closest('.ov-row[data-ov]'))) {

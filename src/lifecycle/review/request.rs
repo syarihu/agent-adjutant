@@ -2,11 +2,12 @@ use std::path::Path;
 
 use crate::infra::clock::now_secs;
 use crate::lifecycle::hub::hub_startable;
-use crate::others::{self, RequestError, Requested};
+use crate::others::{self, HungReader, RequestError, Requested};
 use crate::registry;
+use crate::registry::Liveness;
 use crate::task::PrRef;
 
-use super::dispatch;
+use super::{dispatch, stop_reader};
 
 /// Why asking for a read was refused. The transports word it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +40,16 @@ pub fn request(root: &Path, pr: &PrRef) -> Result<Asked, AskError> {
     let ctx = registry::review_context(root).map_err(AskError::Failed)?;
     let hub_up = registry::hub_status(&ctx.state, &ctx.repo.slug, &ctx.repo.hub_name).present;
     let startable = hub_startable(&ctx.settings.terminal);
-    let asked = request_with(root, pr, now_secs(), hub_up, startable)?;
+    let now = now_secs();
+    let asked = request_taking_over(
+        root,
+        pr,
+        now,
+        hub_up,
+        startable,
+        &registry::hub_process_liveness,
+        &|reader| stop_reader(&ctx, reader),
+    )?;
     // Outside the record's lock, which `request_read` has let go of.
     let queue_error = dispatch(root).error;
     // The record as it is after the dispatch, which may have started this very read.
@@ -78,4 +88,52 @@ pub(crate) fn request_with(
         RequestError::Done => AskError::Done,
         RequestError::Failed(why) => AskError::Failed(why),
     })
+}
+
+/// `request_with`, and when the read is running with a reader that has run too long, the
+/// takeover: the old reader goes first, and the read is taken over only once it is known to be
+/// gone. A reader that is alive (and recorded when it started) is stopped; one that cannot be told
+/// alive or dead, or cannot be stopped, is left running and the answer is `Already`: starting a
+/// second beside it would put more than the allowed number of readers at work.
+pub(crate) fn request_taking_over(
+    root: &Path,
+    pr: &PrRef,
+    now: i64,
+    hub_up: bool,
+    startable: bool,
+    alive: &dyn Fn(u32, Option<&str>) -> Liveness,
+    stop: &dyn Fn(&HungReader) -> Result<(), String>,
+) -> Result<Requested, AskError> {
+    let asked = request_with(root, pr, now, hub_up, startable)?;
+    let Requested::Already(_) = &asked else {
+        return Ok(asked);
+    };
+    let hung = others::hung_reader(root, pr, now).map_err(AskError::Failed)?;
+    let Some(reader) = hung.filter(|reader| may_take_over(reader, alive, stop)) else {
+        return Ok(asked);
+    };
+    // The session is asked again under the record's lock: it may have ended since it was looked at.
+    others::take_over_read(root, pr, now, &reader.session_id).map_err(|e| match e {
+        RequestError::NoRecord => AskError::NoRecord,
+        RequestError::Done => AskError::Done,
+        RequestError::Failed(why) => AskError::Failed(why),
+    })
+}
+
+/// Whether the old reader is out of the way: no process was ever recorded, it is gone, or it was
+/// alive and has been stopped. Anything else leaves it where it is.
+fn may_take_over(
+    reader: &HungReader,
+    alive: &dyn Fn(u32, Option<&str>) -> Liveness,
+    stop: &dyn Fn(&HungReader) -> Result<(), String>,
+) -> bool {
+    let Some(pid) = reader.pid else {
+        return true;
+    };
+    match alive(pid, reader.ps_started.as_deref()) {
+        Liveness::Gone => true,
+        Liveness::CannotTell => false,
+        // Stopping needs the start time, which `stop` refuses without.
+        Liveness::Alive => stop(reader).is_ok(),
+    }
 }

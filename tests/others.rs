@@ -384,18 +384,7 @@ fn a_read_asked_for_with_the_hub_up_is_started_in_a_window_of_its_own() {
 
     // A live process stands in for the code-review hub.
     let hub = Sleeper::new();
-    let record = fixture.state.join("hubs/review.json");
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    std::fs::write(
-        &record,
-        json!({
-            "pid": hub.pid(), "psStarted": ps_started(hub.pid()), "hubName": "adjutant-review",
-            "cwd": fixture.state.join("review").to_str().unwrap(), "nameInCommand": false,
-            "hub": "@review",
-        })
-        .to_string(),
-    )
-    .unwrap();
+    forge_review_hub(&fixture, &hub);
     let state = body(&resident.get("/api/others").1);
     assert_eq!(state["hub"]["state"], "running");
     assert_eq!(state["hub"]["canRead"], true);
@@ -550,6 +539,35 @@ fn a_reader_can_only_tell_the_code_review_hub() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    // A person has `adj send`: with no reader's session nothing is said this way.
+    let out = fixture.cmd(&[
+        "review",
+        "say",
+        "--pr",
+        "acme/widget#7",
+        "--subject",
+        "s",
+        "--body",
+        "b",
+    ]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("only a reader"));
+    let out = fixture
+        .command([
+            "review",
+            "say",
+            "--pr",
+            "acme/widget#7",
+            "--subject",
+            "s",
+            "--body",
+            "b",
+        ])
+        .env("ADJUTANT_REVIEW_SESSION", "  ")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(!fixture.state.join("inbox").exists());
     // Only report and question.
     let out = fixture.cmd(&[
         "review",
@@ -661,4 +679,23 @@ fn only_the_reader_the_record_names_may_speak_for_its_pr() {
     assert!(!fixture.state.join("inbox").exists());
     assert!(say("sid-a").status.success());
     assert!(fixture.state.join("inbox/review").is_dir());
+}
+
+#[test]
+fn a_start_of_the_hub_that_fails_is_a_server_error_and_bad_input_is_a_bad_request() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    // The terminal is not tmux, so the start itself cannot be made: not the caller's mistake.
+    let (code, text) = resident.post("/api/others/hub/start", "{}");
+    assert_eq!(code, 500, "{text}");
+    assert!(
+        body(&text)["error"].as_str().unwrap().contains("tmux"),
+        "{text}"
+    );
+    // A `start` that is none of the three is the caller's.
+    let (code, _) = resident.post(
+        "/api/others/hub/start",
+        &json!({"start": "sideways"}).to_string(),
+    );
+    assert_eq!(code, 400);
 }

@@ -81,6 +81,7 @@ fn asking_queues_the_read_and_keeps_what_an_earlier_one_made() {
             attention: 2,
             check: 1,
             drafts: 3,
+            extra: Default::default(),
         }),
         finished_at: Some("20261001T000000Z".to_string()),
         session_id: Some("old".to_string()),
@@ -254,6 +255,7 @@ fn a_failed_read_keeps_the_earlier_read_through_and_changes_only_a_current_one()
             attention: 1,
             check: 0,
             drafts: 0,
+            extra: Default::default(),
         });
     }
     put(root.path(), r);
@@ -545,7 +547,8 @@ fn a_valid_file_is_stored_and_the_record_is_ready() {
         Some(AiCounts {
             attention: 1,
             check: 1,
-            drafts: 1
+            drafts: 1,
+            extra: Default::default(),
         })
     );
     assert_eq!((ai.error, ai.stale), (None, false));
@@ -1057,40 +1060,111 @@ fn a_reader_that_cannot_finish_ends_its_read_and_frees_the_place() {
 }
 
 #[test]
-fn a_read_hung_in_running_is_replaced_by_a_new_request_and_its_reader_is_superseded() {
+fn a_running_read_is_never_replaced_by_asking_alone_and_a_hung_one_is_named() {
     let root = tempfile::tempdir().unwrap();
-    put(root.path(), running(1, "sid-old"));
-    // Inside the limit it is still running.
-    let near = NOW + HUNG_READER_SECS - 1;
+    let mut r = running(1, "sid-old");
+    {
+        let ai = r.ai.as_mut().unwrap();
+        ai.pid = Some(4242);
+        ai.ps_started = Some("Mon Oct  5 10:00:00 2026".to_string());
+    }
+    put(root.path(), r);
+    let late = NOW + HUNG_READER_SECS + 1;
+    // However long it has run, asking is `Already`: the old reader has not been looked at.
     assert!(matches!(
-        request_read(root.path(), &pr(1), near),
+        request_read(root.path(), &pr(1), late),
         Ok(Requested::Already(_))
     ));
     assert_eq!(
         load(root.path(), 1).ai.unwrap().session_id.as_deref(),
         Some("sid-old")
     );
-    // Past it, the request takes the read over.
+    // Inside the limit nobody is named; past it, the reader is.
+    assert_eq!(
+        hung_reader(root.path(), &pr(1), NOW + HUNG_READER_SECS - 1),
+        Ok(None)
+    );
+    let hung = hung_reader(root.path(), &pr(1), late).unwrap().unwrap();
+    assert_eq!(hung.session_id, "sid-old");
+    assert_eq!(hung.pid, Some(4242));
+    assert_eq!(hung.ps_started.as_deref(), Some("Mon Oct  5 10:00:00 2026"));
+    // A read that is not running, or has no launch time, names no one.
+    put(root.path(), asked(2, "queued", 0));
+    assert_eq!(hung_reader(root.path(), &pr(2), late), Ok(None));
+    assert_eq!(hung_reader(root.path(), &pr(3), late), Ok(None));
+}
+
+#[test]
+fn a_read_is_taken_over_only_from_the_reader_that_was_checked() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-old"));
     let late = NOW + HUNG_READER_SECS + 1;
-    let Ok(Requested::Queued(r)) = request_read(root.path(), &pr(1), late) else {
-        panic!("a hung read answered Already");
+    // The session was replaced since it was looked at: nothing changes.
+    let Ok(Requested::Already(_)) = take_over_read(root.path(), &pr(1), late, "sid-other") else {
+        panic!("took over another reader's read");
+    };
+    assert_eq!(
+        load(root.path(), 1).ai.unwrap().session_id.as_deref(),
+        Some("sid-old")
+    );
+    // The one that was checked is replaced, and can no longer hand in.
+    let Ok(Requested::Queued(r)) = take_over_read(root.path(), &pr(1), late, "sid-old") else {
+        panic!("not taken over");
     };
     let ai = r.ai.unwrap();
     assert_eq!(
         (ai.status.as_str(), ai.session_id, ai.pid),
         ("queued", None, None)
     );
-    // The old reader can no longer hand in.
     assert_eq!(
         submit(root.path(), 1, &valid(), Some("sid-old")).unwrap_err(),
         SubmitError::Superseded
     );
-    // A queued read is never taken over, however old.
-    put(root.path(), asked(2, "queued", 0));
+    // Taken over already: the second finds no running read under it.
     assert!(matches!(
-        request_read(root.path(), &pr(2), late),
+        take_over_read(root.path(), &pr(1), late, "sid-old"),
         Ok(Requested::Already(_))
     ));
+    // A done PR is not.
+    let mut done = running(2, "sid-x");
+    done.pr_state = PrOpenState::Merged;
+    put(root.path(), done);
+    assert_eq!(
+        take_over_read(root.path(), &pr(2), late, "sid-x"),
+        Err(RequestError::Done)
+    );
+}
+
+#[test]
+fn counts_keep_a_key_they_do_not_know_and_read_a_missing_one_as_zero() {
+    let root = tempfile::tempdir().unwrap();
+    let mut r = record(1);
+    r.ai = Some(AiRead {
+        status: "ready".to_string(),
+        counts: Some(AiCounts {
+            attention: 1,
+            check: 2,
+            drafts: 3,
+            extra: Default::default(),
+        }),
+        ..blank_ai()
+    });
+    put(root.path(), r);
+    // A newer binary's record: a count this one does not know, and `check` left out.
+    let path = root.path().join("others/acme~widget~1.json");
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    raw["ai"]["counts"] = json!({"attention": 4, "drafts": 5, "info": 6});
+    std::fs::write(&path, raw.to_string()).unwrap();
+    // It still loads, and is listed.
+    let counts = load(root.path(), 1).ai.unwrap().counts.unwrap();
+    assert_eq!((counts.attention, counts.check, counts.drafts), (4, 0, 5));
+    assert_eq!(counts.extra["info"], 6);
+    assert_eq!(store::list(root.path()).len(), 1);
+    // And the unknown count survives a save.
+    let mut again = load(root.path(), 1);
+    store::save(root.path(), &mut again).unwrap();
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["ai"]["counts"]["info"], 6);
 }
 
 #[test]

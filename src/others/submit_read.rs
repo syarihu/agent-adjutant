@@ -173,6 +173,7 @@ pub(crate) fn submit_read_with(
         attention: count(&read, Level::Attention),
         check: count(&read, Level::Check),
         drafts: read.drafts.len() as u32,
+        extra: Default::default(),
     };
     let previous = store::load_read(root, &stem).map_err(SubmitError::Failed)?;
     store::write_read(root, &stem, &Stored::of(&record.id, &stamp, session, &read))

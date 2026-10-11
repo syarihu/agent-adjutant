@@ -114,8 +114,14 @@ pub fn review_say(args: &ReviewSayArgs) -> Result<(), String> {
     let session = std::env::var(REVIEW_SESSION_ENV)
         .ok()
         .filter(|session| !session.trim().is_empty());
-    // Only the reader the record is waiting for may speak for this PR.
-    if let Some(session) = session.as_deref() {
+    // Only a reader speaks here: a person has `adj send`. The reader is the one the record is
+    // waiting for, and no other may speak for this PR.
+    let Some(session) = session.as_deref() else {
+        return Err(
+            "only a reader can say something this way (ADJUTANT_REVIEW_SESSION is not set); to write to the hub yourself use adj send --hub @review".to_string(),
+        );
+    };
+    {
         let id = others::pr_id(&pr);
         let current = others::list(&root)
             .into_iter()
@@ -137,7 +143,7 @@ pub fn review_say(args: &ReviewSayArgs) -> Result<(), String> {
         body: format!(
             "Pull request: {}\nReader session: {}\n\n{}",
             others::pr_id(&pr),
-            session.as_deref().unwrap_or("none"),
+            session,
             body
         ),
     };
