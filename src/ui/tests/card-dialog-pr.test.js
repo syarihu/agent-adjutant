@@ -34,7 +34,7 @@ function world() {
     selectedTaskId: 'pr:acme/widget#12', document: { get activeElement() { return w.focus; } }, tp: () => ({ hidden: false }), esc: x => String(x), CSS: { escape: x => x },
     prView: { force: false }, prFocusKeep: () => null, prRestoreFocus: () => null, others: w.others, othersById: () => w.rec, othersRecords: () => [w.rec], othersHubView: () => ({ canRead: true, why: '' }), othersNowEst: () => 0,
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3),
-    prReadOf: () => w.read, prDraftsBodyHtml: () => w.dock, PR_HOOKS: { diff: null },
+    prReadOf: () => w.read, prReadEntry: () => w.readEntry, prDraftsBodyHtml: () => w.dock, PR_HOOKS: { diff: null },
     cardDialogEl: () => dlg, cardDialogContent: () => content, cardDialogDockEl: () => col,
     cardDialogStrip() {}, cardDialogFill: () => ({}), cardDialogFocusOf: () => null, cardDialogFocusBack() {}, cardDialogCardEl: () => null,
     cardDialogMarkUpdated: () => { w.marks++; }, cardDialogShowUpdate: ch => { w.shown.push(ch); }, cardDialogPruneUpdate: () => { w.pruned++; }, cardDialogSpy() {},
@@ -273,4 +273,16 @@ test('a scroll by hand also ends the wait of the diff\'s own link', () => {
   vm.runInContext(cut(dlgSrc, /^const cardDialogUserMoved = [^\n]*/m) + '\ncardDialogUserMoved();', c);
   assert.deepStrictEqual(calls, ['moved']);
   assert.strictEqual(c.cardDialog.target, null);
+});
+
+test('a stored read that cannot be fetched does not hide the buttons of the out-of-review card in the dialog', () => {
+  const { w, sync, state } = world();
+  w.rec = rec({ files: [{ path: 'src/big.rs', additions: 2000, deletions: 0, change: 'modified' }], ai: { status: 'ready', sha: A, stale: true } });
+  w.read = undefined;
+  sync(true, true);
+  const html = () => state('cardDialog.groups.flatMap(g => g.cards).map(c => c.html).join("")');
+  assert.ok(!html().includes('data-pr-split'));
+  w.readEntry = { error: 'boom' };
+  sync(true);
+  assert.ok(html().includes('data-pr-split') && html().includes('data-pr-ai'));
 });

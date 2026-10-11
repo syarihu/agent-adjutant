@@ -103,7 +103,7 @@ function prDialogSync(force = false, initial = false) {
   const asking = others.asking.has(id);
   const hook = PR_HOOKS.diff;
   const groups = prDialogGroups(rec, read, records, hubView, nowSecs, {
-    diff: !!hook, asking,
+    diff: !!hook, asking, readError: !!prReadEntry(id)?.error,
     diffFileHtml: hook ? path => hook.dialogFileHtml(rec, read, path) : null,
     diffPaths: hook && read ? hook.dialogPaths(rec, read) : null,
     diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,

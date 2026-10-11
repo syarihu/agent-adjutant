@@ -396,7 +396,7 @@ test('a proposal made after the file exists is counted in the notice, and 「新
   assert.ok(!vm.runInContext(`prDraftsBodyHtml({ id: 'acme/widget#1', url: 'u' }, ${JSON.stringify(proposal)}, 'panel')`, held.c).includes('下読みし直した下書き'));
 });
 
-test('the buttons ask for a proposal when asked to, and 下読みし直す asks for one only while the PR is out of review', () => {
+test('only the split button asks for a proposal; the re-read button asks for a read, whatever is stored', () => {
   const asked = [];
   const bigRec = { id: 'acme/widget#1', url: 'u', state: 'ai-ready', files: [{ path: 'b.rs', additions: 2000, deletions: 0, change: 'modified' }] };
   const click = (sel, read, rec = bigRec) => {
@@ -411,9 +411,9 @@ test('the buttons ask for a proposal when asked to, and 下読みし直す asks 
   click('[data-pr-ai]', null);
   click('[data-pr-reread]', { mode: 'split', sha: 'a'.repeat(40) });
   click('[data-pr-reread]', { sha: 'a'.repeat(40) });
-  // The PR is small now: a stored proposal does not make the re-read one.
+  // Small now: the same.
   click('[data-pr-reread]', { mode: 'split', sha: 'a'.repeat(40) }, { ...bigRec, files: [] });
-  assert.deepStrictEqual(asked, [['acme/widget#1', 'split'], ['acme/widget#1', undefined], ['acme/widget#1', 'split'], ['acme/widget#1', undefined], ['acme/widget#1', undefined]]);
+  assert.deepStrictEqual(asked, [['acme/widget#1', 'split'], ['acme/widget#1', undefined], ['acme/widget#1', undefined], ['acme/widget#1', undefined], ['acme/widget#1', undefined]]);
 });
 
 test('a full read-through at the head a proposal was made at offers its drafts, and the file then says it is of that read', () => {

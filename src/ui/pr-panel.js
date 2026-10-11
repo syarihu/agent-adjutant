@@ -413,8 +413,8 @@ function prAct(e, { inDialog = false } = {}) {
   };
   let b;
   if ((b = hit('[data-pr-ai], [data-pr-split], [data-pr-reread]'))) {
-    // 「下読みし直す」 asks for a proposal again only for a proposal of a PR that is still out of review.
-    const mode = b.matches('[data-pr-split]') || (b.matches('[data-pr-reread]') && read?.mode === 'split' && othersOutOfReview(rec) && OTHERS_LIVE.includes(rec.state)) ? 'split' : undefined;
+    // Only the split button asks for a proposal; the re-read button is never drawn while the PR is out of review.
+    const mode = b.matches('[data-pr-split]') ? 'split' : undefined;
     if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id, mode);
     return true;
   }
