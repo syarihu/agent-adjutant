@@ -1946,6 +1946,72 @@ fn the_review_hubs_agent_is_given_the_absolute_state_dir_whatever_the_variable_s
     )));
 }
 
+const READER_CONFIG: &str = r#"{
+    "defaults": {"agentEnv": {"CLAUDE_CONFIG_DIR": "/cfg/default"}},
+    "repos": {"acme/widget": {
+        "agentEnv": {"CLAUDE_CONFIG_DIR": "/cfg/widget", "ADJUTANT_HUB": "other", "ADJUTANT_STATE_DIR": "rel"},
+        "reviewerRunner": "codex exec {prompt}"
+    }}
+}"#;
+
+fn values_of<'a>(env: &'a [(String, String)], key: &str) -> Vec<&'a str> {
+    env.iter()
+        .filter(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+        .collect()
+}
+
+#[test]
+fn the_reader_of_a_registered_repository_is_given_that_repositorys_agent_env() {
+    let sandbox = Sandbox::new(READER_CONFIG);
+    let root = sandbox.state();
+    let env = agent_env(&review_context_for(&root, "acme/widget").unwrap());
+    assert_eq!(
+        values_of(&env, "CLAUDE_CONFIG_DIR"),
+        ["/cfg/widget"],
+        "{env:?}"
+    );
+    assert_eq!(values_of(&env, "ADJUTANT_HUB"), ["@review"], "{env:?}");
+    assert_eq!(
+        values_of(&env, "ADJUTANT_STATE_DIR"),
+        [root.to_string_lossy()],
+        "{env:?}"
+    );
+}
+
+#[test]
+fn the_reader_of_an_unregistered_repository_keeps_the_review_hubs_agent_env() {
+    let sandbox = Sandbox::new(READER_CONFIG);
+    let root = sandbox.state();
+    let env = agent_env(&review_context_for(&root, "acme/other").unwrap());
+    assert_eq!(env, agent_env(&review_context(&root).unwrap()));
+    assert_eq!(values_of(&env, "CLAUDE_CONFIG_DIR"), ["/cfg/default"]);
+}
+
+#[test]
+fn the_reader_finds_its_repositorys_entry_whatever_the_case_of_the_name() {
+    let sandbox = Sandbox::new(READER_CONFIG);
+    let env = agent_env(&review_context_for(&sandbox.state(), "Acme/Widget").unwrap());
+    assert_eq!(values_of(&env, "CLAUDE_CONFIG_DIR"), ["/cfg/widget"]);
+}
+
+#[test]
+fn the_reader_of_a_registered_repository_runs_the_review_hubs_runner() {
+    let sandbox = Sandbox::new(READER_CONFIG);
+    let root = sandbox.state();
+    let ctx = review_context_for(&root, "acme/widget").unwrap();
+    // The folder-trust watcher reads the screen of the hub's runner; the repository's own
+    // `reviewerRunner` is not what starts a reader.
+    assert_eq!(
+        ctx.settings.reviewer_runner,
+        review_context(&root).unwrap().settings.reviewer_runner
+    );
+    assert_ne!(
+        ctx.settings.reviewer_runner.as_deref(),
+        Some("codex exec {prompt}")
+    );
+}
+
 #[test]
 fn a_repository_hubs_agent_is_given_no_state_dir_of_its_own() {
     let sandbox = Sandbox::empty();

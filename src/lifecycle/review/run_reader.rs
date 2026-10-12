@@ -22,10 +22,13 @@ use crate::task::PrRef;
 /// directory they start in, which nobody is there to answer. A `reviewerRunner` of any other
 /// agent, or a reader outside tmux, has no watcher and runs as it always did.
 ///
+/// The reader runs with the `agentEnv` of the repository `pr` belongs to, as that repository's
+/// workers do, and not the code-review hub's own.
+///
 /// Refused when the record no longer names this session (the read was asked for again, or it
 /// was failed), so a superseded launch starts no agent.
 pub fn run_reader(root: &Path, pr: &PrRef, session: &str) -> String {
-    let ctx = match registry::review_context(root) {
+    let ctx = match registry::review_context_for(root, &pr.nwo()) {
         Ok(ctx) => ctx,
         Err(e) => return e,
     };
@@ -55,8 +58,7 @@ pub fn run_reader(root: &Path, pr: &PrRef, session: &str) -> String {
     let template = ctx.settings.reviewer_runner.as_deref();
     let runner_line = template.unwrap_or(runner::DEFAULT_REVIEWER_RUNNER);
     let agent = wake_agent(Some(runner_line));
-    let mut env = reader_env(agent_env(&ctx), agent);
-    env.push((REVIEW_SESSION_ENV.to_string(), session.to_string()));
+    let env = launch_env(&ctx, agent, session);
     let hooks = agent_hooks_for(&ctx.state, runner_line);
     let settings = hooks.path().map(|path| path.to_string_lossy());
     // The mode is the record's, as the request left it: what asked is not the reader's to say.
@@ -83,6 +85,14 @@ pub fn run_reader(root: &Path, pr: &PrRef, session: &str) -> String {
     let why = format!("cannot start the reader: {error}");
     let _ = others::fail_read(root, pr, Some(session), &why, now_secs());
     why
+}
+
+/// The whole environment of the reader's agent: `reader_env` over what the context's `agentEnv`
+/// gives, and the session the record names.
+fn launch_env(ctx: &registry::Context, agent: Agent, session: &str) -> Vec<(String, String)> {
+    let mut env = reader_env(agent_env(ctx), agent);
+    env.push((REVIEW_SESSION_ENV.to_string(), session.to_string()));
+    env
 }
 
 /// Claude Code's setting for its fullscreen terminal UI.
@@ -134,6 +144,24 @@ mod tests {
         );
         let own = env_of(&[("CLAUDE_CODE_NO_FLICKER", "0")]);
         assert_eq!(reader_env(own.clone(), Agent::Claude), own);
+    }
+
+    #[test]
+    fn a_claude_reader_is_given_its_repositorys_agent_env_and_its_session() {
+        let sandbox = crate::testing::Sandbox::new(
+            r#"{"repos": {"acme/widget": {"agentEnv": {"CLAUDE_CONFIG_DIR": "/cfg/widget"}}}}"#,
+        );
+        let root = sandbox.state();
+        let ctx = registry::review_context_for(&root, "acme/widget").unwrap();
+        let env = launch_env(&ctx, Agent::Claude, "s1");
+        for pair in [
+            ("CLAUDE_CONFIG_DIR", "/cfg/widget"),
+            ("CLAUDE_CODE_NO_FLICKER", "1"),
+            (REVIEW_SESSION_ENV, "s1"),
+            ("ADJUTANT_HUB", "@review"),
+        ] {
+            assert!(env.contains(&env_of(&[pair])[0]), "{pair:?} in {env:?}");
+        }
     }
 
     #[test]

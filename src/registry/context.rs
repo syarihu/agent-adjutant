@@ -137,6 +137,19 @@ pub fn review_context(root: &Path) -> Result<Context, String> {
     context_at(identity::review_hub_at(root), root.to_path_buf())
 }
 
+/// The code-review hub's context for the reader of a PR in `nwo`: the hub's, with the
+/// `agentEnv` of `nwo`'s own entry when the config has one, so the reader runs with what that
+/// repository's workers run with. Nothing else is swapped: the runner, the terminal and the
+/// folder-trust watcher's view of them stay the hub's.
+pub fn review_context_for(root: &Path, nwo: &str) -> Result<Context, String> {
+    let mut ctx = review_context(root)?;
+    let repo = config::resolve_config(nwo)?;
+    if repo.registered {
+        ctx.settings.agent_env = repo.settings.agent_env;
+    }
+    Ok(ctx)
+}
+
 /// The context of `repo` over the state directory `state`, for a caller that already holds the
 /// root it reads (the resident server opens every board over its own).
 pub fn context_at(repo: RepoInfo, state: PathBuf) -> Result<Context, String> {
