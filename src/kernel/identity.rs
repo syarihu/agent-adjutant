@@ -21,6 +21,15 @@ use crate::infra::git::git;
 /// pick hubs out of a pile of worker sessions by prefix alone.
 pub const HUB_PREFIX: &str = "adjutant-";
 
+/// The reserved hub identifier of the code-review hub, the one hub that belongs to no
+/// repository. `@` cannot be in a repository name or a tracker key, so it can never be the
+/// identifier of a parent-task hub.
+pub const REVIEW_HUB_ID: &str = "@review";
+
+/// The slug of the code-review hub. It has no digest: every slug `slug_for` makes ends in
+/// `-<16 hex>`, so this one cannot be the slug of any repository or parent-task hub.
+pub const REVIEW_SLUG: &str = "review";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoInfo {
     /// Absolute path of the main checkout (never a linked worktree).
@@ -42,6 +51,38 @@ pub struct RepoInfo {
     /// `origin`, `argument`, or `dirname` — how `nwo` was arrived at. The commands warn on
     /// `dirname` because that is the one case where two machines can disagree.
     pub nwo_source: &'static str,
+}
+
+impl RepoInfo {
+    /// Whether this is the code-review hub, which belongs to no repository.
+    pub fn is_review(&self) -> bool {
+        self.slug == REVIEW_SLUG && self.hub.as_deref() == Some(REVIEW_HUB_ID)
+    }
+}
+
+/// The code-review hub over the state directory `state`. Its "main checkout" is a plain
+/// directory, `<state>/review`, that git never sees: the hub reads and writes no checkout.
+pub fn review_hub_at(state: &Path) -> RepoInfo {
+    RepoInfo {
+        main: state.join("review").to_string_lossy().to_string(),
+        nwo: REVIEW_HUB_ID.to_string(),
+        repo: REVIEW_HUB_ID.to_string(),
+        hub: Some(REVIEW_HUB_ID.to_string()),
+        slug: REVIEW_SLUG.to_string(),
+        hub_name: format!("{HUB_PREFIX}{REVIEW_SLUG}"),
+        nwo_source: "review",
+    }
+}
+
+/// The code-review hub over the state directory this process reads, made absolute.
+fn review_hub() -> RepoInfo {
+    let dir = crate::infra::paths::state_dir();
+    review_hub_at(&std::path::absolute(&dir).unwrap_or(dir))
+}
+
+/// Whether `hub_arg` names the code-review hub.
+fn names_review(hub_arg: Option<&str>) -> bool {
+    hub_arg.map(str::trim) == Some(REVIEW_HUB_ID)
 }
 
 /// The worktree this command is being run in — the linked one, not the main checkout.
@@ -351,6 +392,15 @@ pub fn resolve_in(
     repo_arg: Option<&str>,
     hub_arg: Option<&str>,
 ) -> Result<RepoInfo, String> {
+    // Before git is asked: the code-review hub works from any directory.
+    if names_review(hub_arg) {
+        if repo_arg.is_some() {
+            return Err(
+                "the code-review hub belongs to no repository: drop the repository".to_string(),
+            );
+        }
+        return Ok(review_hub());
+    }
     let main = main_worktree(start)?;
     let (nwo, source) = match repo_arg {
         Some(arg) => (arg.to_string(), "argument"),
@@ -376,6 +426,9 @@ fn repo_info(
     source: &'static str,
     hub_arg: Option<&str>,
 ) -> Result<RepoInfo, String> {
+    if names_review(hub_arg) {
+        return Ok(review_hub());
+    }
     // Blank is absent, here as well as at every gate in front of this one: an identifier
     // that is only whitespace would otherwise be a hub that exists, has an address nobody
     // can type twice, and is invisible in every listing.

@@ -35,14 +35,20 @@
 
   <section class="wk-list" id="wk-list" role="tabpanel" aria-labelledby="nav-work" aria-label="いまの仕事の一覧">
     <div class="pane-head wk-list-head">
-      <span class="material-symbols-outlined" aria-hidden="true">work_history</span>
-      <span class="pane-title">いまの仕事</span>
-      <div class="m3-segmented-tabs wk-group-switch" role="group" aria-label="まとめ方">
-        <button type="button" class="m3-seg-tab" data-wk-group="parent" aria-pressed="true">親 Issue</button>
-        <button type="button" class="m3-seg-tab" data-wk-group="state" aria-pressed="false">状態</button>
+      <div class="m3-segmented-tabs wk-tab-switch" role="group" aria-label="一覧">
+        <button type="button" class="m3-seg-tab" data-wk-tab="task" aria-pressed="true">タスク<span class="rail-badge zero" id="wk-tab-count-task" title="新着の数">0</span></button>
+        <button type="button" class="m3-seg-tab" data-wk-tab="others" aria-pressed="false">AI 下読み<span class="rail-badge zero" id="wk-tab-count-others" title="新着の数">0</span><span class="ov-stale-dot" id="ov-stale-dot" role="img" aria-label="同期が古くなっています" hidden></span></button>
+      </div>
+      <button type="button" class="tool-btn wk-group-menu-btn" id="wk-group-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="wk-group-menu" aria-label="まとめ方: 親 Issue" title="まとめ方: 親 Issue">
+        <span class="material-symbols-outlined" aria-hidden="true">account_tree</span>
+      </button>
+      <div class="wk-group-menu" id="wk-group-menu" role="menu" aria-label="まとめ方" hidden>
+        <button type="button" role="menuitemradio" aria-checked="true" data-wk-group="parent"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span>親 Issue</button>
+        <button type="button" role="menuitemradio" aria-checked="false" data-wk-group="state"><span class="material-symbols-outlined" aria-hidden="true">view_agenda</span>状態</button>
       </div>
     </div>
-    <div class="wk-list-scroll"><div id="wk-groups"></div></div>
+    <div class="wk-list-scroll" id="wk-task-scroll"><div id="wk-groups"></div></div>
+    <div class="wk-list-scroll" id="ov-scroll" hidden><div id="ov-groups"></div></div>
     <div class="wk-rate" id="wk-rate"></div>
   </section>
 
@@ -281,7 +287,8 @@
         <label><input type="checkbox" id="notify-waiting"> 確認待ち（確認依頼が届いたとき、入力や許可を待ち始めたとき）</label>
         <label class="notify-multi"><input type="checkbox" id="notify-done"> 完了（worker のターンが終わったとき）</label>
         <label class="notify-multi"><input type="checkbox" id="notify-failed"> 失敗（セッションが失敗したとき）</label>
-        <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。確認待ちがオンでブラウザが通知を許可しているあいだ、このページが確認待ちを通知し、サーバーの <code>notification</code> は鳴らしません。オフにしたとき（約90秒以内）や、このページを開いていないときは、サーバーの <code>notification</code> が鳴ります（確認依頼もこのとき鳴ります）</span>
+        <label class="notify-multi"><input type="checkbox" id="notify-review"> レビュー依頼（同期で、レビューの依頼か頼み直しが届いたとき）</label>
+        <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。確認待ちがオンでブラウザが通知を許可しているあいだ、このページが確認待ちを通知し、サーバーの <code>notification</code> は鳴らしません。オフにしたとき（約90秒以内）や、このページを開いていないときは、サーバーの <code>notification</code> が鳴ります（確認依頼もこのとき鳴ります）。レビュー依頼は、同期をしたタブが同期のたびに 1 回だけ通知し、push だけでは鳴りません</span>
       </fieldset>
     </div>
     <div class="foot">
@@ -528,6 +535,35 @@
       <button type="submit" value="close" class="btn-m3-danger">
         <span class="material-symbols-outlined" style="font-size:16px;">close</span>
         <span>タブを閉じる</span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="reader-close-dialog">
+  <form method="dialog">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-error);">warning</span>
+        <span>下読みを閉じる</span>
+      </div>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル" aria-label="キャンセル">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body close-help">
+      <div class="target">
+        <div id="reader-close-name" class="name"></div>
+      </div>
+      <p>この PR の下読みをしている worker のウィンドウを閉じます。worker は止まります。</p>
+      <p>下読みと下書きは残ります。あとで「下読みし直す」と、新しい worker が読みます。</p>
+      <p id="reader-close-running">いまは下読みの途中です。閉じると、この下読みは失敗として扱われます。もう一度頼めます。</p>
+    </div>
+    <div class="foot">
+      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
+      <button type="submit" value="close" class="btn-m3-danger">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">close</span>
+        <span>下読みを閉じる</span>
       </button>
     </div>
   </form>

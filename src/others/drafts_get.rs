@@ -1,0 +1,23 @@
+//! The stored drafts of a PR, as the board page reads them.
+
+use std::path::Path;
+
+use serde_json::Value;
+
+use crate::task::PrRef;
+
+use super::drafts::StoredDrafts;
+use super::store;
+
+/// The drafts kept for `pr`: `None` when there are none, and an error when there is a file
+/// that cannot be read, which is not the same answer. Keys this binary does not know are in it.
+pub fn drafts(root: &Path, pr: &PrRef) -> Result<Option<Value>, String> {
+    let Some(text) = store::load_drafts(root, &store::stem(pr))? else {
+        return Ok(None);
+    };
+    let stored: StoredDrafts = serde_json::from_str(&text)
+        .map_err(|e| format!("cannot read the drafts of {}: {e}", store::id_of(pr)))?;
+    serde_json::to_value(stored)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}

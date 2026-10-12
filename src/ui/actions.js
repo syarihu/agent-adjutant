@@ -84,6 +84,24 @@ document.getElementById('close-dialog').addEventListener('close', e => {
   if (e.target.returnValue === 'close' && worktree && running) worktreeAct('close', worktree, true);
 });
 
+/* Asked before a PR's reader is closed, in the page like the worker's tab above. Only the button that says so closes it; when it
+   does, the PR is looked at again, since the reader may have ended while the dialog was open. */
+let readerCloseTarget = null;
+function openReaderCloseDialog(id) {
+  readerCloseTarget = id;
+  const rec = othersById(id);
+  document.getElementById('reader-close-name').textContent = rec ? `${rec.repo} #${rec.number}` : id;
+  document.getElementById('reader-close-running').hidden = rec?.ai?.status !== 'running';
+  const dialog = document.getElementById('reader-close-dialog');
+  dialog.returnValue = '';
+  dialog.showModal();
+}
+document.getElementById('reader-close-dialog').addEventListener('close', e => {
+  const id = readerCloseTarget;
+  readerCloseTarget = null;
+  if (e.target.returnValue === 'close' && id && prReaderOpen(othersById(id))) othersCloseReader(id);
+});
+
 /* How a hub is named in its panel and where a hub is chosen. */
 function hubLabel(h) {
   if (!h.parent) return 'リポジトリの hub';
@@ -300,10 +318,10 @@ function markHubButtons() {
   if (btn) btn.classList.toggle('on', !!selectedTaskId && selectedTaskId === HUB_REF + ownHubId());
 }
 
-/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, on
+/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, both lists of it, on
    a board served alone what waits on the person on it. */
 function renderDocTitle() {
-  const sum = multiBoard ? workNewCount() : waitingIn() + (state.waits || []).length;
+  const sum = multiBoard ? workBadgeCount() : waitingIn() + (state.waits || []).length;
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
 }
 
@@ -869,7 +887,7 @@ async function setPark(task, base, parked) {
 }
 
 /* The notification settings: the browser's permission, and which kinds of the page's notifications ring. */
-const NOTIFY_BOXES = { waiting: 'notify-waiting', done: 'notify-done', failed: 'notify-failed' };
+const NOTIFY_BOXES = { waiting: 'notify-waiting', done: 'notify-done', failed: 'notify-failed', review: 'notify-review' };
 function drawNotifyDialog() {
   const perm = Notification.permission;
   parkEl('notify-permission-text').textContent = perm === 'granted' ? 'ブラウザの通知は許可されています'

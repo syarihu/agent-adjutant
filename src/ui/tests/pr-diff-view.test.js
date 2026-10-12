@@ -1,0 +1,440 @@
+/* The page's half of the annotated diff (src/ui/pr-diff-view.js) against stand-ins for the page, run with `node --test`: what is
+   fetched and for whom, what is drawn and when, where a link goes, and what 「＋」 and the annotation's buttons do. */
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+const SHA = 'a'.repeat(40);
+const DIFF = [
+  'diff --git a/src/a.rs b/src/a.rs', '--- a/src/a.rs', '+++ b/src/a.rs', '@@ -1,2 +1,3 @@', ' fn a() {', '-    old();', '+    // why', '+    new();', ' }',
+  'diff --git a/docs/x.md b/docs/x.md', 'new file mode 100644', '--- /dev/null', '+++ b/docs/x.md', '@@ -0,0 +1 @@', '+hello', '',
+].join('\n');
+const rec = (id = 'acme/widget#1') => ({ id, repo: 'acme/widget', number: 1, url: 'https://github.com/acme/widget/pull/1', headSha: SHA, files: [] });
+const readThrough = (extra = {}) => ({
+  sha: SHA, madeAt: 'm1', order: [{ path: 'src/a.rs', category: 'logic' }], deleted: [],
+  annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'ex', text: 'Explains new' }, { path: 'src/a.rs', anchor: '// why', kind: 'tr', text: 'Translated' }], ...extra,
+});
+
+/* A stand-in element: what the code under test reads and writes. */
+function el(dataset = {}, extra = {}) {
+  const classes = new Set();
+  return Object.assign({
+    dataset, hidden: false, innerHTML: '', attrs: {}, textContent: '', isConnected: true, offsetWidth: 0,
+    classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c) },
+    setAttribute(k, v) { this.attrs[k] = v; }, toggleAttribute(k, on) { this.attrs[k] = on; },
+    closest: () => null, querySelector: () => null, querySelectorAll: () => [], matches: () => false, scrollIntoView() {},
+  }, extra);
+}
+const wrap = el => el;
+
+function world({ io = false } = {}) {
+  const w = { calls: [], gets: [], pending: [], notes: [], edits: [], drafts: [], hubView: { canRead: true }, selected: 'pr:acme/widget#1', pane: 'diff', dialogOpen: false, loaded: true };
+  // The panel's root and the dialog's content, each with the pieces the code looks for.
+  const mk = () => {
+    const bodies = [el({ prdBody: '0' }), el({ prdBody: '1' })];
+    const sections = bodies.map((b, i) => el({ prdFile: String(i) }, { querySelector: s => (s === '[data-prd-body]' ? b : null), closest: () => null }));
+    const tabs = ['logic', 'ui', 'doc', 'test', 'resource'].map(c => el({ prdTab: c }));
+    const fold = el({});
+    const root = el({}, { querySelectorAll: s => (s === '[data-prd-body]' ? bodies : s === '[data-prd-file]' ? sections : s === '[data-prd-tab]' ? tabs : s === '[data-prd-fold]' ? [fold] : []),
+      querySelector: s => (s === '[data-prd-file], [data-prd-tab]' ? sections[0] : s.startsWith('[data-prd-file=') ? sections[Number(s.match(/"(\d+)"/)[1])] : null) });
+    return { root, bodies, sections, tabs, fold };
+  };
+  w.panel = mk();
+  w.dialog = mk();
+  const detail = el({}, { scrollTop: 0, addEventListener: (t, f) => { w.onScroll = f; } });
+  const restEl = el({}, { querySelector: s => (s === '.prd-root' ? w.panel.root : null) });
+  const body = el({});
+  const dlg = { get open() { return w.dialogOpen; }, querySelector: s => (s === '.card-dialog-body' ? body : null), addEventListener: (t, f, cap) => { w.dlgClick = f; } };
+  const c = vm.createContext({
+    TextEncoder, TextDecoder, CSS: { escape: x => x }, console, Promise, Date, setTimeout: f => 0, structuredClone,
+    IntersectionObserver: io ? class { constructor(cb, o) { w.io = { cb, o, seen: [] }; } observe(x) { w.io.seen.push(x); } unobserve() {} disconnect() { w.ioGone = true; } } : undefined,
+    get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_HOOKS: { diff: null }, DIFF_LOADING: '<div class="loading">差分を読み込み中…</div>',
+    secTitle: t => t, panelBtnsHtml: j => j,
+    tp: id => (id === 'tp-detail' ? detail : id === 'tp-rest' ? restEl : null),
+    cardDialogEl: () => dlg, cardDialogContent: () => Object.assign(w.dialog.root, { addEventListener() {} }),
+    cardDialog: { mode: 'review', subject: 'pr:acme/widget#1', quiet: false }, CARD_DIALOG_TARGET_MS: 10000,
+    cardDialogCardEl: key => { w.calls.push(['cardEl', key]); return key === 'diff:src/a.rs' ? w.dialog.sections[0] : key === 'diff:docs/x.md' ? w.dialog.sections[1] : null; },
+    cardDialogGo: (...a) => { w.calls.push(['go', ...a, { cat: vm.runInContext("prDiff.cat.get('acme/widget#1')", c), filled: w.dialog.bodies[1].innerHTML !== '' }]); },
+    closeCardDialog: () => { w.calls.push(['close']); w.dialogOpen = false; }, openPrDialog: opener => { w.calls.push(['open', opener]); w.dialogOpen = true; },
+    isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => rec(), prReadOf: () => w.read,
+    othersHubView: () => w.hubView, othersRecords: () => [], others: { doc: { hub: null }, asking: new Set() },
+    renderTaskPanel: () => { w.calls.push(['render']); },
+    prDraftsEntry: () => ({ loaded: w.loaded }), prDoc: () => ({ drafts: w.drafts }),
+    prEditDrafts: (id, rd, fn) => { if (!w.loaded) return false; const doc = { drafts: [...w.drafts] }; fn(doc); w.edits.push(doc.drafts[doc.drafts.length - 1]); return true; },
+    prRedrawNow: f => { w.calls.push(['redraw', f]); }, go: (p, o) => { w.calls.push(['gopane', p, o]); }, nav: { get pane() { return w.pane; } },
+    note: (...a) => { w.notes.push(a); }, prAsk: p => { w.calls.push(['ask', p]); },
+    boardApi: (base, url) => new Promise((resolve, reject) => { w.gets.push(url); w.pending.push({ resolve, reject }); }),
+  });
+  vm.runInContext(['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js'].map(read).join('\n'), c);
+  vm.runInContext(read('pr-diff-view.js'), c);
+  const run = e => vm.runInContext(e, c);
+  w.read = readThrough();
+  return { w, c, run };
+}
+const tick = () => new Promise(r => setImmediate(r));
+const ok = (w, run, i = 0) => { w.pending[i].resolve({ id: 'acme/widget#1', sha: SHA, bytes: DIFF.length, diff: DIFF }); return tick(); };
+
+test('a diff is applied only to its own PR and its own read-through', async () => {
+  const { w, c, run } = world();
+  const a = c.rec_ = rec();
+  c.prDiffEnsure(rec(), w.read);
+  c.prDiffEnsure(rec('acme/widget#2'), w.read);
+  assert.deepStrictEqual(w.gets, ['/api/others/diff?id=acme%2Fwidget%231', '/api/others/diff?id=acme%2Fwidget%232']);
+  // The first PR's read-through is replaced while its diff is on its way: the answer is for the old one and is not taken.
+  const newer = readThrough({ madeAt: 'm2' });
+  assert.strictEqual(c.prDiffEnsure(rec(), newer).state, 'loading');
+  await ok(w, run, 0);
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#1').state`), 'loading');
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#1').key`), null);
+  // The other PR's own answer is taken.
+  await ok(w, run, 1);
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#2').state`), 'ok');
+  // The next round asks for the newer one, and that answer is taken.
+  c.prDiffEnsure(rec(), newer);
+  assert.strictEqual(w.gets.length, 3);
+  await ok(w, run, 2);
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#1').state`), 'ok');
+  // Held: asked again for nothing.
+  c.prDiffEnsure(rec(), newer);
+  assert.strictEqual(w.gets.length, 3);
+});
+
+test('no diff stored, an empty one and a too-large one are answers, and a failure is asked again later', async () => {
+  const states = async answer => {
+    const { w, c, run } = world();
+    c.prDiffEnsure(rec(), w.read);
+    answer(w.pending[0]);
+    await tick();
+    return { w, c, run, state: run(`prDiff.cache.get('acme/widget#1').state`) };
+  };
+  assert.strictEqual((await states(p => p.reject(Object.assign(new Error('no diff'), { status: 404 })))).state, 'none');
+  assert.strictEqual((await states(p => p.resolve({ sha: SHA, bytes: 0, diff: '' }))).state, 'empty');
+  const big = await states(p => p.resolve({ sha: SHA, bytes: 9 * 1024 * 1024, diff: null }));
+  assert.strictEqual(big.state, 'big');
+  assert.ok(big.c.prdStatusHtml(rec(), big.run(`prDiff.cache.get('acme/widget#1')`), false).includes('9.0 MB'));
+  // A diff of another head is not this read-through's.
+  assert.strictEqual((await states(p => p.resolve({ sha: 'b'.repeat(40), bytes: 3, diff: 'x\n' }))).state, 'none');
+  assert.strictEqual((await states(p => p.resolve({ sha: SHA, bytes: 3, diff: 'not a diff\n' }))).state, 'bad');
+  const failed = await states(p => p.reject(new Error('boom')));
+  assert.strictEqual(failed.state, 'error');
+  // Not at once again (a redraw would loop), and not forever.
+  failed.c.prDiffEnsure(rec(), failed.w.read);
+  assert.strictEqual(failed.w.gets.length, 1);
+  failed.run(`prDiff.cache.get('acme/widget#1').retryAt = 0`);
+  failed.c.prDiffEnsure(rec(), failed.w.read);
+  assert.strictEqual(failed.w.gets.length, 2);
+});
+
+test('each state says what it is, and 404 offers 「下読みし直す」 and GitHub through the existing re-read button', async () => {
+  const text = async (answer, dialog = false) => {
+    const { w, c } = world();
+    const html = () => (dialog ? c.prdDialogHeadHtml(rec(), w.read) : c.prdTabHtml(rec(), w.read));
+    assert.ok(html().includes('差分を読み込み中'));
+    if (dialog) assert.ok(html().includes('class="loading"'), 'the dialog says it with the loading note its change marks know');
+    answer(w.pending[0]);
+    await tick();
+    return html();
+  };
+  const none = await text(p => p.reject(Object.assign(new Error('x'), { status: 404 })));
+  assert.ok(none.includes('この下読みには差分が保存されていません。下読みし直すと表示されます') && none.includes('data-pr-reread') && none.includes('下読みし直す'));
+  assert.ok(none.includes('href="https://github.com/acme/widget/pull/1/files"') && none.includes('GitHub で開く'));
+  assert.ok((await text(p => p.resolve({ sha: SHA, bytes: 0, diff: '' }))).includes('差分はありません'));
+  assert.ok((await text(p => p.resolve({ sha: SHA, bytes: 3 * 1024 * 1024, diff: null }))).includes('差分が大きすぎるため保存していません（3.0 MB）'));
+  assert.ok((await text(p => p.reject(new Error('boom')))).includes('role="alert"'));
+  const okHtml = await text(p => p.resolve({ sha: SHA, bytes: DIFF.length, diff: DIFF }));
+  assert.ok(okHtml.includes('data-prd-root') && okHtml.includes('data-prd-tab="logic"') && okHtml.includes('data-prd-file="1"'));
+  const stale = await (async () => {
+    const { w, c } = world();
+    w.pending.length = 0;
+    const r = { ...rec(), headSha: 'c'.repeat(40) };
+    c.prdTabHtml(r, w.read);
+    w.pending[0].resolve({ sha: SHA, bytes: 1, diff: DIFF });
+    await tick();
+    return c.prdTabHtml(r, w.read);
+  })();
+  assert.ok(stale.includes('この差分は aaaaaaa で下読みしたときのものです'));
+  // The dialog's cards: the bar first, then the files in the diff's order, with short labels.
+  const { w, c } = world();
+  c.prdDialogHeadHtml(rec(), w.read);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.prdDialogPaths(rec(), w.read))), []);
+  w.pending[0].resolve({ sha: SHA, bytes: 1, diff: DIFF });
+  await tick();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.prdDialogPaths(rec(), w.read))), ['src/a.rs', 'docs/x.md']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(c.prdDialogLabel(rec(), 'src/a.rs'))), { label: 'a.rs', title: 'src/a.rs' });
+  assert.ok(c.prdDialogHeadHtml(rec(), w.read).includes('data-pr-sec="diff-bar"'));
+  assert.ok(c.prdDialogFileHtml(rec(), w.read, 'src/a.rs').includes('data-prd-file="0"'));
+});
+
+async function loaded(opts) {
+  const x = world(opts);
+  x.c.prDiffEnsure(rec(), x.w.read);
+  await ok(x.w, x.run, 0);
+  return x;
+}
+
+test('with no IntersectionObserver every file is drawn at once, from one render each', async () => {
+  const { w, c, run } = await loaded();
+  let renders = 0;
+  const real = c.prDiffBodyHtml;
+  c.prDiffBodyHtml = (...a) => { renders++; return real(...a); };
+  c.prdOnShown();
+  assert.ok(w.panel.bodies.every(b => b.innerHTML.includes('prd-l')));
+  assert.strictEqual(renders, 2);
+  assert.strictEqual(w.panel.tabs[0].attrs['aria-pressed'], 'true');
+  assert.strictEqual(w.panel.tabs[2].attrs['aria-pressed'], 'false');
+  // Drawn again: nothing is rendered again, and what is there is left alone.
+  c.prdOnShown();
+  assert.strictEqual(renders, 2);
+});
+
+test('a big diff is drawn file by file, as each comes near the screen, in the element that scrolls', async () => {
+  const { w, c, run } = await loaded({ io: true });
+  run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
+  c.prdOnShown();
+  assert.strictEqual(w.io.o.rootMargin, '1200px 0px');
+  assert.strictEqual(w.io.seen.length, 2);
+  assert.ok(w.panel.bodies.every(b => b.innerHTML === ''));
+  const near = w.panel.bodies[1];
+  w.io.cb([{ isIntersecting: true, target: near }, { isIntersecting: false, target: w.panel.bodies[0] }]);
+  assert.ok(near.innerHTML.includes('prd-l'));
+  assert.strictEqual(w.panel.bodies[0].innerHTML, '');
+  // The dialog's observer is rooted at its own body, not at the panel.
+  w.dialogOpen = true;
+  c.prdOnDrawn();
+  assert.strictEqual(w.io.o.root, run(`cardDialogEl().querySelector('.card-dialog-body')`));
+  assert.notStrictEqual(w.io.o.root, run(`tp('tp-detail')`));
+});
+
+test('after the dialog replaced its content, the files drawn before are drawn again from the cache', async () => {
+  const { w, c, run } = await loaded({ io: true });
+  run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
+  w.dialogOpen = true;
+  c.prdOnDrawn();
+  w.io.cb([{ isIntersecting: true, target: w.dialog.bodies[0] }]);
+  assert.ok(w.dialog.bodies[0].innerHTML.includes('prd-l'));
+  let renders = 0;
+  const real = c.prDiffBodyHtml;
+  c.prDiffBodyHtml = (...a) => { renders++; return real(...a); };
+  // The content is replaced: new, empty bodies.
+  const fresh = [el({ prdBody: '0' }), el({ prdBody: '1' })];
+  w.dialog.bodies.splice(0, 2, ...fresh);
+  c.prdOnDrawn();
+  assert.ok(fresh[0].innerHTML.includes('prd-l'), 'the one drawn before is drawn again');
+  assert.strictEqual(fresh[1].innerHTML, '', 'the other waits to be seen');
+  assert.strictEqual(renders, 0, 'from the cache, with no new render');
+});
+
+test('a tab and the fold are set in place and hide the other categories', async () => {
+  const { w, c } = await loaded();
+  c.prdOnShown();
+  // The markdown file is in the doc tab: its section is hidden until that tab is on.
+  assert.strictEqual(w.panel.sections[0].hidden, false);
+  assert.strictEqual(w.panel.sections[1].hidden, true);
+  const tab = w.panel.tabs[2];
+  w.calls.length = 0;
+  const e = { target: { closest: s => (s === '[data-prd-tab]' ? el({ prdTab: 'doc' }) : null) } };
+  assert.strictEqual(c.prdAct(e, {}), true);
+  assert.strictEqual(w.panel.sections[0].hidden, true);
+  assert.strictEqual(w.panel.sections[1].hidden, false);
+  assert.strictEqual(tab.attrs['aria-pressed'], 'true');
+  assert.ok(!w.calls.some(x => x[0] === 'render' || x[0] === 'redraw'), 'nothing is drawn again');
+  c.prdAct({ target: { closest: s => (s === '[data-prd-fold]' ? el() : null) } }, {});
+  assert.strictEqual(w.panel.fold.attrs['aria-pressed'], 'true');
+  assert.strictEqual(w.panel.fold.textContent, '', 'the label is fixed: the state is aria-pressed');
+  assert.strictEqual(w.panel.root.classList.contains('prd-folded'), true);
+});
+
+test('a link switches the tab first and draws the file, then goes there; from the panel it opens 「拡大」', async () => {
+  const { w, c, run } = await loaded({ io: true });
+  run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
+  const opener = el();
+  c.prdGoto('docs/x.md', 1, { inDialog: false, opener });
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [['open', opener]]);
+  const go = w.calls.find(x => x[0] === 'go');
+  assert.strictEqual(go[1], 'diff:docs/x.md');
+  assert.strictEqual(go[3], false);
+  // At the moment of the jump the tab was the file's, and its body was drawn.
+  assert.strictEqual(go[4].cat, 'doc');
+  assert.strictEqual(run('prDiff.target'), null);
+  // A file that is not in the diff goes to the group.
+  w.calls.length = 0;
+  c.prdGoto('nope.rs', null, { inDialog: true });
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'go').map(x => x.slice(1, 4)), [[null, 'diff', true]]);
+});
+
+test('a link waits for a diff that is on its way, and is dropped when there is none', async () => {
+  const { w, c, run } = world();
+  w.dialogOpen = true;
+  c.prDiffEnsure(rec(), w.read);
+  c.prdGoto('src/a.rs', 3, { inDialog: true });
+  assert.strictEqual(w.calls.filter(x => x[0] === 'go').length, 0);
+  assert.ok(run('prDiff.target'));
+  await ok(w, run, 0);
+  c.prdApplyTarget();
+  assert.strictEqual(w.calls.filter(x => x[0] === 'go').length, 1);
+  assert.strictEqual(run('prDiff.target'), null);
+  // No diff stored: the group, and the wait is over.
+  const n = world();
+  n.w.dialogOpen = true;
+  n.c.prDiffEnsure(rec(), n.w.read);
+  n.c.prdGoto('src/a.rs', 3, { inDialog: true });
+  n.w.pending[0].reject(Object.assign(new Error('x'), { status: 404 }));
+  await tick();
+  n.c.prdApplyTarget();
+  assert.deepStrictEqual(n.w.calls.filter(x => x[0] === 'go').map(x => x.slice(1, 4)), [[null, 'diff', true]]);
+});
+
+const onLine = (c, attrs, extra = {}) => {
+  const file = el({ prdFile: '0' });
+  const btn = el(attrs, { closest: s => (s === '[data-prd-file]' ? file : s === '[data-prd-ann]' ? el({ prdAnn: '0' }) : null), matches: s => !!extra.matches?.includes(s) });
+  return { target: { closest: s => s === extra.hit ? btn : null } };
+};
+
+test('「＋」 starts a draft of the person on the right side and line, and the panel goes to 下書き', async () => {
+  const { w, c } = await loaded();
+  c.prdAct(onLine(c, { prdPlus: 'left:2' }, { hit: '[data-prd-plus]' }), { inDialog: false });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits)), [{ key: 'p1', source: 'person', path: 'src/a.rs', line: 2, side: 'left', body: '' }]);
+  const order = w.calls.map(x => x[0]);
+  assert.ok(order.indexOf('gopane') < order.indexOf('redraw'), 'the tab first, then the box');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane')[1])), { pane: 'drafts' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: false });
+});
+
+test('in 「拡大」 the box appears in the column and the panel is left where it is', async () => {
+  const { w, c } = await loaded();
+  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { inDialog: true });
+  assert.strictEqual(w.calls.some(x => x[0] === 'gopane'), false);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: true });
+  assert.strictEqual(w.edits[0].line, 3);
+});
+
+test('an explanation\'s 「下書きに」 is the same, with its text as the body; unanchored it is a file draft; unloaded drafts say so', async () => {
+  const { w, c } = await loaded();
+  const hit = '[data-prd-todraft], [data-prd-ask]';
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit, matches: ['[data-prd-todraft]'] }), { inDialog: false });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Explains new' });
+  c.prdAct(onLine(c, {}, { hit, matches: ['[data-prd-todraft]'] }), { inDialog: false });
+  assert.strictEqual(w.edits[1].line, undefined);
+  w.loaded = false;
+  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { inDialog: false });
+  assert.strictEqual(w.edits.length, 2);
+  assert.strictEqual(w.notes.length, 1);
+});
+
+test('「聞く」 in 「拡大」 closes it first, then asks with the line and the first words', async () => {
+  const { w, c, run } = await loaded();
+  w.dialogOpen = true;
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: [] }), { inDialog: true });
+  assert.deepStrictEqual(w.calls.filter(x => ['close', 'ask'].includes(x[0])).map(x => x[0]), ['close', 'ask']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'ask')[1])), { path: 'src/a.rs', line: 3, title: 'Explains new' });
+  assert.strictEqual(run('cardDialog.quiet'), true);
+});
+
+test('the panel restores its reading place on coming back to the tab, not on every redraw', async () => {
+  const { w, c, run } = await loaded();
+  c.prdOnShown();
+  w.onScroll();
+  const detail = run(`tp('tp-detail')`);
+  detail.scrollTop = 420;
+  w.onScroll();
+  c.prdOnShown();
+  detail.scrollTop = 0;
+  c.prdOnShown();
+  assert.strictEqual(detail.scrollTop, 0, 'a redraw within the tab leaves it');
+  c.prdOnLeft();
+  c.prdOnShown();
+  assert.strictEqual(detail.scrollTop, 420);
+});
+
+test('the hook keeps its shape', () => {
+  const { run } = world();
+  assert.deepStrictEqual(JSON.parse(run('JSON.stringify(Object.keys(PR_HOOKS.diff).sort())')), ['act', 'applyTarget', 'dialogFileHtml', 'dialogHeadHtml', 'dialogLabel', 'dialogPaths',
+    'goto', 'onDrawn', 'onLeft', 'onMoved', 'onShown', 'tabHtml']);
+});
+
+test('switching to another PR in the tab never writes into the PR that was left, whether its diff is loading, missing or failed', async () => {
+  const { w, c, run } = await loaded();
+  const detail = run(`tp('tp-detail')`);
+  c.prdOnShown();
+  detail.scrollTop = 420;
+  w.onScroll();
+  assert.strictEqual(run(`prDiff.scroll.get('acme/widget#1')`), 420);
+  // The panel goes to PR 2 (its scroll is reset to the top), whose diff is on its way.
+  w.selected = 'pr:acme/widget#2';
+  detail.scrollTop = 0;
+  c.prdOnShown();
+  assert.strictEqual(run('prDiff.enteredFor'), 'acme/widget#2');
+  w.onScroll();
+  assert.strictEqual(run(`prDiff.scroll.get('acme/widget#1')`), 420);
+  assert.strictEqual(run(`prDiff.scroll.has('acme/widget#2')`), false, 'nor is a scroll over a loading note a reading place');
+  // And back: PR 1's place is put back.
+  w.selected = 'pr:acme/widget#1';
+  c.prdOnShown();
+  assert.strictEqual(detail.scrollTop, 420);
+});
+
+test('only the selected PR and a few others are kept, and what was drawn is dropped for the others', async () => {
+  const { w, c, run } = await loaded();
+  c.prdOnShown();
+  assert.ok(run(`prDiff.cache.get('acme/widget#1').bodies.size`) > 0);
+  for (const n of [2, 3, 4, 5, 6]) c.prDiffEnsure({ ...rec(`acme/widget#${n}`) }, w.read);
+  // PR 1 is selected, so it stays with its drawn bodies; of the others the three used last stay.
+  assert.deepStrictEqual(JSON.parse(run(`JSON.stringify([...prDiff.cache.keys()].sort())`)), ['acme/widget#1', 'acme/widget#4', 'acme/widget#5', 'acme/widget#6']);
+  assert.ok(run(`prDiff.cache.get('acme/widget#1').bodies.size`) > 0);
+  // Selecting another drops what PR 1 drew, and keeps its diff.
+  w.selected = 'pr:acme/widget#6';
+  c.prDiffEnsure(rec('acme/widget#6'), w.read);
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#1').bodies.size`), 0);
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#1').state`), 'ok');
+});
+
+test('a very long file opens by a click, and a link into it opens it', async () => {
+  const { w, c, run } = await loaded();
+  run(`(() => { const f = prDiff.cache.get('acme/widget#1').layout.files[1]; f.closed = true; })()`);
+  c.prdOnShown();
+  assert.strictEqual(w.panel.bodies[1].hidden, true);
+  assert.strictEqual(w.panel.bodies[1].innerHTML, '');
+  w.dialogOpen = true;
+  c.prdGoto('docs/x.md', null, { inDialog: true });
+  assert.strictEqual(w.dialog.bodies[1].hidden, false);
+  assert.ok(w.dialog.bodies[1].innerHTML.includes('prd-l'));
+});
+
+test('a link waiting for its diff is dropped when the person scrolls by hand', async () => {
+  const { w, c, run } = world();
+  w.dialogOpen = true;
+  c.prDiffEnsure(rec(), w.read);
+  c.prdGoto('src/a.rs', 3, { inDialog: true });
+  assert.ok(run('prDiff.target'));
+  c.prdOnMoved();
+  await ok(w, run, 0);
+  c.prdApplyTarget();
+  assert.strictEqual(w.calls.filter(x => x[0] === 'go').length, 0);
+});
+
+test('an error is retried by a redraw it schedules, for the PR still shown, and a new read-through starts without waiting', async () => {
+  const { w, c, run } = world();
+  const timers = [];
+  c.setTimeout = (f, ms) => { timers.push([f, ms]); return 0; };
+  c.prDiffEnsure(rec(), w.read);
+  w.pending[0].reject(new Error('boom'));
+  await tick();
+  assert.strictEqual(run(`prDiff.cache.get('acme/widget#1').state`), 'error');
+  assert.strictEqual(timers.length, 1);
+  assert.strictEqual(timers[0][1], 5000);
+  w.calls.length = 0;
+  timers[0][0]();
+  assert.deepStrictEqual(w.calls, [['render']]);
+  // Another PR is shown by then: nothing is drawn.
+  w.calls.length = 0;
+  w.selected = 'pr:acme/widget#2';
+  timers[0][0]();
+  assert.deepStrictEqual(w.calls, []);
+  // A new read-through is not held back by the failure of the old one.
+  w.selected = 'pr:acme/widget#1';
+  c.prDiffEnsure(rec(), readThrough({ madeAt: 'm2' }));
+  assert.strictEqual(w.gets.length, 2);
+});

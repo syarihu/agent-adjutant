@@ -90,6 +90,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
     },
     querySelector(sel) { return sel === '.cd-dock' ? this.docks[0] || null : null; },
     contains: el => !!el?.inCol,
+    labels: [], setAttribute(name, value) { if (name === 'aria-label') this.labels.push(value); },
     replaceChildren(...nodes) { this.draws++; this.docks = nodes.flatMap(n => n.docks || [n]); },
   };
   waiting.forEach((r, i) => { const d = dockEl(r, drafts[r] || ''); d.hidden = i > 0; col.docks.push(d); });
@@ -130,6 +131,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
   vm.runInContext([
     cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};\nconst CARD_DIALOG_GONE = [^\n]*;\nconst CARD_DIALOG_GATE_GONE = [^\n]*;\nconst CARD_DIALOG_TASK_GONE = [^\n]*;\nconst CARD_DIALOG_NONE_LEFT = [^\n]*;\nconst cardDialogDrafts = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogDockEl = [^\n]*;/m),
+    cut(dlgSrc, /^const cardDialogIndexed = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogUpdateEl = [^\n]*;/m),
     cut(utilSrc, /^const REL_TIME_RE = [^\n]*;/m), cut(utilSrc, /^const timeFree = [^\n]*;/m),
     cut(viewSrc, /^const HISTORY_LOADING = [^\n]*;/m), cut(viewSrc, /^const DIFF_LOADING = [^\n]*;/m),
@@ -626,6 +628,7 @@ test('the index keeps the group that was clicked until the person scrolls', () =
     cardDialogFollowDock: k => followed.push(k), cardDialogSeeUpdated() {},
   });
   vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), ...['cardDialogActiveGroup', 'cardDialogSpy'].map(n => fnSrc(dlgSrc, n)),
+    cut(dlgSrc, /^const cardDialogIndexed = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogUserMoved = [^\n]*/m), "cardDialog.mode = 'task';"].join('\n'), c);
   const spy = () => vm.runInContext('cardDialogSpy()', c);
   spy();
@@ -688,6 +691,7 @@ test('the pinned group is let go when the body scrolls away from where the jump 
     cardDialogEl: () => ({ querySelector: () => body }), requestAnimationFrame: f => f(), cardDialogSpy() {},
   });
   vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), cut(dlgSrc, /^const cardDialogUserMoved = [^\n]*/m),
+    cut(dlgSrc, /^const cardDialogIndexed = [^\n]*;/m),
     cut(dlgSrc, /^for \(const type of \['wheel'[^\n]*\n/m),
     cut(dlgSrc, /^cardDialogEl\(\)\.querySelector\('\.card-dialog-body'\)\.addEventListener\('scroll'[\s\S]*?\n\}\);/m),
     "cardDialog.mode = 'task'; cardDialog.pinned = 'b'; cardDialog.pinnedAt = 500;"].join('\n'), c);
@@ -947,6 +951,7 @@ function noticeWorld() {
   });
   const cards = {}, body = { clientHeight: 600, getBoundingClientRect: () => ({ top: 0, bottom: 600 }) };
   vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), cut(dlgSrc, /^const CARD_DIALOG_UPDATE_MS = [^\n]*;/m), cut(dlgSrc, /^const CARD_DIALOG_SEEN_MS = [^\n]*;/m),
+    cut(dlgSrc, /^const cardDialogIndexed = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogUpdateEl = [^\n]*;/m), cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m),
     ...['cardDialogUpdateText', 'cardDialogShowUpdate', 'cardDialogWriteUpdate', 'cardDialogPruneUpdate', 'cardDialogMergeChanges', 'cardDialogUpdateTimer', 'cardDialogHideUpdate', 'cardDialogSeeNotice', 'cardDialogResetUpdates', 'cardDialogSeeUpdated'].map(n => fnSrc(dlgSrc, n)),
     cut(dlgSrc, /^cardDialogUpdateEl\(\)\.addEventListener\('pointerenter'[\s\S]*?\nfor \(const type of \['pointerleave'[\s\S]*?\n\}\n/m),

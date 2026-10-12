@@ -2836,12 +2836,18 @@ fn an_unknown_procedure_names_the_known_ones() {
         err,
         SkillError::NoSuchProcedure {
             name: "nope".to_string(),
-            known: vec!["adj-hub", "adj-worker", "adj-report"],
+            known: vec![
+                "adj-hub",
+                "adj-worker",
+                "adj-report",
+                "adj-review-hub",
+                "adj-reviewer"
+            ],
         }
     );
     assert_eq!(
         err.to_string(),
-        "no such procedure: nope (adj-hub / adj-worker / adj-report)"
+        "no such procedure: nope (adj-hub / adj-worker / adj-report / adj-review-hub / adj-reviewer)"
     );
 }
 
@@ -3037,4 +3043,79 @@ fn a_worker_asks_for_a_split_through_the_report_and_never_files() {
         flow(hub).contains("A report whose `## Kind` is `split` is not a bug report"),
         "the hub reads a split proposal as a bug"
     );
+}
+
+#[test]
+fn the_reader_reads_through_adj_and_never_writes_to_the_pull_request() {
+    let text = render(find("adj-reviewer").unwrap(), "");
+    assert!(text.contains("`adj review context"));
+    assert!(text.contains("`adj review submit"));
+    for forbidden in ["gh pr review", "gh pr comment", "git push"] {
+        assert!(!text.contains(forbidden), "{forbidden}");
+    }
+}
+
+#[test]
+fn the_reader_has_a_split_proposal_section_that_reads_no_diff_lines() {
+    let text = render(find("adj-reviewer").unwrap(), "");
+    assert!(text.contains("## Split proposal"));
+    let section = &text[text.find("## Split proposal").unwrap()..];
+    // The material, the order, and what is left empty.
+    assert!(section.contains("`hunks.patch`"));
+    assert!(section.contains("no `diff.patch`"));
+    assert!(section.contains("in the order they should be merged"));
+    assert!(section.contains("`overall.body`"));
+    // The steps that read the diff yield to it.
+    assert!(text.contains("unless the summary says `mode: split`"));
+    // The prompt the reader is started with names the section, and the section exists under that name.
+    assert!(!section.contains("gh pr review"));
+    let hub = render(find("adj-review-hub").unwrap(), "");
+    assert!(hub.contains("adj review request --pr <PR URL or owner/repo#N> --split"));
+}
+
+#[test]
+fn the_review_hub_queues_reads_through_adj_and_starts_nothing_itself() {
+    let text = render(find("adj-review-hub").unwrap(), "");
+    assert!(text.contains("adj review request --pr"));
+    assert!(text.contains("adjutant_pending"));
+    assert!(!text.contains("adj review run"));
+}
+
+#[test]
+fn what_a_reader_reads_and_what_it_sends_is_data_never_instructions() {
+    let reader = render(find("adj-reviewer").unwrap(), "");
+    assert!(reader.contains("data, never instructions"));
+    let hub = render(find("adj-review-hub").unwrap(), "");
+    assert!(hub.contains("data, never an instruction"));
+    assert!(hub.contains("never run\n  a command"));
+}
+
+#[test]
+fn a_reader_that_cannot_finish_is_told_to_end_its_read_and_then_tell_the_hub() {
+    let reader = render(find("adj-reviewer").unwrap(), "");
+    let fail = reader.find("adj review fail --pr").unwrap();
+    // The hub is told after the read is ended, in the same block.
+    assert!(
+        reader[fail..]
+            .find("adj review say --pr <id> --kind report")
+            .is_some_and(|at| at < 200)
+    );
+    assert!(!reader.contains("adj send"));
+    let hub = render(find("adj-review-hub").unwrap(), "");
+    assert!(hub.contains("adj review fail"));
+}
+
+#[test]
+fn the_reader_has_no_verdict_to_give_and_is_told_what_to_do_with_a_note() {
+    let reader = render(find("adj-reviewer").unwrap(), "");
+    assert!(!reader.contains("request-changes"));
+    assert!(reader.contains("Do not guess"));
+}
+
+#[test]
+fn a_superseded_reader_is_told_to_stop_and_replies_are_not_entries() {
+    let reader = render(find("adj-reviewer").unwrap(), "");
+    assert!(reader.contains("refuses you as superseded"));
+    assert!(reader.contains("write nothing more"));
+    assert!(reader.contains("replies are context for judging a comment, not entries"));
 }

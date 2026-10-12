@@ -295,6 +295,16 @@ pub(super) fn tmux_enter_script(socket: Option<&str>, pane_id: &str) -> String {
     )
 }
 
+/// One named key (`Down`, `Enter`) sent to a pane, as tmux spells it and not as typed text.
+pub fn tmux_key_script(socket: Option<&str>, pane_id: &str, key: &str) -> String {
+    let prefix = tmux_cmd_prefix(socket);
+    format!(
+        "{prefix} send-keys -t {} {}",
+        sh_quote(pane_id),
+        sh_quote(key)
+    )
+}
+
 pub fn tmux_close_script(socket: Option<&str>, window_id: &str) -> String {
     let prefix = tmux_cmd_prefix(socket);
     let win_q = sh_quote(window_id);

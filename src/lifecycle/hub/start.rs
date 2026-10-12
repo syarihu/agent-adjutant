@@ -1,3 +1,4 @@
+use super::ensure_home;
 use super::resume::saved_hub_session;
 use crate::infra::paths::exe_path;
 use crate::infra::terminal::{self, SpawnRequest};
@@ -107,6 +108,8 @@ pub fn start_hub(ctx: &Context, start: HubStart) -> Result<TabOutcome, String> {
     if !hub_startable(&ctx.settings.terminal) {
         return Err("starting a hub from the board needs terminal.preset \"tmux\"".to_string());
     }
+    // The tab opens in the hub's directory, which the code-review hub has to be given.
+    ensure_home(ctx)?;
     hub_in_tab(ctx, None, &[], start, None, &ctx.settings.terminal, false)
 }
 

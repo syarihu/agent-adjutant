@@ -9,6 +9,7 @@ mod issue_parents;
 mod jules_watch;
 mod notifications;
 mod pr_poll;
+pub mod review_queue;
 pub mod sweep_gates;
 mod wait_watch;
 

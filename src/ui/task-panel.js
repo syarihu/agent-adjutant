@@ -249,6 +249,11 @@ function renderTaskPanelNow() {
     if (panelTerm.term) disposePanelTerminal();
     syncWorkSelection();
   }
+  // A PR waiting on your review has no board behind it: its panel is drawn from its own record (pr-panel.js).
+  if (isPrRef(selectedTaskId)) {
+    if (view !== 'work') return dismissTaskPanel();
+    return renderPrPanel();
+  } else if (typeof prLeft === 'function') prLeft();
   // A card the board no longer lists, a hub that left its list, or a session that is gone takes
   // the panel with it. In the work view the panel stays and says so: the row was opened from a
   // list that may know more than the board it is on.
@@ -934,6 +939,7 @@ function termPlaceholderHtml(s) {
 
 /* Events are heard on the panel itself: its parts are drawn again, it is not. */
 tp('task-panel').addEventListener('click', e => {
+  if (isPrRef(selectedTaskId)) return view === 'work' ? prPanelClick(e) : undefined;
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;

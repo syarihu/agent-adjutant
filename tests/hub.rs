@@ -620,3 +620,72 @@ fn a_runner_that_is_not_claude_is_given_no_hook_settings() {
     assert!(!out.contains("--settings"), "{out}");
     assert!(!fixture.state.join("agent-hooks").exists());
 }
+
+// ── the code-review hub ──────────────────────────────────────────────
+
+/// `adj hub --review` needs no repository: from a directory that is not one, it prints the hub
+/// that belongs to no repository, starting in a directory of its own under the state directory.
+/// It writes no board address and no hub record, which only a real start does.
+#[test]
+fn the_review_hub_starts_in_its_own_directory_outside_any_repository() {
+    let fixture = Fixture::new(QUIET);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let out = fixture
+        .command(["hub", "--review", "--dry-run"])
+        .current_dir(elsewhere.path())
+        .output()
+        .unwrap();
+    let said =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{said}");
+    let home = fixture.state.join("review");
+    assert!(said.contains(&format!("cd {}", home.display())), "{said}");
+    assert!(said.contains("-n adjutant-review "), "{said}");
+    assert!(said.contains("ADJUTANT_HUB=@review"), "{said}");
+    // The state directory as an absolute path, so the agent that starts in `<state>/review`
+    // reads the same one.
+    assert!(
+        said.contains(&format!("ADJUTANT_STATE_DIR={}", fixture.state.display())),
+        "{said}"
+    );
+    assert!(said.contains("adj-review-hub"), "{said}");
+    // No board of its own to serve.
+    assert!(!said.contains("ADJUTANT_HUB_SERVE"), "{said}");
+    // A dry run makes nothing, the home included.
+    assert!(!home.exists());
+    assert!(!fixture.state.join("boards").exists());
+    assert!(!fixture.state.join("hubs").join("review.json").exists());
+    // The same hub by its identifier.
+    let by_id = fixture
+        .command(["hub", "--hub", "@review", "--dry-run"])
+        .current_dir(elsewhere.path())
+        .output()
+        .unwrap();
+    assert!(by_id.status.success());
+    // A fresh session each time, so only the address is the same.
+    assert!(String::from_utf8_lossy(&by_id.stdout).contains("-n adjutant-review "));
+}
+
+#[test]
+fn the_review_hub_belongs_to_no_repository() {
+    let fixture = Fixture::new(QUIET);
+    let out = fixture.cmd(&["hub", "--review", "--repo", "acme/widget", "--dry-run"]);
+    assert!(!out.status.success());
+    let out = fixture.cmd(&["hub", "--review", "--hub", "x", "--dry-run"]);
+    assert!(!out.status.success());
+    // The identifier with a repository is refused too, not quietly taken for the repository's.
+    let out = fixture.cmd(&[
+        "hub",
+        "--hub",
+        "@review",
+        "--repo",
+        "acme/widget",
+        "--dry-run",
+    ]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no repository"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

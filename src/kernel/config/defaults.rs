@@ -47,12 +47,13 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-pub(super) const SETTING_KEYS: [&str; 19] = [
+pub(super) const SETTING_KEYS: [&str; 20] = [
     "terminal",
     "notification",
     "agentRunner",
     "agentEnv",
     "hubRunner",
+    "reviewerRunner",
     // What `--resume` runs instead of the two above. Beside them for the reason they are here:
     // which agent a session is, and how it is reopened, is the machine's business.
     "agentResumeRunner",

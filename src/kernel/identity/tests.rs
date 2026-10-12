@@ -299,3 +299,54 @@ fn a_branch_cannot_be_used_to_walk_out_of_the_checkout() {
         "/src/widget/release/1.2.x"
     );
 }
+
+#[test]
+fn the_review_hub_resolves_outside_git_over_the_state_dir() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let outside = tempfile::tempdir().unwrap();
+    let info = resolve_in(Some(outside.path()), None, Some(" @review ")).unwrap();
+    assert!(info.is_review());
+    assert_eq!(info.slug, "review");
+    assert_eq!(info.hub_name, "adjutant-review");
+    assert_eq!(info.hub.as_deref(), Some("@review"));
+    assert_eq!(info.nwo, "@review");
+    assert_eq!(
+        info.main,
+        sandbox.state().join("review").to_string_lossy().to_string()
+    );
+    // The same answer by re-addressing another repository's info.
+    let again = review_hub_at(&sandbox.state());
+    assert_eq!(again, info);
+    let repo = RepoInfo {
+        main: "/repo".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: slug_for("acme/widget", None),
+        hub_name: hub_name("acme/widget", None).unwrap(),
+        nwo_source: "argument",
+    };
+    assert_eq!(repo.addressed(Some("@review")).unwrap(), info);
+}
+
+#[test]
+fn the_review_slug_has_no_digest_and_no_repository_or_task_hub_can_have_it() {
+    assert_eq!(REVIEW_SLUG, "review");
+    for slug in [
+        slug_for("acme/widget", None),
+        slug_for("acme/widget", Some("review")),
+        slug_for("review", None),
+        slug_for("@review", None),
+        slug_for("acme/widget", Some("@review")),
+    ] {
+        assert_ne!(slug, REVIEW_SLUG);
+        assert_eq!(slug.rsplit('-').next().map(str::len), Some(16), "{slug}");
+    }
+}
+
+#[test]
+fn the_review_hub_refuses_a_repository() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let err = resolve_in(None, Some("acme/widget"), Some("@review")).unwrap_err();
+    assert!(err.contains("no repository"), "{err}");
+}

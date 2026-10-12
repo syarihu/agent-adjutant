@@ -50,6 +50,54 @@ pub const DEFAULT_HUB_RUNNER: &str =
 pub const DEFAULT_HUB_RESUME_RUNNER: &str =
     "claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}";
 
+/// The reader of a PR, the read-only worker of the code-review hub. It has no checkout and no
+/// `gh`: it reads what `adj review context` writes next to it, and hands in one JSON file.
+///
+/// Read-only is enforced here, not by asking. `--allowedTools` only *adds* rules, so on its own it
+/// would sit on top of whatever the person's own Claude settings allow (a `gh` rule, a wildcard
+/// `Bash`) and on every MCP server they have (some of which write to GitHub). Two flags take
+/// those away: `--setting-sources ''` loads no user, project or local settings file, and
+/// `--strict-mcp-config` loads no MCP server but those named with `--mcp-config` (none). The
+/// `--settings` file this adds (`{settings}`: adjutant's own hooks) is not a setting source in
+/// that sense and still applies. What is left is the list: under `--permission-mode dontAsk`
+/// anything off it is denied, not asked, so the reader cannot push, comment or review, and nothing
+/// waits on a prompt in a window nobody watches. With no MCP server the reader uses the `adj`
+/// command for everything (`adj skill`, `adj review say`), so no `mcp__` tool is listed. A deny list
+/// over `gh` would leak (`gh api -f query=mutation`, `--input`, `graphql`); having no `gh` does not.
+///
+/// The one file it may write is `./read-through.json`, named as an `Edit(...)` rule: Claude's file
+/// checks match `Edit(path)` rules only, and an `Edit` rule covers every tool that edits a file,
+/// Write included. A `Write(path)` rule would match nothing and deny the file.
+///
+/// `--permission-mode` comes after `--allowedTools` on purpose. The tools option takes any number
+/// of values, and `{settings}` renders to nothing when there is no hooks file, so a flag has to
+/// follow the list or the prompt would be read as one more tool pattern.
+///
+/// Reading is scoped to the reader's own directory: `Read(./**)`, `Grep(./**)` and `Glob(./**)` allow
+/// what `adj review context` wrote there and deny any path outside it, so the reader cannot read
+/// the person's other files (keys, tokens, other readers' material) however a pull request asks.
+///
+/// There is no `adj send` on the list: it can address any hub and wake it, and a reader that read
+/// a hostile pull request must not be able to. `adj review say` reaches the code-review hub and
+/// nobody else.
+///
+/// The patterns match `adj ...` as typed, so `adj` has to be on PATH. A `reviewerRunner` of your
+/// own has to keep both isolation flags, or the reader gets whatever the person's settings give
+/// it. Another agent is held to reading by the procedure alone.
+///
+/// Claude Code and agy ask whether to trust the directory they start in, and nobody answers in a
+/// reader's window: `run_reader` starts a watcher that answers it for the reader's own directory
+/// and fails the read at any other prompt. A runner of any other agent has no watcher.
+///
+/// `--setting-sources ''` also drops the person's `"tui": "fullscreen"`, which would leave Claude
+/// Code's inline UI, where the board's terminal sends the mouse wheel as arrow keys that scroll
+/// the input history. So `run_reader` sets `CLAUDE_CODE_NO_FLICKER=1` for a Claude reader unless
+/// `agentEnv` already sets it.
+pub const DEFAULT_REVIEWER_RUNNER: &str = "claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}";
+
+/// What the code-review hub is told on startup, in the shape of `HUB_STARTUP_PROMPT`.
+pub const REVIEW_HUB_STARTUP_PROMPT: &str = "Fetch the adj-review-hub procedure with adjutant_skill name=adj-review-hub (or `adj skill adj-review-hub` if that is not available), and start the code-review hub as it says.";
+
 /// What the hub is told on startup.
 ///
 /// What the hub is told on startup — naming two ways to fetch the procedure, and not a
@@ -97,6 +145,25 @@ pub fn hub_command(
 ) -> String {
     hub_line(
         template.unwrap_or(DEFAULT_HUB_RUNNER),
+        env,
+        name,
+        session,
+        prompt,
+        settings,
+    )
+}
+
+/// The command line that starts the reader session `name` of a PR.
+pub fn reviewer_command(
+    template: Option<&str>,
+    env: &[(String, String)],
+    name: &str,
+    session: &str,
+    prompt: &str,
+    settings: Option<&str>,
+) -> String {
+    hub_line(
+        template.unwrap_or(DEFAULT_REVIEWER_RUNNER),
         env,
         name,
         session,
@@ -344,13 +411,17 @@ fn agent_token(runner: &str) -> Option<Range<usize>> {
 
 pub fn runner_for_procedure(settings: &config::Settings, procedure: &str) -> Option<String> {
     match procedure {
-        "adj-hub" => settings.hub_runner.clone(),
+        "adj-hub" | "adj-review-hub" => settings.hub_runner.clone(),
+        "adj-reviewer" => settings.reviewer_runner.clone(),
         _ => settings.agent_runner.clone(),
     }
 }
 
 pub fn resolve_runner_for(cwd: Option<&Path>, procedure: &str) -> Option<String> {
-    let info = identity::resolve_in(cwd, None, None).ok()?;
+    // The review procedures run outside any repository.
+    let hub =
+        matches!(procedure, "adj-review-hub" | "adj-reviewer").then_some(identity::REVIEW_HUB_ID);
+    let info = identity::resolve_in(cwd, None, hub).ok()?;
     let settings = config::resolve_config(&info.nwo).ok()?.settings;
     runner_for_procedure(&settings, procedure)
 }
@@ -452,6 +523,72 @@ mod tests {
         assert!(out.contains("adj-hub"), "{out}");
         // Unattended by default: a hub stopped for approval is a hub not reading its inbox.
         assert!(out.contains("--permission-mode auto"), "{out}");
+    }
+
+    #[test]
+    fn the_reader_line_lists_its_tools_and_ends_with_the_prompt_with_or_without_hooks() {
+        for settings in [None, Some("/state/hooks.json")] {
+            let out = reviewer_command(
+                None,
+                &[],
+                "adjutant-read-acme~widget~7",
+                SID,
+                "read the pull request acme/widget#7",
+                settings,
+            );
+            // Reading is the reader's own directory, never a bare `Read` that takes any path.
+            assert!(out.contains(
+                "--allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),"
+            ));
+            assert!(!out.contains("'Read,") && !out.contains(",Read,"), "{out}");
+            assert!(out.contains("Bash(adj review submit:*)"), "{out}");
+            assert!(out.contains("Bash(adj review fail:*)"), "{out}");
+            assert!(out.contains("Bash(adj review say:*)"), "{out}");
+            // `adj send` can address any hub, which a reader must not be able to.
+            assert!(!out.contains("adj send"), "{out}");
+            assert!(out.contains("--permission-mode dontAsk"), "{out}");
+            // The person's own settings and MCP servers are not the reader's; `''` stays an empty word.
+            assert!(out.contains("--setting-sources '' "), "{out}");
+            assert!(out.contains("--strict-mcp-config"), "{out}");
+            assert!(!out.contains("mcp__"), "{out}");
+            // No `gh` and no `git` anywhere on the list.
+            assert!(
+                !out.contains("Bash(gh") && !out.contains("Bash(git"),
+                "{out}"
+            );
+            // The tools list is ended by a flag, so the prompt cannot be taken for a tool.
+            assert!(out.contains("' --permission-mode dontAsk"), "{out}");
+            assert!(
+                out.ends_with("'read the pull request acme/widget#7'"),
+                "{out}"
+            );
+            assert_eq!(out.contains("--settings"), settings.is_some(), "{out}");
+        }
+    }
+
+    #[test]
+    fn the_empty_setting_sources_reaches_the_agent_as_an_empty_argument() {
+        let line = reviewer_command(None, &[], "n", SID, "go", Some("/h.json"));
+        // `claude` is a function that prints its arguments one by one.
+        let script =
+            format!("claude() {{ for a in \"$@\"; do printf '<%s>' \"$a\"; done; }}; {line}");
+        let out = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        let args = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(
+            args.contains("<--setting-sources><><--strict-mcp-config>"),
+            "{args}"
+        );
+        assert!(args.ends_with("<--settings></h.json><go>"), "{args}");
+    }
+
+    #[test]
+    fn the_review_hub_startup_prompt_is_not_a_slash_command() {
+        assert!(!REVIEW_HUB_STARTUP_PROMPT.trim_start().starts_with('/'));
+        assert!(REVIEW_HUB_STARTUP_PROMPT.contains("adjutant_skill name=adj-review-hub"));
+        assert!(REVIEW_HUB_STARTUP_PROMPT.contains("`adj skill adj-review-hub`"));
     }
 
     #[test]

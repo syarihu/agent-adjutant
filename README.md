@@ -324,6 +324,8 @@ placeholders are substituted **already shell-quoted** — so do not put quotes a
 | | | *the built-in `focus`, `close` and `wake` reach a session through the terminal it was started in (recorded when it registered), so changing `preset` does not strand sessions started before; sessions with no such record, or one started by a `spawn` template outside tmux, follow the current `preset`* |
 | `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
 | `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
+| `reviewerRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}` |
+| | | *starts the read-only reader of a PR (「AI 下読み」). The default holds it to reading: `--allowedTools` only adds to what your own Claude settings and MCP servers already allow, so `--setting-sources ''` and `--strict-mcp-config` drop those two (the reader has no settings file and no MCP server, and uses `adj skill` and `adj review say` from the command line), and under `dontAsk` anything off the list is denied, not asked. It has no `gh`. A `reviewerRunner` of your own has to keep both flags, or the reader gets whatever your settings give it. The one file it may write is named as `Edit(...)` because Claude's file rules match `Edit(path)` only, and an `Edit` rule covers Write too. `adj` has to be on PATH for the patterns to match. Another agent is held to reading by the `adj-reviewer` procedure alone* |
 | `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
 | `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
 | | | *`{settings}` becomes `--settings <file>`, the file holding adjutant's hooks for the session. It is added after `claude` when a template does not name it, unless the template passes its own `--settings`; do not quote it. A binary older than this does not know it, so write it by hand only once every binary sharing the config does* |
@@ -419,8 +421,8 @@ such list, and there it opens the session's terminal). With no such page open, `
 A wait the page was left to is looked at again if the page closes or sleeps while the session still
 waits, and rings `notification` then, so a late reminder is possible but silence is not.
 `send` and `tell` are not affected: they ring `notification` as before.
-Which of waiting, done and failed the page notifies for is set in the page's notification dialog (the
-bell button; waiting and failed are on by default) and is kept in the browser; turning waiting off
+Which of waiting, done, failed and review requests the page notifies for is set in the page's notification dialog (the
+bell button; waiting, failed and review requests are on by default) and is kept in the browser; turning waiting off
 hands waits and gates back to `notification` within about 90 seconds. While a notifying page is open,
 waits it keeps quiet (a parked task, the row open in a visible tab) do not ring `notification` either.
 
@@ -529,7 +531,7 @@ The addresses of the old セッション tab (`?view=sessions[&task=<ref>]`, `&s
 is in the middle column whichever tab of the panel is on.
 
 **いまの仕事 (the work under way).** The 「いまの仕事」 tab of the sidebar's switch (`?view=work`), on the resident server only, is one view of
-the work under way in every repository, in three columns: the list in the sidebar, the terminal in the middle and the task panel on the right. The list has two groupings: 「親 Issue」
+the work under way in every repository, in three columns: the list in the sidebar, the terminal in the middle and the task panel on the right. The heading row of the list is a switch between 「タスク」 (the list described here) and 「AI 下読み」 (below), each half with its own count of new rows. The tasks have two groupings, chosen in a menu behind the icon at the end of that row (the icon shows the one in use, and the menu is there only on 「タスク」): 「親 Issue」
 (the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
 with the tasks that have no parent in the group of the repository's hub, which comes first, above the parent issues; the owner heading is shown even when there is only one owner,
 owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
@@ -571,6 +573,36 @@ openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt`
 gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
 when you last typed into it.
 
+The PRs that asked for your review are kept apart from tasks, one record each, in the repositories of the
+owners adj has a board for. `POST /api/others/sync` (the resident only) reads them from GitHub: the open PRs that
+ask for you directly, and every record not yet done (or done with a reader still open), by number. It runs only when asked, never at start or on a timer.
+`GET /api/others` returns `{now, lastSync, records, hub}`; each record carries the PR's title, author, branches, head
+SHA, diff size with the files, CI, reviewers, your last review and the commits pushed since, and a derived `state`
+(`requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done`). A record done for a day is removed by the next
+sync, unless a reader is still open on it. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
+
+**AI 下読み.** The other half of the switch lists those records, one group per repository (marked when adj has no board for it), the oldest request
+first and the done ones last, with 「同期」 and the time of the last sync, and a chip per repository to narrow the list. A row has the PR's title, number, author,
+`+additions -deletions`, files, a size (S below 200 changed lines, M below 1000, L above), the time since the request and a line for its state. Selecting a row opens the PR the way a task opens: the reader's terminal in the middle (once an AI 下読み has started, to ask it about the diff), the read-through in the panel on the right (tabs 下読み, 差分 and 下書き) and 「拡大」 for the whole of it. The address carries it, as `/?view=work&task=pr:<owner/repo#N>` (with `&pane=drafts` for the third tab), so a link opens it. The 差分 tab (and the 差分 group of 「拡大」) shows the whole diff the reader read, in five tabs decided from the path alone (仕様・ロジック, UI, ドキュメント, テスト, リソース) with each one's share of the changed lines, files in the read-through's reading order, and its annotations under their lines (all open; one button folds them). A 「＋」 on a line starts a draft there; 見るポイント and 読む順 jump to the line or file, and a file deleted whole or of more than 1500 rows starts closed. The draft comments you edit there are kept by adj on the server, not in the browser, so a reload or another browser still has them. 「N 件を pending review に積む」 under them puts them into your pending review on the PR (added to the one you already have): the drafts become its line comments, the overall comment its body. A pending review is visible only to you, and you finish and submit it on GitHub; adj never submits a review and never approves or requests changes. Drafts it has put in stay in the list, read-only, and copying stays available.
+A PR whose change is too large to read (one file changed by more than 1,500 lines, not counting files deleted whole, lock files, snapshots and generated files; the total of the PR does not count) is 「レビュー対象外」: its row names the file that is too large and offers 「分割案」 in place of 「AI 下読み」, which asks a worker to draft how to cut the PR into reviewable ones from the file structure and the hunk headers only (no lines of the diff are read). The proposal lands in the drafts as the overall comment, where you edit it, copy it or put it into a pending review. The middle and the 下読み tab list the files over the limit with 「分割を提案する」 and 「それでも AI 下読み」, which reads the whole PR anyway.
+A row is new when a request, a re-request, a finished read-through or a push is later than when you pressed 既読 on it (or started its AI 下読み, or put drafts into a pending review); a PR waiting on its author, or done, never is.
+When the last sync is more than 30 minutes old the list says so, with 「いま同期する」, and the half of the switch gets a dot. A sync that brings in a request or a re-request rings a desktop notification once
+(「レビュー依頼 N 件」 for several); a push alone does not. The code-review hub's row says whether AI 下読み is available; while it is not, the sync and the list work. The read marks are in this browser (`adj.seenOthers`).
+The hub's own procedure no longer lists these PRs in its terminal: it points at this list.
+
+**The code-review hub and the reader.** 「AI 下読み」 is made by a hub that belongs to no repository: `adj hub --review` (the same as
+`--hub @review`; it conflicts with `--repo`) starts it from any directory, in `<state>/review`, and 「hub を起動」 on its row
+(`POST /api/others/hub/start`, `terminal.preset: "tmux"` only) does the same. It is not in 「ボード」. A read-through is asked for
+with the row's button (`POST /api/others/ai` with `{"id": "owner/repo#N"}`, and `"mode": "split"` for a split proposal of a PR that is out of review; 409 `hub-stopped` while the hub is down, so nothing is
+queued) or `adj review request --pr <URL|owner/repo#N>` (`--split` for the proposal). A sync never asks for a read, though a place it frees by closing a reader may start the next one in the queue. At most 3 readers run at once and the rest wait in the
+order asked. Each reader is a window of its own, in an empty directory, with no checkout and no `gh`: `adj review context --pr <id> --out .`
+writes the diff, the body, the commit messages and the review comments next to it (read-only requests, no mutation), and the reader hands in one
+JSON file with `adj review submit --pr <id> --file read-through.json`, checked against the schema before anything is stored (a reader that cannot finish says so with `adj review fail --pr <id> --why <text>`, which frees its place and lets the PR be asked again, and speaks to the hub only with `adj review say` (it can reach no other hub); a read stuck in `running` for 30 minutes is taken over by a new request once its old reader is gone or has been stopped (its tmux window is closed), and otherwise stays). It
+cannot push, comment or review. That is enforced for Claude by the default `reviewerRunner`; for another agent it is the `adj-reviewer`
+procedure's rule, so set a `reviewerRunner` that restricts it. A reader stays running after it hands in, until the board's 「下読みを閉じる」 closes it (`POST /api/others/reader/close` with `{"id": "owner/repo#N"}`; 409 `no-reader` when none is open) or a sync finds its PR merged or closed; closing keeps the read-through and the drafts, and a read that was running is failed and can be asked for again. `GET /api/others/read?id=<owner/repo#N>` answers the stored read-through, and `GET /api/others/diff?id=<owner/repo#N>` the diff the reader read (`{id, sha, bytes, diff}`): it is kept with the read-through at its head and removed with it, an empty diff is `""`, and one over 8 MiB is `null` with its size. When the PR gets a new head, the read-through is kept and shown as made at the old one
+(「下読みし直す」), and nothing is read again by itself. The schema and the queue rules are in
+[docs/architecture.md](docs/architecture.md#the-read-through).
+
 **新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
 session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
@@ -590,7 +622,7 @@ new again only when something changes what you have to do: a gate opens, a permi
 worker finishes a turn with no gate open, a session fails, the PR turns to yours again, or you take a park off (置くのをやめる,
 `adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to
 checks does not. Two buttons: `done` on a new row marks it read, and `done_all` in the 新着 header marks every new row
-read. The badge on the sidebar's 「いまの仕事」 tab counts the new rows, and is refreshed every 10 seconds while another
+read. The badge on the sidebar's 「いまの仕事」 tab counts the new rows of both lists, and is refreshed every 10 seconds while another
 view is open; it is the only count in the sidebar, and on the resident server it is the number in front of the page's
 title (a board served alone puts what waits on you there). The checkbox 「処理したら次へ」 in the 新着 header (on by
 default, kept in the browser) opens the next new row, in the order the list shows them, once you answer or close a gate on
@@ -1412,13 +1444,14 @@ mail       inbox, outbox, delivery and wake, reading an agent's screen
 task       task records, their operations and the GitHub reads behind them
 gate       gate records and their operations
 jules      Jules sessions: starting one, following it, relaying review comments
+others     PRs other people asked you to review: their records, the sync that reads them, the state derived from them
 lifecycle  starting, stopping, resuming, closing, focusing and linking hubs and workers
 board      the daemon, the resident server, the read model, the background jobs, and the page's session and hub actions
 transport  cli, mcp and board_http: read input, call an operation, word the result
 ```
 
 The list is bottom first: a module may use the ones above it, never one below it; `lib.rs` and
-`main.rs` are the crate roots over all ten. `scripts/check-layering.sh` enforces the arrows, and CI
+`main.rs` are the crate roots over all eleven. `scripts/check-layering.sh` enforces the arrows, and CI
 runs it. As long as it passes, splitting into a Cargo workspace later stays a mechanical move.
 
 [docs/architecture.md](docs/architecture.md) has the details: a picture of the layers, what each

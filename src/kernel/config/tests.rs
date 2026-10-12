@@ -174,7 +174,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         // Every optional key is set, because several are skipped when absent and a
         // skipped key would pass an "is it spelled right" check for free.
         json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
-               "hubRunner": "start {name}", "worktreePattern": ".wt/{name}",
+               "hubRunner": "start {name}", "reviewerRunner": "read {name}", "worktreePattern": ".wt/{name}",
                "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
                "maxWorkers": 3, "stuckAfterMinutes": 30, "julesKey": "print-key", "language": "ja",
                "hubResumeRunner": "again {name} {sessionId}",
@@ -189,6 +189,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         "workerWake",
         "agentRunner",
         "hubRunner",
+        "reviewerRunner",
         "agentResumeRunner",
         "hubResumeRunner",
         "worktreePattern",
@@ -208,6 +209,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         "worker_wake",
         "agent_runner",
         "hub_runner",
+        "reviewer_runner",
         "agent_resume_runner",
         "hub_resume_runner",
         "hub_auto_resume_hours",

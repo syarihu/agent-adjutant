@@ -15,6 +15,7 @@
 #   task       task records and their operations, GitHub reads
 #   gate       gate records and their operations
 #   jules      Jules sessions and their operations
+#   others     PRs other people asked you to review: records, sync, derived state
 #   lifecycle  starting, stopping, resuming, closing and linking hubs and workers
 #   board      the daemon, the resident server, the read model, the background jobs, and the
 #              actions a person runs from the page
@@ -35,7 +36,7 @@ export LC_ALL=C
 cd "$(dirname "$0")/.." || exit 1
 
 # The stack, bottom first. A module here may name only modules earlier in this list.
-RANK=(infra kernel registry mail task gate jules lifecycle board transport)
+RANK=(infra kernel registry mail task gate jules others lifecycle board transport)
 # The crate roots. May name anything; nothing else may name them.
 TOP=(lib main)
 # `testing` is `#[cfg(test)]` scaffolding in lib.rs, not a layer: it ships in no binary, so

@@ -15,6 +15,7 @@ mod jules;
 mod kernel;
 mod lifecycle;
 mod mail;
+mod others;
 mod registry;
 mod task;
 mod transport;

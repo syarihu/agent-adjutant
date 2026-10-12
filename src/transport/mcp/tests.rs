@@ -53,7 +53,7 @@ fn a_non_json_line_is_a_parse_error_rather_than_a_crash() {
 }
 
 #[test]
-fn all_three_procedures_are_listed_and_fetchable() {
+fn every_procedure_is_listed_and_fetchable() {
     let listed = call("prompts/list", json!({}));
     let names: Vec<&str> = listed["result"]["prompts"]
         .as_array()
@@ -61,7 +61,16 @@ fn all_three_procedures_are_listed_and_fetchable() {
         .iter()
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["adj-hub", "adj-worker", "adj-report"]);
+    assert_eq!(
+        names,
+        [
+            "adj-hub",
+            "adj-worker",
+            "adj-report",
+            "adj-review-hub",
+            "adj-reviewer"
+        ]
+    );
 
     let got = call(
         "prompts/get",
@@ -498,7 +507,7 @@ fn an_unknown_procedure_is_worded_per_entry_point() {
     );
     assert_eq!(
         call_tool("adjutant_skill", &json!({"name": "nope"})).unwrap_err(),
-        "no such procedure: nope (adj-hub / adj-worker / adj-report)"
+        "no such procedure: nope (adj-hub / adj-worker / adj-report / adj-review-hub / adj-reviewer)"
     );
 }
 

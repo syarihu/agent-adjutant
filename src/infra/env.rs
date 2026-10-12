@@ -40,6 +40,11 @@ pub const HUB_ENV: &str = "ADJUTANT_HUB";
 /// runs under every session on the machine that has it registered — and which one.
 pub const HUB_SESSION_ENV: &str = "ADJUTANT_HUB_SESSION";
 
+/// The session a reader of a pull request runs as, set on the line `adj review run` execs.
+/// `adj review submit` reads it so that a hand-in from a reader that was superseded (the read
+/// was asked for again) is refused. A person handing a file in by hand sets none.
+pub const REVIEW_SESSION_ENV: &str = "ADJUTANT_REVIEW_SESSION";
+
 /// Carried on the hub's command line like `HUB_SESSION_ENV`, and holding the hub's slug:
 /// it is what tells the MCP server under the agent to serve that hub's board. A variable of
 /// its own rather than the session one, because that one is left off for a runner that

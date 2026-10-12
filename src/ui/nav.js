@@ -12,6 +12,8 @@
      /b/<slug>/?view=work&task=<ref>&pane=detail           いまの仕事 with a row selected: the board of
                                                            the row's task, hub or parent (<ref> may also
                                                            be parent:<key>)
+     /?view=work&task=pr:<owner/repo#N>&pane=drafts        いまの仕事 with a PR waiting on your review in the
+                                                           panel (pane: detail = 下読み, diff, drafts)
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. The addresses of the セッション
    tab and of 要対応, which are gone, are sent on by nav-legacy.js. */
@@ -37,7 +39,10 @@ const DEFAULT_MULTI_VIEW = 'agent';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
-  const out = { board: null, view: 'agent', task: q.get('task'), pane: PANES.includes(q.get('pane')) ? q.get('pane') : 'detail' };
+  const task = q.get('task');
+  const p = q.get('pane');
+  // A PR has its own tabs; any other task has the board's.
+  const out = { board: null, view: 'agent', task, pane: PANES.includes(p) || (isPrRef(task) && PR_PANES.includes(p)) ? p : 'detail' };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   // `/` on a server with several boards opens the view its constant names; a board's own address, the one before.
@@ -51,7 +56,10 @@ function parseUrl(loc = location) {
   const legacy = legacyNav(loc, multiBoard);
   if (legacy) Object.assign(out, legacy.nav);
   // The task panel opens on a board of its own; 「すべて」 switches to the card's board first.
-  if (out.board === 'all') out.task = null;
+  // A PR waiting on your review belongs to no board: its address stays on 「すべて」, in the work view.
+  if (out.board === 'all' && !(out.view === 'work' && isPrRef(out.task))) out.task = null;
+  // And it is kept nowhere else: another view, or a board's own address (a board served alone never reads the records), has no panel for it.
+  if (isPrRef(out.task) && (out.view !== 'work' || out.board !== 'all')) out.task = null;
   return out;
 }
 
@@ -109,7 +117,8 @@ function go(patch = {}, { replace = false } = {}) {
   Object.assign(nav, patch);
   if (nav.board !== prev.board && !('task' in patch)) nav.task = null;
   // A session with no task is shown over 「いまの仕事」: it does not follow a move off it.
-  if (nav.view !== 'work' && !('task' in patch) && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
+  // A PR waiting on your review is shown over 「いまの仕事」 only, as a session with no task is.
+  if (nav.view !== 'work' && !('task' in patch) && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
   const boardChanged = nav.board !== prev.board;
   if (boardChanged) switchBoard(); else leaveWork(prev);
   const url = urlOf();
@@ -169,10 +178,10 @@ function applyPendingTask(final = false) {
   if (id !== pendingTask) { pendingTask = id; setNav({ task: id }); }
   // A parent is in the work document, not in this board's state. In the work view, a board that has
   // no such task answers for it: the panel says so (renderTaskPanel) instead of closing.
-  const there = isParentRef(id) ? !!parentOfRef(id) : isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : isGateRef(id) ? !!gateOfPanelRef(id) : (state.tasks || []).some(t => t.id === id);
+  const there = isPrRef(id) ? prReady() : isParentRef(id) ? !!parentOfRef(id) : isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : isGateRef(id) ? !!gateOfPanelRef(id) : (state.tasks || []).some(t => t.id === id);
   if (!there) {
     // A parent is in the work document, which may not have come yet: the pending task waits for it (refreshWork).
-    if (final && !isParentRef(id)) {
+    if (final && !isParentRef(id) && !isPrRef(id)) {
       pendingTask = null;
       if (view === 'work') { selectedTaskId = id; renderTaskPanel(); }
     }

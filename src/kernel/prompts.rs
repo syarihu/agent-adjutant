@@ -1,4 +1,4 @@
-//! The three procedures, baked into the binary.
+//! The procedures, baked into the binary.
 //!
 //! They are shipped as MCP prompts rather than written into each agent's commands directory
 //! because a file that is copied into place is a file that drifts: upgrade the tool and the
@@ -18,7 +18,7 @@ pub struct PromptDef {
     pub raw_content: &'static str,
 }
 
-pub const PROMPTS: [PromptDef; 3] = [
+pub const PROMPTS: [PromptDef; 5] = [
     PromptDef {
         name: "adj-hub",
         raw_content: include_str!("../../commands/adj-hub.md"),
@@ -30,6 +30,14 @@ pub const PROMPTS: [PromptDef; 3] = [
     PromptDef {
         name: "adj-report",
         raw_content: include_str!("../../commands/adj-report.md"),
+    },
+    PromptDef {
+        name: "adj-review-hub",
+        raw_content: include_str!("../../commands/adj-review-hub.md"),
+    },
+    PromptDef {
+        name: "adj-reviewer",
+        raw_content: include_str!("../../commands/adj-reviewer.md"),
     },
 ];
 

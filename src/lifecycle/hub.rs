@@ -4,6 +4,7 @@
 
 mod claim_launch;
 mod close;
+mod ensure_home;
 mod exec_launch;
 mod focus;
 mod plan_launch;
@@ -15,6 +16,7 @@ mod tests;
 
 pub use claim_launch::*;
 pub use close::*;
+pub use ensure_home::*;
 pub use exec_launch::*;
 pub use focus::*;
 pub use plan_launch::*;

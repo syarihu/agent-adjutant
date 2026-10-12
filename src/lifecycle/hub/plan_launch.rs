@@ -98,7 +98,8 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
     // The board this hub is served by, for the same MCP server: it lives exactly as long as
     // the session, so the board stops when the hub does and nothing has to watch for that.
     // `adj hub` itself cannot, since it `exec`s the agent and is gone.
-    if ctx.settings.hub_serve {
+    // The code-review hub has no board of its own: its list is a row of 「いまの仕事」.
+    if ctx.settings.hub_serve && !ctx.repo.is_review() {
         env.push((
             crate::infra::env::HUB_SERVE_ENV.to_string(),
             ctx.repo.slug.clone(),
@@ -119,6 +120,10 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
     let hooks = agent_hooks_for(&ctx.state, template.unwrap_or(default));
     let settings = hooks.path().map(|path| path.to_string_lossy());
     let settings = settings.as_deref();
+    let startup_prompt = match ctx.repo.is_review() {
+        true => runner::REVIEW_HUB_STARTUP_PROMPT,
+        false => runner::HUB_STARTUP_PROMPT,
+    };
     let mut command = match &resumed {
         Some(_) => runner::hub_resume_command(
             template,
@@ -133,7 +138,7 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
             &env,
             &ctx.repo.hub_name,
             &session,
-            runner::HUB_STARTUP_PROMPT,
+            startup_prompt,
             settings,
         ),
     };

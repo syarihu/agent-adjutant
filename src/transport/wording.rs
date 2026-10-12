@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
+use crate::lifecycle::review::{AskError, CloseError};
 use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
 use crate::registry::Context;
 use crate::task::{self, Checked, PrState};
@@ -102,4 +103,73 @@ pub fn skill_text(name: &str, arguments: &str, agent: Option<&str>) -> Result<St
     })
     .map(|r| r.text)
     .map_err(|e| e.to_string())
+}
+
+/// Why asking for a read-through was refused, as the CLI and the board both say it.
+pub fn review_refusal(why: &AskError) -> String {
+    match why {
+        AskError::HubStopped => {
+            "the code-review hub is not running: start it with `adj hub --review`, or from its row on the board".to_string()
+        }
+        AskError::NotStartable => {
+            "a reader can only be opened with terminal.preset \"tmux\"".to_string()
+        }
+        AskError::NoRecord => "no such pull request on the list: run 「同期」 on the board first".to_string(),
+        AskError::Done => "that pull request is done".to_string(),
+        AskError::Failed(why) => why.clone(),
+    }
+}
+
+/// Why a mode of a request for a read is refused, as the board says it.
+pub fn unknown_read_mode() -> &'static str {
+    "mode must be \"read\" or \"split\""
+}
+
+/// What the queue of readers could not do after a request, a hand-in or a failure was taken, as
+/// the CLI and the board both say it.
+pub fn queue_warning(why: &str) -> String {
+    format!("the queue of readers could not be worked: {why}")
+}
+
+/// Why a reader was not closed, as the board says it.
+pub fn close_refusal(why: &CloseError) -> String {
+    match why {
+        CloseError::NoRecord => {
+            "no such pull request on the list: run 「同期」 on the board first".to_string()
+        }
+        CloseError::NoReader => "no reader is open on that pull request".to_string(),
+        CloseError::Failed(why) => why.clone(),
+    }
+}
+
+/// The readers a sync found merged or closed and could not close, as the board says it: each
+/// stays open, and the next sync tries again.
+pub fn close_warning(failures: &[(String, String)]) -> String {
+    let each: Vec<String> = failures
+        .iter()
+        .map(|(id, why)| {
+            if id.is_empty() {
+                why.clone()
+            } else {
+                format!("{id}: {why}")
+            }
+        })
+        .collect();
+    format!(
+        "could not close the readers of merged or closed pull requests: {}",
+        each.join("; ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_warning;
+
+    #[test]
+    fn a_close_warning_names_each_pr_and_leaves_out_an_empty_id() {
+        let some = [("acme/widget#7".to_string(), "stuck".to_string())];
+        assert!(close_warning(&some).ends_with("pull requests: acme/widget#7: stuck"));
+        let none = [(String::new(), "no config".to_string())];
+        assert!(close_warning(&none).ends_with("pull requests: no config"));
+    }
 }

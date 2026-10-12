@@ -75,6 +75,11 @@ pub(crate) fn record(root: &Path, slug: &str, port: u16) -> Result<bool, String>
 /// address is only ever a convenience for a server that may not be running. The three keys are
 /// put into what is there, so a key a newer version added to the entry survives (rule 10).
 pub fn note_board(root: &Path, repo: &crate::kernel::identity::RepoInfo) {
+    // The code-review hub is not a repository and has no board of its own: it is one row of
+    // 「いまの仕事」, not an entry of 「ボード」. Every route into the address book comes here.
+    if repo.is_review() {
+        return;
+    }
     let path = boards_dir(root).join(format!("{}.json", repo.slug));
     let mut entry = match crate::infra::fs::read_json(&path) {
         Some(Value::Object(fields)) => fields,

@@ -4,7 +4,7 @@ use serde_json::json;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 
-use crate::infra::clock::now_secs;
+use crate::infra::clock::{now_secs, utc_stamp};
 use crate::infra::http::{self, Request};
 use crate::infra::ws;
 
@@ -12,7 +12,11 @@ use super::assets::UI_HTML;
 use super::auth::{page_rings, refuse};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
-use crate::board::view::{boards, work};
+use crate::board::review::{CloseRefused, RequestRefused};
+use crate::board::view::{boards, others, work};
+use crate::lifecycle::hub::TabOutcome;
+use crate::lifecycle::review::{AskError, CloseError};
+use crate::others::{PushError, ReadMode, Requested, SaveDraftsError, SyncError};
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -48,15 +52,26 @@ pub fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::R
     route_resident(resident, &req, &mut stream)
 }
 
-/// A WebSocket handshake: there is exactly one thing it may ask for, the terminal of a session
-/// on a board this server serves. Anything else is a 404, and so is that on a board a hub or a
-/// dedicated `adj serve` serves, which never reach here.
-fn upgrade_resident(
+/// A WebSocket handshake: it may ask for the terminal of a session on a board this server serves,
+/// or for the terminal of a PR's reader. Anything else is a 404, and so is that on a board a hub
+/// or a dedicated `adj serve` serves, which never reach here.
+pub(super) fn upgrade_resident(
     resident: &Resident,
     req: &Request,
     mut stream: TcpStream,
     reader: BufReader<TcpStream>,
 ) -> std::io::Result<()> {
+    if req.path == "/api/others/terminal" {
+        // Resolved from the record of the PR, so the page names a PR and nothing more.
+        let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+            return http::json(
+                &mut stream,
+                400,
+                &json!({ "error": "a pull request id is required" }).to_string(),
+            );
+        };
+        return super::terminal::serve_reader(resident, &pr, req, stream, reader);
+    }
     let found = split_board_path(&req.path).and_then(|(slug, rest)| {
         let inner = Request {
             path: rest.to_string(),
@@ -77,7 +92,11 @@ fn upgrade_resident(
     }
 }
 
-fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+pub(super) fn route_resident(
+    resident: &Resident,
+    req: &Request,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
     if let Some((slug, rest)) = split_board_path(&req.path) {
         let Some(server) = resident.board(slug) else {
             return http::json(out, 404, &json!({ "error": "no such board" }).to_string());
@@ -118,8 +137,313 @@ fn route_resident(resident: &Resident, req: &Request, out: &mut impl Write) -> s
                 &json!({ "error": "could not build the work list" }).to_string(),
             ),
         },
+        ("GET", "/api/others") => http::json(
+            out,
+            200,
+            &serde_json::to_string(&others(&resident.root)).unwrap_or_default(),
+        ),
+        // Run on this connection's own thread, as the resident gives each one: a sync takes up
+        // to its 30 seconds without holding any other request up.
+        ("POST", "/api/others/sync") => match crate::board::review::sync(&resident.root) {
+            Ok((synced, failures)) => {
+                let mut answer = serde_json::to_value(&synced).unwrap_or_default();
+                // The sync stands when a reader could not be closed: its words, not an error.
+                if !failures.is_empty() {
+                    answer["closeWarning"] =
+                        json!(crate::transport::wording::close_warning(&failures));
+                }
+                http::json(out, 200, &answer.to_string())
+            }
+            Err(SyncError::Busy) => http::json(
+                out,
+                409,
+                &json!({ "error": "a sync is already running", "busy": true }).to_string(),
+            ),
+            Err(SyncError::Failed(why)) => {
+                http::json(out, 400, &json!({ "error": why }).to_string())
+            }
+        },
+        ("POST", "/api/others/ai") => ask_for_read(resident, req, out),
+        ("POST", "/api/others/reader/close") => close_reader(resident, req, out),
+        ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
+        ("GET", "/api/others/read") => stored_read(resident, req, out),
+        ("GET", "/api/others/diff") => stored_diff(resident, req, out),
+        ("GET", "/api/others/drafts") => stored_drafts(resident, req, out),
+        ("POST", "/api/others/drafts") => save_drafts(resident, req, out),
+        ("POST", "/api/others/pending") => push_pending(resident, req, out),
         _ => no_such_route(out),
     }
+}
+
+/// `POST /api/others/ai`: queue a read-through of a PR (or, with `mode` split, a split proposal),
+/// and start the readers next in line.
+fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let Some(id) = input.get("id").and_then(serde_json::Value::as_str) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "an id is required" }).to_string(),
+        );
+    };
+    // Refused before anything is written, like an id that names no PR.
+    // A `mode` that is not text is as unknown as a word that is not one of the two.
+    let wire = match input.get("mode") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(value.as_str().unwrap_or("")),
+    };
+    let Some(mode) = ReadMode::from_wire(wire) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": crate::transport::wording::unknown_read_mode() }).to_string(),
+        );
+    };
+    match crate::board::review::request(&resident.root, id, mode) {
+        Ok(asked) => {
+            let (Requested::Queued(record) | Requested::Already(record)) = asked.requested;
+            // `warning` is set when the queue could not be worked after the request was taken.
+            http::json(
+                out,
+                200,
+                &json!({ "record": record, "warning": asked.queue_error.as_deref().map(crate::transport::wording::queue_warning) }).to_string(),
+            )
+        }
+        Err(RequestRefused::BadId) => http::json(
+            out,
+            400,
+            &json!({ "error": format!("not a pull request: {id}") }).to_string(),
+        ),
+        Err(RequestRefused::Refused(why)) => {
+            let (status, because) = match &why {
+                AskError::HubStopped => (409, Some("hub-stopped")),
+                AskError::NotStartable => (409, Some("not-startable")),
+                AskError::NoRecord => (404, None),
+                AskError::Done => (400, None),
+                AskError::Failed(_) => (500, None),
+            };
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::review_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// `POST /api/others/reader/close`: close the reader of a PR with `{"id": ...}`. The read-through,
+/// the drafts and the record stay; a read that was running is failed and can be asked for again.
+fn close_reader(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let Some(id) = input.get("id").and_then(serde_json::Value::as_str) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "an id is required" }).to_string(),
+        );
+    };
+    match crate::board::review::close(&resident.root, id) {
+        Ok(closed) => http::json(
+            out,
+            200,
+            &json!({
+                "record": closed.record,
+                // Set when the queue could not be worked after a running read gave up its place.
+                "warning": closed.queue_error.as_deref().map(crate::transport::wording::queue_warning),
+            })
+            .to_string(),
+        ),
+        Err(CloseRefused::BadId) => http::json(
+            out,
+            400,
+            &json!({ "error": format!("not a pull request: {id}") }).to_string(),
+        ),
+        Err(CloseRefused::Refused(why)) => {
+            let (status, because) = match &why {
+                CloseError::NoRecord => (404, None),
+                CloseError::NoReader => (409, Some("no-reader")),
+                CloseError::Failed(_) => (500, None),
+            };
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::close_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// `POST /api/others/hub/start`: open the code-review hub in a new window.
+fn start_review_hub(
+    resident: &Resident,
+    req: &Request,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    let input: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let how = match super::handlers::hub_start_of(&input) {
+        Ok(how) => how,
+        Err(e) => return http::json(out, 400, &json!({ "error": e }).to_string()),
+    };
+    match crate::board::review::start(&resident.root, how) {
+        Ok(TabOutcome::Opened(done)) => http::json(
+            out,
+            200,
+            &json!({ "started": true, "description": done.description }).to_string(),
+        ),
+        Ok(TabOutcome::AlreadyRunning(status)) => http::json(
+            out,
+            200,
+            &json!({ "started": false, "running": true, "pid": status.pid }).to_string(),
+        ),
+        // The input was fine and the start itself failed: not the caller's mistake.
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/read?id=`: the read-through kept for a PR, as it was handed in.
+fn stored_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::read_through(&resident.root, &pr) {
+        Ok(Some(read)) => http::json(out, 200, &read.to_string()),
+        Ok(None) => http::json(out, 404, &json!({ "error": "no read-through" }).to_string()),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/diff?id=`: the diff the stored read-through was made from.
+fn stored_diff(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::stored_diff(&resident.root, &pr) {
+        Ok(Some(diff)) => http::json(out, 200, &diff.to_string()),
+        Ok(None) => http::json(out, 404, &json!({ "error": "no diff" }).to_string()),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/drafts?id=`: the drafts kept for a PR.
+fn stored_drafts(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::drafts(&resident.root, &pr) {
+        Ok(Some(drafts)) => http::json(out, 200, &drafts.to_string()),
+        Ok(None) => http::json(out, 404, &json!({ "error": "no drafts" }).to_string()),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `POST /api/others/drafts`: replace the drafts of a PR with `{"id": ..., "drafts": {...}}`.
+/// Only the inner object is the input, so that what a GET answers (with its `id` and `savedAt`)
+/// cannot be sent back as it is.
+fn save_drafts(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let body: serde_json::Value = match serde_json::from_slice(&req.body) {
+        Ok(body) => body,
+        Err(e) => {
+            return http::json(
+                out,
+                400,
+                &json!({ "error": format!("cannot read the request: {e}") }).to_string(),
+            );
+        }
+    };
+    let Some(pr) = body
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::others::pr_of)
+    else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    let Some(drafts) = body.get("drafts").filter(|d| d.is_object()) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "drafts must be an object" }).to_string(),
+        );
+    };
+    match crate::others::save_drafts(&resident.root, &pr, drafts, &utc_stamp(now_secs())) {
+        Ok(stored) => http::json(out, 200, &stored.to_string()),
+        Err(SaveDraftsError::Invalid(problems)) => http::json(
+            out,
+            400,
+            &json!({ "error": "the drafts are not valid", "problems": problems }).to_string(),
+        ),
+        Err(SaveDraftsError::NoRecord) => http::json(
+            out,
+            404,
+            &json!({ "error": "no such pull request" }).to_string(),
+        ),
+        Err(SaveDraftsError::Failed(e)) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `POST /api/others/pending`: put the stored drafts of `{"id": ...}` into the person's pending
+/// review on GitHub. The stored drafts are what is sent, so the page saves first. adj never submits
+/// the review; the person does, on GitHub.
+fn push_pending(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+    let Some(pr) = body
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::others::pr_of)
+    else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    let (status, answer) = match crate::others::push_pending(&resident.root, &pr) {
+        Ok(pushed) => (
+            200,
+            serde_json::to_value(&pushed).unwrap_or_else(|e| json!({ "error": e.to_string() })),
+        ),
+        Err(PushError::NoRecord) => (404, json!({ "error": "no such pull request" })),
+        Err(PushError::NoDrafts) => (404, json!({ "error": "there are no drafts to send" })),
+        Err(PushError::Closed) => (
+            400,
+            json!({ "error": "the pull request is merged or closed" }),
+        ),
+        Err(PushError::Nothing) => (
+            400,
+            json!({ "error": "there is nothing new to send", "nothing": true }),
+        ),
+        Err(PushError::Busy) => (
+            409,
+            json!({ "error": "the drafts of this pull request are being sent" }),
+        ),
+        Err(PushError::Invalid(problems)) => (
+            400,
+            json!({ "error": "the drafts are not valid", "problems": problems }),
+        ),
+        Err(PushError::GitHub(why)) => (
+            502,
+            json!({ "error": format!("GitHub did not take the drafts: {why}") }),
+        ),
+        Err(PushError::Failed(e)) => (500, json!({ "error": e })),
+    };
+    http::json(out, status, &answer.to_string())
 }
 
 /// How long a built `/api/work` document answers the next requests.

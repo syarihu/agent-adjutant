@@ -48,7 +48,7 @@ function setView(v) {
     const want = v === 'board' ? (prefs.tab === 'human' ? 'human' : 'agent') : 'work';
     if (nav.view !== want) {
       nav.view = want;
-      if (want !== 'work' && isSessRef(nav.task)) { nav.task = null; nav.pane = 'detail'; }
+      if (want !== 'work' && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
       history.replaceState(null, '', urlOf());
     }
   }
@@ -182,6 +182,7 @@ async function boot() {
   setInterval(refresh, 2000);
   // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
   refreshWork();
-  setInterval(() => { refreshBoards(); if (view !== 'work') refreshWork(); }, 10000);
+  refreshOthers();
+  setInterval(() => { refreshBoards(); if (view !== 'work') { refreshWork(); refreshOthers(); } }, 10000);
 }
 boot();
