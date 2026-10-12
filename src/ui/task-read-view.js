@@ -346,7 +346,8 @@ function renderTaskReaderPanel(task) {
   const text = live ? ''
     : !doc ? `<div class="tp-muted">${esc(taskRead.error ? `読み込めませんでした: ${taskRead.error}` : '読み込み中…')}</div>`
       : !rec ? '<div class="tp-ph-head">AI 下読みの worker はまだいません</div><div class="tp-muted">AI 下読みすると、ここにその worker のターミナルが開きます。</div>'
-        : prMiddleHtml(rec, records, othersHubView(doc.hub, records), othersNowEst(), {
+        // No records for the queue's place: the document has this record only, which would always be the first.
+        : prMiddleHtml(rec, [], othersHubView(doc.hub, records), othersNowEst(), {
           readAt: 'middle', asking: others.asking.has(rec.id), read, readError: !!prReadEntry(rec.id)?.error, ...(panelTerm.term ? { ended: panelTerm.ended } : {}),
         });
   setPanelPart('ph', ph, text);

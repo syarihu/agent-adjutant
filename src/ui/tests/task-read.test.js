@@ -369,3 +369,10 @@ test('the dialog\'s clicks reach prAct as the dialog\'s, and the other events as
   handlers.click('F');
   assert.strictEqual(calls.length, 1, 'not for the task\'s dialog');
 });
+
+test('a queued read says 順番待ち without a place: the task\'s document holds its own record, not the queue', () => {
+  const queued = rec({ ai: { status: 'queued', startedAt: '20261001T000000Z' } });
+  const html = plain(taskReadGroups(queued, null, hub, T0, {})).map(g => g.cards.map(c => c.html).join('')).join('');
+  assert.ok(html.includes('AI 下読みの順番待ち'), html);
+  assert.ok(!html.includes('番目'));
+});

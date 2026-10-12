@@ -17,7 +17,7 @@ function taskReadTabState(task, doc, nowSecs) {
   if (doc && doc.pr == null) return state(TASK_READ_UNREADABLE_WHY, { disabled: true, why: TASK_READ_UNREADABLE_WHY });
   const rec = doc?.record;
   if (!rec) return state('');
-  const ai = othersAiView(rec, [rec], nowSecs);
+  const ai = othersAiView(rec, [], nowSecs);
   switch (ai.kind) {
     case 'queued': case 'running': case 'hung': return state('下読み中…');
     case 'stale': return state('前の push 時点', { dot: true });
@@ -61,10 +61,11 @@ function taskReaderCard(rec, read, records, nowSecs) {
   return { key: s.key, label: s.label, badge: '', wide: false, html: prSecHtml(s), expand: null };
 }
 
-/* The groups of the middle: the dialog's (`prDialogGroups`, whose `opts` these are, with `records` for a queued read's place), without
-   前回のレビューから, which compares with a review of yours, and with the reader's card first in 要点. */
+/* The groups of the middle: the dialog's (`prDialogGroups`, whose `opts` these are), without 前回のレビューから, which compares with
+   a review of yours, and with the reader's card first in 要点. The task's document holds its own record only, not the queue, so a
+   queued read says 順番待ち without a place: with its record alone it would always be the first. */
 function taskReadGroups(rec, read, hubView, nowSecs, opts = {}) {
-  const records = opts.records || [rec];
+  const records = [];
   const groups = prDialogGroups(rec, read, records, hubView, nowSecs, { readerWhere: '右のターミナル', ...opts }).filter(g => g.key !== 'since');
   const reader = taskReaderCard(rec, read, records, nowSecs);
   const top = groups.find(g => g.key === 'top');
