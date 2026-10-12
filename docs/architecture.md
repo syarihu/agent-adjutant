@@ -742,3 +742,7 @@ The route is resident-only, and is placed before the task update, so `POST /api/
 - **Refusals.** 400 for a body that is not an object with a `pr`, and for nothing to send; 404 for a task that is not there; 409 `{error, why}` with `why` `no-pr`, `pr-changed` (the task's PR is not the one the drafts are of), `pr-done` (merged or closed), `no-record` (never read),
   `no-worker` (a task handed to Jules), `no-gate`, `gate-waiting` or `busy`; 500 for a record, drafts or gate that cannot be read or written. 200 answers `{gate: {id, kind, shelf}, sent: [key], overall, at, present, woken}`: `shelf` is `answered` for a gate that was waiting and `record` for a record, and `present`
   and `woken` are what delivery says of the worker, as an answered gate's do.
+- **Known limits.** (a) With no waiting diff or verify gate and no diff record (for example the waiting diff gate was approved and the worker has not put out a record since) the hand-over is refused with `no-gate`; the points can be sent once the worker opens its next diff record or gate.
+  (b) The sent marks are written by the page after the 200, so if that save is lost the drafts show unsent again and could be sent twice (the timeline shows both hand-overs).
+  (c) An older binary that rewrites a record drops `handoff` from earlier answers, which then show as a plain send-back.
+  (d) Drafts kept across a re-read are of the head they were taken from: when that differs from the read-through's, the comment says so (`handoff.draftsSha`).

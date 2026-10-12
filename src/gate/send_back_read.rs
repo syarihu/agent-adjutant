@@ -112,8 +112,15 @@ fn comment_of(items: &[Instruction], overall: Option<&str>, handoff: &ReadHandof
     } else {
         format!("{n} points")
     };
+    // Drafts kept across a re-read: the reader's points are of the earlier head, which is said.
+    let earlier = handoff
+        .short_drafts_sha()
+        .map(|sha| {
+            format!(" The (AI) points were kept from an earlier read, so their lines are of {sha}.")
+        })
+        .unwrap_or_default();
     let mut out = format!(
-        "The person read this PR with an AI read-through and sends you {points}. {of}\n(AI) = the reader wrote it and the person kept it; the rest the person wrote.\n"
+        "The person read this PR with an AI read-through and sends you {points}. {of}{earlier}\n(AI) = the reader wrote it and the person kept it; the rest the person wrote.\n"
     );
     for (i, item) in items.iter().enumerate() {
         let ai = if item.by_reader { " (AI)" } else { "" };

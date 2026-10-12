@@ -160,9 +160,15 @@ pub fn hand_to_worker(ctx: &Context, task_id: &str, pr_seen: &str) -> Result<Han
         .map_err(HandRefused::Unreadable)?
         .and_then(|read| read.get("sha").and_then(|s| s.as_str().map(str::to_string)));
 
+    // Drafts kept across a re-read are of the head they were taken from, not of the read-through now.
+    let drafts_sha = drafts
+        .from_sha
+        .clone()
+        .filter(|from| sha.as_deref().is_some_and(|now| now != from));
     let handoff = ReadHandoff {
         pr: id,
         sha,
+        drafts_sha,
         count: items.len() as u32,
         overall: overall.is_some(),
         extra: serde_json::Map::new(),

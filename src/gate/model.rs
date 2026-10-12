@@ -262,6 +262,10 @@ pub struct ReadHandoff {
     /// The comment on the whole was sent too.
     #[serde(default)]
     pub overall: bool,
+    /// The head the reader's points that were kept were taken from, when that is not `sha`: the
+    /// person read again and kept drafts of the earlier read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafts_sha: Option<String>,
     /// Keys this binary does not know, kept from the file (rule 10).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -271,6 +275,11 @@ impl ReadHandoff {
     /// The short form of the head the lines are of.
     pub fn short_sha(&self) -> Option<&str> {
         self.sha.as_deref().map(|s| s.get(..7).unwrap_or(s))
+    }
+
+    /// The short form of `drafts_sha`.
+    pub fn short_drafts_sha(&self) -> Option<&str> {
+        self.drafts_sha.as_deref().map(|s| s.get(..7).unwrap_or(s))
     }
 }
 

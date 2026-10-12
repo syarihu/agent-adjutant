@@ -607,6 +607,7 @@ fn handoff() -> ReadHandoff {
         sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
         count: 0,
         overall: false,
+        drafts_sha: None,
         extra: serde_json::Map::new(),
     }
 }

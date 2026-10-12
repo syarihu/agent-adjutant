@@ -269,3 +269,44 @@ fn a_hand_over_running_for_the_task_is_busy_and_the_next_one_is_not() {
     drop(held);
     assert!(hand_to_worker(&ctx, "t1", PR).is_ok());
 }
+
+#[test]
+fn drafts_kept_from_an_earlier_read_say_so_in_the_message() {
+    let (_sandbox, ctx) = ready();
+    let earlier = "b".repeat(40);
+    let file = json!({"id": PR, "savedAt": "20261001T000000Z", "version": 1, "fromSha": earlier,
+        "drafts": [draft("r1", "reader", Some("src/a.rs"), "old point", false)]});
+    put_file(&ctx, "drafts", &file.to_string());
+    hand_to_worker(&ctx, "t1", PR).unwrap();
+    let out = outbox(&ctx);
+    assert!(out.contains("Lines are of 0123456"), "{out}");
+    assert!(
+        out.contains("kept from an earlier read, so their lines are of bbbbbbb"),
+        "{out}"
+    );
+}
+
+#[test]
+fn drafts_of_the_current_read_say_nothing_of_an_earlier_one() {
+    let (_sandbox, ctx) = ready();
+    let now = "0123456789abcdef0123456789abcdef01234567";
+    let file = json!({"id": PR, "savedAt": "20261001T000000Z", "version": 1, "fromSha": now,
+        "drafts": [draft("r1", "reader", Some("src/a.rs"), "point", false)]});
+    put_file(&ctx, "drafts", &file.to_string());
+    hand_to_worker(&ctx, "t1", PR).unwrap();
+    assert!(!outbox(&ctx).contains("earlier read"));
+}
+
+#[test]
+fn a_second_concurrent_hand_over_is_busy_and_a_refusal_releases_the_guard() {
+    let (_sandbox, ctx) = ready();
+    let held = Running::take(&ctx.state, "acme-widget", "t1").unwrap();
+    assert_eq!(hand_to_worker(&ctx, "t1", PR), Err(HandRefused::Busy));
+    drop(held);
+    // An early refusal gives the place back: the next call is refused for its own reason, not Busy.
+    assert_eq!(
+        hand_to_worker(&ctx, "t1", "acme/widget#8"),
+        Err(HandRefused::PrChanged)
+    );
+    assert!(hand_to_worker(&ctx, "t1", PR).is_ok());
+}
