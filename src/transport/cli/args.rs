@@ -111,7 +111,7 @@ pub(crate) enum Commands {
 
 #[derive(Subcommand)]
 pub(crate) enum ReviewAction {
-    /// Ask for a read-through of a PR (AI 下読み); it waits for a place when three are running
+    /// Ask for a read-through of a PR, or of a task's PR (AI 下読み); it waits for a place when three are running
     Request(ReviewRequestArgs),
     /// Write what a reader reads of a PR into a directory: the diff, the body, the review comments
     Context(ReviewContextArgs),
@@ -132,8 +132,17 @@ pub(crate) enum ReviewAction {
 #[derive(Args)]
 pub(crate) struct ReviewRequestArgs {
     /// The pull request: its URL, or `owner/repo#N`
+    #[arg(long, required_unless_present = "task", conflicts_with = "task")]
+    pub(crate) pr: Option<String>,
+    /// The task whose pull request to read, by id (of the repository the command runs in, or of --repo/--hub)
     #[arg(long)]
-    pub(crate) pr: String,
+    pub(crate) task: Option<String>,
+    /// With --task: owner/name (default: derived from origin)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// With --task: which hub of the repository (default: $ADJUTANT_HUB, or the one that dispatched this worktree)
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
     /// Ask for a split proposal only (for a PR whose change is too large to read)
     #[arg(long)]
     pub(crate) split: bool,

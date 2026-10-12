@@ -2811,3 +2811,30 @@ fn a_reader_with_no_process_yet_is_not_open() {
     put(root.path(), r);
     assert_eq!(open_reader(root.path(), &pr(1)), Ok(None));
 }
+
+#[test]
+fn a_task_s_read_waits_in_the_same_line_of_three() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), asked(1, "running", 0));
+    put(root.path(), asked(2, "running", 1));
+    put(root.path(), asked(3, "queued", 2));
+    let mut for_a_task = asked(4, "queued", 3);
+    for_a_task.requested = false;
+    for_a_task.task = Some(TaskLink {
+        board: "acme-widget".to_string(),
+        id: "t1".to_string(),
+        extra: Default::default(),
+    });
+    put(root.path(), for_a_task);
+    // One place is free, and it goes to the one asked first.
+    let claims = claim_reads(root.path(), NOW, &sessions()).unwrap();
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].id, "acme/widget#3");
+    assert_eq!(status(root.path(), 4), "queued");
+    // The task's read is asked for like a request's, and takes its place when one is freed.
+    fail_read(root.path(), &pr(1), None, "gone", NOW).unwrap();
+    let claims = claim_reads(root.path(), NOW, &sessions()).unwrap();
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].id, "acme/widget#4");
+    assert_eq!(status(root.path(), 4), "running");
+}

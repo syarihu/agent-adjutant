@@ -59,6 +59,7 @@ pub(super) fn record(number: u64) -> Record {
         events: Events::default(),
         ai: None,
         pending_review_at: None,
+        task: None,
         first_seen_at: "20261001T000001Z".to_string(),
         read_at: "20261001T000001Z".to_string(),
         extra: Default::default(),
@@ -1175,4 +1176,251 @@ fn a_newer_review_at_an_old_commit_does_not_keep_an_older_push_stamp() {
     sync_at(root.path(), &acme(), NOW + 60, &fake).unwrap();
     let pushed = record_of(root.path(), 7).unwrap().events.pushed;
     assert_eq!(pushed, Some(utc_stamp(NOW + 60)));
+}
+
+// ── a task's PR ──────────────────────────────────────────────────────
+
+fn link(id: &str) -> TaskLink {
+    TaskLink {
+        board: "acme-widget".to_string(),
+        id: id.to_string(),
+        extra: Default::default(),
+    }
+}
+
+/// A record read for a task, that nobody requested of you.
+fn task_record(number: u64) -> Record {
+    let mut r = record(number);
+    r.requested = false;
+    r.requested_at = None;
+    r.task = Some(link("t1"));
+    r
+}
+
+/// The record of task `id` of the hub `acme-widget`, as the task module keeps it.
+fn put_task(root: &Path, id: &str) {
+    let dir = root.join("tasks/acme-widget");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{id}.json")), "{}").unwrap();
+}
+
+#[test]
+fn a_task_s_pr_that_nobody_requested_is_not_withdrawn() {
+    let r = task_record(1);
+    assert_eq!(derive(&r), (State::Requested, None));
+    let mut other = record(1);
+    other.requested = false;
+    assert_eq!(derive(&other), (State::Done, Some(DoneReason::Withdrawn)));
+}
+
+#[test]
+fn a_task_s_pr_ends_only_when_merged_or_closed() {
+    let mut r = task_record(1);
+    r.my_review = reviewed(ReviewState::Approved, "20261002T000000Z", "h1");
+    // Neither an approval nor a request that is gone ends it.
+    assert_eq!(derive(&r), (State::Requested, None));
+    r.requested_at = Some("20261003T000000Z".to_string());
+    assert_eq!(derive(&r), (State::Requested, None));
+    r.pr_state = PrOpenState::Merged;
+    assert_eq!(derive(&r), (State::Done, Some(DoneReason::Merged)));
+    r.pr_state = PrOpenState::Closed;
+    assert_eq!(derive(&r), (State::Done, Some(DoneReason::Closed)));
+}
+
+#[test]
+fn a_task_s_read_moves_its_state_as_a_request_s_does() {
+    let mut r = task_record(1);
+    for (status, state) in [
+        ("queued", State::AiReading),
+        ("running", State::AiReading),
+        ("ready", State::AiReady),
+        ("failed", State::Requested),
+    ] {
+        r.ai = ai(status);
+        assert_eq!(derive(&r), (state, None), "{status}");
+    }
+}
+
+#[test]
+fn a_record_from_before_the_task_key_reads_and_saves_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let value = serde_json::to_value(record(7)).unwrap();
+    assert!(value.get("task").is_none());
+    write_raw(root.path(), "acme~widget~7.json", &value.to_string());
+    let mut loaded = store::load(root.path(), &pr(7)).unwrap().unwrap();
+    assert_eq!(loaded.task, None);
+    store::save(root.path(), &mut loaded).unwrap();
+    let text = std::fs::read_to_string(root.path().join("others/acme~widget~7.json")).unwrap();
+    let saved: Value = serde_json::from_str(&text).unwrap();
+    assert!(saved.get("task").is_none(), "{text}");
+}
+
+#[test]
+fn a_key_inside_task_this_binary_does_not_know_survives_a_save() {
+    let root = tempfile::tempdir().unwrap();
+    let mut value = serde_json::to_value(task_record(7)).unwrap();
+    assert_eq!(value["task"], json!({"board": "acme-widget", "id": "t1"}));
+    value["task"]["fromTheFuture"] = json!(1);
+    write_raw(root.path(), "acme~widget~7.json", &value.to_string());
+    let mut loaded = store::load(root.path(), &pr(7)).unwrap().unwrap();
+    assert_eq!(loaded.task.as_ref().unwrap().id, "t1");
+    store::save(root.path(), &mut loaded).unwrap();
+    let text = std::fs::read_to_string(root.path().join("others/acme~widget~7.json")).unwrap();
+    let saved: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["task"]["fromTheFuture"], json!(1));
+    assert_eq!(saved["task"]["board"], json!("acme-widget"));
+}
+
+#[test]
+fn only_a_task_s_pr_that_is_not_requested_is_off_the_review_list() {
+    assert!(record(1).on_review_list());
+    assert!(!task_record(1).on_review_list());
+    let mut requested = task_record(1);
+    requested.requested = true;
+    assert!(requested.on_review_list());
+}
+
+#[test]
+fn a_sync_keeps_reading_a_task_s_record_the_search_does_not_find() {
+    let root = tempfile::tempdir().unwrap();
+    let mut r = task_record(7);
+    r.ai = Some(AiRead {
+        sha: Some("h1".to_string()),
+        ..ai("ready").unwrap()
+    });
+    store::save(root.path(), &mut r).unwrap();
+    let mut moved = open_pr("h2");
+    without_requested(&mut moved);
+    let fake = Fake::new(&[]).with(7, moved);
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+
+    assert_eq!(fake.read(), vec![7]);
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(r.head_sha, "h2");
+    assert!(r.ai.as_ref().unwrap().stale);
+    assert_eq!((r.state, r.done_reason), (State::AiReady, None));
+    assert_eq!(r.task, Some(link("t1")));
+}
+
+#[test]
+fn a_merged_task_pr_is_done_as_merged_after_a_sync() {
+    let root = tempfile::tempdir().unwrap();
+    store::save(root.path(), &mut task_record(7)).unwrap();
+    let fake = Fake::new(&[]);
+    fake.set_merged(7);
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    let r = record_of(root.path(), 7).unwrap();
+    assert_eq!(
+        (r.state, r.done_reason),
+        (State::Done, Some(DoneReason::Merged))
+    );
+    assert_eq!(r.done_at, Some(utc_stamp(NOW)));
+}
+
+/// A task's record that has been done for more than a day.
+fn done_for_task(root: &Path, number: u64) {
+    let mut r = task_record(number);
+    r.pr_state = PrOpenState::Merged;
+    r.done_at = Some(utc_stamp(NOW - DAY - 1));
+    store::save(root, &mut r).unwrap();
+}
+
+#[test]
+fn a_done_task_record_outlives_its_day_while_its_task_exists() {
+    let root = tempfile::tempdir().unwrap();
+    put_task(root.path(), "t1");
+    done_for_task(root.path(), 7);
+    let synced = sync_at(root.path(), &acme(), NOW, &Fake::new(&[])).unwrap();
+    assert!(synced.removed.is_empty());
+    assert!(record_of(root.path(), 7).is_some());
+}
+
+#[test]
+fn a_done_task_record_goes_a_day_after_its_task_is_gone() {
+    let root = tempfile::tempdir().unwrap();
+    done_for_task(root.path(), 7);
+    let synced = sync_at(root.path(), &acme(), NOW, &Fake::new(&[])).unwrap();
+    assert_eq!(synced.removed, vec!["acme/widget#7"]);
+    assert!(record_of(root.path(), 7).is_none());
+}
+
+#[test]
+fn a_task_that_cannot_be_read_keeps_its_record() {
+    let root = tempfile::tempdir().unwrap();
+    // A file where the hub's directory should be: the record cannot be looked for, which is not
+    // the same as there being none.
+    std::fs::create_dir_all(root.path().join("tasks")).unwrap();
+    std::fs::write(root.path().join("tasks/acme-widget"), "").unwrap();
+    assert!(crate::task::exists(root.path(), "acme-widget", "t1").is_err());
+    done_for_task(root.path(), 7);
+    let synced = sync_at(root.path(), &acme(), NOW, &Fake::new(&[])).unwrap();
+    assert!(synced.removed.is_empty());
+    assert!(record_of(root.path(), 7).is_some());
+}
+
+fn track(
+    root: &Path,
+    pr: &crate::task::PrRef,
+    task: &TaskLink,
+    fake: &Fake,
+) -> Result<Record, String> {
+    track_task_pr_with(root, pr, task, "Acme/Widget", NOW, &|args, deadline| {
+        fake.run(args, deadline)
+    })
+}
+
+#[test]
+fn tracking_a_task_s_pr_makes_its_record_from_github() {
+    let root = tempfile::tempdir().unwrap();
+    let mut node = open_pr("h1");
+    without_requested(&mut node);
+    let fake = Fake::new(&[]).with(7, node);
+    let r = track(root.path(), &pr(7), &link("t1"), &fake).unwrap();
+    assert_eq!(r.task, Some(link("t1")));
+    assert_eq!(r.repo, "Acme/Widget");
+    assert_eq!(r.url, "https://github.com/Acme/Widget/pull/7");
+    assert_eq!((r.requested, r.state), (false, State::Requested));
+    assert_eq!(r.head_sha, "h1");
+    assert!(!r.on_review_list());
+    assert_eq!(record_of(root.path(), 7), Some(r));
+}
+
+#[test]
+fn tracking_reuses_a_review_request_s_record_and_keeps_its_read() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(&[7]).with(7, open_pr("h1"));
+    sync_at(root.path(), &acme(), NOW, &fake).unwrap();
+    let mut asked = record_of(root.path(), 7).unwrap();
+    asked.ai = Some(AiRead {
+        sha: Some("h1".to_string()),
+        ..ai("ready").unwrap()
+    });
+    store::save(root.path(), &mut asked).unwrap();
+
+    let r = track(root.path(), &pr(7), &link("t1"), &fake).unwrap();
+    assert_eq!(r.task, Some(link("t1")));
+    assert!(r.requested && r.on_review_list());
+    assert_eq!(r.ai.as_ref().unwrap().status, "ready");
+    assert_eq!(r.first_seen_at, utc_stamp(NOW));
+    // Another task's ask moves the link, and a later sync keeps it.
+    let r = track(root.path(), &pr(7), &link("t2"), &fake).unwrap();
+    assert_eq!(r.task, Some(link("t2")));
+    sync_at(root.path(), &acme(), NOW + 60, &fake).unwrap();
+    assert_eq!(record_of(root.path(), 7).unwrap().task, Some(link("t2")));
+}
+
+#[test]
+fn tracking_a_pr_github_cannot_read_writes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(&[]);
+    assert!(track(root.path(), &pr(7), &link("t1"), &fake).is_err());
+    assert!(!root.path().join("others").exists());
+
+    // Another host is refused before GitHub is asked.
+    let elsewhere = pr_ref("https://ghe.example.com/acme/widget/pull/7", None).unwrap();
+    let fake = Fake::new(&[]);
+    let why = track(root.path(), &elsewhere, &link("t1"), &fake).unwrap_err();
+    assert!(why.contains("github.com"), "{why}");
+    assert!(fake.calls.lock().unwrap().is_empty());
+    assert!(!root.path().join("others").exists());
 }

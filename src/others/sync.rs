@@ -14,7 +14,9 @@ use crate::task::{PrRef, pr_ref};
 
 use super::github::{self, Facts, Gh, Hit};
 use super::list::list;
-use super::model::{Events, FileStat, LastSync, PrOpenState, Record, State, SyncFailure, derive};
+use super::model::{
+    Events, FileStat, LastSync, PrOpenState, Record, State, SyncFailure, TaskLink, derive,
+};
 use super::scope::{Scope, scope};
 use super::store;
 
@@ -102,7 +104,7 @@ pub(crate) fn sync_with(root: &Path, scope: &Scope, now: i64, gh: Gh) -> Result<
         let id = store::id_of(&target.pr);
         let applied = read.and_then(|facts| {
             let files = files_of(root, gh, &target.pr, &facts, deadline);
-            apply(root, scope, now, target, facts, files)
+            apply(root, scope, now, target, facts, files, None)
         });
         match applied {
             Ok(true) => arrived.push(id),
@@ -175,20 +177,22 @@ pub(super) fn files_of(
 
 /// Bring the record of `target` up to date with `facts`. `Ok(true)` when a request or a
 /// re-request arrived with it. A PR that is not recorded and was not asked of you (a team's
-/// request) is left out.
-fn apply(
+/// request) is left out, unless it is read for a task: `task` links the record to it, and a later
+/// sync that passes none keeps the link the record already has.
+pub(super) fn apply(
     root: &Path,
     scope: &Scope,
     now: i64,
     target: &Hit,
     facts: Facts,
     files: Option<Vec<FileStat>>,
+    task: Option<&TaskLink>,
 ) -> Result<bool, String> {
     let stem = store::stem(&target.pr);
     let _lock = store::lock(root, &stem)?;
     // Loaded again under the lock: what the read-through wrote since the listing is kept.
     let prev = store::load(root, &target.pr)?;
-    if prev.is_none() && !facts.requested {
+    if prev.is_none() && !facts.requested && task.is_none() {
         return Ok(false);
     }
     let stamp = utc_stamp(now);
@@ -226,11 +230,16 @@ fn apply(
             events: Events::default(),
             ai: None,
             pending_review_at: None,
+            task: None,
             first_seen_at: stamp.clone(),
             read_at: stamp.clone(),
             extra: Default::default(),
         },
     };
+    // A request to read the PR for another task moves the record to it.
+    if let Some(task) = task {
+        next.task = Some(task.clone());
+    }
     next.registered = scope.registered.contains(&target.pr.nwo());
     next.title = facts.title;
     next.author = facts.author;
@@ -332,9 +341,16 @@ fn apply(
 fn remove_done(root: &Path, now: i64) -> Vec<String> {
     let cutoff = utc_stamp(now - DONE_KEPT_SECS);
     // A reader still open on it is kept: it is removed once the reader is closed, which a sync does
-    // when the PR is merged or closed, and which the person can do before.
+    // when the PR is merged or closed, and which the person can do before. A record read for a
+    // task stays while the task does: only a task that is definitely gone lets it go, and one
+    // that cannot be looked at keeps it.
     let expired = |r: &Record| {
+        let task_kept = r
+            .task
+            .as_ref()
+            .is_some_and(|t| !matches!(crate::task::exists(root, &t.board, &t.id), Ok(false)));
         r.state == State::Done
+            && !task_kept
             && r.done_at.as_deref().is_some_and(|at| at < cutoff.as_str())
             && !r.ai.as_ref().is_some_and(|ai| ai.reader_open())
     };

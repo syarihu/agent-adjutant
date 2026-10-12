@@ -1049,6 +1049,40 @@ fn a_task_route_names_a_task_id() {
 }
 
 #[test]
+fn the_task_read_routes_come_before_the_task_update() {
+    assert_eq!(
+        parsed("GET", "/api/tasks/t1/ai"),
+        Ok(Some(Route::TaskRead("t1".into())))
+    );
+    assert_eq!(
+        parsed("POST", "/api/tasks/t1/ai"),
+        Ok(Some(Route::AskTaskRead("t1".into())))
+    );
+    // The id is the segment as written, never decoded.
+    assert_eq!(
+        parsed("POST", "/api/tasks/a%2Fb/ai"),
+        Ok(Some(Route::AskTaskRead("a%2Fb".into())))
+    );
+    // A task named `ai` is still updated at its own address, and has no read at one segment.
+    assert_eq!(
+        parsed("POST", "/api/tasks/ai"),
+        Ok(Some(Route::UpdateTask("ai".into())))
+    );
+    assert_eq!(parsed("GET", "/api/tasks/ai"), Ok(None));
+    assert_eq!(parsed("GET", "/api/tasks/t1/ai/x"), Ok(None));
+    // Other methods are no route.
+    assert_eq!(parsed("PUT", "/api/tasks/t1/ai"), Ok(None));
+}
+
+#[test]
+fn the_task_read_routes_are_resident_only() {
+    for method in ["GET", "POST"] {
+        let route = parsed(method, "/api/tasks/t1/ai").unwrap().unwrap();
+        assert!(route.resident_only(), "{method}");
+    }
+}
+
+#[test]
 fn only_the_resident_serves_what_reaches_outside_the_repository() {
     for (method, path) in [
         ("POST", "/api/sessions/x/resume"),

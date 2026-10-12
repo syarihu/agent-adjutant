@@ -97,7 +97,7 @@ fixtures.
 - `jules`: Jules sessions (`start`, `follow`, `findings`, `relay`, ...). It has no `store`: the
   session id and what was relayed are fields of the task record, and the private `api` client takes
   the store's place.
-- `others`: the PRs other people asked you to review: one record per PR, the sync that reads them
+- `others`: the PRs other people asked you to review, and the PRs of your own tasks that a read-through was asked for (`track_task_pr`): one record per PR, the sync that reads them
   from GitHub (`sync`), and the state derived from each record (`model::derive`). It reads and
   writes by state root, not by `Context`: the records belong to the person, not to a hub. It has a
   private `store.rs` and a `github.rs` of its own, and uses `task`'s PR reference and check
@@ -109,7 +109,7 @@ fixtures.
   hubs and workers; plan and exec a launch, claim slots, register launches and link workers to
   tasks. `lifecycle::review` starts the readers of the code-review hub: `request`, `dispatch` (reap
   the dead, claim the next in line, open a window for each, outside every lock), `launch_reader`,
-  `run_reader` (what a reader's window runs), `settle_reader` and `submit`; `close_reader` stops one reader and marks its read closed, and `close_readers` does so for the readers of merged or closed PRs after a sync. `run_reader` starts a
+  `request_for_task` (the same for a task's PR), `run_reader` (what a reader's window runs), `settle_reader` and `submit`; `close_reader` stops one reader and marks its read closed, and `close_readers` does so for the readers of merged or closed PRs after a sync. `run_reader` starts a
   detached watcher (`settle_reader`) before the agent takes over: it answers the agent's
   folder-trust prompt for the reader's own directory and no other. It fails the read, and closes
   the reader's pane, when the agent asks to trust another directory, when the dialog is still up
@@ -198,7 +198,7 @@ transport passes the handler in. `cli/serve.rs` passes `board_http::handle` for 
 `cli/server.rs` passes `board_http::handle_resident` to the resident. The resident strips
 `/b/<slug>` (`split_board_path`) and hands the rest to the same `routes::route`. Every board
 answers the same routes except the ones `Route::resident_only` lists (a session's resume, restart,
-open and clean-up; starting a parent hub; the hub actions; the terminal; assets): `route` answers
+open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
@@ -351,7 +351,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `agent-hooks/claude-<digest>.json` | the hook settings passed with `--settings`, one per `adj` binary | lifecycle (`write_agent_hooks.rs`) |
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
-| `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review, and how the last sync went | others (`store.rs`) |
+| `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review (and PRs of your tasks that a read-through was asked for), and how the last sync went | others (`store.rs`) |
 | `others/diffs/<owner>~<repo>~<number>.json` | the diff the stored read-through was made from, kept at hand-in | others (`store.rs`) |
 | `others/drafts/<owner>~<repo>~<number>.json` | the person's draft review comments of a PR, saved whole by the page | others (`store.rs`) |
 | `others/reads/<owner>~<repo>~<number>.json`, `others/review.lock` | the latest read-through of a PR; the lock held while readers are counted and claimed | others (`store.rs`) |
@@ -378,12 +378,12 @@ and the order it was done in.
 ## PRs others asked you to review
 
 `others` keeps one record per open PR that asked for **your** review (a request to a team of yours
-does not count), in the repositories of the owners adj has a board for. The records and the sync are
+does not count), in the repositories of the owners adj has a board for. It also keeps the record of a PR of one of your own tasks once a read-through of it was asked for (see [A task's PR](#a-tasks-pr)); such a record carries `task`. The records and the sync are
 the contract for the pages and workers that read them; the names below are the JSON keys.
 
 - `GET /api/others` answers `{now, lastSync, records, hub}`. `now` is epoch seconds. `lastSync` is `null`
   before the first sync. `records` are sorted by `repo` (case-insensitive), then `requestedAt`
-  (none last), then `number`.
+  (none last), then `number`. A record that is read for a task and that nobody requested of you is left out of `records` (it is not on the list), but its reader counts in `hub.running` and `hub.queued`, which say what the hub is doing.
 - `POST /api/others/sync` runs the sync, only when asked: nothing reads GitHub at start, on a timer
   or on `GET`. It answers 200 `{lastSync, arrived, removed, records, closeWarning?}` (`removed` are the records done for a day, never one with a reader still open) (`closeWarning` is set when the reader of a merged or closed PR could not be closed; see the reader's close below), 409
   `{"error": "a sync is already running", "busy": true}` when a sync is already running in the same
@@ -420,11 +420,12 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `myReview` | `{state, submittedAt, commit}`: your last submitted review and the commit it was made on, or `null` |
 | `commitsSinceReview` | commits on the head since `myReview.commit`; `0` when it is the head; `null` when unknown (no review, or the commit is no longer among the last 100) |
 | `requested` | you are a requested reviewer right now |
+| `task` | `{board, id}`: the hub slug and the id of the task this PR is read for; absent for a PR that was only asked of you. Set by a request to read a task's PR (see [A task's PR](#a-tasks-pr)); a later sync keeps it, and a request for another task moves it. Unknown keys inside it are kept |
 | `requestedAt` | time of the latest request that named you |
 | `rerequest` | the current request came after a review of yours |
 | `state` | derived, one of `requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done` |
 | `doneReason` | only while `state` is `done`: `approved`, `merged`, `closed` or `withdrawn` |
-| `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later, unless a reader is still open on it (see closing a reader) |
+| `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later, unless a reader is still open on it (see closing a reader), or it has a `task` and that task's record still exists (a task that cannot be looked for keeps it; only a task that is definitely gone lets it go) |
 | `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review (when it is later than the review, else the sync's time) when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
 | `ai` | the AI read-through: `{status, sha, startedAt, finishedAt, launchedAt, readFrom, sessionId, pid, psStarted, terminal, error, counts, mode, readerClosedAt, stale}`; absent until one was asked for. `status` is `queued`, `running`, `ready` or `failed`. `mode` is `split` when the latest request was for a split proposal (see [The read-through](#the-read-through)), absent for a read-through; a value this binary does not know is a read-through. `startedAt` is when the person asked, which is the place in the queue; `launchedAt` is when the reader was started; `sessionId` is the reader whose hand-in is taken; `sha` and `counts` (`{attention, check, drafts}`) are those of the stored read-through and are kept when a re-read is asked for; `error` is why the last read failed, as one line of at most 300 characters. `readerClosedAt` is when the reader was closed (by the person, or by a sync that found the PR merged or closed), absent otherwise: the read-through, the drafts and the record stay, and a request for a read clears it. `readFrom` is when the stored read-through's material was taken at the latest: the `launchedAt` of the reader that handed it in, or the hand-in time when no reader was launched. `stale` is derived on every load and save and never trusted from disk: it is true when `sha` is not `headSha` and the sync saw that head (`headSeenAt`) at or after `readFrom`, or when either is missing. The hand-in time is not used, since a reader that read A, a push of B stored by a sync, and then a hand-in of A is stale. A reader reads the PR's live head, which can be newer than the last sync's, so a read of a head the sync has not seen yet is not stale, and the sync that brings it makes `sha` and `headSha` equal |
 | `pendingReviewAt` | time adj last put drafts into your pending review on GitHub (`POST /api/others/pending`); absent until then. Acting on the row, like starting a read: the page reads it with `ai.startedAt` to take the row off 新着. Not an event |
@@ -440,7 +441,7 @@ requested, it is `pushed` when the head moved since your review and `requested` 
 request, or a re-request with nothing pushed). When you are not requested: no review of yours, or a
 request newer than your review that went away, is `done` as `withdrawn`; an approving last review is
 `done` as `approved`; otherwise `pushed` when the head moved since your review and
-`waiting-on-author` when it did not. The read-through moves only a `requested` record: `ai-reading`
+`waiting-on-author` when it did not. A record with a `task` and no request of yours is never withdrawn or approved: while the PR is open it is `requested` (a task's PR has no request to take away and no verdict of yours that ends it), and it ends only when the PR is merged or closed. The read-through moves only a `requested` record: `ai-reading`
 while `ai.status` is `queued` or `running`, `ai-ready` when it is `ready` (also when it is stale). On a
 `pushed` record `ai` is shown beside the state and does not replace it.
 
@@ -490,6 +491,30 @@ first. A diff over 2000 rows is drawn file by file as each comes near the screen
   (a read of the whole PR, as before) until a reader is at work. A proposal that is stored and not stale is not offered again; one made for an
   older head is offered as 「分割を提案し直す」, and what a button asks for follows whether the PR is out of review now (and live), never the mode of the stored read-through: a PR that has become small is read in the usual way, also after a proposal, and a proposal is asked for again only while it is out of review.
 
+### A task's PR
+
+A task that has a `pr` can have it read the same way, through the same record, queue (3 places), reader and
+read-through as a request. The record is the PR's own (`others/<owner>~<repo>~<number>.json`), found through the task's
+**current** `pr` (a bare `#N` is read against the task's repository, as `task::pr_refs` does), so a task that gets another
+PR shows that PR's record; `task` says what the record is for, and does not decide the lookup.
+
+- `POST /b/<slug>/api/tasks/<id>/ai` with `{"mode": "read"|"split"}` (`mode` optional, as above), or
+  `adj review request --task <id> [--repo <owner/name>] [--hub <id>]` (`--pr` and `--task` exclude each other),
+  asks for it (`lifecycle::review::request_for_task`). Before anything is read from GitHub or written it refuses what it
+  can know: a task that is not there, a task with no PR, a PR that is not on github.com or a bare number with no remote to read it
+  against, the code-review hub not running (`hub-stopped`) and a terminal a reader cannot be opened in (`not-startable`). Then it reads the PR from GitHub
+  with the sync's own query, makes or updates the record under its lock (`others::track_task_pr`: the facts, `task`; a record
+  made for another task is moved to this one; a PR that cannot be read writes nothing), asks for the read as a request does, and starts
+  the readers next in line. The answers: 200 `{record, warning}`; 400 for a mode that is not `read` or `split`, a PR this cannot read and a done PR; 404 for a task that is not there; 409 `{error, why}` with `why`
+  `no-pr`, `hub-stopped` or `not-startable`; 500 when GitHub or a record could not be read or written. A board a hub serves answers 404, as for `/api/others/*`.
+- `GET /b/<slug>/api/tasks/<id>/ai` answers `{pr, record, hub}`: `pr` is the task's PR as `owner/repo#N` (`null` when it has none, or one this
+  cannot read), `record` the PR's record whether it carries `task` or was only requested of you (`null` when it has none), and `hub` the
+  code-review hub as `GET /api/others` has it. It reads nothing from GitHub and writes nothing. A task that is not there is a 400.
+- The record is never withdrawn for lack of a request and is not in `GET /api/others` `records` unless you are also requested (then it
+  is one record, listed and offered a pending review as a request is). It follows the PR: merged or closed ends it (`done`, and its reader
+  is closed by the sync); an approval or a request going away does not. 「同期」 and each request bring its facts up to date. A done one is
+  kept past its day while its task exists. The pending review is not refused here: it is for the PR whoever asked.
+
 ### The read-through
 
 The code-review hub (`adj hub --review`) belongs to no repository. Its hub identifier is the reserved `@review` (an `@` cannot be in a
@@ -498,7 +523,7 @@ name is `adjutant-review`. `identity::resolve_in` answers it before it asks git,
 MCP tools from any directory. It is not in 「ボード」: `registry::note_board` skips it. Its working directory is `<state>/review`,
 which `lifecycle::hub::ensure_home` makes.
 
-A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>", "mode": "read"|"split"}`, `mode` optional, or `adj review request --pr <url|id> [--split]`), never asked for by a
+A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>", "mode": "read"|"split"}`, `mode` optional, or `adj review request --pr <url|id> [--split]`; for a task's PR see [A task's PR](#a-tasks-pr)), never asked for by a
 sync, though a place a sync frees by closing a reader may start the next queued read. `mode` `split` asks for a split proposal of a PR too large to read (see below); it is stored as `ai.mode`, and a reader's mode is always the record's, never its own word. The server does not refuse a split of a PR that is in review. A `mode` that is not `read`, `split` or absent is a 400 `{"error": "mode must be \"read\" or \"split\""}` before anything is written. A request for a read that is already queued or running changes nothing, its mode included; a takeover queues the mode of the new request. The answers: 200 `{record, warning}` when it is queued or already queued or running (`warning` is `null`, or says that the queue could not be worked after the request was taken; the request stands and the job tries again, and `adj review request|submit|fail` print it on stderr); 409 `{error, why}` with `why` `hub-stopped` or
 `not-startable` (nothing is written); 404 for a PR with no record; 400 for a bad id or a done PR. Readers start only while the hub is
 up. `others::claim_reads` runs under `others/review.lock`: it first fails a queued read whose PR is done (`the PR is no longer open`), then counts the `running` records, and marks as `running` the first

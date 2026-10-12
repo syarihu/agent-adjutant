@@ -26,7 +26,7 @@ const FILE_PAGES: usize = 9;
 pub(super) const SEARCH_LIMIT: usize = 100;
 
 /// Runs `gh` with these arguments and gives up at the deadline.
-pub(super) type Gh<'a> = &'a (dyn Fn(&[&str], Instant) -> Result<GhRun, String> + Sync);
+pub(crate) type Gh<'a> = &'a (dyn Fn(&[&str], Instant) -> Result<GhRun, String> + Sync);
 
 /// `Gh`, with a body for `gh`'s stdin when given: what a mutation travels in, so that nothing the
 /// person wrote is ever an argument.

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
-use crate::lifecycle::review::{AskError, CloseError};
+use crate::lifecycle::review::{AskError, CloseError, TaskAskError};
 use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
 use crate::registry::Context;
 use crate::task::{self, Checked, PrState};
@@ -117,6 +117,18 @@ pub fn review_refusal(why: &AskError) -> String {
         AskError::NoRecord => "no such pull request on the list: run 「同期」 on the board first".to_string(),
         AskError::Done => "that pull request is done".to_string(),
         AskError::Failed(why) => why.clone(),
+    }
+}
+
+/// Why asking for a read-through of a task's PR was refused, as the CLI and the board both say it.
+pub fn task_review_refusal(why: &TaskAskError) -> String {
+    match why {
+        TaskAskError::Task(why) => why.clone(),
+        TaskAskError::NoPr => "the task has no pull request yet".to_string(),
+        TaskAskError::NotReadable(pr) => {
+            format!("not a pull request on github.com this can read: {pr}")
+        }
+        TaskAskError::Refused(why) => review_refusal(why),
     }
 }
 

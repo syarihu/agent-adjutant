@@ -3,6 +3,7 @@ use super::close_readers::{close_finished_readers_with, frees_a_place, has_finis
 use super::dispatch::dispatch_with;
 use super::launch_reader::launch_reader_with;
 use super::request::request_with;
+use super::request_for_task::request_for_task_with;
 use super::*;
 use crate::infra::terminal::Performed;
 use crate::others::{self, Claim, ReadMode, Requested};
@@ -12,6 +13,7 @@ use crate::testing::Sandbox;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const NOW: i64 = 1_791_600_000;
 
@@ -908,5 +910,199 @@ fn a_stop_that_fails_because_another_closer_got_there_first_still_closes() {
         Err("no pane".into())
     });
     assert_eq!(still, Err(super::CloseError::Failed("no pane".to_string())));
+    assert!(closed_at(&root, 2).is_none());
+}
+
+// ── a task's PR ──────────────────────────────────────────────────────
+
+/// The context of the hub `acme-widget`, whose tasks are the ones a read is asked for.
+fn task_hub() -> (Sandbox, Context) {
+    let sandbox = Sandbox::empty();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = registry::context_at(repo, sandbox.state()).unwrap();
+    (sandbox, ctx)
+}
+
+/// Task `id` of the hub `acme-widget`, with `pr` when given.
+fn put_task(root: &Path, id: &str, pr: Option<&str>) {
+    let dir = root.join("tasks/acme-widget");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut task = json!({
+        "id": id, "kind": "investigate", "title": "t", "doneWhen": "report-only",
+        "status": "backlog", "autoStart": true, "createdAt": "20261001T000000Z", "updatedAt": "20261001T000000Z"
+    });
+    if let Some(pr) = pr {
+        task["pr"] = json!(pr);
+    }
+    std::fs::write(dir.join(format!("{id}.json")), task.to_string()).unwrap();
+}
+
+/// What the details query answers for PR 7 at `head`, which nobody asked you to review.
+fn pr_seven(head: &str) -> Value {
+    let up = |word: &str| word.to_ascii_uppercase();
+    json!({
+        "number": 7, "url": "https://github.com/acme/widget/pull/7", "title": "Add a thing",
+        "state": up("open"), "isDraft": false, "author": {"login": "alice"},
+        "baseRefName": "main", "headRefName": "feature", "headRefOid": head,
+        "additions": 1, "deletions": 1, "changedFiles": 1,
+        "files": {
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{"path": "a.rs", "additions": 1, "deletions": 1, "changeType": up("modified")}]
+        },
+        "reviewRequests": {"nodes": []}, "latestReviews": {"nodes": []},
+        "myReviews": {"nodes": []}, "requests": {"nodes": []},
+        "commits": {"nodes": [{"commit": {"oid": head, "committedDate": "2026-09-30T00:00:00Z"}}]},
+        "lastCommit": {"nodes": [{"commit": {"statusCheckRollup": null}}]}
+    })
+}
+
+/// A `gh` that knows who you are and PR 7, and counts what it was asked.
+fn github(
+    asked: &AtomicUsize,
+) -> impl Fn(&[&str], std::time::Instant) -> Result<crate::infra::gh::GhRun, String> + Sync + '_ {
+    move |args: &[&str], _| {
+        asked.fetch_add(1, Ordering::SeqCst);
+        let said = |stdout: String| {
+            Ok(crate::infra::gh::GhRun {
+                ok: true,
+                stdout,
+                stderr: String::new(),
+            })
+        };
+        match args {
+            ["api", "user", ..] => said("me".to_string()),
+            ["api", "graphql", ..] => {
+                said(json!({"data": {"p0": {"pullRequest": pr_seven("h1")}}}).to_string())
+            }
+            other => panic!("unexpected gh call {other:?}"),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ask_for_task(
+    ctx: &Context,
+    id: &str,
+    now: i64,
+    hub_up: bool,
+    startable: bool,
+    asked: &AtomicUsize,
+) -> Result<Requested, TaskAskError> {
+    request_for_task_with(
+        ctx,
+        id,
+        ReadMode::Read,
+        now,
+        hub_up,
+        startable,
+        &gone,
+        &|_| Ok(()),
+        &github(asked),
+    )
+}
+
+#[test]
+fn asking_for_a_task_s_read_is_refused_before_github_is_asked_or_anything_written() {
+    let (sandbox, ctx) = task_hub();
+    let root = sandbox.state();
+    put_task(&root, "none", None);
+    put_task(&root, "bare", Some("#7"));
+    put_task(
+        &root,
+        "elsewhere",
+        Some("https://ghe.example.com/acme/widget/pull/7"),
+    );
+    put_task(&root, "ok", Some("https://github.com/acme/widget/pull/7"));
+    let asked = AtomicUsize::new(0);
+    let ask = |id: &str, hub_up, startable| ask_for_task(&ctx, id, NOW, hub_up, startable, &asked);
+
+    assert!(matches!(
+        ask("missing", true, true),
+        Err(TaskAskError::Task(_))
+    ));
+    assert_eq!(ask("none", true, true), Err(TaskAskError::NoPr));
+    // A bare number has no remote to be read against here.
+    assert_eq!(
+        ask("bare", true, true),
+        Err(TaskAskError::NotReadable("#7".to_string()))
+    );
+    assert!(matches!(
+        ask("elsewhere", true, true),
+        Err(TaskAskError::NotReadable(_))
+    ));
+    assert_eq!(
+        ask("ok", false, true),
+        Err(TaskAskError::Refused(AskError::HubStopped))
+    );
+    assert_eq!(
+        ask("ok", true, false),
+        Err(TaskAskError::Refused(AskError::NotStartable))
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
+    assert!(!root.join("others").exists());
+}
+
+#[test]
+fn asking_for_a_task_s_read_queues_it_and_asking_again_while_running_writes_nothing() {
+    let (sandbox, ctx) = task_hub();
+    let root = sandbox.state();
+    put_task(&root, "ok", Some("https://github.com/acme/widget/pull/7"));
+    let asked = AtomicUsize::new(0);
+
+    let Ok(Requested::Queued(record)) = ask_for_task(&ctx, "ok", NOW, true, true, &asked) else {
+        panic!("not queued");
+    };
+    assert_eq!(
+        record
+            .task
+            .as_ref()
+            .map(|t| (t.board.as_str(), t.id.as_str())),
+        Some(("acme-widget", "ok"))
+    );
+    assert!(!record.requested && !record.on_review_list());
+    assert_eq!(record.ai.as_ref().unwrap().status, "queued");
+    assert_eq!(status_of(&root, 7), "queued");
+
+    // Once it runs, asking again keeps the place and the time it was asked.
+    let claims = others::claim_reads(&root, NOW, &sessions()).unwrap();
+    assert_eq!(claims.len(), 1);
+    let before = record_text(&root, 7);
+    let Ok(Requested::Already(again)) = ask_for_task(&ctx, "ok", NOW + 60, true, true, &asked)
+    else {
+        panic!("not already");
+    };
+    assert_eq!(again.ai.as_ref().unwrap().status, "running");
+    let after: Value = serde_json::from_str(&record_text(&root, 7)).unwrap();
+    let before: Value = serde_json::from_str(&before).unwrap();
+    assert_eq!(after["ai"], before["ai"]);
+}
+
+#[test]
+fn the_sweep_closes_the_reader_of_a_merged_task_pr_and_keeps_its_read() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "merged");
+    open_reader(&root, 2, "ready", "open");
+    for number in [1, 2] {
+        let path = root.join(format!("others/acme~widget~{number}.json"));
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["requested"] = json!(false);
+        v["task"] = json!({"board": "acme-widget", "id": "t1"});
+        std::fs::write(&path, v.to_string()).unwrap();
+    }
+    let failures = sweep(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_some());
+    assert_eq!(status_of(&root, 1), "ready");
+    assert!(kept(&root, 1));
+    // An open task PR with no request is not done, and its reader stays.
     assert!(closed_at(&root, 2).is_none());
 }

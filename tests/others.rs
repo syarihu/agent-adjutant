@@ -842,3 +842,150 @@ fn the_diff_of_a_read_through_is_kept_at_hand_in_and_served() {
     assert_eq!(stored["bytes"], patch.len());
     assert_eq!(stored["diff"], patch);
 }
+
+// ── a task's PR ──────────────────────────────────────────────────────
+
+/// A task of the fixture's board, with `pr` when given.
+fn task_with_pr(resident: &Resident, pr: Option<&str>) -> String {
+    let task = made_task(resident, json!({"title": "Retry the upload"}));
+    let id = task["id"].as_str().unwrap().to_string();
+    if let Some(pr) = pr {
+        let (status, text) = resident.post(
+            &format!("/b/{SLUG}/api/tasks/{id}"),
+            &json!({"pr": pr}).to_string(),
+        );
+        assert_eq!(status, 200, "{text}");
+    }
+    id
+}
+
+#[test]
+fn asking_for_a_task_s_read_answers_by_what_it_came_to() {
+    let fixture = Fixture::new(QUIET);
+    register(&fixture);
+    let (path, log, _) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    let bare = task_with_pr(&resident, None);
+    let with_pr = task_with_pr(&resident, Some("https://github.com/acme/widget/pull/7"));
+    let ask = |id: &str, body: Value| {
+        resident.post(&format!("/b/{SLUG}/api/tasks/{id}/ai"), &body.to_string())
+    };
+
+    // A mode that is not read or split is refused before the task is looked at.
+    let (code, text) = ask(&with_pr, json!({"mode": "x"}));
+    assert_eq!(code, 400, "{text}");
+    assert_eq!(body(&text)["error"], "mode must be \"read\" or \"split\"");
+    let (code, text) = ask("nonsense", json!({}));
+    assert_eq!(code, 404, "{text}");
+    let (code, text) = ask(&bare, json!({}));
+    assert_eq!(code, 409, "{text}");
+    assert_eq!(body(&text)["why"], "no-pr");
+    // The code-review hub is not running: refused with nothing read and nothing written.
+    let (code, text) = ask(&with_pr, json!({}));
+    assert_eq!(code, 409, "{text}");
+    assert_eq!(body(&text)["why"], "hub-stopped");
+    assert!(!fixture.state.join("others").exists());
+    assert!(!log.exists(), "a refused request asked GitHub");
+}
+
+#[test]
+fn a_task_s_read_is_the_record_of_its_current_pr_and_the_hub() {
+    let fixture = Fixture::new(QUIET);
+    register(&fixture);
+    let (path, _, _) = stub_gh(&fixture);
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    let bare = task_with_pr(&resident, None);
+    let with_pr = task_with_pr(&resident, Some("https://github.com/acme/widget/pull/7"));
+    let read = |id: &str| resident.get(&format!("/b/{SLUG}/api/tasks/{id}/ai"));
+
+    let (code, text) = read(&bare);
+    assert_eq!(code, 200, "{text}");
+    let none = body(&text);
+    assert_eq!((&none["pr"], &none["record"]), (&Value::Null, &Value::Null));
+    assert_eq!(none["hub"]["state"], "stopped");
+    assert_eq!(none["hub"]["max"], 3);
+
+    // A PR nobody has read yet: named, with no record.
+    let (_, text) = read(&with_pr);
+    let named = body(&text);
+    assert_eq!(named["pr"], "acme/widget#7");
+    assert_eq!(named["record"], Value::Null);
+
+    // The record is found through the task's PR, whether or not it is linked to the task.
+    resident.post("/api/others/sync", "");
+    let (_, text) = read(&with_pr);
+    assert_eq!(body(&text)["record"]["id"], "acme/widget#7");
+    let (code, _) = read("nonsense");
+    assert_eq!(code, 400);
+}
+
+#[test]
+fn get_api_others_leaves_out_a_task_s_pr_but_counts_its_reader_in_the_hub() {
+    let fixture = Fixture::new(QUIET);
+    let resident = Resident::start(&fixture);
+    let record = |number: u64, task: Option<Value>, requested: bool| {
+        let mut record = json!({
+            "id": format!("acme/widget#{number}"), "repo": "Acme/Widget", "number": number,
+            "url": format!("https://github.com/acme/widget/pull/{number}"),
+            "registered": true, "title": "t", "base": "main", "head": "f", "headSha": "h1",
+            "prState": "open", "additions": 1, "deletions": 1, "changedFiles": 1,
+            "requested": requested, "requestedAt": "20261001T000000Z",
+            "firstSeenAt": "20261001T000000Z", "readAt": "20261001T000000Z",
+            "ai": {"status": "running", "startedAt": "20261002T000000Z"}
+        });
+        if let Some(task) = task {
+            record["task"] = task;
+        }
+        record
+    };
+    let dir = fixture.state.join("others");
+    std::fs::create_dir_all(&dir).unwrap();
+    let link = || Some(json!({"board": SLUG, "id": "t1"}));
+    for (number, task, requested) in [(1, None, true), (2, link(), false), (3, link(), true)] {
+        std::fs::write(
+            dir.join(format!("acme~widget~{number}.json")),
+            record(number, task, requested).to_string(),
+        )
+        .unwrap();
+    }
+    let (status, text) = resident.get("/api/others");
+    assert_eq!(status, 200, "{text}");
+    let state = body(&text);
+    let ids: Vec<&str> = state["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    // The one nobody requested of you is not on the list, and the one that is also requested is.
+    assert_eq!(ids, ["acme/widget#1", "acme/widget#3"]);
+    assert_eq!(state["hub"]["running"], 3);
+}
+
+#[test]
+fn review_request_takes_a_pr_or_a_task_and_not_both() {
+    let fixture = Fixture::new(QUIET);
+    let said = |args: &[&str]| {
+        let out = fixture.cmd(args);
+        assert!(!out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stderr).to_string()
+    };
+    assert!(said(&["review", "request"]).contains("--pr"));
+    assert!(
+        said(&["review", "request", "--pr", "acme/widget#7", "--task", "t1"])
+            .contains("cannot be used with")
+    );
+    assert!(
+        said(&[
+            "review",
+            "request",
+            "--repo",
+            "acme/widget",
+            "--pr",
+            "acme/widget#7"
+        ])
+        .contains("--task")
+    );
+    // A task that is not there is refused in the task's words.
+    assert!(said(&["review", "request", "--task", "nonsense"]).contains("no such task"));
+}
