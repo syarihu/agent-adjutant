@@ -1026,7 +1026,7 @@ fn asking_for_a_task_s_read_is_refused_before_github_is_asked_or_anything_writte
 
     assert!(matches!(
         ask("missing", true, true),
-        Err(TaskAskError::Task(_))
+        Err(TaskAskError::NoTask)
     ));
     assert_eq!(ask("none", true, true), Err(TaskAskError::NoPr));
     // A bare number has no remote to be read against here.
@@ -1105,4 +1105,71 @@ fn the_sweep_closes_the_reader_of_a_merged_task_pr_and_keeps_its_read() {
     assert!(kept(&root, 1));
     // An open task PR with no request is not done, and its reader stays.
     assert!(closed_at(&root, 2).is_none());
+}
+
+#[test]
+fn a_task_record_that_cannot_be_read_is_not_a_missing_task() {
+    let (sandbox, ctx) = task_hub();
+    let root = sandbox.state();
+    let dir = root.join("tasks/acme-widget");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("broken.json"), "{ not json").unwrap();
+    let asked = AtomicUsize::new(0);
+    assert!(matches!(
+        ask_for_task(&ctx, "broken", NOW, true, true, &asked),
+        Err(TaskAskError::TaskUnreadable(_))
+    ));
+    assert_eq!(
+        ask_for_task(&ctx, "missing", NOW, true, true, &asked),
+        Err(TaskAskError::NoTask)
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_task_given_another_pr_while_github_is_read_is_not_queued() {
+    let (sandbox, ctx) = task_hub();
+    let root = sandbox.state();
+    put_task(&root, "ok", Some("https://github.com/acme/widget/pull/7"));
+    let asked = AtomicUsize::new(0);
+    let real = github(&asked);
+    // The task's PR is rewritten while GitHub answers.
+    let rewriting = |args: &[&str], deadline| {
+        put_task(&root, "ok", Some("https://github.com/acme/widget/pull/8"));
+        real(args, deadline)
+    };
+    let result = request_for_task_with(
+        &ctx,
+        "ok",
+        ReadMode::Read,
+        NOW,
+        true,
+        true,
+        &gone,
+        &|_| Ok(()),
+        &rewriting,
+    );
+    assert_eq!(result, Err(TaskAskError::PrChanged));
+    // Read, but not queued.
+    let pr = others::pr_of("acme/widget#7").unwrap();
+    let record = others::record(&root, &pr).unwrap().unwrap();
+    assert!(record.ai.is_none());
+    // A task that is gone, or has lost its PR, meanwhile is said so.
+    put_task(&root, "ok", Some("https://github.com/acme/widget/pull/7"));
+    let dropping = |args: &[&str], deadline| {
+        put_task(&root, "ok", None);
+        real(args, deadline)
+    };
+    let result = request_for_task_with(
+        &ctx,
+        "ok",
+        ReadMode::Read,
+        NOW,
+        true,
+        true,
+        &gone,
+        &|_| Ok(()),
+        &dropping,
+    );
+    assert_eq!(result, Err(TaskAskError::NoPr));
 }

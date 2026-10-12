@@ -1,21 +1,29 @@
 use crate::infra::clock::now_secs;
 use crate::lifecycle::hub::hub_startable;
-use crate::others::{self, Gh, HungReader, ReadMode, Requested, TaskLink};
+use crate::others::{self, Gh, HungReader, ReadMode, Requested, TaskLink, TrackError};
 use crate::registry::{self, Context, Liveness};
 use crate::task;
+use crate::task::PrRef;
 
 use super::{AskError, Asked, dispatch, request_taking_over, stop_reader};
 
 /// Why asking for a read of a task's PR was refused. The transports word it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskAskError {
-    /// The task could not be read, and why: "no such task", or a record that does not parse.
-    Task(String),
+    /// There is no such task.
+    NoTask,
+    /// The task's record is there and cannot be read, and why.
+    TaskUnreadable(String),
     /// The task has no PR yet.
     NoPr,
     /// The task's PR is not one this can read: not on github.com, or a bare number with no
     /// remote to read it against. Holds the PR as the task names it.
     NotReadable(String),
+    /// A sync is running, which also writes the PR's record: nothing was written; ask again once it
+    /// ends.
+    Syncing,
+    /// The task's PR changed while GitHub was read: nothing was queued; ask again.
+    PrChanged,
     /// The read was refused as a request's is, or GitHub could not be read.
     Refused(AskError),
 }
@@ -79,14 +87,7 @@ pub(crate) fn request_for_task_with(
     gh: Gh,
 ) -> Result<Requested, TaskAskError> {
     let root = &ctx.state;
-    let found = task::get(root, &ctx.repo.slug, task_id).map_err(TaskAskError::Task)?;
-    let text = found.pr.clone().ok_or(TaskAskError::NoPr)?;
-    let pr = task::pr_refs(ctx, std::slice::from_ref(&found))
-        .into_iter()
-        .next()
-        .flatten()
-        .filter(|pr| pr.host == "github.com")
-        .ok_or(TaskAskError::NotReadable(text))?;
+    let (found, pr) = task_pr(ctx, task_id)?;
     if !hub_up {
         return Err(TaskAskError::Refused(AskError::HubStopped));
     }
@@ -104,8 +105,39 @@ pub(crate) fn request_for_task_with(
     } else {
         pr.nwo()
     };
-    others::track_task_pr_with(root, &pr, &link, &repo, now, gh)
-        .map_err(|e| TaskAskError::Refused(AskError::Failed(e)))?;
+    others::track_task_pr_with(root, &pr, &link, &repo, now, gh).map_err(|e| match e {
+        TrackError::Syncing => TaskAskError::Syncing,
+        TrackError::Failed(why) => TaskAskError::Refused(AskError::Failed(why)),
+    })?;
+    // The task may have been given another PR while GitHub was read: this one is not the task's now,
+    // and is not queued for it.
+    if task_pr(ctx, task_id)?.1 != pr {
+        return Err(TaskAskError::PrChanged);
+    }
     request_taking_over(root, &pr, now, mode, hub_up, startable, alive, stop)
         .map_err(TaskAskError::Refused)
+}
+
+/// The task and the PR it names now, or why it names none this can read. A task record that is
+/// there and cannot be read is not "no such task".
+fn task_pr(ctx: &Context, task_id: &str) -> Result<(task::Task, PrRef), TaskAskError> {
+    let root = &ctx.state;
+    let slug = &ctx.repo.slug;
+    let found = match task::get(root, slug, task_id) {
+        Ok(found) => found,
+        Err(why) => {
+            return Err(match task::exists(root, slug, task_id) {
+                Ok(false) => TaskAskError::NoTask,
+                _ => TaskAskError::TaskUnreadable(why),
+            });
+        }
+    };
+    let text = found.pr.clone().ok_or(TaskAskError::NoPr)?;
+    let pr = task::pr_refs(ctx, std::slice::from_ref(&found))
+        .into_iter()
+        .next()
+        .flatten()
+        .filter(|pr| pr.host == "github.com")
+        .ok_or(TaskAskError::NotReadable(text))?;
+    Ok((found, pr))
 }

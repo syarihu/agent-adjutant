@@ -1363,7 +1363,7 @@ fn track(
     pr: &crate::task::PrRef,
     task: &TaskLink,
     fake: &Fake,
-) -> Result<Record, String> {
+) -> Result<Record, TrackError> {
     track_task_pr_with(root, pr, task, "Acme/Widget", NOW, &|args, deadline| {
         fake.run(args, deadline)
     })
@@ -1414,13 +1414,37 @@ fn tracking_a_pr_github_cannot_read_writes_nothing() {
     let root = tempfile::tempdir().unwrap();
     let fake = Fake::new(&[]);
     assert!(track(root.path(), &pr(7), &link("t1"), &fake).is_err());
-    assert!(!root.path().join("others").exists());
+    // Only the sync's lock file may be there, never a record.
+    assert!(store::list(root.path()).is_empty());
 
     // Another host is refused before GitHub is asked.
     let elsewhere = pr_ref("https://ghe.example.com/acme/widget/pull/7", None).unwrap();
     let fake = Fake::new(&[]);
-    let why = track(root.path(), &elsewhere, &link("t1"), &fake).unwrap_err();
+    let Err(TrackError::Failed(why)) = track(root.path(), &elsewhere, &link("t1"), &fake) else {
+        panic!("not refused");
+    };
     assert!(why.contains("github.com"), "{why}");
     assert!(fake.calls.lock().unwrap().is_empty());
-    assert!(!root.path().join("others").exists());
+    // Only the sync's lock file may be there, never a record.
+    assert!(store::list(root.path()).is_empty());
+}
+
+#[test]
+fn tracking_while_a_sync_runs_writes_nothing_and_says_so() {
+    let root = tempfile::tempdir().unwrap();
+    let mut node = open_pr("h1");
+    without_requested(&mut node);
+    let fake = Fake::new(&[]).with(7, node);
+    let sync = store::try_lock_sync(root.path()).unwrap().unwrap();
+    assert_eq!(
+        track(root.path(), &pr(7), &link("t1"), &fake),
+        Err(TrackError::Syncing)
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+    assert!(record_of(root.path(), 7).is_none());
+    // Once the sync ends it is read.
+    drop(sync);
+    assert!(track(root.path(), &pr(7), &link("t1"), &fake).is_ok());
+    // And the sync can run after it: tracking let go of the lock.
+    assert!(sync_at(root.path(), &acme(), NOW, &fake).is_ok());
 }

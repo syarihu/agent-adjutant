@@ -123,7 +123,10 @@ pub fn review_refusal(why: &AskError) -> String {
 /// Why asking for a read-through of a task's PR was refused, as the CLI and the board both say it.
 pub fn task_review_refusal(why: &TaskAskError) -> String {
     match why {
-        TaskAskError::Task(why) => why.clone(),
+        TaskAskError::NoTask => "no such task".to_string(),
+        TaskAskError::TaskUnreadable(why) => why.clone(),
+        TaskAskError::Syncing => "a sync is running; ask again once it ends".to_string(),
+        TaskAskError::PrChanged => "the task's PR changed while it was read; ask again".to_string(),
         TaskAskError::NoPr => "the task has no pull request yet".to_string(),
         TaskAskError::NotReadable(pr) => {
             format!("not a pull request on github.com this can read: {pr}")

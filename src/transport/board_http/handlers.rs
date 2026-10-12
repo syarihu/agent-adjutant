@@ -53,8 +53,29 @@ pub(super) fn ask_for_task_read(
     body: &[u8],
     out: &mut impl Write,
 ) -> std::io::Result<()> {
-    let input: Value = serde_json::from_slice(body).unwrap_or_default();
-    // Refused before anything is read or written.
+    // An empty body is no options; anything else must be a JSON object. Refused before anything is
+    // read or written.
+    let input: Value = if body.iter().all(u8::is_ascii_whitespace) {
+        json!({})
+    } else {
+        match serde_json::from_slice::<Value>(body) {
+            Ok(input) if input.is_object() => input,
+            Ok(_) => {
+                return http::json(
+                    out,
+                    400,
+                    &json!({ "error": "bad JSON: expected an object" }).to_string(),
+                );
+            }
+            Err(e) => {
+                return http::json(
+                    out,
+                    400,
+                    &json!({ "error": format!("bad JSON: {e}") }).to_string(),
+                );
+            }
+        }
+    };
     let mode = match read_mode_of(&input) {
         Ok(mode) => mode,
         Err(why) => return http::json(out, 400, &json!({ "error": why }).to_string()),
@@ -71,7 +92,10 @@ pub(super) fn ask_for_task_read(
         }
         Err(why) => {
             let (status, because) = match &why {
-                TaskAskError::Task(_) => (404, None),
+                TaskAskError::NoTask => (404, None),
+                TaskAskError::TaskUnreadable(_) => (500, None),
+                TaskAskError::Syncing => (409, Some("syncing")),
+                TaskAskError::PrChanged => (409, Some("pr-changed")),
                 TaskAskError::NoPr => (409, Some("no-pr")),
                 TaskAskError::NotReadable(_) => (400, None),
                 TaskAskError::Refused(refused) => refusal_status(refused),

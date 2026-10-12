@@ -886,6 +886,29 @@ fn asking_for_a_task_s_read_answers_by_what_it_came_to() {
     assert_eq!(body(&text)["why"], "hub-stopped");
     assert!(!fixture.state.join("others").exists());
     assert!(!log.exists(), "a refused request asked GitHub");
+
+    // A body that is not a JSON object is refused before the task is looked at; none is no options.
+    for bad in ["{", "[]", "\"read\"", "x"] {
+        let (code, text) = resident.post(&format!("/b/{SLUG}/api/tasks/{with_pr}/ai"), bad);
+        assert_eq!(code, 400, "{bad}: {text}");
+        assert!(
+            body(&text)["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("bad JSON"),
+            "{text}"
+        );
+    }
+    let (code, _) = resident.post(&format!("/b/{SLUG}/api/tasks/{with_pr}/ai"), "  ");
+    assert_eq!(code, 409);
+    assert!(!fixture.state.join("others").exists());
+
+    // A task record that cannot be read is a server error, not a missing task.
+    let broken = fixture.state.join(format!("tasks/{SLUG}/broken.json"));
+    std::fs::write(&broken, "{ not json").unwrap();
+    let (code, text) = ask("broken", json!({}));
+    assert_eq!(code, 500, "{text}");
+    assert!(!fixture.state.join("others").exists());
 }
 
 #[test]

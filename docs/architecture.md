@@ -498,15 +498,15 @@ read-through as a request. The record is the PR's own (`others/<owner>~<repo>~<n
 **current** `pr` (a bare `#N` is read against the task's repository, as `task::pr_refs` does), so a task that gets another
 PR shows that PR's record; `task` says what the record is for, and does not decide the lookup.
 
-- `POST /b/<slug>/api/tasks/<id>/ai` with `{"mode": "read"|"split"}` (`mode` optional, as above), or
+- `POST /b/<slug>/api/tasks/<id>/ai` with `{"mode": "read"|"split"}` (`mode` optional, as above; an empty body is no options, and a body that is not a JSON object is a 400 `bad JSON: …` before anything is read), or
   `adj review request --task <id> [--repo <owner/name>] [--hub <id>]` (`--pr` and `--task` exclude each other),
   asks for it (`lifecycle::review::request_for_task`). Before anything is read from GitHub or written it refuses what it
   can know: a task that is not there, a task with no PR, a PR that is not on github.com or a bare number with no remote to read it
   against, the code-review hub not running (`hub-stopped`) and a terminal a reader cannot be opened in (`not-startable`). Then it reads the PR from GitHub
-  with the sync's own query, makes or updates the record under its lock (`others::track_task_pr`: the facts, `task`; a record
-  made for another task is moved to this one; a PR that cannot be read writes nothing), asks for the read as a request does, and starts
+  with the sync's own query, makes or updates the record (`others::track_task_pr_with`, holding the sync's lock from the read to the save so an older answer cannot overwrite a sync's newer one; the facts, `task`; a record
+  made for another task is moved to this one; a PR that cannot be read writes nothing), asks for the read as a request does (after checking that the task still names that PR), and starts
   the readers next in line. The answers: 200 `{record, warning}`; 400 for a mode that is not `read` or `split`, a PR this cannot read and a done PR; 404 for a task that is not there; 409 `{error, why}` with `why`
-  `no-pr`, `hub-stopped` or `not-startable`; 500 when GitHub or a record could not be read or written. A board a hub serves answers 404, as for `/api/others/*`.
+  `no-pr`, `hub-stopped`, `not-startable`, `syncing` (a sync is running; nothing was read or written) or `pr-changed` (the task got another PR while GitHub was read; nothing was queued); 500 when GitHub or a record could not be read or written, and for a task record that is there and cannot be read. A board a hub serves answers 404, as for `/api/others/*`.
 - `GET /b/<slug>/api/tasks/<id>/ai` answers `{pr, record, hub}`: `pr` is the task's PR as `owner/repo#N` (`null` when it has none, or one this
   cannot read), `record` the PR's record whether it carries `task` or was only requested of you (`null` when it has none), and `hub` the
   code-review hub as `GET /api/others` has it. It reads nothing from GitHub and writes nothing. A task that is not there is a 400.
