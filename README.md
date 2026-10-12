@@ -448,7 +448,8 @@ itself; one without gets a `cd` prepended. A new tab is named by the shell insid
 mechanism that does not generalise, since a profile whose title format is driven by user
 variables ignores it and the tab silently keeps the wrong name. `agentEnv` is an object of environment variables
 both the hub and its workers are started with, for a repository that runs under a separate
-agent profile.
+agent profile. The AI reader of a pull request in that repository gets it too, with `ADJUTANT_HUB`
+set to the code-review hub and `ADJUTANT_STATE_DIR` to the absolute state directory on top.
 
 ### Running Workers in tmux
 

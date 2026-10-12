@@ -104,7 +104,7 @@
       ],
       "ide": "studio",
       "baseBranch": "auto",
-      "//agentEnv": "Environment the hub and its workers are both started with. For a repo that runs under a separate agent profile: if the hub and its workers land in different config directories, their MCP servers, auth and history disagree. Keys have to be variable names — letters, digits and underscore, not starting with a digit — because these are assembled into an `env K=V …` command line; anything else is dropped and reported in `warnings`. Do not write `~`: which side expands it varies.",
+      "//agentEnv": "Environment the hub and its workers are both started with; the AI reader of a pull request in this repo gets it too (with ADJUTANT_HUB set to the code-review hub and ADJUTANT_STATE_DIR to the absolute state dir). For a repo that runs under a separate agent profile: if the hub and its workers land in different config directories, their MCP servers, auth and history disagree. Keys have to be variable names — letters, digits and underscore, not starting with a digit — because these are assembled into an `env K=V …` command line; anything else is dropped and reported in `warnings`. Do not write `~`: which side expands it varies.",
       "agentEnv": {
         "CLAUDE_CONFIG_DIR": "/absolute/path/to/config-dir"
       },
