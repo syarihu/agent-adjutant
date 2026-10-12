@@ -1,5 +1,5 @@
 use super::*;
-use crate::registry::AgentEvent;
+use crate::registry::{AgentEvent, LAST_MESSAGE_CHARS, LAST_MESSAGE_WHOLE_CHARS};
 
 fn fixture(name: &str) -> Value {
     let text = match name {
@@ -121,14 +121,19 @@ fn the_last_message_is_trimmed_and_blank_or_missing_is_none() {
 }
 
 #[test]
-fn a_long_last_message_is_cut_on_a_character_boundary_and_keeps_its_line_breaks() {
-    let long = format!("one\n\ntwo\n{}", "あ".repeat(LAST_MESSAGE_CHARS));
+fn a_long_last_message_is_passed_whole_up_to_the_cap_and_keeps_its_line_breaks() {
+    // Past the row's own limit, which the registry applies, and not cut here.
+    let long = format!("one\n\ntwo\n{}", "あ".repeat(LAST_MESSAGE_CHARS * 3));
     let message = stop_message(&stop_saying(Some(&long))).unwrap();
+    assert_eq!(message, long);
+    // Past the cap it is cut there, on a character boundary, with an ellipsis.
+    let huge = format!("one\n\ntwo\n{}", "あ".repeat(LAST_MESSAGE_WHOLE_CHARS));
+    let message = stop_message(&stop_saying(Some(&huge))).unwrap();
     assert!(message.starts_with("one\n\ntwo\n"), "{message:?}");
     assert!(message.ends_with("あ…"));
-    assert_eq!(message.chars().count(), LAST_MESSAGE_CHARS + 1);
-    // Exactly the limit is not cut.
-    let exact = "x".repeat(LAST_MESSAGE_CHARS);
+    assert_eq!(message.chars().count(), LAST_MESSAGE_WHOLE_CHARS + 1);
+    // Exactly the cap is not cut.
+    let exact = "x".repeat(LAST_MESSAGE_WHOLE_CHARS);
     assert_eq!(stop_message(&stop_saying(Some(&exact))), Some(exact));
 }
 

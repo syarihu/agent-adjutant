@@ -1,5 +1,5 @@
 use super::*;
-use crate::registry::store::read_agent_session;
+use crate::registry::store::{read_agent_message, read_agent_session};
 use std::collections::HashMap;
 
 const T0: i64 = 1_000_000;
@@ -1309,4 +1309,206 @@ fn the_time_the_person_typed_is_kept_on_disk() {
     assert_eq!(row.status, Some(AgentStatus::Done));
     let text = std::fs::read_to_string(agent_session_path(dir.path(), "s1")).unwrap();
     assert!(text.contains("\"lastPromptAt\""), "{text}");
+}
+
+// ── the whole last message ───────────────────────────────────────
+
+fn long(chars: usize) -> String {
+    format!("start\n{}", "あ".repeat(chars))
+}
+
+/// A row to say things in: a `Stop` alone does not start one.
+fn started_row(root: &Path) {
+    record(root, &tool(T0 - 10, "Bash: ls"));
+}
+
+fn side_written(root: &Path, id: &str) {
+    write_agent_message(
+        root,
+        &WholeLastMessage {
+            session_id: id.to_string(),
+            at: T0,
+            text: "x".repeat(2000),
+            other: Default::default(),
+        },
+    )
+    .unwrap();
+}
+
+fn side(root: &Path, id: &str) -> Option<WholeLastMessage> {
+    match read_agent_message(&agent_message_path(root, id)) {
+        Recorded::Found(message) => Some(message),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_long_stop_leaves_the_row_cut_and_the_whole_text_in_a_side_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    let text = long(LAST_MESSAGE_CHARS * 3);
+    record(root, &said(&text, T0));
+    let row = read(root, "s1");
+    let kept = row.last_message.as_deref().unwrap();
+    assert_eq!(kept.chars().count(), LAST_MESSAGE_CHARS + 1);
+    assert!(kept.ends_with('…'));
+    let whole = side(root, "s1").unwrap();
+    assert_eq!(whole.text, text);
+    assert_eq!(whole.session_id, "s1");
+    assert_eq!(Some(whole.at), row.last_message_at);
+}
+
+#[test]
+fn a_failure_text_is_kept_whole_the_same_way() {
+    let dir = tempfile::tempdir().unwrap();
+    started_row(dir.path());
+    let text = long(LAST_MESSAGE_CHARS * 2);
+    record(dir.path(), &event(failure(Some(&text)), T0));
+    assert_eq!(side(dir.path(), "s1").unwrap().text, text);
+}
+
+#[test]
+fn a_short_message_leaves_no_side_file_and_removes_an_older_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    record(root, &said("Short.", T0));
+    assert!(side(root, "s1").is_none());
+    record(root, &said(&long(LAST_MESSAGE_CHARS * 2), T0 + 100));
+    assert!(side(root, "s1").is_some());
+    record(root, &said("Short again.", T0 + 200));
+    assert!(side(root, "s1").is_none());
+}
+
+#[test]
+fn a_turn_without_a_message_leaves_the_side_file_of_the_last_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    record(root, &said(&long(LAST_MESSAGE_CHARS * 2), T0));
+    record(root, &event(stop(None), T0 + 100));
+    assert!(side(root, "s1").is_some());
+}
+
+#[test]
+fn a_message_over_the_cap_is_cut_at_the_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    started_row(dir.path());
+    // As the hook hands it over: already cut at the cap.
+    let capped = cut_last_message(
+        &long(LAST_MESSAGE_WHOLE_CHARS * 2),
+        LAST_MESSAGE_WHOLE_CHARS,
+    );
+    record(dir.path(), &said(&capped, T0));
+    let whole = side(dir.path(), "s1").unwrap();
+    assert_eq!(whole.text.chars().count(), LAST_MESSAGE_WHOLE_CHARS + 1);
+    assert!(whole.text.ends_with('…'));
+}
+
+#[test]
+fn the_same_first_words_within_the_heartbeat_bring_the_newer_whole_text_under_the_old_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    let head = "あ".repeat(LAST_MESSAGE_CHARS * 2);
+    record(root, &said(&format!("{head} first tail"), T0));
+    record(root, &said(&format!("{head} second tail"), T0 + 5));
+    let row = read(root, "s1");
+    assert_eq!(row.last_message_at, Some(T0));
+    let whole = side(root, "s1").unwrap();
+    assert!(whole.text.ends_with("second tail"));
+    assert_eq!(Some(whole.at), row.last_message_at);
+}
+
+#[test]
+fn a_sub_agents_stop_writes_no_side_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    record(root, &event(HookEvent::PostToolUse, T0));
+    record(
+        root,
+        &from_sub("a1", said(&long(LAST_MESSAGE_CHARS * 2), T0 + 5)),
+    );
+    assert!(side(root, "s1").is_none());
+}
+
+#[test]
+fn the_end_of_a_session_removes_its_side_file_with_the_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    record(root, &said(&long(LAST_MESSAGE_CHARS * 2), T0));
+    assert!(side(root, "s1").is_some());
+    record(root, &event(HookEvent::SessionEnd, T0 + 10));
+    assert!(!exists(root, "s1"));
+    assert!(!agent_message_path(root, "s1").exists());
+}
+
+#[test]
+fn the_sweep_removes_the_side_file_of_a_dead_row_and_an_orphan_and_keeps_a_live_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    started_row(root);
+    put(root, &row_of("gone", Some(999), Some(T0)));
+    put(root, &row_of("alive", Some(5), Some(T0)));
+    for id in ["gone", "alive", "orphan"] {
+        write_agent_message(
+            root,
+            &WholeLastMessage {
+                session_id: id.to_string(),
+                at: T0,
+                text: "x".repeat(2000),
+                other: Default::default(),
+            },
+        )
+        .unwrap();
+    }
+    let table = ProcessTable::fixed(Some(HashMap::from([(5, "A".to_string())])));
+    sweep_with(root, &table, HookEvent::SessionStart);
+    assert!(!exists(root, "gone"));
+    assert!(!agent_message_path(root, "gone").exists());
+    assert!(!agent_message_path(root, "orphan").exists());
+    // The lock taken to judge the orphan is not left behind for the next sweep (a lock another test's
+    // forked process still shares is let go of in a moment, as above).
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while agent_session_lock_path(root, "orphan").exists() {
+        assert!(std::time::Instant::now() < deadline, "the lock was left");
+        std::thread::sleep(Duration::from_millis(10));
+        sweep_with(root, &table, HookEvent::SessionStart);
+    }
+    assert!(agent_message_path(root, "alive").exists());
+}
+
+#[test]
+fn a_side_file_is_never_listed_as_a_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        &AgentSession {
+            ps_started: Some("A".to_string()),
+            ..row_of("s1", Some(5), Some(T0))
+        },
+    );
+    side_written(root, "s1");
+    let table = ProcessTable::fixed(Some(HashMap::from([(5, "A".to_string())])));
+    let rows = agent_sessions_with(root, &table).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].session_id, "s1");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_side_file_is_readable_by_its_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    started_row(dir.path());
+    record(dir.path(), &said(&long(LAST_MESSAGE_CHARS * 2), T0));
+    let mode = std::fs::metadata(agent_message_path(dir.path(), "s1"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
 }

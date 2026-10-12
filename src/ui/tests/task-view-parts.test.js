@@ -39,10 +39,11 @@ const ctx = vm.createContext({
   manualChecked: () => new Set([1]),
   gateStatusHtml: () => '<status>',
   timelineHtml: () => '<ol class="timeline"><li><button data-open="d-1">t</button></li></ol>',
-  sessionOfTask: () => SESSION.s, lastMessageHtml: a => `<div class="tp-lastmsg">${a.lastMessage}</div>`,
+  sessionOfTask: () => SESSION.s, ensureLastMessage: s => { SESSION.asked.push(s); },
+  lastMessageHtml: (a, s, opts = {}) => `<div class="tp-lastmsg" data-expanded="${!!opts.expanded}" data-for="${s?.id}">${a.lastMessage}</div>`,
   histories: {}, historyKey: t => t.id,
 });
-const SESSION = { s: null };
+const SESSION = { s: null, asked: [] };
 const load = (src) => vm.runInContext(src, ctx);
 load([
   cut(utilSrc, /^const esc = [^\n]*\n/m),
@@ -237,6 +238,16 @@ test('a task with nothing to judge leaves out what it lacks; a record is all the
   assert.ok(!cardOf(gs, 'details:lastmsg'));
   SESSION.s = { present: true, agentSession: { lastMessage: 'done it' } };
   assert.ok(cardOf(groupsOf([]), 'details:lastmsg').html.includes('done it'));
+  // The dialog's card is the expanded one, and the whole text is asked for the session it is about.
+  SESSION.s = { id: 'w1', present: true, agentSession: { lastMessage: 'done it' } };
+  SESSION.asked.length = 0;
+  const html = cardOf(groupsOf([]), 'details:lastmsg').html;
+  assert.ok(html.includes('data-expanded="true"') && html.includes('data-for="w1"'), html);
+  assert.deepStrictEqual(SESSION.asked.map(x => x.id), ['w1']);
+  SESSION.asked.length = 0;
+  SESSION.s = { id: 'w1', present: false, agentSession: { lastMessage: 'x' } };
+  groupsOf([]);
+  assert.deepStrictEqual(SESSION.asked, []);
   SESSION.s = { present: false, agentSession: { lastMessage: 'x' } };
   assert.ok(!cardOf(groupsOf([]), 'details:lastmsg'));
   SESSION.s = null;

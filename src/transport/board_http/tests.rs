@@ -1052,19 +1052,26 @@ fn a_terminal_route_names_a_session_id() {
 #[test]
 fn a_session_route_names_a_session_id_and_an_action() {
     fn method(action: &str) -> &'static str {
-        if action == "git" { "GET" } else { "POST" }
+        if matches!(action, "git" | "message") {
+            "GET"
+        } else {
+            "POST"
+        }
     }
     fn route(id: String, action: &str) -> Route {
         match action {
             "link" => Route::LinkSession(id),
             "git" => Route::SessionGit(id),
+            "message" => Route::SessionMessage(id),
             "resume" => Route::Session(id, SessionAction::Resume),
             "restart" => Route::Session(id, SessionAction::Restart),
             "open" => Route::Session(id, SessionAction::Open),
             _ => Route::Session(id, SessionAction::CleanUp),
         }
     }
-    for action in ["link", "git", "resume", "restart", "open", "cleanup"] {
+    for action in [
+        "link", "git", "message", "resume", "restart", "open", "cleanup",
+    ] {
         let method = method(action);
         assert_eq!(
             parsed(method, &format!("/api/sessions/worker-x/{action}")),
@@ -1105,6 +1112,7 @@ fn a_session_route_names_a_session_id_and_an_action() {
     );
     // An action is not another's route, and the terminal is not one of these.
     assert_eq!(parsed("POST", "/api/sessions/worker-x/git"), Ok(None));
+    assert_eq!(parsed("POST", "/api/sessions/worker-x/message"), Ok(None));
     assert_eq!(
         parsed("POST", "/api/sessions/worker-x/terminal"),
         Ok(Some(Route::Terminal("worker-x".into())))
@@ -1234,6 +1242,7 @@ fn only_the_resident_serves_what_reaches_outside_the_repository() {
         ("POST", "/api/sessions"),
         ("POST", "/api/sessions/x/link"),
         ("GET", "/api/sessions/x/git"),
+        ("GET", "/api/sessions/x/message"),
         ("POST", "/api/hub/next"),
         ("POST", "/api/hub/wake"),
         ("POST", "/api/worktrees/focus"),

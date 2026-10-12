@@ -187,3 +187,27 @@ pub(super) fn write_agent_session(root: &Path, row: &AgentSession) -> Result<(),
     }
     write_json_private(&agent_session_path(root, &row.session_id), row)
 }
+
+/// Where the whole last message of a session is kept. A directory of its own, because
+/// `agent-sessions/` is read as one row per `*.json` and swept by the same suffix.
+pub(super) fn agent_messages_dir(root: &Path) -> PathBuf {
+    agent_sessions_dir(root).join("messages")
+}
+
+pub(super) fn agent_message_path(root: &Path, id: &str) -> PathBuf {
+    agent_messages_dir(root).join(format!("{id}.json"))
+}
+
+pub(super) fn read_agent_message(path: &Path) -> Recorded<WholeLastMessage> {
+    read_record(path, |value| {
+        serde_json::from_value::<WholeLastMessage>(value).ok()
+    })
+}
+
+pub(super) fn write_agent_message(root: &Path, message: &WholeLastMessage) -> Result<(), String> {
+    if !valid_session_id(&message.session_id) {
+        return Err(format!("not a usable session id: {:?}", message.session_id));
+    }
+    // Readable by its owner only, like the row: it is the same text. The write makes the directory.
+    write_json_private(&agent_message_path(root, &message.session_id), message)
+}

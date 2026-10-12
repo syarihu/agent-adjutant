@@ -853,6 +853,25 @@ pub fn session_git(
     git_state_of(server, &session)
 }
 
+/// The whole last message of one session's agent, asked when the expanded view opens rather than
+/// carried on every poll. The ledger row is the one the board itself joined to the session: the
+/// request names a session, never a ledger row.
+pub fn session_last_message(
+    server: &Server,
+    id: &str,
+) -> Result<crate::registry::LastMessageRead, String> {
+    let settings = settings_now(server);
+    let session = find_session(server, &settings, id)?;
+    let Some(agent) = session.agent_session.as_ref() else {
+        return Err("this session has no agent session".to_string());
+    };
+    let Some(agent_id) = agent.session_id.as_deref() else {
+        return Err("this session has no agent session".to_string());
+    };
+    crate::registry::whole_last_message(&server.ctx.state, agent_id)?
+        .ok_or_else(|| "no such agent session".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

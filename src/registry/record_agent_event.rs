@@ -1,8 +1,9 @@
 //! What an agent's hook says about its session, written into the session's row.
 
 use super::store::{
-    agent_session_broken_path, agent_session_lock_path, agent_session_path, agent_sessions_dir,
-    read_agent_session, write_agent_session,
+    agent_message_path, agent_messages_dir, agent_session_broken_path, agent_session_lock_path,
+    agent_session_path, agent_sessions_dir, read_agent_session, write_agent_message,
+    write_agent_session,
 };
 use super::*;
 use crate::infra::fs::{lock_checked, try_lock_checked};
@@ -44,7 +45,9 @@ pub enum HookEvent {
         kind: Option<String>,
         message: Option<String>,
     },
-    /// The end of a turn, with what the agent said last when the payload carried it.
+    /// The end of a turn, with what the agent said last when the payload carried it: the whole
+    /// text, cut only at `LAST_MESSAGE_WHOLE_CHARS`. The row keeps the first `LAST_MESSAGE_CHARS`
+    /// of it and a side file the rest.
     Stop {
         message: Option<String>,
     },
@@ -125,23 +128,103 @@ pub fn record_agent_event_with(
             // than look again.
             answer_with_nothing(&missing, &mut lookups);
         }
-        match apply(current, event, &lookups) {
+        // The side file goes first, under the same lock: a reader that sees the new `lastMessageAt`
+        // finds the whole text that belongs to it. Its error waits until the row is written and the
+        // sweep has run: a side file that cannot be written is no reason to skip either.
+        // A repeated `Stop` can leave the row as it was, and still bring a newer whole text.
+        let unchanged_row = matches!(
+            event.hook,
+            HookEvent::Stop { .. } | HookEvent::StopFailure { .. }
+        )
+        .then(|| current.clone())
+        .flatten();
+        let side = match apply(current, event, &lookups) {
             Applied::NeedsLookup => {
                 drop(guard);
                 look_up(&missing, &mut lookups, table);
                 continue;
             }
-            Applied::Write(row) => write_agent_session(root, &row)?,
-            Applied::Remove => remove_if_present(&path)?,
-            Applied::Unchanged => {}
-        }
+            Applied::Write(row) => {
+                let side = keep_whole(root, id, whole_to_keep(event, &row));
+                write_agent_session(root, &row)?;
+                side
+            }
+            Applied::Remove => {
+                remove_if_present(&path)?;
+                remove_if_present(&agent_message_path(root, id))
+            }
+            Applied::Unchanged => match &unchanged_row {
+                Some(row) => keep_whole(root, id, whole_to_keep(event, row)),
+                None => Ok(()),
+            },
+        };
         drop(guard);
-        return match event.hook {
+        let swept = match event.hook {
             HookEvent::SessionStart | HookEvent::Stop { .. } => sweep(root, table, event.at, id),
             _ => Ok(()),
         };
+        return join_errors([side, swept]);
     }
     Err(format!("cannot settle the row for session {id}"))
+}
+
+/// What to do with the side file after an event has been applied to a row.
+enum KeepWhole {
+    Write(WholeLastMessage),
+    Remove,
+    Nothing,
+}
+
+/// The side file `event` calls for, judged against the row it was just applied to. Only a session's
+/// own `Stop` or `StopFailure` with a message counts: a sub-agent's never does, whatever second it
+/// arrives in. It counts when the row holds this message (its cut text is the event's cut text), which
+/// is also so when the same words came again within the heartbeat and the row kept its `lastMessageAt`:
+/// the side file is then written again under that `at`, since the tails may differ. A message the row
+/// holds uncut needs no side file and removes an older one. A row that holds other words (an event
+/// that was not applied to it) leaves the side file alone.
+fn whole_to_keep(event: &AgentEvent, row: &AgentSession) -> KeepWhole {
+    let (HookEvent::Stop {
+        message: Some(message),
+    }
+    | HookEvent::StopFailure {
+        message: Some(message),
+    }) = &event.hook
+    else {
+        return KeepWhole::Nothing;
+    };
+    let (Some(kept), Some(at)) = (row.last_message.as_deref(), row.last_message_at) else {
+        return KeepWhole::Nothing;
+    };
+    if from_subagent(event) || kept != cut_last_message(message, LAST_MESSAGE_CHARS) {
+        return KeepWhole::Nothing;
+    }
+    if message.chars().count() > LAST_MESSAGE_CHARS {
+        KeepWhole::Write(WholeLastMessage {
+            session_id: row.session_id.clone(),
+            at,
+            text: message.clone(),
+            other: Default::default(),
+        })
+    } else {
+        KeepWhole::Remove
+    }
+}
+
+/// Write, remove or leave the side file of `id`'s whole last message, as the event called for.
+fn keep_whole(root: &Path, id: &str, keep: KeepWhole) -> Result<(), String> {
+    match keep {
+        KeepWhole::Write(message) => write_agent_message(root, &message),
+        KeepWhole::Remove => remove_if_present(&agent_message_path(root, id)),
+        KeepWhole::Nothing => Ok(()),
+    }
+}
+
+fn join_errors(results: impl IntoIterator<Item = Result<(), String>>) -> Result<(), String> {
+    let errors: Vec<String> = results.into_iter().filter_map(Result::err).collect();
+    match errors.is_empty() {
+        true => Ok(()),
+        false => Err(errors.join("; ")),
+    }
 }
 
 /// `SessionEnd` removes the row under its lock and needs no lookup; the rest end here.
@@ -150,7 +233,9 @@ fn remove_or_leave(root: &Path, event: &AgentEvent, row_exists: bool) -> Result<
         return Ok(());
     }
     let _guard = lock_checked(&agent_session_lock_path(root, &event.session_id))?;
-    remove_if_present(&agent_session_path(root, &event.session_id))
+    let row = remove_if_present(&agent_session_path(root, &event.session_id));
+    let side = remove_if_present(&agent_message_path(root, &event.session_id));
+    join_errors([row, side])
 }
 
 fn look_up(wanted: &Wanted, lookups: &mut Lookups, table: &ProcessTable) {
@@ -179,12 +264,44 @@ fn answer_with_nothing(wanted: &Wanted, lookups: &mut Lookups) {
 /// failure is collected rather than stopping the sweep, and goes back after the rest is done.
 fn sweep(root: &Path, table: &ProcessTable, now: i64, except: &str) -> Result<(), String> {
     let dir = agent_sessions_dir(root);
+    let mut errors = Vec::new();
+    // Side files whose row is gone. Before the directory is listed: looking at one takes the row's
+    // lock, which can create the file, and the lock list below must see it to remove it.
+    match std::fs::read_dir(agent_messages_dir(root)) {
+        Ok(entries) => {
+            for entry in entries {
+                let name = match entry {
+                    Ok(entry) => entry.file_name().to_string_lossy().to_string(),
+                    Err(e) => {
+                        errors.push(format!(
+                            "cannot list {}: {e}",
+                            agent_messages_dir(root).display()
+                        ));
+                        continue;
+                    }
+                };
+                if let Some(id) = name.strip_suffix(".json")
+                    && valid_session_id(id)
+                    && let Err(e) = sweep_message(root, id)
+                {
+                    errors.push(e);
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => errors.push(format!(
+            "cannot list {}: {e}",
+            agent_messages_dir(root).display()
+        )),
+    }
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("cannot list {}: {e}", dir.display())),
+        Err(e) => {
+            errors.push(format!("cannot list {}: {e}", dir.display()));
+            return Err(errors.join("; "));
+        }
     };
-    let mut errors = Vec::new();
     let mut locks = Vec::new();
     for entry in entries {
         let entry = match entry {
@@ -250,8 +367,26 @@ fn sweep_row(root: &Path, table: &ProcessTable, now: i64, id: &str) -> Result<()
         return Ok(());
     };
     match dead(&path) {
-        true => remove_if_present(&path),
+        true => join_errors([
+            remove_if_present(&path),
+            remove_if_present(&agent_message_path(root, id)),
+        ]),
         false => Ok(()),
+    }
+}
+
+/// Remove the side file of a row that is gone, judged again under the row's lock so that an event
+/// that is writing the row and its side file is not undone half way.
+fn sweep_message(root: &Path, id: &str) -> Result<(), String> {
+    if agent_session_path(root, id).exists() {
+        return Ok(());
+    }
+    let Some(_held) = try_lock_checked(&agent_session_lock_path(root, id))? else {
+        return Ok(());
+    };
+    match agent_session_path(root, id).exists() {
+        true => Ok(()),
+        false => remove_if_present(&agent_message_path(root, id)),
     }
 }
 

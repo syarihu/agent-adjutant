@@ -45,10 +45,7 @@ const WAITING_FOCUS_CHARS: usize = 400;
 
 /// `text` cut to at most `max` characters, on a character boundary, with an ellipsis when cut.
 pub fn cut_chars(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        Some((end, _)) => format!("{}…", text[..end].trim_end()),
-        None => text.to_string(),
-    }
+    crate::registry::cut_last_message(text, max)
 }
 
 /// One hub's open gates, and what could show their workers moved on, read once per poll.

@@ -338,8 +338,38 @@ pub const PHASES: [&str; 8] = [
 ];
 
 /// What is kept of the agent's last message of a turn (`lastMessage`): a paragraph or two, line
-/// breaks and all. The hook cuts it on write and the board cuts it again for rows of other binaries.
+/// breaks and all. The row keeps this much, and the board cuts it again for rows of other
+/// binaries. The whole text goes to a side file (`WholeLastMessage`), up to `LAST_MESSAGE_WHOLE_CHARS`.
 pub const LAST_MESSAGE_CHARS: usize = 1000;
+
+/// The most of a last message the hook hands over and the side file keeps: a long report, not a
+/// log. It bounds what one session can put in the state directory (about 200 KB of UTF-8).
+pub const LAST_MESSAGE_WHOLE_CHARS: usize = 50_000;
+
+/// `text` cut to at most `max` characters on a character boundary, trailing whitespace dropped
+/// and an ellipsis added when cut. The one rule for every cut of a last message.
+pub fn cut_last_message(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", text[..end].trim_end()),
+        None => text.to_string(),
+    }
+}
+
+/// The whole last message of a turn, as `agent-sessions/messages/<session id>.json` keeps it, for
+/// a message the row had to cut. `at` is the row's `lastMessageAt` it belongs to: a reader that
+/// finds another time knows the file is from another turn. Unknown keys stay in `other`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WholeLastMessage {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub at: i64,
+    #[serde(default)]
+    pub text: String,
+    #[serde(flatten)]
+    pub other: Map<String, Value>,
+}
 
 /// How long a worker that was dispatched but has not registered yet still holds its slot.
 ///
@@ -663,7 +693,7 @@ pub(super) enum Applied {
 /// Whether the event comes from a sub-agent rather than the session itself: it names an
 /// `agent_id` and is not one of the two events about a sub-agent's life, or a notification
 /// (which is always the parent's).
-fn from_subagent(event: &AgentEvent) -> bool {
+pub(super) fn from_subagent(event: &AgentEvent) -> bool {
     event.agent_id.is_some()
         && !matches!(
             event.hook,
@@ -795,12 +825,14 @@ fn remember_message(row: &mut AgentSession, message: Option<&str>, now: i64) {
     let Some(message) = message else {
         return;
     };
-    let repeated = row.last_message.as_deref() == Some(message)
+    // `message` is the whole text; the row keeps the cut one.
+    let cut = cut_last_message(message, LAST_MESSAGE_CHARS);
+    let repeated = row.last_message.as_deref() == Some(cut.as_str())
         && row
             .last_message_at
             .is_some_and(|at| now - at < HEARTBEAT_SECS);
     if !repeated {
-        row.last_message = Some(message.to_string());
+        row.last_message = Some(cut);
         row.last_message_at = Some(now);
     }
 }

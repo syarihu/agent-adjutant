@@ -16,8 +16,8 @@ use super::handlers::{
     start_parent_hub, update_task, wake_hub,
 };
 use super::sessions::{
-    clean_up_session, git_of_session, link_session, open_session, restart_session, resume_session,
-    start_session,
+    clean_up_session, git_of_session, last_message_of_session, link_session, open_session,
+    restart_session, resume_session, start_session,
 };
 use crate::board::Server;
 use crate::board::view::{Lines, state, task_history, task_read};
@@ -63,6 +63,8 @@ pub(super) enum Route<Id = String> {
     StartSession,
     LinkSession(Id),
     SessionGit(Id),
+    /// `GET <id>/message`: the whole last message, read when the expanded view opens.
+    SessionMessage(Id),
     Session(Id, SessionAction),
     StartParentHub,
     Hub(Id, HubAction),
@@ -202,6 +204,7 @@ impl<'a> Route<&'a str> {
         let (raw, action) = rest.split_once('/').filter(|(raw, _)| !raw.is_empty())?;
         Some(match (method, action) {
             ("GET", "git") => Route::SessionGit(raw),
+            ("GET", "message") => Route::SessionMessage(raw),
             ("POST", "link") => Route::LinkSession(raw),
             ("POST", "resume") => Route::Session(raw, SessionAction::Resume),
             ("POST", "restart") => Route::Session(raw, SessionAction::Restart),
@@ -234,6 +237,7 @@ impl<'a> Route<&'a str> {
         Ok(match self {
             Route::LinkSession(raw) => Route::LinkSession(decode_segment(raw)?),
             Route::SessionGit(raw) => Route::SessionGit(decode_segment(raw)?),
+            Route::SessionMessage(raw) => Route::SessionMessage(decode_segment(raw)?),
             Route::Session(raw, action) => Route::Session(decode_segment(raw)?, action),
             Route::Hub(raw, action) => Route::Hub(decode_segment(raw)?, action),
             Route::Terminal(raw) => Route::Terminal(decode_segment(raw)?),
@@ -303,6 +307,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::StartSession => reply(out, start_session(server, &req.body)),
         Route::LinkSession(id) => reply(out, link_session(server, &id, &req.body)),
         Route::SessionGit(id) => reply(out, git_of_session(server, &id)),
+        Route::SessionMessage(id) => reply(out, last_message_of_session(server, &id)),
         Route::Session(id, action) => reply(
             out,
             match action {
