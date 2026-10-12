@@ -23,6 +23,36 @@ function loadXterm(base = BASE) {
   return xtermLoading;
 }
 
+/* A browser extension that runs before the page (Vimium's insert mode) can take Escape from a
+   focused terminal: it blurs the text area and the key never reaches xterm, nor the page. All
+   the page sees is the text area losing the focus to nothing, with no press elsewhere and the
+   window still focused. Said once, so the person knows where the key went. Neither the focus
+   nor the key is put back: a guessed ESC would interrupt the agent. */
+let termPointerAt = 0;
+document.addEventListener('pointerdown', e => {
+  if (!e.target?.closest?.('.adj-terminal')) termPointerAt = Date.now();
+}, true);
+const terminalLostToNothing = (e, { now = Date.now(), pointerAt = termPointerAt, hasFocus = document.hasFocus() } = {}) =>
+  !!e.target?.classList?.contains('xterm-helper-textarea') && !!e.target.closest?.('.adj-terminal')
+  && e.relatedTarget == null && hasFocus && now - pointerAt > 500;
+// Settled a task later: the page's own disposal (another row, another view, the panel closed) and
+// hiding (another tab of the panel) blur the text area too, and leave it gone or hidden by then. A
+// window that lost the focus meanwhile does not spend the one note either.
+const terminalStillThere = (ta, active = document.activeElement) =>
+  document.hasFocus() && ta.isConnected && !!ta.closest('.adj-terminal')
+  && (ta.closest('.adj-terminal').checkVisibility?.() ?? true) && !active?.closest?.('.adj-terminal');
+let terminalTakenNoted = false;
+document.addEventListener('focusout', e => {
+  if (terminalTakenNoted || !terminalLostToNothing(e)) return;
+  const ta = e.target;
+  setTimeout(() => {
+    if (terminalTakenNoted || !terminalStillThere(ta)) return;
+    terminalTakenNoted = true;
+    note('ターミナルのフォーカスが外れました', true,
+      'ブラウザの拡張機能（Vimium など）が Escape を先に取ると、エージェントには届きません。拡張機能の設定でこのボードを除外してください');
+  });
+}, true);
+
 const TERMINAL_ENDS = {
   1000: '切り離しました',
   4404: 'セッションが見つからないか、tmux 上にありません',
