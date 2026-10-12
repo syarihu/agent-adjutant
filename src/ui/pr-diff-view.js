@@ -431,11 +431,13 @@ function prdAct(e, { place = 'panel' } = {}) {
   if ((b = hit('[data-prd-jump]'))) {
     const f = prdShowCategoryOf(entry.layout.files[Number(b.dataset.prdJump)]?.path);
     if (f?.closed) { prDiff.open.add(`${id}|${f.path}`); prdSyncAll(); }
-    const p = f && prdPlace('panel');
+    // The panel's list jumps in the panel; the read-through's in the middle, where its diff is.
+    const at = place === 'read' ? 'read' : 'panel';
+    const p = f && prdPlace(at);
     if (p) {
       const section = p.root.querySelector(`[data-prd-file="${f.i}"]`);
       const body = section?.querySelector('[data-prd-body]');
-      if (body && !body.hidden) prdFillBody(entry, 'panel', body);
+      if (body && !body.hidden) prdFillBody(entry, at, body);
       section?.scrollIntoView({ block: 'start' });
     }
     return true;
