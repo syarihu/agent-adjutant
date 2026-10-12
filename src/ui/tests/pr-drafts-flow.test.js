@@ -17,7 +17,9 @@ function world({ stored = null } = {}) {
     note: (...a) => { w.notes.push(a); }, prRedrawNow: () => { w.redrawn++; },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => ({ id: 'acme/widget#1' }), prReadOf: () => c.read,
     prNextKey: (doc, prefix) => { let n = 1; while (doc.drafts.some(d => d.key === `${prefix}${n}`)) n++; return `${prefix}${n}`; },
-    refreshOthers: async () => { w.refreshed++; }, tp: () => null, cardDialogEl: () => null, renderTaskPanel() {},
+    // What the page is on, as pr-panel.js says it: the selected review request.
+    prShown: () => (typeof w.selected === 'string' && w.selected.startsWith('pr:') ? { id: w.selected.slice(3), rec: { id: w.selected.slice(3) }, kind: 'pr' } : null),
+    refreshOthers: async () => { w.refreshed++; }, tp: () => null, cardDialogEl: () => null, renderTaskPanel() {}, prRedrawFor() {},
     prSeedDrafts: read => ({ version: 1, fromSha: read?.sha ?? null, drafts: (read?.drafts || []).map((d, i) => ({ key: `r${i + 1}`, source: 'reader', ...d })), overall: { body: '' } }),
     boardApi: async (base, url, o) => {
       if (url === '/api/others/pending') {
@@ -32,7 +34,7 @@ function world({ stored = null } = {}) {
       return {};
     },
   });
-  vm.runInContext(['prView', 'prDraftsEntry', 'prDocOfStored', 'prEnsureDrafts', 'prEditDrafts', 'prScheduleSave', 'prSave', 'prShowSave', 'prSaveState', 'prInput', 'prPend'].map(n => {
+  vm.runInContext(['prView', 'prDraftsEntry', 'prDocOfStored', 'prEnsureDrafts', 'prEditDrafts', 'prScheduleSave', 'prSave', 'prShowSave', 'prSaveState', 'prInput', 'prSaveSettled', 'prPend'].map(n => {
     return n === 'prView' ? `const prView = { drafts: new Map() };` : n === 'prSaveState' ? cut(/^const prSaveState = [^\n]*;/m) : fn(n);
   }).concat([cut(/^const PR_DRAFT_KEYS = [^\n]*;/m), fn('prSaveBody'), cut(/^const prDoc = [^\n]*;/m)]).join('\n'), c);
   const run = e => vm.runInContext(e, c);
@@ -367,6 +369,8 @@ function offerWorld(doc, read, rec = { id: 'acme/widget#1', url: 'u' }) {
     CSS: { escape: x => x }, structuredClone, JSON, console, selectedTaskId: 'pr:acme/widget#1', PR_REF: 'pr:', PR_HOOKS: { diff: null },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => rec, OTHERS_LIVE: ['requested', 'ai-reading', 'ai-ready', 'pushed'],
     prReadOf: () => read, prRedrawNow: sel => { w.redrawn.push(sel); }, prScheduleSave() {}, prShowSave() {}, note() {}, othersRequestAi() {}, cardDialog: {},
+    // What the page is on, as pr-panel.js says it: the selected review request, asked through the list's endpoint.
+    prShown: () => ({ id: 'acme/widget#1', rec, kind: 'pr', ask: mode => c.othersRequestAi('acme/widget#1', mode) }),
     secTitle: t => t, panelBtnsHtml: () => '',
   });
   const files = ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js'];

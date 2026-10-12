@@ -17,13 +17,39 @@ pub fn answer(
     choice: Option<&str>,
     comment: Option<&str>,
 ) -> Result<(Gate, crate::mail::DeliveryOutcome), String> {
+    answer_with(ctx, id, decision, choice, comment, None).map_err(|e| e.0)
+}
+
+/// Why `answer_with` did not answer: the gate was settled by somebody else first (a typed case, so
+/// a caller can tell it from a failure without reading the words), or something failed.
+pub(super) struct AnswerError(pub String, pub bool);
+
+impl From<String> for AnswerError {
+    fn from(why: String) -> Self {
+        AnswerError(why, false)
+    }
+}
+
+/// `answer`, for an answer whose comment is made of points chosen from a read-through (see
+/// `send_back_read`): the worker's message names the read-through, and the answer keeps it.
+pub(super) fn answer_with(
+    ctx: &Context,
+    id: &str,
+    decision: &str,
+    choice: Option<&str>,
+    comment: Option<&str>,
+    handoff: Option<&ReadHandoff>,
+) -> Result<(Gate, crate::mail::DeliveryOutcome), AnswerError> {
     // Locked before the gate is read, and held until it is archived: the worker's close and
     // the board's sweep decide a gate under the same lock, and an answer delivered to a gate
     // somebody else has just closed would wake a worker to something that was settled.
     let held = if exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
         let lock = lock(ctx, Shelf::Open, id)?;
         if !exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
-            return Err(already_decided(ctx, id).unwrap_or_else(|| format!("no open gate: {id}")));
+            return Err(AnswerError(
+                already_decided(ctx, id).unwrap_or_else(|| format!("no open gate: {id}")),
+                true,
+            ));
         }
         Some(lock)
     } else {
@@ -31,7 +57,12 @@ pub fn answer(
     };
     let mut gate = match get(&ctx.state, &ctx.repo.slug, id) {
         Ok(gate) => gate,
-        Err(e) => return Err(already_decided(ctx, id).unwrap_or(e)),
+        Err(e) => {
+            return Err(match already_decided(ctx, id) {
+                Some(settled) => AnswerError(settled, true),
+                None => e.into(),
+            });
+        }
     };
     // Nothing else means anything to a worker that is not waiting: an approval of a record
     // would wake it to be told to carry on with what it is already doing.
@@ -43,16 +74,17 @@ pub fn answer(
             } else {
                 ""
             }
-        ));
+        )
+        .into());
     }
     if let Some(choice) = choice
         && !gate.choices.iter().any(|c| c.id == choice)
     {
-        return Err(format!("no such choice on this gate: {choice}"));
+        return Err(format!("no such choice on this gate: {choice}").into());
     }
 
     let subject = answer_subject(&gate, decision);
-    let body = answer_body(&gate, decision, choice, comment);
+    let body = answer_body_from(&gate, decision, choice, comment, handoff);
     let told = if gate.answered_by_hub() {
         // `gate` rather than `answer`: the hub pairs an `answer` with a question it asked a
         // worker, and this is a person deciding on something the hub put on the board.
@@ -92,6 +124,8 @@ pub fn answer(
             decision: decision.to_string(),
             comment,
             answered_at: at.clone(),
+            handoff: handoff.cloned(),
+            extra: serde_json::Map::new(),
         });
         save(ctx, Shelf::Record, &gate)?;
         drop(lock);
@@ -106,6 +140,9 @@ pub fn answer(
     gate.comment = comment;
     let at = stamp();
     gate.answered_at = Some(at.clone());
+    if let Some(handoff) = handoff {
+        gate.set_handoff(handoff);
+    }
     archive(ctx, &gate)?;
     drop(held);
     note_answered(ctx, gate.task.as_deref(), &at);

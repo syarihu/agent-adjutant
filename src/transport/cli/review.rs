@@ -15,7 +15,7 @@ use crate::lifecycle;
 use crate::others::{self, ReadMode, Requested, SubmitError};
 use crate::registry;
 use crate::task::PrRef;
-use crate::transport::wording::{queue_warning, review_refusal};
+use crate::transport::wording::{queue_warning, review_refusal, task_review_refusal};
 
 fn pr_named(text: &str) -> Result<PrRef, String> {
     others::pr_of(text)
@@ -23,28 +23,41 @@ fn pr_named(text: &str) -> Result<PrRef, String> {
 }
 
 pub fn review_request(args: &ReviewRequestArgs) -> Result<(), String> {
-    let root = registry::state_root(None);
-    pr_named(&args.pr)?;
+    // They address a task's hub, and a PR is named by its own URL: refused rather than ignored.
+    if args.task.is_none() && (args.repo.is_some() || args.hub.is_some()) {
+        return Err("--repo and --hub go with --task: a pull request is named in full".to_string());
+    }
     let mode = if args.split {
         ReadMode::Split
     } else {
         ReadMode::Read
     };
-    let record = match review::request(&root, &args.pr, mode) {
-        Ok(asked) => {
-            if let Some(why) = &asked.queue_error {
-                eprintln!("adjutant: {}", queue_warning(why));
-            }
-            match asked.requested {
-                Requested::Queued(record) => record,
-                Requested::Already(record) => {
-                    println!("{} is already being read or waiting for a place", record.id);
-                    record
-                }
+    let asked = match (&args.pr, &args.task) {
+        (_, Some(task)) => {
+            let ctx = registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+            review::ask_for_task(&ctx, task, mode).map_err(|why| task_review_refusal(&why))?
+        }
+        (Some(pr), None) => {
+            let root = registry::state_root(None);
+            pr_named(pr)?;
+            match review::request(&root, pr, mode) {
+                Ok(asked) => asked,
+                Err(RequestRefused::BadId) => return Err(format!("not a pull request: {pr}")),
+                Err(RequestRefused::Refused(why)) => return Err(review_refusal(&why)),
             }
         }
-        Err(RequestRefused::BadId) => return Err(format!("not a pull request: {}", args.pr)),
-        Err(RequestRefused::Refused(why)) => return Err(review_refusal(&why)),
+        // clap asks for one of the two.
+        (None, None) => return Err("say which pull request: --pr or --task".to_string()),
+    };
+    if let Some(why) = &asked.queue_error {
+        eprintln!("adjutant: {}", queue_warning(why));
+    }
+    let record = match asked.requested {
+        Requested::Queued(record) => record,
+        Requested::Already(record) => {
+            println!("{} is already being read or waiting for a place", record.id);
+            record
+        }
     };
     let status = record.ai.as_ref().map(|ai| ai.status.as_str());
     println!(

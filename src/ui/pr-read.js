@@ -74,12 +74,15 @@ function prHeadMainHtml(rec) {
       <h2 class="tp-title">${esc(rec?.title)}</h2>
     </div>`;
 }
+/* 「下読みを閉じる」, while a reader runs that has a process to stop; `closing` is a close of this page's that is out. */
+const prCloseReaderBtnHtml = (rec, closing) => prReaderOpen(rec) && rec.ai.pid
+  ? `<button type="button" class="btn-m3-text tp-jump" data-pr-close-reader${closing ? ' disabled' : ''} title="読み取り専用の worker を止めて、ウィンドウを閉じます">${closing ? '閉じています…' : '下読みを閉じる'}</button>` : '';
 /* The panel's head: 「GitHub で開く」, 「下読みを閉じる」 (while a reader runs that has a process to stop), 「拡大」 and close (panelBtnsHtml adds the close). */
 function prHeadHtml(rec, opts = {}) {
   const url = httpUrl(rec?.url);
   const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）">GitHub で開く</a>` : '';
   // `opts.closing`: a close of this page's is out, and it is not asked for twice.
-  const closeReader = prReaderOpen(rec) && rec.ai.pid ? `<button type="button" class="btn-m3-text tp-jump" data-pr-close-reader${opts.closing ? ' disabled' : ''} title="読み取り専用の worker を止めて、ウィンドウを閉じます">${opts.closing ? '閉じています…' : '下読みを閉じる'}</button>` : '';
+  const closeReader = prCloseReaderBtnHtml(rec, opts.closing);
   const expand = '<button type="button" class="tool-btn" data-pr-expand aria-haspopup="dialog" title="拡大" aria-label="PR 全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>';
   return prHeadMainHtml(rec) + panelBtnsHtml(open + closeReader + expand);
 }
@@ -196,6 +199,9 @@ function prUnwritten(read) {
   return { key: 'more:unwritten', label: '本文に書かれていないこと', html: `<ul class="pr-list">${xs.map(x => prLi(esc(x))).join('')}</ul>` };
 }
 
+/* What is said of a read-through whose PR has moved on since: the commit its diff is of, and the head now. */
+const prStaleText = (read, rec) => `この差分は ${prSha7(read.sha)} で下読みしたときのものです（PR の head は ${prSha7(rec.headSha)}）`;
+
 /* The foot of the read-through: the commit it was made at, a warning and 「下読みし直す」 when the head has moved, and what a
    read still under way says (`ai` is `othersAiView`'s). */
 function prFooter(rec, read, ai, hubView, asking = false) {
@@ -223,10 +229,11 @@ function prAiButtonHtml(ai, hubView, asking) {
 function prSplitButtonHtml(label, hubView, asking) {
   return `<button type="button" class="btn-m3-tonal pr-ai" data-pr-split${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">call_split</span><span>${esc(asking ? '依頼中…' : label)}</span></button>`;
 }
-function prBeforeRead(rec, records, hubView, nowSecs, asking = false) {
+function prBeforeRead(rec, records, hubView, nowSecs, asking = false, readerWhere = '') {
   const ai = othersAiView(rec, records, nowSecs);
+  // `readerWhere`: where the reader can be talked to, when that is not the middle (a task's is its sidebar).
   const text = ai.kind === 'none' || !ai.text
-    ? '下読みするまでは GitHub の情報だけです。AI 下読みすると、要点・見るポイント・読む順・設計判断・テスト範囲・下書きの候補ができます。' : ai.text;
+    ? `下読みするまでは GitHub の情報だけです。AI 下読みすると、要点・見るポイント・読む順・設計判断・テスト範囲・下書きの候補ができます。${readerWhere ? `読んだあとは、${readerWhere}でその worker に差分のことを聞けます。` : ''}` : ai.text;
   return { key: 'top:ai', label: 'AI 下読み', html: `<div class="tp-line">${esc(text)}</div>${prAiButtonHtml(ai, hubView, asking)}` };
 }
 
@@ -285,7 +292,7 @@ function prSplitProposal(read) {
     html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">下書きタブで編集・コピー・pending review に積めます。</div>` };
 }
 
-/* The sections of the 下読み tab, in the issue's order. `opts`: `diff` (the annotated diff is there), `asking`, `readError`. */
+/* The sections of the 下読み tab, in the issue's order. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's). */
 function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
   const ai = othersAiView(rec, records, nowSecs);
   const hasRead = !!read;
@@ -293,7 +300,7 @@ function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
     prFacts(rec, nowSecs),
     prOutOfReview(rec, read, ai, hubView, opts.asking, !!opts.readError),
     prSince(rec, read),
-    !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking) : null,
+    !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking, opts.readerWhere) : null,
     prThree(read),
     prSplitProposal(read),
     prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec) }),
@@ -320,7 +327,14 @@ function prDetailHtml(rec, read, records, hubView, nowSecs, opts = {}) {
 
 /* ── the middle, before there is a terminal in it ── */
 
+/* Where the read-through is, as the middle's notes say it: `opts.readAt` is 'panel' (a review request's, in the panel on the right,
+   the default) or 'middle' (a task's, in the middle, with the reader in the panel). */
+const PR_READ_AT = {
+  panel: { kept: '下読み・下書きはパネルに残っています。', keptRead: '下読みはパネルに残っています。', is: '右のパネルにあります' },
+  middle: { kept: '下読みは真ん中に残っています。', keptRead: '下読みは真ん中に残っています。', is: '真ん中にあります' },
+};
 function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
+  const at = PR_READ_AT[opts.readAt] || PR_READ_AT.panel;
   const ai = othersAiView(rec, records, nowSecs);
   const oor = othersOutOfReview(rec);
   // A PR that is out of review offers its two ways on until a reader is at work on it, in either mode. `opts.read` is the stored
@@ -339,10 +353,10 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   if (rec?.ai?.readerClosedAt) {
     const again = OTHERS_LIVE.includes(rec.state)
       ? `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, opts.asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(opts.asking ? '依頼中…' : '下読みし直す')}</span></button>` : '';
-    return '<div class="tp-ph-head">AI 下読みの worker を閉じました</div><div class="tp-muted">下読み・下書きはパネルに残っています。</div>' + again;
+    return `<div class="tp-ph-head">AI 下読みの worker を閉じました</div><div class="tp-muted">${esc(at.kept)}</div>` + again;
   }
   if (opts.ended != null) {
-    return '<div class="tp-ph-head">AI 下読みの worker は終わっています</div><div class="tp-muted">下読みはパネルに残っています。</div>'
+    return `<div class="tp-ph-head">AI 下読みの worker は終わっています</div><div class="tp-muted">${esc(at.keptRead)}</div>`
       + '<button type="button" class="btn-m3-tonal" data-pr-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>'
       + prAiButtonHtml(ai, hubView, opts.asking);
   }
@@ -353,7 +367,7 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   }
   const mountable = prReaderOpen(rec);
   const note = mountable ? '接続しています…'
-    : ['done', 'stale'].includes(ai.kind) ? `${ai.mode === 'split' ? '分割案' : '下読み'}は右のパネルにあります。worker の画面は開けません。`
+    : ['done', 'stale'].includes(ai.kind) ? `${ai.mode === 'split' ? '分割案' : '下読み'}は${at.is}。worker の画面は開けません。`
     : ai.kind === 'running' || ai.kind === 'hung' ? 'worker の画面は開けません（tmux のウィンドウが記録されていません）。' : '';
   return `<div class="tp-ph-head">${esc(ai.text)}</div>${note ? `<div class="tp-muted">${esc(note)}</div>` : ''}${mountable ? '' : prAiButtonHtml(ai, hubView, opts.asking)}`;
 }
@@ -466,19 +480,50 @@ function prPendHtml(doc, pend = {}) {
   return `<div class="pr-pend">${button}${note}${status}</div>`;
 }
 
+/* What handing the drafts of a task's PR to its worker would send: the drafts with something written that are not sent yet (a draft
+   with no file is sent as a point on the whole PR), and whether the overall comment has something written. The server decides the
+   same way. */
+function prHandable(doc) {
+  const drafts = (doc?.drafts || []).filter(d => String(d.body || '').trim() && !d.sentAt).length;
+  const overall = String(doc?.overall?.body || '').trim() !== '';
+  return { drafts, overall };
+}
+
+/* The button that hands the drafts of a task's PR to its worker, what it does, and how the last hand-over went: the slot under the
+   drafts of 「worker への指示」. `hand`: `sending`, `result` ({ sent, overall, present, woken } of the last one, or { error }). */
+function prHandHtml(doc, hand = {}) {
+  const n = prHandable(doc);
+  const empty = !n.drafts && !n.overall;
+  const label = (n.drafts ? `${n.drafts} 件を worker に渡す` : '全体のコメントを worker に渡す') + (n.drafts && n.overall ? '（全体のコメントも）' : '');
+  const title = empty ? '渡せるものがありません。書き込みのある下書きか、全体のコメントがあると渡せます' : '';
+  const button = `<button type="button" class="btn-m3-filled" data-pr-hand${empty || hand.sending ? ' disabled' : ''}${hand.sending ? ' aria-busy="true"' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(hand.sending ? '渡しています…' : empty ? 'worker に渡す' : label)}</button>`;
+  const why = empty && !hand.sending ? '<div class="pr-pend-note">渡せるものがありません。</div>' : '';
+  const note = `${why}<div class="pr-pend-note">worker が差分の確認を待っているときは、その確認を「差し戻す」で答えます。待っていないときは、最新の差分の記録に差し戻しとして渡します。渡した下書きは「渡しました」と印が付き、残ります。</div>`;
+  const r = hand.result;
+  const done = r && !r.error ? [`${(r.sent || []).length} 件を渡しました`, r.overall ? '全体のコメントも渡しました' : ''].filter(Boolean).join('／') : '';
+  const status = r ? (r.error ? `<div class="pr-why" role="note">${esc(r.error)}</div>` : `<div class="pr-pend-result" role="status">${esc(done)}</div>`) : '';
+  return `<div class="pr-pend">${button}${note}${status}</div>`;
+}
+
 const PR_SAVE_TEXT = { saved: '保存しました', saving: '保存しています…' };
 /* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('panel' or 'dock': only the class of the
-   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `pend` (`prPendHtml`'s). */
+   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `to` (where they go:
+   'pending', the default, a pending review on GitHub, with `pend` (`prPendHtml`'s); or 'worker', a task's worker, with `hand`
+   (`prHandHtml`'s) and no pending review). */
 function prDraftsHtml(doc, read, opts = {}) {
   const drafts = doc?.drafts || [];
-  const failed = new Map((opts.pend?.result?.failed || []).map(f => [f.key, f.why]));
+  const toWorker = opts.to === 'worker';
+  // What is going somewhere is not edited, and its buttons are off.
+  const sending = toWorker ? !!opts.hand?.sending : !!opts.pend?.sending;
+  const failed = new Map(toWorker ? [] : (opts.pend?.result?.failed || []).map(f => [f.key, f.why]));
+  const sentChip = toWorker ? '<span class="pr-chip pr-chip-sent" title="worker に渡した指示です">渡しました</span>' : '<span class="pr-chip pr-chip-sent" title="pending review に積んだ下書きです">積みました</span>';
   const items = drafts.map(d => {
     const loc = prDraftLocation(d);
     // What is in the pending review is read-only here (edit it on GitHub), and so is everything while a push is on its way.
-    const locked = !!d.sentAt || !!opts.pend?.sending;
+    const locked = !!d.sentAt || sending;
     const why = !d.sentAt && failed.has(d.key) ? `<div class="pr-why" role="note">積めませんでした: ${esc(failed.get(d.key))}</div>` : '';
     return `<div class="pr-draft" data-pr-draft="${esc(d.key)}">
-      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}${d.sentAt ? '<span class="pr-chip pr-chip-sent" title="pending review に積んだ下書きです">積みました</span>' : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${opts.pend?.sending ? ' disabled' : ''}>捨てる</button></span></div>
+      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}${d.sentAt ? sentChip : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${sending ? ' disabled' : ''}>捨てる</button></span></div>
       <textarea class="pr-draft-body" data-pr-body="${esc(d.key)}" aria-label="${esc(`${loc} への下書き`)}" spellcheck="false"${locked ? ' readonly' : ''}>
 ${esc(d.body)}</textarea>${why}
     </div>`;
@@ -486,7 +531,7 @@ ${esc(d.body)}</textarea>${why}
   const suggestion = read?.overall?.suggestion
     ? `<div class="pr-suggestion">AI の判定の目安: <b>${esc(read.overall.suggestion)}</b>（文字だけ。判定を選んで送るのは GitHub です）</div>` : '';
   const notice = opts.notice > 0
-    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new${opts.pend?.sending ? ' disabled' : ''}>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep${opts.pend?.sending ? ' disabled' : ''}>このままにする</button></div>` : '';
+    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new${sending ? ' disabled' : ''}>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep${sending ? ' disabled' : ''}>このままにする</button></div>` : '';
   const save = opts.save?.status === 'error'
     ? `保存できませんでした: ${opts.save.error || ''} 入力はこのページに残っています`
     : PR_SAVE_TEXT[opts.save?.status] || '';
@@ -495,10 +540,10 @@ ${esc(d.body)}</textarea>${why}
     ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。見るポイントの「下書きに」から足せます。</div>'}
     <label class="pr-overall-label">全体のコメント
       ${suggestion}
-      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${opts.pend?.sending ? ' readonly' : ''}>
+      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${sending ? ' readonly' : ''}>
 ${esc(doc?.overall?.body || '')}</textarea>
     </label>
-    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot>${opts.pend ? prPendHtml(doc, opts.pend) : ''}</div></div>
+    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot>${toWorker ? prHandHtml(doc, opts.hand) : opts.pend ? prPendHtml(doc, opts.pend) : ''}</div></div>
     <div class="pr-save${opts.save?.status === 'error' ? ' err' : ''}" role="status" data-pr-save>${esc(save)}</div>
   </div>`;
 }

@@ -100,6 +100,95 @@ fn the_page_has_one_task_panel_and_no_drawer() {
 }
 
 #[test]
+fn the_page_shows_a_tasks_read_through_in_the_middle() {
+    // The tabs and the read-through are one each: a second copy would be a second place to type into.
+    for id in [
+        "id=\"wk-mid-row\"",
+        "id=\"wk-mid-lead\"",
+        "id=\"wk-mid-tabs\"",
+        "id=\"wk-term-pane\"",
+        "id=\"task-read\"",
+        "id=\"task-read-index\"",
+        "id=\"task-read-body\"",
+        "id=\"task-read-band\"",
+        "id=\"task-read-content\"",
+    ] {
+        assert_eq!(UI_HTML.matches(id).count(), 1, "{id}");
+    }
+    // The row is always shown: its lead holds the sidebar's toggle, and only the tabs go away for what is not a task.
+    assert!(!UI_HTML.contains("id=\"wk-mid-row\" hidden"));
+    assert_eq!(UI_HTML.matches("id=\"rail-toggle\"").count(), 1);
+    let (lead, toggle, tabs) = (
+        UI_HTML.find("id=\"wk-mid-lead\"").unwrap(),
+        UI_HTML.find("id=\"rail-toggle\"").unwrap(),
+        UI_HTML.find("id=\"wk-mid-tabs\"").unwrap(),
+    );
+    assert!(
+        lead < toggle && toggle < tabs,
+        "the toggle goes in the lead, before the tabs"
+    );
+    assert!(UI_HTML.contains(".wk-mid-tabs[hidden] { display: none; }"));
+    for function in [
+        "function taskReadTabState(",
+        "function taskReadTabsHtml(",
+        "function taskReadGroups(",
+        "function taskReaderHeadHtml(",
+        "function taskReaderTabsHtml(",
+        "function taskReadShown(",
+        "function taskReadRefresh(",
+        "function taskReadAsk(",
+        "function renderTaskReadTabs(",
+        "function renderTaskReadMiddle(",
+        "function renderTaskReaderPanel(",
+        "function prShown(",
+        "function prDraftsPane(",
+        "function prSaveSettled(",
+        "function taskReadHand(",
+        "function prRecOf(",
+        "function markIndexCurrent(",
+        "function scrollToCard(",
+        "function keepReadingPlace(",
+        "function syncReaderTerm(",
+    ] {
+        assert_eq!(UI_HTML.matches(function).count(), 1, "{function}");
+    }
+    // What a later change builds on.
+    for piece in [
+        "const OWN_HOOKS = { drafts: null }",
+        "OWN_HOOKS.drafts = {",
+        "data-drafts=\"off\"",
+        "id=\"tp-read-drafts\"",
+        "const READ_PANES = ['ai', 'ai-drafts']",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The scripts share one scope and run in order: the pure half after the diff's, the page's half after the diff's page half and
+    // before the entry point, which draws the first screen.
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("function prParseDiff(") < at("function taskReadTabState("));
+    assert!(at("function taskReadTabState(") < at("function prShown("));
+    assert!(at("function prdGoto(") < at("function taskReadShown("));
+    assert!(at("function taskReadShown(") < at("function setView("));
+    // The drafts' hook is set after the view that declares it, and before the entry point that draws the first screen.
+    assert!(at("const OWN_HOOKS = {") < at("OWN_HOOKS.drafts = {"));
+    assert!(at("OWN_HOOKS.drafts = {") < at("function setView("));
+    // The tabs are above the head of the middle, and the read-through is beside the terminal's pane, not inside it.
+    assert!(at("id=\"wk-mid-row\"") < at("id=\"wk-term-head\""));
+    assert!(at("id=\"wk-term-pane\"") < at("id=\"task-read\""));
+    let pane = at("id=\"wk-term-pane\"");
+    let read = at("id=\"task-read\"");
+    assert!(!UI_HTML[pane..read].contains("</section>"));
+    assert!(at(".prd-root {") < at(".wk-mid-row {"));
+    // The tabs control panels that name them back.
+    for piece in [
+        "id=\"wk-term-pane\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-task\"",
+        "id=\"task-read\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-ai\"",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+}
+
+#[test]
 fn the_task_panel_has_the_tabs_and_the_full_view_is_gone() {
     for piece in [
         "const PANES = ['detail', 'term', 'review', 'check', 'history']",
@@ -1049,6 +1138,82 @@ fn a_task_route_names_a_task_id() {
 }
 
 #[test]
+fn the_task_read_routes_come_before_the_task_update() {
+    assert_eq!(
+        parsed("GET", "/api/tasks/t1/ai"),
+        Ok(Some(Route::TaskRead("t1".into())))
+    );
+    assert_eq!(
+        parsed("POST", "/api/tasks/t1/ai"),
+        Ok(Some(Route::AskTaskRead("t1".into())))
+    );
+    // The id is the segment as written, never decoded.
+    assert_eq!(
+        parsed("POST", "/api/tasks/a%2Fb/ai"),
+        Ok(Some(Route::AskTaskRead("a%2Fb".into())))
+    );
+    // A task named `ai` is still updated at its own address, and has no read at one segment.
+    assert_eq!(
+        parsed("POST", "/api/tasks/ai"),
+        Ok(Some(Route::UpdateTask("ai".into())))
+    );
+    assert_eq!(parsed("GET", "/api/tasks/ai"), Ok(None));
+    assert_eq!(parsed("GET", "/api/tasks/t1/ai/x"), Ok(None));
+    // Other methods are no route.
+    assert_eq!(parsed("PUT", "/api/tasks/t1/ai"), Ok(None));
+}
+
+#[test]
+fn the_task_read_routes_are_resident_only() {
+    for method in ["GET", "POST"] {
+        let route = parsed(method, "/api/tasks/t1/ai").unwrap().unwrap();
+        assert!(route.resident_only(), "{method}");
+    }
+}
+
+#[test]
+fn the_hand_over_route_comes_before_the_task_update_and_is_resident_only() {
+    let route = parsed("POST", "/api/tasks/t1/hand").unwrap().unwrap();
+    assert_eq!(route, Route::HandToWorker("t1".into()));
+    assert!(route.resident_only());
+    // The id is the segment as written, never decoded.
+    assert_eq!(
+        parsed("POST", "/api/tasks/a%2Fb/hand"),
+        Ok(Some(Route::HandToWorker("a%2Fb".into())))
+    );
+    // A task named `hand` is still updated at its own address.
+    assert_eq!(
+        parsed("POST", "/api/tasks/hand"),
+        Ok(Some(Route::UpdateTask("hand".into())))
+    );
+    assert_eq!(parsed("GET", "/api/tasks/t1/hand"), Ok(None));
+}
+
+#[test]
+fn each_refusal_to_hand_the_drafts_over_has_its_status_and_why() {
+    use super::handlers::hand_status;
+    use crate::board::review::HandRefused as R;
+    use crate::gate::Kind;
+    for (why, status, because) in [
+        (R::NoTask, 404, None),
+        (R::Nothing, 400, None),
+        (R::NoPr, 409, Some("no-pr")),
+        (R::PrChanged, 409, Some("pr-changed")),
+        (R::PrDone, 409, Some("pr-done")),
+        (R::NoRecord, 409, Some("no-record")),
+        (R::NoWorker, 409, Some("no-worker")),
+        (R::NoGate, 409, Some("no-gate")),
+        (R::GateWaiting(Kind::Plan), 409, Some("gate-waiting")),
+        (R::GateChanged, 409, Some("gate-changed")),
+        (R::Busy, 409, Some("busy")),
+        (R::Unreadable("x".into()), 500, None),
+        (R::Failed("x".into()), 500, None),
+    ] {
+        assert_eq!(hand_status(&why), (status, because), "{why:?}");
+    }
+}
+
+#[test]
 fn only_the_resident_serves_what_reaches_outside_the_repository() {
     for (method, path) in [
         ("POST", "/api/sessions/x/resume"),
@@ -1216,6 +1381,12 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "id=\"notify-dialog\"",
         "function notifyEndEvents",
         "id=\"rail-resize\"",
+        // The sidebar is hidden from the toggle at the head of the middle, in this view only, and the choice is kept.
+        "aria-controls=\"nav-rail\"",
+        "data-action=\"rail-toggle\"",
+        "body.view-work.rail-hidden #nav-rail { display: none; }",
+        "body.view-work.rail-hidden { --rail-w: 0px; }",
+        "prefs.railHidden = prefs.railHidden === true",
         // The list is the resident's own document, not a merge made in the page.
         "boardApi('', '/api/work')",
         "view=work",
@@ -1226,6 +1397,7 @@ fn the_page_has_the_work_view_and_no_review_queue() {
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
+    assert_eq!(UI_HTML.matches("id=\"rail-toggle-count\"").count(), 1);
     // A board served alone has no list of boards to read the work from.
     assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
     // One sidebar with a switch at its top: the boards, and the list of the work under way beside the

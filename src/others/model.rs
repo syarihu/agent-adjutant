@@ -79,12 +79,38 @@ pub struct Record {
     /// row, so the page takes it off 新着 like starting a read. Not an event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_review_at: Option<String>,
+    /// The task this PR is read for: set when a task's own PR was asked to be read, absent for a
+    /// PR that was asked of you. It keeps a record that nobody requested from being withdrawn,
+    /// leaves it off the review list, and keeps it past the day rule while the task exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskLink>,
     pub first_seen_at: String,
     /// Stamp of the last sync that read this PR.
     pub read_at: String,
     /// Keys this binary does not know (architecture rule 10).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The task a record is read for: the hub's slug and the task's id, which is where the task
+/// record is (`tasks/<board>/<id>.json`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLink {
+    pub board: String,
+    pub id: String,
+    /// Keys this binary does not know (architecture rule 10).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Record {
+    /// Whether the record is in the 「AI 下読み」 list: a PR that was asked of you, or a task's PR
+    /// that is also requested from you. A task's PR that nobody requested is read for its task,
+    /// and the task's card shows it.
+    pub fn on_review_list(&self) -> bool {
+        self.task.is_none() || self.requested
+    }
 }
 
 /// Where a PR stands for you. Never trusted from disk: `derive` sets it on every load and save.
@@ -384,6 +410,10 @@ pub fn derive(r: &Record) -> (State, Option<DoneReason>) {
         } else {
             State::Requested
         }
+    } else if r.task.is_some() {
+        // A task's PR has no request to withdraw and no verdict of yours that ends it: it follows
+        // the PR, which ends when it is merged or closed.
+        State::Requested
     } else {
         match &r.my_review {
             // Asked, and the request was taken away before you reviewed.

@@ -14,6 +14,8 @@
                                                            be parent:<key>)
      /?view=work&task=pr:<owner/repo#N>&pane=drafts        いまの仕事 with a PR waiting on your review in the
                                                            panel (pane: detail = 下読み, diff, drafts)
+   /b/<slug>/?view=work&task=<id>&pane=ai                 いまの仕事 with a task's AI 下読み in the middle (pane: ai, or
+                                                           ai-drafts with 「worker への指示」 on the right)
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. The addresses of the セッション
    tab and of 要対応, which are gone, are sent on by nav-legacy.js. */
@@ -60,6 +62,8 @@ function parseUrl(loc = location) {
   if (out.board === 'all' && !(out.view === 'work' && isPrRef(out.task))) out.task = null;
   // And it is kept nowhere else: another view, or a board's own address (a board served alone never reads the records), has no panel for it.
   if (isPrRef(out.task) && (out.view !== 'work' || out.board !== 'all')) out.task = null;
+  // A task's read-through is a view of the work view only; the address of one anywhere else opens the task on its own panes.
+  if (READ_PANES.includes(p) && out.view === 'work' && isTaskRef(out.task)) out.pane = p;
   return out;
 }
 
@@ -119,6 +123,8 @@ function go(patch = {}, { replace = false } = {}) {
   // A session with no task is shown over 「いまの仕事」: it does not follow a move off it.
   // A PR waiting on your review is shown over 「いまの仕事」 only, as a session with no task is.
   if (nav.view !== 'work' && !('task' in patch) && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
+  // A task's read-through is a view of the work view only.
+  if (nav.view !== 'work' && READ_PANES.includes(nav.pane)) nav.pane = 'detail';
   const boardChanged = nav.board !== prev.board;
   if (boardChanged) switchBoard(); else leaveWork(prev);
   const url = urlOf();

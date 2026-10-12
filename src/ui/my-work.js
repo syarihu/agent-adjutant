@@ -259,12 +259,14 @@ const workBadgeCount = () => workNewCount() + othersNewCount();
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
-  const counts = [[el, workNewCount() + othersNewCount()], [wk('wk-tab-count-task'), workNewCount()], [wk('wk-tab-count-others'), othersNewCount()]];
+  const all = workBadgeCount();
+  const counts = [[el, all], [wk('rail-toggle-count'), all], [wk('wk-tab-count-task'), workNewCount()], [wk('wk-tab-count-others'), othersNewCount()]];
   for (const [box, n] of counts) {
     if (!box) continue;
     box.textContent = n;
     box.classList.toggle('zero', !n);
   }
+  renderRailToggle();
   renderDocTitle();
 }
 
@@ -1085,18 +1087,26 @@ function workTermHeadHtml(sel, free = null) {
 function renderWorkTerm() {
   if (view !== 'work') return;
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
-  if (isPrRef(nav.task)) return renderPrTerm(othersById(prIdOfRef(nav.task)));
+  if (isPrRef(nav.task)) {
+    // A review request's middle is already its reader: it has no tabs.
+    renderTaskReadTabs(null);
+    return renderPrTerm(othersById(prIdOfRef(nav.task)));
+  }
   const sel = workSelected();
   // A worktree with no process (the hub's 「動いていない worktree」) is no row of the list, but the board lists it.
   const free = !sel && isSessRef(nav.task) ? sessOfRef(nav.task) : null;
   const ds = sel?.session || null;
   const own = ds ? (state.sessions || []).find(x => x.id === ds.id) || null : free;
   const s = own || ds;
-  setWorkTermPart('head', wk('wk-term-head'), workTermHeadHtml(sel, free));
+  // A task with a PR has a second view, its read-through (task-read-view.js): the worker's terminal is kept behind it.
+  const task = isTaskRef(nav.task) ? taskById(nav.task) || null : null;
+  const { reading, revealed } = renderTaskReadTabs(task);
+  setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free));
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
-  syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own ? 'term' : 'none');
+  // Not mounted while it is hidden behind the read-through: a hidden host has no size, and the terminal would tell the window 80x24. One already mounted is kept.
+  syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
   setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true) : '');
   const ph = wk('wk-term-ph');
   ph.hidden = !!workTerm.term;
@@ -1111,6 +1121,9 @@ function renderWorkTerm() {
             : !own ? '<div class="tp-muted">このボードにはこのセッションが見えないため、ターミナルを開けません</div>'
               : termPlaceholderHtml(own);
   setWorkTermPart('ph', ph, text);
+  // Sized while it was hidden, which a terminal skips: asked again now that it has a size.
+  if (revealed) workTerm.term?.fit();
+  if (reading) renderTaskReadMiddle(task);
 }
 
 /* The bar over the middle terminal: the session's own actions, as the panel's terminal bar has them. */

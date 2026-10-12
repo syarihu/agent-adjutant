@@ -49,7 +49,7 @@ function world({ io = false } = {}) {
   const body = el({});
   const dlg = { get open() { return w.dialogOpen; }, querySelector: s => (s === '.card-dialog-body' ? body : null), addEventListener: (t, f, cap) => { w.dlgClick = f; } };
   const c = vm.createContext({
-    TextEncoder, TextDecoder, CSS: { escape: x => x }, console, Promise, Date, setTimeout: f => 0, structuredClone,
+    TextEncoder, TextDecoder, CSS: { escape: x => x }, console, Promise, Date, setTimeout: f => 0, structuredClone, document: { getElementById: id => w.byId?.[id] || null },
     IntersectionObserver: io ? class { constructor(cb, o) { w.io = { cb, o, seen: [] }; } observe(x) { w.io.seen.push(x); } unobserve() {} disconnect() { w.ioGone = true; } } : undefined,
     get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_HOOKS: { diff: null }, DIFF_LOADING: '<div class="loading">差分を読み込み中…</div>',
     secTitle: t => t, panelBtnsHtml: j => j,
@@ -62,6 +62,11 @@ function world({ io = false } = {}) {
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => rec(), prReadOf: () => w.read,
     othersHubView: () => w.hubView, othersRecords: () => [], others: { doc: { hub: null }, asking: new Set() },
     renderTaskPanel: () => { w.calls.push(['render']); },
+    // What the page is on, as pr-panel.js says it: the selected review request.
+    prShown: () => w.shown !== undefined ? w.shown : (typeof w.selected === 'string' && w.selected.startsWith('pr:') ? { id: w.selected.slice(3), rec: rec(w.selected.slice(3)), kind: 'pr', hubView: w.hubView, asking: false } : null),
+    prRecOf: () => rec(), prRedrawFor: id => { if (w.selected === `pr:${id}`) w.calls.push(['render']); },
+    // The tab the drafts are in, as pr-panel.js says it.
+    prDraftsPane: () => (w.shown?.kind === 'task' ? 'ai-drafts' : 'drafts'),
     prDraftsEntry: () => ({ loaded: w.loaded }), prDoc: () => ({ drafts: w.drafts }),
     prEditDrafts: (id, rd, fn) => { if (!w.loaded) return false; const doc = { drafts: [...w.drafts] }; fn(doc); w.edits.push(doc.drafts[doc.drafts.length - 1]); return true; },
     prRedrawNow: f => { w.calls.push(['redraw', f]); }, go: (p, o) => { w.calls.push(['gopane', p, o]); }, nav: { get pane() { return w.pane; } },
@@ -251,7 +256,7 @@ test('a link switches the tab first and draws the file, then goes there; from th
   const { w, c, run } = await loaded({ io: true });
   run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
   const opener = el();
-  c.prdGoto('docs/x.md', 1, { inDialog: false, opener });
+  c.prdGoto('docs/x.md', 1, { place: 'panel', opener });
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [['open', opener]]);
   const go = w.calls.find(x => x[0] === 'go');
   assert.strictEqual(go[1], 'diff:docs/x.md');
@@ -261,7 +266,7 @@ test('a link switches the tab first and draws the file, then goes there; from th
   assert.strictEqual(run('prDiff.target'), null);
   // A file that is not in the diff goes to the group.
   w.calls.length = 0;
-  c.prdGoto('nope.rs', null, { inDialog: true });
+  c.prdGoto('nope.rs', null, { place: 'dialog' });
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'go').map(x => x.slice(1, 4)), [[null, 'diff', true]]);
 });
 
@@ -269,7 +274,7 @@ test('a link waits for a diff that is on its way, and is dropped when there is n
   const { w, c, run } = world();
   w.dialogOpen = true;
   c.prDiffEnsure(rec(), w.read);
-  c.prdGoto('src/a.rs', 3, { inDialog: true });
+  c.prdGoto('src/a.rs', 3, { place: 'dialog' });
   assert.strictEqual(w.calls.filter(x => x[0] === 'go').length, 0);
   assert.ok(run('prDiff.target'));
   await ok(w, run, 0);
@@ -280,7 +285,7 @@ test('a link waits for a diff that is on its way, and is dropped when there is n
   const n = world();
   n.w.dialogOpen = true;
   n.c.prDiffEnsure(rec(), n.w.read);
-  n.c.prdGoto('src/a.rs', 3, { inDialog: true });
+  n.c.prdGoto('src/a.rs', 3, { place: 'dialog' });
   n.w.pending[0].reject(Object.assign(new Error('x'), { status: 404 }));
   await tick();
   n.c.prdApplyTarget();
@@ -295,7 +300,7 @@ const onLine = (c, attrs, extra = {}) => {
 
 test('「＋」 starts a draft of the person on the right side and line, and the panel goes to 下書き', async () => {
   const { w, c } = await loaded();
-  c.prdAct(onLine(c, { prdPlus: 'left:2' }, { hit: '[data-prd-plus]' }), { inDialog: false });
+  c.prdAct(onLine(c, { prdPlus: 'left:2' }, { hit: '[data-prd-plus]' }), { place: 'panel' });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits)), [{ key: 'p1', source: 'person', path: 'src/a.rs', line: 2, side: 'left', body: '' }]);
   const order = w.calls.map(x => x[0]);
   assert.ok(order.indexOf('gopane') < order.indexOf('redraw'), 'the tab first, then the box');
@@ -305,7 +310,7 @@ test('「＋」 starts a draft of the person on the right side and line, and the
 
 test('in 「拡大」 the box appears in the column and the panel is left where it is', async () => {
   const { w, c } = await loaded();
-  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { inDialog: true });
+  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'dialog' });
   assert.strictEqual(w.calls.some(x => x[0] === 'gopane'), false);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: true });
   assert.strictEqual(w.edits[0].line, 3);
@@ -314,12 +319,12 @@ test('in 「拡大」 the box appears in the column and the panel is left where 
 test('an explanation\'s 「下書きに」 is the same, with its text as the body; unanchored it is a file draft; unloaded drafts say so', async () => {
   const { w, c } = await loaded();
   const hit = '[data-prd-todraft], [data-prd-ask]';
-  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit, matches: ['[data-prd-todraft]'] }), { inDialog: false });
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit, matches: ['[data-prd-todraft]'] }), { place: 'panel' });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Explains new' });
-  c.prdAct(onLine(c, {}, { hit, matches: ['[data-prd-todraft]'] }), { inDialog: false });
+  c.prdAct(onLine(c, {}, { hit, matches: ['[data-prd-todraft]'] }), { place: 'panel' });
   assert.strictEqual(w.edits[1].line, undefined);
   w.loaded = false;
-  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { inDialog: false });
+  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'panel' });
   assert.strictEqual(w.edits.length, 2);
   assert.strictEqual(w.notes.length, 1);
 });
@@ -327,7 +332,7 @@ test('an explanation\'s 「下書きに」 is the same, with its text as the bod
 test('「聞く」 in 「拡大」 closes it first, then asks with the line and the first words', async () => {
   const { w, c, run } = await loaded();
   w.dialogOpen = true;
-  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: [] }), { inDialog: true });
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: [] }), { place: 'dialog' });
   assert.deepStrictEqual(w.calls.filter(x => ['close', 'ask'].includes(x[0])).map(x => x[0]), ['close', 'ask']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'ask')[1])), { path: 'src/a.rs', line: 3, title: 'Explains new' });
   assert.strictEqual(run('cardDialog.quiet'), true);
@@ -352,7 +357,7 @@ test('the panel restores its reading place on coming back to the tab, not on eve
 test('the hook keeps its shape', () => {
   const { run } = world();
   assert.deepStrictEqual(JSON.parse(run('JSON.stringify(Object.keys(PR_HOOKS.diff).sort())')), ['act', 'applyTarget', 'dialogFileHtml', 'dialogHeadHtml', 'dialogLabel', 'dialogPaths',
-    'goto', 'onDrawn', 'onLeft', 'onMoved', 'onShown', 'tabHtml']);
+    'goto', 'onDrawn', 'onDrawnAt', 'onLeft', 'onMoved', 'onShown', 'tabHtml']);
 });
 
 test('switching to another PR in the tab never writes into the PR that was left, whether its diff is loading, missing or failed', async () => {
@@ -398,7 +403,7 @@ test('a very long file opens by a click, and a link into it opens it', async () 
   assert.strictEqual(w.panel.bodies[1].hidden, true);
   assert.strictEqual(w.panel.bodies[1].innerHTML, '');
   w.dialogOpen = true;
-  c.prdGoto('docs/x.md', null, { inDialog: true });
+  c.prdGoto('docs/x.md', null, { place: 'dialog' });
   assert.strictEqual(w.dialog.bodies[1].hidden, false);
   assert.ok(w.dialog.bodies[1].innerHTML.includes('prd-l'));
 });
@@ -407,7 +412,7 @@ test('a link waiting for its diff is dropped when the person scrolls by hand', a
   const { w, c, run } = world();
   w.dialogOpen = true;
   c.prDiffEnsure(rec(), w.read);
-  c.prdGoto('src/a.rs', 3, { inDialog: true });
+  c.prdGoto('src/a.rs', 3, { place: 'dialog' });
   assert.ok(run('prDiff.target'));
   c.prdOnMoved();
   await ok(w, run, 0);
@@ -437,4 +442,96 @@ test('an error is retried by a redraw it schedules, for the PR still shown, and 
   w.selected = 'pr:acme/widget#1';
   c.prDiffEnsure(rec(), readThrough({ madeAt: 'm2' }));
   assert.strictEqual(w.gets.length, 2);
+});
+
+/* The middle of a task's read-through is the third place the diff is drawn in: what is selected is a task, so `prShown` says `task`. */
+function readWorld() {
+  const x = world();
+  const scroll = el({}, { scrollTop: 0 });
+  x.w.byId = { 'task-read': el({}, { hidden: false }), 'task-read-content': x.w.dialog.root, 'task-read-body': scroll };
+  x.w.shown = { id: 'acme/widget#1', rec: rec(), kind: 'task', hubView: x.w.hubView, asking: false };
+  x.w.selected = 'task-1';
+  x.scroll = scroll;
+  x.run('PRD_VIEWS').read = {
+    ready: () => true, place: 'read', go: (...a) => { x.w.calls.push(['rgo', ...a]); return true; },
+    cardEl: key => (key === 'diff:docs/x.md' ? x.w.dialog.sections[1] : key === 'diff:src/a.rs' ? x.w.dialog.sections[0] : null),
+  };
+  return x;
+}
+
+test('the middle of a task is a place of its own: its root is the read-through\'s content, and what scrolls is its body', async () => {
+  const { w, c, run, scroll } = readWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  const p = c.prdPlace('read');
+  assert.strictEqual(p.root, w.dialog.root);
+  assert.strictEqual(p.scroll, scroll);
+  // Kept but not on screen (the other tab, or a review request selected): no place, so another PR's state does not reach it.
+  w.byId['task-read'].hidden = true;
+  assert.strictEqual(c.prdPlace('read'), null);
+  w.byId['task-read'].hidden = false;
+  w.shown = { ...w.shown, kind: 'pr' };
+  assert.strictEqual(c.prdPlace('read'), null);
+  w.shown = { ...w.shown, kind: 'task' };
+  // Nothing drawn in it yet: no place.
+  w.byId['task-read-content'] = el({}, { querySelector: () => null });
+  assert.strictEqual(c.prdPlace('read'), null);
+  // The diff is the one of the task's PR, whatever the panel selects.
+  w.byId['task-read-content'] = w.dialog.root;
+  assert.strictEqual(c.prdCurrent().id, 'acme/widget#1');
+  c.prdSync('read', true);
+  assert.ok(w.dialog.bodies.every(b => b.innerHTML.includes('prd-l')), 'its files are drawn from the one cache');
+  assert.ok(run(`prDiff.cache.get('acme/widget#1').filled.read.size`) === 2);
+  // Another PR on show leaves it empty.
+  w.shown = null;
+  assert.strictEqual(c.prdCurrent(), null);
+});
+
+test('a link in the middle of a task goes there and opens no dialog, after the tab and the file are drawn', async () => {
+  const { w, c, run } = readWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  c.prdGoto('docs/x.md', 1, { place: 'read', opener: el() });
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'no 「拡大」 for it');
+  const go = w.calls.find(x => x[0] === 'rgo');
+  assert.deepStrictEqual(go.slice(1, 3), ['diff:docs/x.md', null]);
+  assert.strictEqual(run(`prDiff.cat.get('acme/widget#1')`), 'doc');
+  assert.strictEqual(run('prDiff.target'), null);
+  // Not in the diff: the group.
+  w.calls.length = 0;
+  c.prdGoto('nope.rs', null, { place: 'read' });
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'rgo').map(x => x.slice(1, 4)), [[null, 'diff', true]]);
+  assert.ok(!w.calls.some(x => x[0] === 'go'), 'not the dialog\'s');
+});
+
+test('a link meant for the middle of a task is dropped when the task on show is another', async () => {
+  const { w, c, run } = readWorld();
+  c.prDiffEnsure(rec(), w.read);
+  c.prdGoto('src/a.rs', 3, { place: 'read' });
+  assert.ok(run('prDiff.target'));
+  w.shown = { ...w.shown, id: 'acme/widget#2' };
+  await ok(w, run, 0);
+  c.prdApplyTarget();
+  assert.strictEqual(run('prDiff.target'), null);
+  assert.ok(!w.calls.some(x => x[0] === 'rgo'));
+});
+
+test('the draft buttons of the diff start a draft in the middle of a task too, and the panel goes to 「worker への指示」', async () => {
+  const { w, c, run } = readWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  assert.strictEqual(c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' }), true);
+  assert.strictEqual(w.edits.length, 1);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: '' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane')[1])), { pane: 'ai-drafts' });
+  // The explanation's own button, found by the selector the real DOM would match it by.
+  const btn = el({ prdAt: 'right:3' }, { closest: sel => (sel === '[data-prd-ann]' ? el({ prdAnn: '0' }) : null), matches: sel => sel === '[data-prd-todraft]' });
+  const click = { target: { closest: sel => (sel.split(',').some(x => x.trim() === '[data-prd-todraft]') ? btn : null) } };
+  assert.strictEqual(c.prdAct(click, { place: 'read' }), true);
+  assert.strictEqual(w.edits.length, 2);
+  // Already on that tab: nothing to switch.
+  w.pane = 'ai-drafts';
+  w.calls.length = 0;
+  c.prdAct(onLine(c, { prdPlus: 'right:4' }, { hit: '[data-prd-plus]' }), { place: 'read' });
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
 });

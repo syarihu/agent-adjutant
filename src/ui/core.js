@@ -43,14 +43,20 @@ const PR_REF = 'pr:';
 const isPrRef = id => typeof id === 'string' && id.startsWith(PR_REF);
 const prIdOfRef = id => id.slice(PR_REF.length);
 const PR_PANES = ['detail', 'diff', 'drafts'];
+/* A task with a PR has a second view in the work view, its read-through (task-read-view.js): `ai` is the reader's terminal beside
+   it, `ai-drafts` its 「worker への指示」. Any other pane of a task is the board's. */
+const READ_PANES = ['ai', 'ai-drafts'];
+/* The ref of a task: its id, which carries none of the prefixes of the other things the work view opens. */
+const isTaskRef = id => typeof id === 'string' && id !== '' && ![PR_REF, HUB_REF, SESS_REF, PARENT_REF, WORK_GATE_REF].some(prefix => id.startsWith(prefix));
 
 const PREF_KEY = 'adj-board-split';
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
-// reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row.
+// reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
+// railHidden is whether the sidebar is hidden in 「いまの仕事」 (the toggle at the head of the middle).
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  railWidth:300, workGroup:'parent', workFolded:[], workTab:'task', othersRepo:'' },
+  railWidth:300, workGroup:'parent', workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -59,6 +65,7 @@ delete prefs.panelSide;
 delete prefs.sessionsFolded;
 if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
+prefs.railHidden = prefs.railHidden === true;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // What is in the browser's storage is not trusted: a width outside its range is the default, a fold
@@ -77,11 +84,27 @@ prefs.notify = notifyPrefs(prefs.notify);
 // `prPrefsToSave` (pr-panel.js) keeps the tab a PR link switched to out of what is saved.
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(typeof prPrefsToSave === 'function' ? prPrefsToSave() : prefs)); } catch {} };
 
+/* The sidebar's toggle: its icon, and its name, which carries the 新着 count its badge shows while the sidebar is hidden (the label
+   replaces the button's content for a screen reader). Called when the pref changes and when the count does. */
+function renderRailToggle() {
+  const rt = document.getElementById('rail-toggle');
+  if (!rt) return;
+  const n = Number(document.getElementById('rail-toggle-count')?.textContent) || 0;
+  const label = !prefs.railHidden ? 'サイドバーを隠す' : n ? `サイドバーを表示（新着 ${n} 件）` : 'サイドバーを表示';
+  rt.setAttribute('aria-expanded', String(!prefs.railHidden));
+  rt.setAttribute('aria-label', label);
+  rt.title = label;
+  rt.querySelector('.material-symbols-outlined').textContent = prefs.railHidden ? 'left_panel_open' : 'left_panel_close';
+}
+
 function applyLayout() {
   const boards = document.getElementById('boards');
   if (!boards) return;
   // The widths of the sidebar and of the work view's list; the panel's own is set by renderTaskPanel.
   document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
+  // The class only takes effect in 「いまの仕事」, whose middle has the toggle (my-work.css).
+  document.body.classList.toggle('rail-hidden', prefs.railHidden);
+  renderRailToggle();
   boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
   document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
   document.body.classList.toggle('layout-split', prefs.layout === 'split');
@@ -269,7 +292,7 @@ async function boardApi(base, path, options = {}) {
     headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status, problems: Array.isArray(data.problems) ? data.problems : null });
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status, why: data.why || null, problems: Array.isArray(data.problems) ? data.problems : null });
   return data;
 }
 
@@ -663,6 +686,8 @@ async function refresh(force = false) {
   if (view === 'work') {
     refreshWork(force);
     refreshOthers(force);
+    // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).
+    taskReadRefresh(force);
     if (nav.board === 'all' || !nav.board) return;
   }
   if (scopeAll()) {

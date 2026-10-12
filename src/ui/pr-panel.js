@@ -7,8 +7,8 @@
 
 /* What pr-diff-view.js sets (the annotated diff): `tabHtml(rec, read)` the 差分 tab; `dialogFileHtml(rec, read, path)`,
    `dialogPaths(rec, read)`, `dialogHeadHtml(rec, read)` and `dialogLabel(rec, path)` the cards of 「拡大」 (keys `diff:<path>` and
-   `diff-bar`); `goto(path, line, { inDialog, opener })`; `onShown()` and `onLeft()`
-   for the panel's tab (left by another tab, another item or a close); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { inDialog })`
+   `diff-bar`); `goto(path, line, { place, opener })` (`place`: 'panel', 'dialog' or 'read'); `onShown()` and `onLeft()`
+   for the panel's tab (left by another tab, another item or a close); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { place })`
    for a click of the diff's own buttons. While it is null the 差分 tab is disabled and 「差分で見る」 is not drawn. */
 const PR_HOOKS = { diff: null };
 /* The drafts are saved a moment after the last key. */
@@ -25,6 +25,29 @@ const prView = {
 };
 
 const prSelected = () => isPrRef(selectedTaskId) ? othersById(prIdOfRef(selectedTaskId)) : null;
+/* What the read-through's views are on now, so that one set of buttons serves a review request and a task. A review request (selected
+   as `pr:<id>`) has its record in the list of the records, its reader's terminal in the middle (`workTerm`) and asks for a read
+   through the list's endpoint. A task's (the 「AI 下読み」 tab of the work view, task-read-view.js) has them in the task's own document,
+   its reader's terminal in the panel (`panelTerm`) and asks through the task. `slot` is where the reader's terminal is mounted;
+   `ask(mode)` asks for a read (`mode` 'split' for a proposal). Null while the page is on neither. */
+function prShown() {
+  if (isPrRef(selectedTaskId)) {
+    const id = prIdOfRef(selectedTaskId);
+    return { id, rec: othersById(id), kind: 'pr', hubView: othersHubView(others.doc?.hub, othersRecords()), asking: others.asking.has(id), ask: mode => othersRequestAi(id, mode), slot: workTerm };
+  }
+  return typeof taskReadShown === 'function' ? taskReadShown() : null;
+}
+/* The record of `id`: the one on show when it is that PR's, else the list's. */
+function prRecOf(id) {
+  const shown = prShown();
+  return shown && shown.id === id ? shown.rec : othersById(id);
+}
+/* Draw what shows the PR `id` again, if it is on show: the panel for a review request, the middle and the panel for a task. */
+function prRedrawFor(id) {
+  const shown = prShown();
+  if (shown?.id !== id) return;
+  if (shown.kind === 'pr') renderTaskPanel(); else taskReadRedraw();
+}
 /* The address names a PR that can be drawn: the records are in (or could not be read, which the panel says). */
 const prReady = () => !!others.doc || others.error != null;
 /* What savePrefs writes: the person's own tab, unless they have chosen one since the link. */
@@ -70,7 +93,7 @@ function prKeepTab() {
   return was;
 }
 /* Draw the panel again if it is on a PR (a request of the page changed what its buttons say). */
-const prRedraw = () => { if (isPrRef(selectedTaskId)) renderTaskPanel(); };
+const prRedraw = () => { if (isPrRef(selectedTaskId)) renderTaskPanel(); else if (typeof taskReadRedraw === 'function') taskReadRedraw(); };
 
 /* Open the PR: the address carries it, so that a link opens it and back goes to what was open. */
 function prOpen(rec) {
@@ -107,8 +130,8 @@ function prEnsureRead(rec) {
     if (err.status === 404) { e.read = null; e.key = key; e.error = null; } else e.error = err.message;
   }).finally(() => {
     e.busy = false;
-    // Applied to the cache of its own PR whatever is selected now; only the selected one is drawn.
-    if (selectedTaskId === PR_REF + rec.id) renderTaskPanel();
+    // Applied to the cache of its own PR whatever is selected now; only the one on show is drawn.
+    prRedrawFor(rec.id);
   });
 }
 
@@ -117,10 +140,11 @@ function prEnsureRead(rec) {
 /* What the page holds of one PR's drafts. `doc` is the file's document (null while there is no file: the reader's drafts then
    stand in, `prSeedDrafts`); `loaded` is that the file has been asked for (editing waits for it, or a save could replace what
    is stored); `dirty` that `doc` has something the server does not; `rev` counts edits, so that a save knows whether more came;
-   `inflight` is the promise of the save on its way; `pending` that a push into the pending review is on its way, `pendResult` how the last one went. */
+   `inflight` is the promise of the save on its way; `pending` that a push into the pending review is on its way, `pendResult` how the last one went; `handing` and `handResult` are the same for
+   handing a task's drafts to its worker (task-read-drafts.js). */
 function prDraftsEntry(id) {
   let e = prView.drafts.get(id);
-  if (!e) prView.drafts.set(id, e = { doc: null, saved: false, loaded: false, loading: false, error: null, dirty: false, saving: false, saveError: null, timer: 0, rev: 0, inflight: null, pending: false, pendResult: null });
+  if (!e) prView.drafts.set(id, e = { doc: null, saved: false, loaded: false, loading: false, error: null, dirty: false, saving: false, saveError: null, timer: 0, rev: 0, inflight: null, pending: false, pendResult: null, handing: false, handResult: null });
   return e;
 }
 /* The stored document without what the server adds. */
@@ -138,7 +162,7 @@ function prEnsureDrafts(id) {
     if (err.status === 404) { e.doc = null; e.saved = false; e.loaded = true; e.error = null; } else e.error = err.message;
   }).finally(() => {
     e.loading = false;
-    if (selectedTaskId === PR_REF + id) renderTaskPanel();
+    prRedrawFor(id);
   });
 }
 /* What a save sends: only the keys this page knows. The server refuses others, and keeps the ones it has stored itself. */
@@ -154,11 +178,11 @@ function prSaveBody(doc) {
 const prDoc = (id, read) => prDraftsEntry(id).doc || prSeedDrafts(read);
 
 /* Change the drafts of `id`: `fn` edits a copy, which is kept and saved. False when they cannot be edited yet, or while they are
-   being put into the pending review (what is sent is what was saved). Redrawing is the caller's (typing must not redraw the box
+   being put into the pending review or handed to a worker (what is sent is what was saved). Redrawing is the caller's (typing must not redraw the box
    being typed in). */
 function prEditDrafts(id, read, fn) {
   const e = prDraftsEntry(id);
-  if (!e.loaded || e.pending) return false;
+  if (!e.loaded || e.pending || e.handing) return false;
   const doc = structuredClone(prDoc(id, read));
   fn(doc);
   e.doc = doc;
@@ -166,6 +190,7 @@ function prEditDrafts(id, read, fn) {
   e.rev++;
   // What the last push said (a draft it refused) is about the drafts as they were.
   e.pendResult = null;
+  e.handResult = null;
   prScheduleSave(id);
   prShowSave(id);
   return true;
@@ -212,7 +237,7 @@ function prShowSave(id) {
   const st = prSaveState(e);
   const text = st.status === 'error' ? `保存できませんでした: ${st.error} 入力はこのページに残っています` : st.status === 'saving' ? '保存しています…' : st.status === 'saved' ? '保存しました' : '';
   for (const root of [tp('task-panel'), cardDialogEl()]) {
-    if (!root || selectedTaskId !== PR_REF + id) continue;
+    if (!root || prShown()?.id !== id) continue;
     root.querySelectorAll('[data-pr-save]').forEach(el => {
       if (el.textContent !== text) el.textContent = text;
       el.classList.toggle('err', st.status === 'error');
@@ -224,8 +249,9 @@ window.addEventListener('beforeunload', e => {
   if ([...prView.drafts.values()].some(d => d.dirty)) { e.preventDefault(); e.returnValue = ''; }
 });
 
-/* The drafts as a body: the panel's 下書き tab and the dialog's column draw the same, `place` being the only difference. */
-function prDraftsBodyHtml(rec, read, place) {
+/* The drafts as a body: the panel's 下書き tab and the dialog's column draw the same, `place` being the only difference. `to` is
+   where they are going: 'pending' (a review request's: a pending review on GitHub) or 'worker' (a task's: its worker). */
+function prDraftsBodyHtml(rec, read, place, to = 'pending') {
   const e = prDraftsEntry(rec.id);
   // `read` is undefined while the read-through is on its way: drafts seeded from it would be the wrong ones.
   if (!e.loaded || read === undefined) {
@@ -235,7 +261,8 @@ function prDraftsBodyHtml(rec, read, place) {
   const doc = prDoc(rec.id, read);
   // After a re-read the person's drafts stay; the reader's new ones are offered.
   const notice = e.saved && read && prFromElsewhere(doc, read) ? prNewReaderDrafts(doc, read).length + (prNewReaderOverall(doc, read) ? 1 : 0) : 0;
-  return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e), pend: { sending: e.pending, result: e.pendResult, prUrl: rec.url } });
+  const where = to === 'worker' ? { to, hand: { sending: e.handing, result: e.handResult } } : { pend: { sending: e.pending, result: e.pendResult, prUrl: rec.url } };
+  return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e), ...where });
 }
 
 /* What a draft box being focused holds the redraw for. */
@@ -330,13 +357,16 @@ function prHeldFlush(root, relatedTarget, held, again) {
 /* ── what the panel's buttons do (and the dialog's: `inDialog`) ── */
 
 function prAsk(point) {
-  const id = isPrRef(selectedTaskId) ? prIdOfRef(selectedTaskId) : null;
-  const rec = id && othersById(id);
-  // Typed into the reader's terminal if that is what the middle holds; what the reader wrote is not typed as it came, since a
+  const shown = prShown();
+  const rec = shown?.rec;
+  const slot = shown?.slot;
+  // Typed into the reader's terminal if that is where it is mounted; what the reader wrote is not typed as it came, since a
   // control character in it would be a key.
   const text = `${prDraftLocation(point)} の「${point.title}」について: `.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ');
-  if (rec && workTerm.term && workTerm.ended == null && workTerm.taskId?.startsWith(`${PR_REF}${rec.id}/`)) {
-    if (workTerm.term.type(text)) workTerm.term.focus();
+  if (rec && slot?.term && slot.ended == null && slot.taskId?.startsWith(`${PR_REF}${rec.id}/`)) {
+    // A task's reader is in the panel, and its terminal is only hidden behind 「worker への指示」: it is shown before it takes the keyboard.
+    if (shown.kind === 'task' && nav.pane !== 'ai') go({ pane: 'ai' }, { replace: true });
+    if (slot.term.type(text)) slot.term.focus();
     else note('聞く', true, 'AI 下読みの worker のターミナルが開いていません');
   } else note('聞く', true, 'AI 下読みの worker のターミナルが開いていません');
 }
@@ -352,6 +382,17 @@ async function prCopy(text) {
   }
 }
 
+/* Wait until nothing of `id`'s drafts is unsaved: the saves in flight and the edits since. Throws, saying `notDone` is what was not
+   done, when one fails or they do not settle. What the server reads is the file, so whatever sends the drafts waits for this first. */
+async function prSaveSettled(id, notDone) {
+  const e = prDraftsEntry(id);
+  for (let n = 0; n < 20 && (e.dirty || e.saving); n++) {
+    if (e.saving) await e.inflight; else await prSave(id);
+    if (e.saveError != null) throw new Error(`下書きを保存できなかったので、${notDone}: ${e.saveError}`);
+  }
+  if (e.dirty || e.saving) throw new Error(`下書きの保存が終わらなかったので、${notDone}`);
+}
+
 /* Put the stored drafts into the person's pending review on GitHub. The server sends what is stored, so what is held here is saved
    first (and the reader's drafts, which are not a file until the first edit, are made the file). One push in flight per PR: a
    second click does nothing. A failed one keeps the drafts as they are and says so; a successful one takes the server's document, in
@@ -364,12 +405,7 @@ async function prPend(id, read) {
   e.pendResult = null;
   prRedrawNow();
   try {
-    // Saves in flight and edits since: until nothing is unsaved, or one fails.
-    for (let n = 0; n < 20 && (e.dirty || e.saving); n++) {
-      if (e.saving) await e.inflight; else await prSave(id);
-      if (e.saveError != null) throw new Error(`下書きを保存できなかったので、積んでいません: ${e.saveError}`);
-    }
-    if (e.dirty || e.saving) throw new Error('下書きの保存が終わらなかったので、積んでいません');
+    await prSaveSettled(id, '積んでいません');
     const res = await boardApi('', '/api/others/pending', { method: 'POST', body: JSON.stringify({ id }) });
     if (res.drafts) { e.doc = prDocOfStored(res.drafts); e.saved = true; e.dirty = false; }
     else {
@@ -390,18 +426,27 @@ async function prPend(id, read) {
     note('pending review', true, err.message);
   } finally {
     e.pending = false;
-    if (selectedTaskId === PR_REF + id) prRedrawNow();
+    if (prShown()?.id === id) prRedrawNow();
   }
 }
 
-/* The click of a button that belongs to a PR, in the panel or in 「拡大」. True when it was one. */
-function prAct(e, { inDialog = false } = {}) {
+/* The tab of the panel the drafts are in: a task's 「worker への指示」, else a review request's 下書き. */
+function prDraftsPane() {
+  return prShown()?.kind === 'task' ? 'ai-drafts' : 'drafts';
+}
+
+/* The click of a button that belongs to a PR, in the panel, in 「拡大」 (`place`: 'panel' or 'dialog') or in a task's read-through
+   (`place` 'read'). True when it was one. */
+function prAct(e, { place = 'panel' } = {}) {
   const hit = sel => e.target.closest(sel);
-  if (!isPrRef(selectedTaskId)) return false;
+  const shown = prShown();
+  // A click of a place that is not the one the page is on belongs to nothing here.
+  if (!shown || (place === 'read') !== (shown.kind === 'task')) return false;
+  const inDialog = place === 'dialog';
   // A click in a dialog that is not about the PR the panel is on belongs to nothing here.
   if (inDialog && cardDialog.subject !== selectedTaskId) return false;
-  const id = prIdOfRef(selectedTaskId);
-  const rec = othersById(id);
+  const id = shown.id;
+  const rec = shown.rec;
   if (!rec) return false;
   const read = prReadOf(rec) || null;
   const doc = () => prDoc(id, read);
@@ -410,12 +455,13 @@ function prAct(e, { inDialog = false } = {}) {
   const edited = (fn, sel = null) => {
     if (prEditDrafts(id, read, fn)) prRedrawNow(sel && { sel, inDialog });
     else if (prDraftsEntry(id).pending) note('下書き', true, 'pending review に積んでいるあいだは、下書きを変えられません');
+    else if (prDraftsEntry(id).handing) note('下書き', true, 'worker に渡しているあいだは、下書きを変えられません');
   };
   let b;
   if ((b = hit('[data-pr-ai], [data-pr-split], [data-pr-reread]'))) {
     // Only the split button asks for a proposal; the re-read button is never drawn while the PR is out of review.
     const mode = b.matches('[data-pr-split]') ? 'split' : undefined;
-    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') othersRequestAi(id, mode);
+    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') shown.ask(mode);
     return true;
   }
   if ((b = hit('[data-pr-ask]'))) {
@@ -434,7 +480,7 @@ function prAct(e, { inDialog = false } = {}) {
       return true;
     }
     // The tab first, so the box that is made is drawn in it; it takes the keyboard, where the person finishes it.
-    if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
+    if (!inDialog && nav.pane !== prDraftsPane()) go({ pane: prDraftsPane() }, { replace: true });
     const key = prNextKey(doc(), 'p');
     edited(d => { d.drafts.push(prDraftFromPoint(point, d)); }, boxSel(key));
     return true;
@@ -473,15 +519,15 @@ function prAct(e, { inDialog = false } = {}) {
   }
   if ((b = hit('[data-pr-goto-diff]'))) {
     const point = read?.points?.[Number(b.dataset.prGotoDiff)];
-    if (point) PR_HOOKS.diff?.goto(point.path, point.line, { inDialog, opener: b });
+    if (point) PR_HOOKS.diff?.goto(point.path, point.line, { place, opener: b });
     return true;
   }
   if ((b = hit('[data-pr-goto-file], [data-pr-goto-deleted]'))) {
     const item = b.dataset.prGotoFile != null ? read?.order?.[Number(b.dataset.prGotoFile)] : read?.deleted?.[Number(b.dataset.prGotoDeleted)];
-    if (item) PR_HOOKS.diff?.goto(item.path, null, { inDialog, opener: b });
+    if (item) PR_HOOKS.diff?.goto(item.path, null, { place, opener: b });
     return true;
   }
-  return PR_HOOKS.diff?.act?.(e, { inDialog }) || false;
+  return PR_HOOKS.diff?.act?.(e, { place }) || false;
 }
 
 /* The panel's own clicks: its tabs, 「拡大」, close, and what PRs share with the dialog. */
@@ -493,23 +539,23 @@ function prPanelClick(e) {
     return;
   }
   if ((b = e.target.closest('[data-pr-expand]'))) return openPrDialog(b);
-  if (e.target.closest('[data-pr-close-reader]')) {
-    // Asked once, in the page: closing stops the reader, which cannot be taken back.
-    const id = isPrRef(selectedTaskId) ? prIdOfRef(selectedTaskId) : null;
-    if (id && prReaderOpen(othersById(id)) && !others.closing.has(id)) openReaderCloseDialog(id);
-    return;
-  }
+  if (e.target.closest('[data-pr-close-reader]')) return prCloseReader();
   prAct(e);
+}
+/* 「下読みを閉じる」: asked once, in the page, since closing stops the reader, which cannot be taken back. */
+function prCloseReader() {
+  const id = prShown()?.id;
+  if (id && prReaderOpen(prRecOf(id)) && !others.closing.has(id)) openReaderCloseDialog(id);
 }
 
 // Typing into a draft changes the document and schedules a save; nothing is drawn, so the box keeps its caret and its composition.
 function prInput(e) {
   const t = e.target;
-  if (!t.matches?.(PR_BOX_SEL) || !isPrRef(selectedTaskId)) return;
+  // Nothing while a task is selected but its read-through is not on screen: the box is not one of this PR's.
+  const shown = prShown();
+  if (!t.matches?.(PR_BOX_SEL) || !shown?.rec) return;
   if (t.closest?.('#card-dialog') && cardDialog.subject !== selectedTaskId) return;
-  const id = prIdOfRef(selectedTaskId);
-  const rec = othersById(id);
-  if (!rec) return;
+  const { id, rec } = shown;
   const read = prReadOf(rec) || null;
   const value = t.value;
   // What is in the pending review is not edited here.
@@ -534,8 +580,9 @@ function prInput(e) {
 }
 // Leaving a box saves at once, and lets a redraw that waited for it be made.
 function prFocusOut(e, root, held, again) {
-  if (!e.target.matches?.(PR_BOX_SEL) || !isPrRef(selectedTaskId)) return;
-  prScheduleSave(prIdOfRef(selectedTaskId), true);
+  const shown = prShown();
+  if (!e.target.matches?.(PR_BOX_SEL) || !shown) return;
+  prScheduleSave(shown.id, true);
   prHeldFlush(root, e.relatedTarget, held, again);
 }
 tp('task-panel').addEventListener('input', e => prInput(e));
@@ -557,31 +604,39 @@ function prMiddleText(rec, hubView) {
   return prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), opts);
 }
 
+/* The subject the reader's terminal is kept under: a closed reader is part of it, so that a re-read does not find the old one. */
+const prReaderSubject = rec => rec ? `${PR_REF}${rec.id}/${rec.ai?.sessionId || ''}${rec.ai?.readerClosedAt ? '/closed' : ''}` : null;
+
+/* The reader's terminal in `slot` (the middle's for a review request, the panel's for a task): kept while the record still names
+   the same reader, disposed when it names another (a re-read) or the PR changes, and mounted when there is a window to attach to.
+   The socket is the reader's (`/api/others/terminal`), resolved on the server from the record. */
+function syncReaderTerm(slot, rec, subject, mount = true) {
+  const mountable = prReaderOpen(rec);
+  if (slot.taskId !== subject || (slot.reconnect && mountable)) disposeTermSlot(slot);
+  slot.taskId = subject;
+  // `mount` is false while its pane is hidden: a terminal mounted there has no size to fit to. One already mounted is kept.
+  if (!mountable || slot.term || !mount) return;
+  slot.sessionId = rec.ai.sessionId || subject;
+  slot.ended = null;
+  const handle = mountSessionTerminal(slot.host(), {
+    path: `/api/others/terminal?id=${encodeURIComponent(rec.id)}`,
+    base: '',
+    focus: false,
+    onEnd: code => {
+      if (slot.term !== handle) return;
+      slot.ended = code;
+      slot.redraw();
+    },
+  });
+  slot.term = handle;
+}
+
 function renderPrTerm(rec) {
   if (view !== 'work') return;
   const head = rec ? `<div class="wk-term-title">${esc(rec.title)}</div><div class="wk-term-sub">${esc(prSubText(rec))} · AI 下読みの worker</div>` : '';
   setWorkTermPart('head', wk('wk-term-head'), head);
-  // A closed reader is part of the subject, so the slot of its terminal is disposed and a re-read does not find it.
-  const subject = rec ? `${PR_REF}${rec.id}/${rec.ai?.sessionId || ''}${rec.ai?.readerClosedAt ? '/closed' : ''}` : null;
-  const mountable = prReaderOpen(rec);
-  if (workTerm.taskId !== subject || (workTerm.reconnect && mountable)) disposeTermSlot(workTerm);
-  workTerm.taskId = subject;
   workTerm.board = null;
-  if (mountable && !workTerm.term) {
-    workTerm.sessionId = rec.ai.sessionId || subject;
-    workTerm.ended = null;
-    const handle = mountSessionTerminal(workTerm.host(), {
-      path: `/api/others/terminal?id=${encodeURIComponent(rec.id)}`,
-      base: '',
-      focus: false,
-      onEnd: code => {
-        if (workTerm.term !== handle) return;
-        workTerm.ended = code;
-        workTerm.redraw();
-      },
-    });
-    workTerm.term = handle;
-  }
+  syncReaderTerm(workTerm, rec, prReaderSubject(rec));
   setWorkTermPart('bar', wk('wk-term-bar'), '');
   const ph = wk('wk-term-ph');
   // Over a terminal that has ended, so the screen of a dead window is not taken for a live one.

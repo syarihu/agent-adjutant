@@ -91,13 +91,14 @@ fixtures.
 - `task`: task records, one file per task, and their operations (`create`, `update`, `edit`,
   `remove`, `get`, `list`, `next`, `hand_over`, `refresh`, `write_brief`, ...), plus the GitHub
   reads behind them. It does not wake or type into a terminal itself; it hands a message to `mail`.
-- `gate`: gate records and `open`, `answer`, `close`, `close_resumed`, `get`, `list`. An answer
+- `gate`: gate records and `open`, `answer`, `send_back_read`, `close`, `close_resumed`, `get`, `list`. An answer
   goes back through `mail`, to the worker's outbox or, for a gate the hub opened, to the hub's
-  inbox; a gate has no channel of its own and delivers nothing itself.
+  inbox; a gate has no channel of its own and delivers nothing itself. `send_back_read` is `answer` for the
+  points a person chose from a read-through of a task's PR: it picks the task's gate and sends `changes` on it.
 - `jules`: Jules sessions (`start`, `follow`, `findings`, `relay`, ...). It has no `store`: the
   session id and what was relayed are fields of the task record, and the private `api` client takes
   the store's place.
-- `others`: the PRs other people asked you to review: one record per PR, the sync that reads them
+- `others`: the PRs other people asked you to review, and the PRs of your own tasks that a read-through was asked for (`track_task_pr`): one record per PR, the sync that reads them
   from GitHub (`sync`), and the state derived from each record (`model::derive`). It reads and
   writes by state root, not by `Context`: the records belong to the person, not to a hub. It has a
   private `store.rs` and a `github.rs` of its own, and uses `task`'s PR reference and check
@@ -109,7 +110,7 @@ fixtures.
   hubs and workers; plan and exec a launch, claim slots, register launches and link workers to
   tasks. `lifecycle::review` starts the readers of the code-review hub: `request`, `dispatch` (reap
   the dead, claim the next in line, open a window for each, outside every lock), `launch_reader`,
-  `run_reader` (what a reader's window runs), `settle_reader` and `submit`; `close_reader` stops one reader and marks its read closed, and `close_readers` does so for the readers of merged or closed PRs after a sync. `run_reader` starts a
+  `request_for_task` (the same for a task's PR), `run_reader` (what a reader's window runs), `settle_reader` and `submit`; `close_reader` stops one reader and marks its read closed, and `close_readers` does so for the readers of merged or closed PRs after a sync. `run_reader` starts a
   detached watcher (`settle_reader`) before the agent takes over: it answers the agent's
   folder-trust prompt for the reader's own directory and no other. It fails the read, and closes
   the reader's pane, when the agent asks to trust another directory, when the dialog is still up
@@ -118,7 +119,8 @@ fixtures.
   `HubStart` and `TabOutcome` and prints nothing, and it changes other modules' records only
   through their operations.
 - `board`: the resident daemon and server, a hub's or `adj serve`'s own board (`dedicated`), the read model, the
-  background jobs, and the page's actions. It does not name `transport` or parse HTTP (see
+  background jobs, and the page's actions. `board::review::hand_to_worker` reads the drafts of a task's PR (`others`) and hands them to the
+  task's worker through `gate::send_back_read`; it writes nothing to `others`. It does not name `transport` or parse HTTP (see
   [How the board gets its handler](#how-the-board-gets-its-handler)).
 - `transport`: `cli` (clap args, dispatch, one file per command or family), `mcp` (the stdio
   JSON-RPC server and its tools), `board_http` (HTTP and WebSocket routes) and `wording` (answers
@@ -198,7 +200,7 @@ transport passes the handler in. `cli/serve.rs` passes `board_http::handle` for 
 `cli/server.rs` passes `board_http::handle_resident` to the resident. The resident strips
 `/b/<slug>` (`split_board_path`) and hands the rest to the same `routes::route`. Every board
 answers the same routes except the ones `Route::resident_only` lists (a session's resume, restart,
-open and clean-up; starting a parent hub; the hub actions; the terminal; assets): `route` answers
+open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai` and handing its drafts to the worker `POST /api/tasks/<id>/hand`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
@@ -351,7 +353,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `agent-hooks/claude-<digest>.json` | the hook settings passed with `--settings`, one per `adj` binary | lifecycle (`write_agent_hooks.rs`) |
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |
-| `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review, and how the last sync went | others (`store.rs`) |
+| `others/<owner>~<repo>~<number>.json` (+ `.lock`), `others/sync.json`, `others/sync.lock` | PRs that asked for your review (and PRs of your tasks that a read-through was asked for), and how the last sync went | others (`store.rs`) |
 | `others/diffs/<owner>~<repo>~<number>.json` | the diff the stored read-through was made from, kept at hand-in | others (`store.rs`) |
 | `others/drafts/<owner>~<repo>~<number>.json` | the person's draft review comments of a PR, saved whole by the page | others (`store.rs`) |
 | `others/reads/<owner>~<repo>~<number>.json`, `others/review.lock` | the latest read-through of a PR; the lock held while readers are counted and claimed | others (`store.rs`) |
@@ -378,12 +380,12 @@ and the order it was done in.
 ## PRs others asked you to review
 
 `others` keeps one record per open PR that asked for **your** review (a request to a team of yours
-does not count), in the repositories of the owners adj has a board for. The records and the sync are
+does not count), in the repositories of the owners adj has a board for. It also keeps the record of a PR of one of your own tasks once a read-through of it was asked for (see [A task's PR](#a-tasks-pr)); such a record carries `task`. The records and the sync are
 the contract for the pages and workers that read them; the names below are the JSON keys.
 
 - `GET /api/others` answers `{now, lastSync, records, hub}`. `now` is epoch seconds. `lastSync` is `null`
   before the first sync. `records` are sorted by `repo` (case-insensitive), then `requestedAt`
-  (none last), then `number`.
+  (none last), then `number`. A record that is read for a task and that nobody requested of you is left out of `records` (it is not on the list), but its reader counts in `hub.running` and `hub.queued`, which say what the hub is doing.
 - `POST /api/others/sync` runs the sync, only when asked: nothing reads GitHub at start, on a timer
   or on `GET`. It answers 200 `{lastSync, arrived, removed, records, closeWarning?}` (`removed` are the records done for a day, never one with a reader still open) (`closeWarning` is set when the reader of a merged or closed PR could not be closed; see the reader's close below), 409
   `{"error": "a sync is already running", "busy": true}` when a sync is already running in the same
@@ -420,11 +422,12 @@ Every time is an adj UTC stamp, `YYYYMMDDTHHMMSSZ`, so times compare as strings.
 | `myReview` | `{state, submittedAt, commit}`: your last submitted review and the commit it was made on, or `null` |
 | `commitsSinceReview` | commits on the head since `myReview.commit`; `0` when it is the head; `null` when unknown (no review, or the commit is no longer among the last 100) |
 | `requested` | you are a requested reviewer right now |
+| `task` | `{board, id}`: the hub slug and the id of the task this PR is read for; absent for a PR that was only asked of you. Set by a request to read a task's PR (see [A task's PR](#a-tasks-pr)); a later sync keeps it, and a request for another task moves it. Unknown keys inside it are kept |
 | `requestedAt` | time of the latest request that named you |
 | `rerequest` | the current request came after a review of yours |
 | `state` | derived, one of `requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done` |
 | `doneReason` | only while `state` is `done`: `approved`, `merged`, `closed` or `withdrawn` |
-| `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later, unless a reader is still open on it (see closing a reader) |
+| `doneAt` | time of the sync that first saw it done; the record is removed by a sync one day later, unless a reader is still open on it (see closing a reader), or it has a `task` and that task's record still exists (a task that cannot be looked for keeps it; only a task that is definitely gone lets it go) |
 | `events` | `{requested, rerequested, aiReady, pushed}`, times or `null`; `pushed` is the commit date of the first commit after your review (when it is later than the review, else the sync's time) when a record first shows a head you had not reviewed (else the time of the sync), moves to the sync's time with each later push, and is `null` while the head is the one you reviewed |
 | `ai` | the AI read-through: `{status, sha, startedAt, finishedAt, launchedAt, readFrom, sessionId, pid, psStarted, terminal, error, counts, mode, readerClosedAt, stale}`; absent until one was asked for. `status` is `queued`, `running`, `ready` or `failed`. `mode` is `split` when the latest request was for a split proposal (see [The read-through](#the-read-through)), absent for a read-through; a value this binary does not know is a read-through. `startedAt` is when the person asked, which is the place in the queue; `launchedAt` is when the reader was started; `sessionId` is the reader whose hand-in is taken; `sha` and `counts` (`{attention, check, drafts}`) are those of the stored read-through and are kept when a re-read is asked for; `error` is why the last read failed, as one line of at most 300 characters. `readerClosedAt` is when the reader was closed (by the person, or by a sync that found the PR merged or closed), absent otherwise: the read-through, the drafts and the record stay, and a request for a read clears it. `readFrom` is when the stored read-through's material was taken at the latest: the `launchedAt` of the reader that handed it in, or the hand-in time when no reader was launched. `stale` is derived on every load and save and never trusted from disk: it is true when `sha` is not `headSha` and the sync saw that head (`headSeenAt`) at or after `readFrom`, or when either is missing. The hand-in time is not used, since a reader that read A, a push of B stored by a sync, and then a hand-in of A is stale. A reader reads the PR's live head, which can be newer than the last sync's, so a read of a head the sync has not seen yet is not stale, and the sync that brings it makes `sha` and `headSha` equal |
 | `pendingReviewAt` | time adj last put drafts into your pending review on GitHub (`POST /api/others/pending`); absent until then. Acting on the row, like starting a read: the page reads it with `ai.startedAt` to take the row off 新着. Not an event |
@@ -440,7 +443,7 @@ requested, it is `pushed` when the head moved since your review and `requested` 
 request, or a re-request with nothing pushed). When you are not requested: no review of yours, or a
 request newer than your review that went away, is `done` as `withdrawn`; an approving last review is
 `done` as `approved`; otherwise `pushed` when the head moved since your review and
-`waiting-on-author` when it did not. The read-through moves only a `requested` record: `ai-reading`
+`waiting-on-author` when it did not. A record with a `task` and no request of yours is never withdrawn or approved: while the PR is open it is `requested` (a task's PR has no request to take away and no verdict of yours that ends it), and it ends only when the PR is merged or closed. The read-through moves only a `requested` record: `ai-reading`
 while `ai.status` is `queued` or `running`, `ai-ready` when it is `ready` (also when it is stale). On a
 `pushed` record `ai` is shown beside the state and does not replace it.
 
@@ -490,6 +493,46 @@ first. A diff over 2000 rows is drawn file by file as each comes near the screen
   (a read of the whole PR, as before) until a reader is at work. A proposal that is stored and not stale is not offered again; one made for an
   older head is offered as 「分割を提案し直す」, and what a button asks for follows whether the PR is out of review now (and live), never the mode of the stored read-through: a PR that has become small is read in the usual way, also after a proposal, and a proposal is asked for again only while it is out of review.
 
+### A task's PR
+
+A task that has a `pr` can have it read the same way, through the same record, queue (3 places), reader and
+read-through as a request. The record is the PR's own (`others/<owner>~<repo>~<number>.json`), found through the task's
+**current** `pr` (a bare `#N` is read against the task's repository, as `task::pr_refs` does), so a task that gets another
+PR shows that PR's record; `task` says what the record is for, and does not decide the lookup.
+
+- `POST /b/<slug>/api/tasks/<id>/ai` with `{"mode": "read"|"split"}` (`mode` optional, as above; an empty body is no options, and a body that is not a JSON object is a 400 `bad JSON: …` before anything is read), or
+  `adj review request --task <id> [--repo <owner/name>] [--hub <id>]` (`--pr` and `--task` exclude each other),
+  asks for it (`lifecycle::review::request_for_task`). Before anything is read from GitHub or written it refuses what it
+  can know: a task that is not there, a task with no PR, a PR that is not on github.com or a bare number with no remote to read it
+  against, the code-review hub not running (`hub-stopped`) and a terminal a reader cannot be opened in (`not-startable`). Then it reads the PR from GitHub
+  with the sync's own query, makes or updates the record (`others::track_task_pr_with`, holding the sync's lock from the read to the save so an older answer cannot overwrite a sync's newer one; the facts, `task`; a record
+  made for another task is moved to this one; a PR that cannot be read writes nothing), asks for the read as a request does (after checking that the task still names that PR), and starts
+  the readers next in line. The answers: 200 `{record, warning}`; 400 for a mode that is not `read` or `split`, a PR this cannot read and a done PR; 404 for a task that is not there; 409 `{error, why}` with `why`
+  `no-pr`, `hub-stopped`, `not-startable`, `syncing` (a sync is running; nothing was read or written) or `pr-changed` (the task got another PR while GitHub was read; nothing was queued); 500 when GitHub or a record could not be read or written, and for a task record that is there and cannot be read. A board a hub serves answers 404, as for `/api/others/*`.
+- `GET /b/<slug>/api/tasks/<id>/ai` answers `{pr, record, hub}`: `pr` is the task's PR as `owner/repo#N` (`null` when it has none, or one this
+  cannot read), `record` the PR's record whether it carries `task` or was only requested of you (`null` when it has none), and `hub` the
+  code-review hub as `GET /api/others` has it. It reads nothing from GitHub and writes nothing. A task that is not there is a 400.
+- The record is never withdrawn for lack of a request and is not in `GET /api/others` `records` unless you are also requested (then it
+  is one record, listed and offered a pending review as a request is). It follows the PR: merged or closed ends it (`done`, and its reader
+  is closed by the sync); an approval or a request going away does not. 「同期」 and each request bring its facts up to date. A done one is
+  kept past its day while its task exists. The pending review is not refused here: it is for the PR whoever asked.
+
+**The page.** A task selected in 「いまの仕事」 has two tabs over the middle, 「タスク」 and 「AI 下読み」 (a selection that is not a task has none, but the row itself is always shown in this view and leads with the toggle that hides and shows the sidebar, kept in `prefs.railHidden`, with the 新着 count on it while hidden;
+a review request's middle is already its reader). 「タスク」 is the view as it was: the worker's terminal in the middle and the task's panel. 「AI 下読み」
+shows the read-through in the middle, laid out as 「拡大」 lays out a review request's (the index on the left and one scroll, 要点, 見るポイント, 読む順,
+設計判断・テスト・書かれていないこと, and the annotated diff stored with the read-through, with its files in the index in reading order; the
+index is a strip of the groups over the read-through while the middle is narrower than 760px, whatever the window), and the reader in the panel: its terminal (`/api/others/terminal`, the same socket a review
+request's middle uses, kept while the tab is on) and 「worker への指示」, which holds the drafts and shows their number. A PR that has moved on since the read shows a band over the read-through with
+「下読みし直す」. The tab is the address's (`pane=ai`, `pane=ai-drafts`, kept only for a task in the work view), so a reload, back and a link keep it, and a task
+selected afresh opens on 「タスク」; while the page is open, the tab of the task's panel that 「タスク」 returns to and the reading place are kept per task. The label of the tab carries the state of the read (要注意 N · 確認 N,
+下読み中…, 前の push 時点 with a dot, 失敗しました), and the tab cannot be chosen before the task has a PR or when its PR is not one this can read. The page reads `GET …/ai` on every poll
+while a task with a PR is selected, in either tab, and asks for a read with `POST …/ai`. The buttons are the review request's (`prAct`), which ask which view the page is on (`prShown`) and not
+what is selected, so the diff's places are the panel, 「拡大」 and the middle of a task. There is no 「拡大」 for a task's read-through, and no 前回のレビューから (a review of yours it compares with).
+「worker への指示」 is the drafts of the PR as instructions for the task's worker: the same boxes as a review request's 下書き (the reader's drafts marked AI, the person's own, 「下書きに」 and 「＋」 of the diff, a comment on the whole),
+but a pending review is not offered for a task's PR (GitHub does not let you ask for changes on your own PR, and the one who fixes it is the worker): the button is 「N 件を worker に渡す」 (see [Handing the drafts to the worker](#handing-the-drafts-to-the-worker)).
+`src/ui/task-read-drafts.js` sets `OWN_HOOKS.drafts` (the hook task-read-view.js leaves) and does the handing; the diff and the read-through are cached by PR, shared with a review request for the same PR. The drafts are the PR's file either way, loaded
+when the tab is chosen; the page draws the reader's panel again when they come.
+
 ### The read-through
 
 The code-review hub (`adj hub --review`) belongs to no repository. Its hub identifier is the reserved `@review` (an `@` cannot be in a
@@ -498,7 +541,7 @@ name is `adjutant-review`. `identity::resolve_in` answers it before it asks git,
 MCP tools from any directory. It is not in 「ボード」: `registry::note_board` skips it. Its working directory is `<state>/review`,
 which `lifecycle::hub::ensure_home` makes.
 
-A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>", "mode": "read"|"split"}`, `mode` optional, or `adj review request --pr <url|id> [--split]`), never asked for by a
+A read-through is asked for (`POST /api/others/ai` with `{"id": "<owner/repo#N>", "mode": "read"|"split"}`, `mode` optional, or `adj review request --pr <url|id> [--split]`; for a task's PR see [A task's PR](#a-tasks-pr)), never asked for by a
 sync, though a place a sync frees by closing a reader may start the next queued read. `mode` `split` asks for a split proposal of a PR too large to read (see below); it is stored as `ai.mode`, and a reader's mode is always the record's, never its own word. The server does not refuse a split of a PR that is in review. A `mode` that is not `read`, `split` or absent is a 400 `{"error": "mode must be \"read\" or \"split\""}` before anything is written. A request for a read that is already queued or running changes nothing, its mode included; a takeover queues the mode of the new request. The answers: 200 `{record, warning}` when it is queued or already queued or running (`warning` is `null`, or says that the queue could not be worked after the request was taken; the request stands and the job tries again, and `adj review request|submit|fail` print it on stderr); 409 `{error, why}` with `why` `hub-stopped` or
 `not-startable` (nothing is written); 404 for a PR with no record; 400 for a bad id or a done PR. Readers start only while the hub is
 up. `others::claim_reads` runs under `others/review.lock`: it first fails a queued read whose PR is done (`the PR is no longer open`), then counts the `running` records, and marks as `running` the first
@@ -670,7 +713,7 @@ wrote is an argument or part of a query's text.
 - When GitHub took something, the drafts file and the record are written under the record's lock: each sent draft gets `sentAt` (when
   the draft is still the same in everything but `sentAt`), `pending` is set, and the record's `pendingReviewAt` is set, which takes the row off 新着.
   A write that fails then is a `warning` in the answer, not an error. When GitHub took nothing, nothing is written.
-  A sent draft stays in the list, read-only, with 「積みました」 and its copy button; copying stays available for every draft.
+  A sent draft stays in the list, read-only, with 「積みました」 and its copy button; copying stays available for every draft. (`sentAt` also means a draft was handed to a task's worker, see below; the page never puts a task's PR into a pending review.)
 - One push runs per PR at a time (a second answers 409). A pending review pinned to an older commit still gets the threads; the ones
   GitHub cannot place come back as `failed`.
 
@@ -678,3 +721,30 @@ wrote is an argument or part of a query's text.
 "none"|"set"|"appended", drafts, record, warning}`; 400 for a bad id, a PR that is merged or closed, drafts that break the contract
 (`problems`), or nothing left to send (`{"error", "nothing": true}`); 404 for a PR adj has no record of or one with no drafts; 409 while a push
 of it runs; 502 when GitHub took none of it; 500 for a file that cannot be read or written.
+
+#### Handing the drafts to the worker
+
+On a task's PR the drafts are instructions for the task's worker, and 「N 件を worker に渡す」 (under the drafts in 「worker への指示」, `data-pr-hand`) sends the ones not sent yet
+the way a person sends back a gate (`board::review::hand_to_worker`, `gate::send_back_read`, `POST /b/<slug>/api/tasks/<id>/hand`, body `{"pr": "<owner/repo#N>"}`, the PR the page showed the drafts for; there is no CLI verb).
+The route is resident-only, and is placed before the task update, so `POST /api/tasks/hand` still updates a task named `hand`.
+
+- **What is sent.** The drafts with a body that is not blank and no `sentAt` (a draft with no `path` is a point on the whole PR), in the file's order, and the overall comment when it is not blank; `source: reader` is marked `(AI)`.
+  The operation reads the stored file (`others::drafts`; an unreadable file is an error and not "none") and **writes nothing to `others`**: the page marks the sent drafts (`sentAt` is the answer's stamp, which the server returns as `at`), clears the overall comment (it went with them)
+  and saves at once; a save that fails stays unsaved and is tried again as any edit is. The page saves before it asks, and locks the drafts while the request is out. One hand-over runs per task at a time (409 `busy`).
+- **Which gate.** In order: a waiting `diff` or `verify` gate of the task is answered with `changes` and archived, exactly as `gate::answer` does; else the task's newest `diff` record gets the answer appended, as a record is sent back today; else it is refused (`no-gate`).
+  A waiting gate of another kind (a plan, a question, a result) is refused (`gate-waiting`): answering around it would skip what the worker waits on. Nothing is ever written into an archived gate. Every refusal is made before any write.
+- **The message.** The same as an answer's (`[gate <id>] changes`, which wakes the worker; the same delivery, and a worker that is not running finds it in the same outbox), with one more header after `## task`:
+  `## From       AI 下読み <owner/repo#N> @ <sha7> (a separate read-only reader; the person chose and sent these)`, and a comment of the numbered points:
+  `The person read this PR with an AI read-through and sends you N points. Lines are of <sha7> (right side unless said).`, then `### 1. src/a.rs:40-42 (AI)`, `### 2. src/b.rs (the file)` or `### 3. the whole PR` each followed by its text
+  (`(old side)` after a line of the left side), then `### Overall`. `sha7` is the head the stored read-through was made at, which the lines are of.
+- **What is kept.** The answer (or the answered waiting gate, as a top-level key) carries `handoff: {pr, sha, draftsSha?, count, overall}`, and its comment is the message. The timeline of the task (経過), 離れていた間に and the decision column say
+  「AI 下読みの指示 N 件を worker に渡した」 (and 「・全体のコメントも」), with the comment folded. Unknown keys inside an answer and its `handoff` are kept (rule 10).
+- **Refusals.** 400 for a body that is not an object with a `pr`, and for nothing to send; 404 for a task that is not there; 409 `{error, why}` with `why` `no-pr`, `pr-changed` (the task's PR is not the one the drafts are of), `pr-done` (merged or closed), `no-record` (never read),
+  `no-worker` (a task handed to Jules), `no-gate`, `gate-waiting`, `gate-changed` or `busy`; 500 for a record, drafts or gate that cannot be read or written. 200 answers `{gate: {id, kind, shelf}, sent: [key], overall, at, present, woken}`: `shelf` is `answered` for a gate that was waiting and `record` for a record, and `present`
+  and `woken` are what delivery says of the worker, as an answered gate's do.
+- **Known limits.** (a) With no waiting diff or verify gate and no diff record (for example the waiting diff gate was approved and the worker has not put out a record since) the hand-over is refused with `no-gate`; the points can be sent once the worker opens its next diff record or gate.
+  (b) The sent marks are written by the page after the 200, so if that save is lost the drafts show unsent again and could be sent twice (the timeline shows both hand-overs).
+  (c) An older binary that rewrites a record drops `handoff` from earlier answers, which then show as a plain send-back.
+  (d) Points kept from an earlier read (the drafts' `fromSha` differs from the read-through's) are of that head, and the comment says so (`handoff.draftsSha`).
+  (e) A waiting gate the hub opened for the task (`dispatch`, `issue`, `relay`) is not looked at when choosing the gate, since the worker does not wait on it.
+  (f) A gate answered or closed by somebody else between choosing it and answering is refused with `gate-changed` (409); nothing was sent.

@@ -4,12 +4,19 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use std::io::Write;
+
+use super::resident::{read_mode_of, refusal_status};
 use super::routes::HubAction;
 use super::sessions::{input_of, text};
 use crate::board::hub::{Reopened, close, find, reset, restart, start, start_for_key, stop};
+use crate::board::review::HandRefused;
 use crate::board::{Server, settings_now};
+use crate::infra::http;
 use crate::jules::{findings as jules_findings, relay as jules_relay};
 use crate::lifecycle::hub::{HubStart, TabOutcome};
+use crate::lifecycle::review::TaskAskError;
+use crate::others::Requested;
 
 // ── the two things the board can change ──────────────────────────────
 
@@ -35,6 +42,153 @@ pub(super) fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Valu
     let patch = crate::task::TaskPatch::from_json(&input)?;
     let (task, handed) = crate::task::update(&server.ctx, id, &patch, hand_over)?;
     Ok(json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) }))
+}
+
+/// `POST /api/tasks/<id>/ai`: queue a read-through of the task's PR (or, with `mode` split, a split
+/// proposal) as a request for one is, and start the readers next in line. Writes its own status:
+/// a task that is not there is 404, one with no PR yet 409 `no-pr`, a PR this cannot read 400, and
+/// a refusal the code-review hub or the record gives is what `POST /api/others/ai` answers for it.
+pub(super) fn ask_for_task_read(
+    server: &Server,
+    id: &str,
+    body: &[u8],
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    // An empty body is no options; anything else must be a JSON object. Refused before anything is
+    // read or written.
+    let input: Value = if body.iter().all(u8::is_ascii_whitespace) {
+        json!({})
+    } else {
+        match serde_json::from_slice::<Value>(body) {
+            Ok(input) if input.is_object() => input,
+            Ok(_) => {
+                return http::json(
+                    out,
+                    400,
+                    &json!({ "error": "bad JSON: expected an object" }).to_string(),
+                );
+            }
+            Err(e) => {
+                return http::json(
+                    out,
+                    400,
+                    &json!({ "error": format!("bad JSON: {e}") }).to_string(),
+                );
+            }
+        }
+    };
+    let mode = match read_mode_of(&input) {
+        Ok(mode) => mode,
+        Err(why) => return http::json(out, 400, &json!({ "error": why }).to_string()),
+    };
+    match crate::board::review::ask_for_task(&server.ctx, id, mode) {
+        Ok(asked) => {
+            let (Requested::Queued(record) | Requested::Already(record)) = asked.requested;
+            // `warning` is set when the queue could not be worked after the request was taken.
+            http::json(
+                out,
+                200,
+                &json!({ "record": record, "warning": asked.queue_error.as_deref().map(crate::transport::wording::queue_warning) }).to_string(),
+            )
+        }
+        Err(why) => {
+            let (status, because) = match &why {
+                TaskAskError::NoTask => (404, None),
+                TaskAskError::TaskUnreadable(_) => (500, None),
+                TaskAskError::Syncing => (409, Some("syncing")),
+                TaskAskError::PrChanged => (409, Some("pr-changed")),
+                TaskAskError::NoPr => (409, Some("no-pr")),
+                TaskAskError::NotReadable(_) => (400, None),
+                TaskAskError::Refused(refused) => refusal_status(refused),
+            };
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::task_review_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// `POST /api/tasks/<id>/hand`: hand the drafts of the task's PR to its worker. The body is
+/// `{"pr": "owner/repo#N"}`, the PR the page showed them for. Writes its own status: a body that is
+/// not that is 400, a task that is not there 404, a refusal that is about the state of the task, its
+/// PR or its gates 409 with `why`, and what could not be read or written 500.
+pub(super) fn hand_to_worker(
+    server: &Server,
+    id: &str,
+    body: &[u8],
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    let pr = match serde_json::from_slice::<Value>(body) {
+        Ok(input) if input.is_object() => match input.get("pr").and_then(Value::as_str) {
+            Some(pr) if !pr.trim().is_empty() => pr.to_string(),
+            _ => {
+                return http::json(
+                    out,
+                    400,
+                    &json!({ "error": "the PR the drafts are of is required" }).to_string(),
+                );
+            }
+        },
+        Ok(_) => {
+            return http::json(
+                out,
+                400,
+                &json!({ "error": "bad JSON: expected an object" }).to_string(),
+            );
+        }
+        Err(e) => {
+            return http::json(
+                out,
+                400,
+                &json!({ "error": format!("bad JSON: {e}") }).to_string(),
+            );
+        }
+    };
+    match crate::board::review::hand_to_worker(&server.ctx, id, &pr) {
+        Ok(done) => http::json(
+            out,
+            200,
+            &json!({
+                "gate": { "id": done.gate_id, "kind": done.kind, "shelf": done.shelf },
+                "sent": done.sent,
+                "overall": done.overall,
+                "at": done.at,
+                "present": done.present,
+                "woken": done.woken,
+            })
+            .to_string(),
+        ),
+        Err(why) => {
+            let (status, because) = hand_status(&why);
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::hand_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// The status a refusal to hand the drafts over is answered with, and the `why` the page words it by.
+pub(super) fn hand_status(why: &HandRefused) -> (u16, Option<&'static str>) {
+    match why {
+        HandRefused::NoTask => (404, None),
+        HandRefused::Nothing => (400, None),
+        HandRefused::NoPr => (409, Some("no-pr")),
+        HandRefused::PrChanged => (409, Some("pr-changed")),
+        HandRefused::PrDone => (409, Some("pr-done")),
+        HandRefused::NoRecord => (409, Some("no-record")),
+        HandRefused::NoWorker => (409, Some("no-worker")),
+        HandRefused::NoGate => (409, Some("no-gate")),
+        HandRefused::GateWaiting(_) => (409, Some("gate-waiting")),
+        HandRefused::GateChanged => (409, Some("gate-changed")),
+        HandRefused::Busy => (409, Some("busy")),
+        HandRefused::Unreadable(_) | HandRefused::Failed(_) => (500, None),
+    }
 }
 
 /// The three buttons a card has for the worker behind it: raise its tab, open its worktree in

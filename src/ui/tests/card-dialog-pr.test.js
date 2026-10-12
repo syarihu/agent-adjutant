@@ -48,7 +48,7 @@ function world() {
     cut(read('task-view.js'), /^const HISTORY_LOADING = [^\n]*;/m), cut(read('task-view.js'), /^const DIFF_LOADING = [^\n]*;/m),
     ...['cardDialogChanged', 'cardDialogTaskHtml'].map(n => fnSrc(dlgSrc, n)),
     cut(read('pr-panel.js'), /^const prBoxFocused = [^\n]*;/m),
-    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
+    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'keepReadingPlace'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
     cut(read('pr-dialog.js'), /^const prDialogDrawn = [^\n]*;/m),
     cut(read('pr-dialog.js'), /^const PR_DIALOG_GONE = [^\n]*;\nconst PR_DIALOG_NO_READ = [^\n]*;\nconst PR_DIALOG_NO_SPLIT = [^\n]*;/m),
     "cardDialog.mode = 'review'; cardDialog.subject = 'pr:acme/widget#12';",
@@ -246,6 +246,58 @@ test('only the cards whose markup changed are replaced: a filled diff file keeps
   state("prDialogDrawn.order = ''");
   draw('6分前');
   assert.strictEqual(whole, 3);
+});
+
+test('prDialogPatch keeps what it was last drawn from in the object it is given, so a second content does not share the dialog\'s', () => {
+  const { c, state } = world();
+  let whole = 0;
+  const content = { children: [], replaceChildren(f) { whole++; this.children = f; } };
+  const own = { order: '', html: new Map() };
+  c.own = own;
+  const groups = groupsOf('5分前');
+  const frag = fakeContent(groups);
+  frag.children = frag;
+  c.prDialogPatch(content, frag, groups, own);
+  assert.strictEqual(whole, 1);
+  assert.deepStrictEqual([...own.html.keys()], ['top:facts', 'diff:a.rs']);
+  assert.strictEqual(state('prDialogDrawn.order'), '', 'the dialog\'s own record is not touched');
+  content.children = fakeContent(groups);
+  const again = fakeContent(groupsOf('6分前'));
+  again.children = again;
+  c.prDialogPatch(content, again, groupsOf('6分前'), own);
+  assert.strictEqual(whole, 1, 'patched against its own record, not replaced');
+  assert.strictEqual(content.children[0].cards[0].html, '6分前');
+});
+
+test('keepReadingPlace puts back the open details and the card at the top, and only the details when asked to', () => {
+  const { c } = world();
+  const detail = open => ({ open });
+  const card = (key, top, details) => ({ dataset: { cdCard: key }, querySelectorAll: () => details, getBoundingClientRect: () => ({ top, bottom: top + 100 }) });
+  const a = card('a', -150, [detail(true)]);
+  const b = card('b', 20, [detail(false), detail(true)]);
+  const body = { scrollTop: 300, getBoundingClientRect: () => ({ top: 0 }) };
+  const content = { querySelectorAll: () => [a, b] };
+  c.args = [body, content];
+  const restore = vm.runInContext('keepReadingPlace(...args)', c);
+  // The page is drawn anew: details closed, the scroll lost, the card moved by 60px.
+  a.querySelectorAll = () => [detail(false)];
+  const fresh = [detail(false), detail(false)];
+  b.querySelectorAll = () => fresh;
+  body.scrollTop = 0;
+  b.getBoundingClientRect = () => ({ top: 80, bottom: 180 });
+  restore(false);
+  assert.strictEqual(fresh[1].open, true);
+  assert.strictEqual(body.scrollTop, 0, 'asked for the details only');
+  restore();
+  assert.strictEqual(body.scrollTop, 360, 'the scroll, then the card that was at the top back where it was (20px under the top)');
+  // Where nothing can be measured (a dialog still closed) only the scroll top is kept.
+  body.scrollTop = 40;
+  const dead = vm.runInContext('keepReadingPlace', c)(body, content, false);
+  body.scrollTop = 0;
+  fresh[1].open = false;
+  dead();
+  assert.strictEqual(body.scrollTop, 40);
+  assert.strictEqual(fresh[1].open, false);
 });
 
 test('a re-read arriving while the diff loads marks the changed cards of the read, and the diff arriving after is not marked', () => {

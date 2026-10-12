@@ -16,10 +16,12 @@ const cut = (src, re) => {
 };
 
 function world(multiBoard = true) {
-  const c = vm.createContext({ URLSearchParams, TOKEN: 't', multiBoard, nav: { board: null, view: 'agent', task: null, pane: 'detail' }, location: {} });
+  const c = vm.createContext({ URLSearchParams, TOKEN: 't', multiBoard, nav: { board: null, view: 'agent', task: null, pane: 'detail' }, location: {},
+    HUB_REF: 'hub:', SESS_REF: 'session:', PARENT_REF: 'parent:', WORK_GATE_REF: 'gate:' });
   vm.runInContext([
     read('nav-legacy.js'),
     cut(read('core.js'), /^const PR_REF = [^\n]*;\nconst isPrRef = [^\n]*;\nconst prIdOfRef = [^\n]*;\nconst PR_PANES = [^\n]*;/m),
+    cut(read('core.js'), /^const READ_PANES = [^\n]*;\n\/\* The ref of a task[^\n]*\nconst isTaskRef = [^\n]*;/m),
     cut(navSrc, /^const PANES = [^\n]*;/m),
     cut(navSrc, /^const DEFAULT_MULTI_VIEW = [^\n]*;/m),
     cut(navSrc, /^function parseUrl\([^)]*\) \{[\s\S]*?\n\}/m),
@@ -77,4 +79,23 @@ test('a malformed escape in the address does not throw', () => {
 test('a board\'s own address does not keep a PR: it never reads the records', () => {
   const w = world();
   assert.strictEqual(w.parse(`/b/acme/?token=t&view=work&task=${enc}`).task, null);
+});
+
+test('a task\'s read-through panes are kept for a task in the work view, and for nothing else', () => {
+  const w = world();
+  for (const pane of ['ai', 'ai-drafts']) {
+    assert.deepStrictEqual(w.parse(`/b/acme/?token=t&view=work&task=t1&pane=${pane}`), { board: 'acme', view: 'work', task: 't1', pane });
+    assert.strictEqual(w.urlOf({ board: 'acme', view: 'work', task: 't1', pane }), `/b/acme/?token=t&view=work&task=t1&pane=${pane}`);
+  }
+  // Outside the work view the task has the board's panes only.
+  assert.strictEqual(w.parse('/b/acme/?token=t&task=t1&pane=ai').pane, 'detail');
+  assert.strictEqual(w.parse('/b/acme/?token=t&view=human&task=t1&pane=ai-drafts').pane, 'detail');
+  // Not a task: a hub, a session, a parent, a gate, a review request, or nothing.
+  for (const ref of ['hub:h1', 'session:s1', 'parent:acme%2Fw%231', 'gate:acme%2Fg1']) {
+    assert.strictEqual(w.parse(`/b/acme/?token=t&view=work&task=${ref}&pane=ai`).pane, 'detail', ref);
+  }
+  assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=ai`).pane, 'detail');
+  assert.strictEqual(w.parse('/b/acme/?token=t&view=work&pane=ai').pane, 'detail');
+  // On 「すべて」 the task is dropped, and so is its pane.
+  assert.strictEqual(w.parse('/?token=t&view=work&task=t1&pane=ai').pane, 'detail');
 });

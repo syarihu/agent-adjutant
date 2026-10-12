@@ -7,8 +7,8 @@ use serde::Serialize;
 use crate::infra::clock::now_secs;
 use crate::kernel::identity::review_hub_at;
 use crate::lifecycle::hub::hub_startable;
-use crate::others::{LastSync, MAX_READING, Record, last_sync, list};
-use crate::registry;
+use crate::others::{LastSync, MAX_READING, Record, last_sync, list, record};
+use crate::registry::{self, Context};
 
 /// The document `GET /api/others` sends.
 #[derive(Debug, Clone, Serialize)]
@@ -48,13 +48,16 @@ pub struct ReviewHub {
 
 /// Read-only: a sync is the only thing that writes these records. The hub's state is a read
 /// too.
+///
+/// A task's PR that nobody requested of you is left out of `records`, which is the list; its
+/// reader still counts in `hub`, which says what the hub is doing.
 pub fn others(root: &Path) -> OthersState {
-    let records = list(root);
-    let hub = Some(review_hub(root, &records));
+    let all = list(root);
+    let hub = Some(review_hub(root, &all));
     OthersState {
         now: now_secs(),
         last_sync: last_sync(root),
-        records,
+        records: all.into_iter().filter(Record::on_review_list).collect(),
         hub,
     }
 }
@@ -82,4 +85,41 @@ fn review_hub(root: &Path, records: &[Record]) -> ReviewHub {
         startable,
         can_read: up && tmux,
     }
+}
+
+/// The read-through of a task's PR, as `GET /api/tasks/<id>/ai` sends it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRead {
+    /// The task's PR as `owner/repo#N`; `None` when the task has none, or one this cannot read.
+    pub pr: Option<String>,
+    /// The PR's record: `None` when it was never asked to be read and is not on the list either.
+    /// Found through the task's current PR, so a task that gets another PR shows that one's.
+    pub record: Option<Record>,
+    /// The code-review hub: whether a read can be asked for now, and how busy its places are.
+    pub hub: ReviewHub,
+}
+
+/// What the task `task_id` of the hub `ctx` is for has of a read: its PR, the record of it (whether
+/// the record is linked to the task or only requested of you) and the hub. Read-only. Takes the
+/// `Context` and not a root and a slug only because a task's bare `#N` is read against its
+/// repository's origin.
+pub fn task_read(ctx: &Context, task_id: &str) -> Result<TaskRead, String> {
+    let root = &ctx.state;
+    let task = crate::task::get(root, &ctx.repo.slug, task_id)?;
+    let pr = crate::task::pr_refs(ctx, std::slice::from_ref(&task))
+        .into_iter()
+        .next()
+        .flatten()
+        // The records are keyed by owner and repository only: a PR on another host would find another's.
+        .filter(|pr| pr.host == "github.com");
+    let record = match &pr {
+        Some(pr) => record(root, pr)?,
+        None => None,
+    };
+    Ok(TaskRead {
+        pr: pr.as_ref().map(|pr| format!("{}#{}", pr.nwo(), pr.number)),
+        record,
+        hub: review_hub(root, &list(root)),
+    })
 }

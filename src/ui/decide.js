@@ -86,7 +86,9 @@ function decideHtml(g) {
         <span>${decisionLabel('changes', g.kind)}</span>
       </h3>` +
       ((g.answers || []).length ? `<ul style="margin:0 0 12px;padding-left:18px">${g.answers.map(a =>
-        `<li><span style="color:var(--md-sys-color-outline)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
+        a.handoff
+          ? `<li><span style="color:var(--md-sys-color-outline)">${ago(a.answeredAt)}に</span> ${esc(handoffText(a.handoff))}${handoffDetailsHtml(a.comment)}</li>`
+          : `<li><span style="color:var(--md-sys-color-outline)">${ago(a.answeredAt)}に差し戻し</span>${a.comment ? ` — ${esc(a.comment)}` : ''}</li>`).join('')}</ul>` : '') +
       `<div class="field" style="margin-bottom:12px">
         <label style="font-size:12px;font-weight:600;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px;display:block;">コメント（何を直してほしいか）</label>
         <textarea class="gate-comment" placeholder="理由を入力してください..."></textarea>
@@ -466,6 +468,13 @@ function dropGate(g) {
   if (listed || row) render();
 }
 
+/* What a message left in a worker's outbox came to, as the note of an answer says it: `data` is the answer's `present` and `woken`.
+   Shared with handing a task's drafts to its worker, which leaves its message the same way. */
+function outboxNote(done, data) {
+  return done + (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
+                                                                       : ' → worker は停止中のため、回答は outbox で保持されます');
+}
+
 async function answer(decision, choice, id, commentOverride = null) {
   const g = gateByRef(id);
   if (!g) return false;
@@ -487,9 +496,7 @@ async function answer(decision, choice, id, commentOverride = null) {
     const toHub = g.answeredByHub;
     note(line, false, toHub
       ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
-      : `${baseName(g.worktree)} の outbox に追記` +
-        (data.woken ? ' → worker に通知しました' : data.present ? ' → worker は次回の outbox 確認時に読み込みます'
-                                                               : ' → worker は停止中のため、回答は outbox で保持されます'));
+      : outboxNote(`${baseName(g.worktree)} の outbox に追記`, data));
     // A record stays, with this answer appended, so it stays in view to show that it went.
     if (g.wait === false && box) box.value = '';
     else gateAnswered(g, key);

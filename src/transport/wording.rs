@@ -1,9 +1,10 @@
 use serde_json::{Value, json};
 
+use crate::board::review::HandRefused;
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
-use crate::lifecycle::review::{AskError, CloseError};
+use crate::lifecycle::review::{AskError, CloseError, TaskAskError};
 use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
 use crate::registry::Context;
 use crate::task::{self, Checked, PrState};
@@ -117,6 +118,45 @@ pub fn review_refusal(why: &AskError) -> String {
         AskError::NoRecord => "no such pull request on the list: run 「同期」 on the board first".to_string(),
         AskError::Done => "that pull request is done".to_string(),
         AskError::Failed(why) => why.clone(),
+    }
+}
+
+/// Why asking for a read-through of a task's PR was refused, as the CLI and the board both say it.
+pub fn task_review_refusal(why: &TaskAskError) -> String {
+    match why {
+        TaskAskError::NoTask => "no such task".to_string(),
+        TaskAskError::TaskUnreadable(why) => why.clone(),
+        TaskAskError::Syncing => "a sync is running; ask again once it ends".to_string(),
+        TaskAskError::PrChanged => "the task's PR changed while it was read; ask again".to_string(),
+        TaskAskError::NoPr => "the task has no pull request yet".to_string(),
+        TaskAskError::NotReadable(pr) => {
+            format!("not a pull request on github.com this can read: {pr}")
+        }
+        TaskAskError::Refused(why) => review_refusal(why),
+    }
+}
+
+/// Why the drafts of a task's PR were not handed to its worker, as the board says it.
+pub fn hand_refusal(why: &HandRefused) -> String {
+    match why {
+        HandRefused::NoTask => "no such task".to_string(),
+        HandRefused::NoPr => "the task has no pull request yet".to_string(),
+        HandRefused::PrChanged => "the task's PR is not the one the drafts are of".to_string(),
+        HandRefused::NoWorker => {
+            "the task is handed to Jules: it has no worker to tell".to_string()
+        }
+        HandRefused::NoRecord => "this pull request has not been read".to_string(),
+        HandRefused::PrDone => "the pull request is merged or closed".to_string(),
+        HandRefused::Nothing => "there is nothing to hand over".to_string(),
+        HandRefused::GateChanged => "the gate was answered meanwhile; nothing was sent".to_string(),
+        HandRefused::Busy => "the drafts are being handed over already".to_string(),
+        HandRefused::NoGate => {
+            "the task has no diff waiting and no diff record to send them back on".to_string()
+        }
+        HandRefused::GateWaiting(kind) => {
+            format!("the task has a {} waiting: answer it first", kind.as_str())
+        }
+        HandRefused::Unreadable(why) | HandRefused::Failed(why) => why.clone(),
     }
 }
 

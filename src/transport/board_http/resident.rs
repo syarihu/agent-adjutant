@@ -175,6 +175,28 @@ pub(super) fn route_resident(
     }
 }
 
+/// The mode a request for a read names (`mode` of its body): absent, null and `read` are a
+/// read-through, `split` a split proposal; anything else, a `mode` that is not text included, is
+/// refused by saying so, and the caller answers 400 before anything is written.
+pub(super) fn read_mode_of(input: &serde_json::Value) -> Result<ReadMode, &'static str> {
+    let wire = match input.get("mode") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(value.as_str().unwrap_or("")),
+    };
+    ReadMode::from_wire(wire).ok_or(crate::transport::wording::unknown_read_mode())
+}
+
+/// The status a refused request for a read answers with, and the `why` the page tells it by.
+pub(super) fn refusal_status(why: &AskError) -> (u16, Option<&'static str>) {
+    match why {
+        AskError::HubStopped => (409, Some("hub-stopped")),
+        AskError::NotStartable => (409, Some("not-startable")),
+        AskError::NoRecord => (404, None),
+        AskError::Done => (400, None),
+        AskError::Failed(_) => (500, None),
+    }
+}
+
 /// `POST /api/others/ai`: queue a read-through of a PR (or, with `mode` split, a split proposal),
 /// and start the readers next in line.
 fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
@@ -187,17 +209,9 @@ fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std
         );
     };
     // Refused before anything is written, like an id that names no PR.
-    // A `mode` that is not text is as unknown as a word that is not one of the two.
-    let wire = match input.get("mode") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(value) => Some(value.as_str().unwrap_or("")),
-    };
-    let Some(mode) = ReadMode::from_wire(wire) else {
-        return http::json(
-            out,
-            400,
-            &json!({ "error": crate::transport::wording::unknown_read_mode() }).to_string(),
-        );
+    let mode = match read_mode_of(&input) {
+        Ok(mode) => mode,
+        Err(why) => return http::json(out, 400, &json!({ "error": why }).to_string()),
     };
     match crate::board::review::request(&resident.root, id, mode) {
         Ok(asked) => {
@@ -215,13 +229,7 @@ fn ask_for_read(resident: &Resident, req: &Request, out: &mut impl Write) -> std
             &json!({ "error": format!("not a pull request: {id}") }).to_string(),
         ),
         Err(RequestRefused::Refused(why)) => {
-            let (status, because) = match &why {
-                AskError::HubStopped => (409, Some("hub-stopped")),
-                AskError::NotStartable => (409, Some("not-startable")),
-                AskError::NoRecord => (404, None),
-                AskError::Done => (400, None),
-                AskError::Failed(_) => (500, None),
-            };
+            let (status, because) = refusal_status(&why);
             http::json(
                 out,
                 status,

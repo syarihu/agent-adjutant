@@ -611,19 +611,16 @@ function cardDialogFill(html, groups, refOfId) {
 }
 
 const cardDialogCardEl = key => [...cardDialogContent().querySelectorAll('[data-cd-card]')].find(el => el.dataset.cdCard === key) || null;
-const cardDialogGroupEl = key => [...cardDialogContent().querySelectorAll('[data-cd-group]')].find(el => el.dataset.cdGroup === key) || null;
 
-/* Brings a card (or a group) to the top and puts focus on it; `flash` marks it for a moment. */
-function cardDialogGo(cardKey, groupKey, flash) {
-  const el = cardKey ? cardDialogCardEl(cardKey) : cardDialogGroupEl(groupKey);
-  if (!el) return false;
+/* Brings a card (or a group) of `content` to the top of `body` and puts focus on it; `flash` marks it for a moment. The card (and
+   `body`'s scroll top, where it is left) come back, or null when there is none: the dialog and a task's read-through both use it. */
+function scrollToCard(content, body, cardKey, groupKey, flash) {
+  const el = cardKey
+    ? [...content.querySelectorAll('[data-cd-card]')].find(x => x.dataset.cdCard === cardKey)
+    : [...content.querySelectorAll('[data-cd-group]')].find(x => x.dataset.cdGroup === groupKey);
+  if (!el) return null;
   el.scrollIntoView({ block: 'start' });
   el.focus({ preventScroll: true });
-  // The person has moved on by hand: a target still waiting for its data is not theirs any more, and the
-  // index marks where they went until they scroll.
-  cardDialog.target = null;
-  cardDialog.pinned = groupKey || cardDialog.groups.find(g => g.cards.some(c => c.key === cardKey))?.key || null;
-  cardDialog.pinnedAt = cardDialogEl().querySelector('.card-dialog-body').scrollTop;
   if (flash) {
     el.classList.remove('cd-flash');
     void el.offsetWidth;
@@ -631,6 +628,16 @@ function cardDialogGo(cardKey, groupKey, flash) {
     // Under reduced motion nothing animates, so no animationend comes.
     setTimeout(() => el.classList.remove('cd-flash'), 1600);
   }
+  return { el, at: body.scrollTop };
+}
+function cardDialogGo(cardKey, groupKey, flash) {
+  const hit = scrollToCard(cardDialogContent(), cardDialogEl().querySelector('.card-dialog-body'), cardKey, groupKey, flash);
+  if (!hit) return false;
+  // The person has moved on by hand: a target still waiting for its data is not theirs any more, and the
+  // index marks where they went until they scroll.
+  cardDialog.target = null;
+  cardDialog.pinned = groupKey || cardDialog.groups.find(g => g.cards.some(c => c.key === cardKey))?.key || null;
+  cardDialog.pinnedAt = hit.at;
   cardDialogSpy();
   return true;
 }
@@ -654,28 +661,38 @@ function cardDialogFollowDock(groupKey) {
   if (!ref || ref === cardDialog.dock || cardDialog.answering || cardDialog.target || (document.activeElement?.matches?.('.card-dialog-dock .gate-comment') && document.activeElement.value)) return;
   cardDialogSetDock(ref);
 }
-function cardDialogSpy() {
-  if (!cardDialogIndexed()) return;
-  const dlg = cardDialogEl();
-  const body = dlg.querySelector('.card-dialog-body');
-  const sections = [...cardDialogContent().querySelectorAll('[data-cd-group]')];
-  if (!sections.length) return;
+/* Marks in `index` the group of `content` that `body` is reading, and brings it into view in the index when it changed from `was`:
+   the one a jump left (`pinned`) while there is one, else the last whose top has reached the top of the scroll. `{ key, changed }`,
+   or null where there is no group. */
+function markIndexCurrent({ index, body, content, pinned, was }) {
+  const sections = [...content.querySelectorAll('[data-cd-group]')];
+  if (!sections.length) return null;
   const top = body.getBoundingClientRect().top;
   const tops = sections.map(el => el.getBoundingClientRect().top - top + body.scrollTop);
   // At the very end the last group may be too short to reach the top.
   const atEnd = body.scrollTop > 0 && body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
-  const pinned = cardDialog.pinned && sections.find(el => el.dataset.cdGroup === cardDialog.pinned);
-  const key = (pinned || sections[atEnd ? sections.length - 1 : cardDialogActiveGroup(tops, body.scrollTop)]).dataset.cdGroup;
-  const changed = key !== cardDialog.active;
-  cardDialog.active = key;
-  if (changed) cardDialogFollowDock(key);
+  const pin = pinned && sections.find(el => el.dataset.cdGroup === pinned);
+  const key = (pin || sections[atEnd ? sections.length - 1 : cardDialogActiveGroup(tops, body.scrollTop)]).dataset.cdGroup;
+  const changed = key !== was;
   let current = null;
-  dlg.querySelectorAll('.card-dialog-index [data-cd-go-group]').forEach(b => {
+  index.querySelectorAll('[data-cd-go-group]').forEach(b => {
     if (b.hasAttribute('data-cd-go-card')) return;
     if (b.dataset.cdGoGroup === key) { b.setAttribute('aria-current', 'location'); current = b; }
     else b.removeAttribute('aria-current');
   });
   if (changed && current) current.scrollIntoView({ block: 'nearest' });
+  return { key, changed };
+}
+function cardDialogSpy() {
+  if (!cardDialogIndexed()) return;
+  const dlg = cardDialogEl();
+  const spied = markIndexCurrent({
+    index: dlg.querySelector('.card-dialog-index'), body: dlg.querySelector('.card-dialog-body'), content: cardDialogContent(),
+    pinned: cardDialog.pinned, was: cardDialog.active,
+  });
+  if (!spied) return;
+  cardDialog.active = spied.key;
+  if (spied.changed) cardDialogFollowDock(spied.key);
   cardDialogSeeUpdated();
 }
 // A scroll by hand ends the wait for a target; the dialog's own scrolling does not come through these.

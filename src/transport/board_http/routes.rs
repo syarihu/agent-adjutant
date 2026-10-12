@@ -11,15 +11,16 @@ use crate::infra::http::{self, Request};
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{page_rings, refuse};
 use super::handlers::{
-    act_on_hub, act_on_worktree, answer_gate, create_task, fetch_issue, focus_hub, nudge_hub,
-    refresh_tasks, relay_findings, review_findings, start_parent_hub, update_task, wake_hub,
+    act_on_hub, act_on_worktree, answer_gate, ask_for_task_read, create_task, fetch_issue,
+    focus_hub, hand_to_worker, nudge_hub, refresh_tasks, relay_findings, review_findings,
+    start_parent_hub, update_task, wake_hub,
 };
 use super::sessions::{
     clean_up_session, git_of_session, link_session, open_session, restart_session, resume_session,
     start_session,
 };
 use crate::board::Server;
-use crate::board::view::{Lines, state, task_history};
+use crate::board::view::{Lines, state, task_history, task_read};
 
 // ── routing ──────────────────────────────────────────────────────────
 
@@ -50,6 +51,12 @@ pub(super) enum Route<Id = String> {
     TaskFindings(String),
     RelayFindings(String),
     FetchIssue(String),
+    /// `GET <id>/ai`: the read-through of the task's PR.
+    TaskRead(String),
+    /// `POST <id>/ai`: ask for it.
+    AskTaskRead(String),
+    /// `POST <id>/hand`: hand the drafts of the task's PR to its worker.
+    HandToWorker(String),
     UpdateTask(String),
     CreateTask,
     Refresh,
@@ -87,12 +94,16 @@ pub(super) enum HubAction {
 impl<Id> Route<Id> {
     /// The routes a board a hub serves answers 404 for: reopening a session, opening a
     /// terminal and starting or stopping a hub reach outside the repository's own records, and
-    /// a board a hub serves lives and dies with that hub. The terminal assets are only for the
+    /// a board a hub serves lives and dies with that hub. A task's read-through is the code-review hub's,
+    /// which only the resident server reaches. The terminal assets are only for the
     /// resident's terminal.
     pub(super) fn resident_only(&self) -> bool {
         matches!(
             self,
             Route::Session(..)
+                | Route::TaskRead(_)
+                | Route::AskTaskRead(_)
+                | Route::HandToWorker(_)
                 | Route::StartParentHub
                 | Route::Hub(..)
                 | Route::Terminal(_)
@@ -173,6 +184,10 @@ impl<'a> Route<&'a str> {
             ("GET", "findings") => Route::TaskFindings(id()?),
             ("POST", "relay") => Route::RelayFindings(id()?),
             ("POST", "issue") => Route::FetchIssue(id()?),
+            // Two segments only: `POST /api/tasks/ai` still updates the task named `ai`.
+            ("GET", "ai") if segments.len() == 2 => Route::TaskRead(id()?),
+            ("POST", "ai") if segments.len() == 2 => Route::AskTaskRead(id()?),
+            ("POST", "hand") if segments.len() == 2 => Route::HandToWorker(id()?),
             ("POST", _) => Route::UpdateTask(last.to_string()),
             _ => return Ok(None),
         }))
@@ -229,6 +244,9 @@ impl<'a> Route<&'a str> {
             Route::TaskFindings(id) => Route::TaskFindings(id),
             Route::RelayFindings(id) => Route::RelayFindings(id),
             Route::FetchIssue(id) => Route::FetchIssue(id),
+            Route::TaskRead(id) => Route::TaskRead(id),
+            Route::AskTaskRead(id) => Route::AskTaskRead(id),
+            Route::HandToWorker(id) => Route::HandToWorker(id),
             Route::UpdateTask(id) => Route::UpdateTask(id),
             Route::CreateTask => Route::CreateTask,
             Route::Refresh => Route::Refresh,
@@ -276,6 +294,9 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::TaskFindings(id) => reply(out, review_findings(server, &id)),
         Route::RelayFindings(id) => reply(out, relay_findings(server, &id, &req.body)),
         Route::FetchIssue(id) => reply(out, fetch_issue(server, &id)),
+        Route::TaskRead(id) => reply(out, task_read(&server.ctx, &id)),
+        Route::AskTaskRead(id) => ask_for_task_read(server, &id, &req.body, out),
+        Route::HandToWorker(id) => hand_to_worker(server, &id, &req.body, out),
         Route::UpdateTask(id) => reply(out, update_task(server, &id, &req.body)),
         Route::CreateTask => reply(out, create_task(server, &req.body)),
         Route::Refresh => reply(out, refresh_tasks(server)),

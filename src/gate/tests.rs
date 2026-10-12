@@ -419,6 +419,8 @@ fn a_record_with_its_structured_fields_reads_back_the_same() {
         decision: "changes".to_string(),
         comment: Some("Please look at it again".to_string()),
         answered_at: "20260922T050000Z".to_string(),
+        handoff: None,
+        extra: serde_json::Map::new(),
     }];
     save(&ctx, Shelf::Record, &gate).unwrap();
     assert_eq!(
@@ -593,4 +595,273 @@ fn absent_options_fall_back_to_the_kinds_defaults() {
             .unwrap();
     let (gate, _) = open(&ctx, request).unwrap();
     assert_eq!(gate.options, Kind::Question.default_options());
+}
+
+// ── sending the points of a read-through ──
+
+const TASK: &str = "20260922T041000Z-cache";
+
+fn handoff() -> ReadHandoff {
+    ReadHandoff {
+        pr: "acme/widget#7".to_string(),
+        sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+        count: 0,
+        overall: false,
+        drafts_sha: None,
+        extra: serde_json::Map::new(),
+    }
+}
+
+fn point(
+    key: &str,
+    path: Option<&str>,
+    line: Option<u32>,
+    body: &str,
+    by_reader: bool,
+) -> Instruction {
+    Instruction {
+        key: key.to_string(),
+        path: path.map(str::to_string),
+        line,
+        start_line: None,
+        left: false,
+        body: body.to_string(),
+        by_reader,
+    }
+}
+
+/// A gate of `kind` for the task, whose answers go to a worktree inside the sandbox.
+fn task_gate(ctx: &Context, id: &str, kind: Kind, wait: bool) -> Gate {
+    let wt = ctx.state.join("wt");
+    std::fs::create_dir_all(&wt).unwrap();
+    let mut g = gate(kind);
+    g.id = id.to_string();
+    g.worktree = wt.display().to_string();
+    g.task = Some(TASK.to_string());
+    g.wait = wait;
+    g.opened_at = id.split('-').next().unwrap().to_string();
+    save(ctx, if wait { Shelf::Open } else { Shelf::Record }, &g).unwrap();
+    g
+}
+
+fn outbox(ctx: &Context) -> String {
+    let path = ctx.state.join("wt/.claude/adjutant-outbox.md");
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+#[test]
+fn a_waiting_diff_gate_is_answered_and_archived_with_the_points() {
+    let (_sandbox, ctx) = hub();
+    task_gate(&ctx, "20260922T041233Z-diff", Kind::Diff, true);
+    let items = [
+        point("a", Some("src/a.rs"), Some(40), "Check the bound", true),
+        point("b", None, None, "Say why in the PR body", false),
+    ];
+    let sent = send_back_read(&ctx, TASK, &items, Some(" Mostly fine "), handoff()).unwrap();
+    assert_eq!(sent.shelf, Shelf::Answered);
+    assert_eq!(sent.gate.decision.as_deref(), Some("changes"));
+    let h = sent.gate.handoff().unwrap();
+    assert_eq!((h.count, h.overall), (2, true));
+    assert!(!exists(
+        &ctx.state,
+        &ctx.repo.slug,
+        Shelf::Open,
+        &sent.gate.id
+    ));
+    assert!(exists(
+        &ctx.state,
+        &ctx.repo.slug,
+        Shelf::Answered,
+        &sent.gate.id
+    ));
+
+    let out = outbox(&ctx);
+    assert!(
+        out.contains("[gate 20260922T041233Z-diff] changes"),
+        "{out}"
+    );
+    assert!(out.contains("## From       AI 下読み acme/widget#7 @ 0123456 (a separate read-only reader; the person chose and sent these)"), "{out}");
+    assert!(
+        out.contains("sends you 2 points. Lines are of 0123456"),
+        "{out}"
+    );
+    assert!(
+        out.contains("### 1. src/a.rs:40 (AI)\nCheck the bound"),
+        "{out}"
+    );
+    assert!(
+        out.contains("### 2. the whole PR\nSay why in the PR body"),
+        "{out}"
+    );
+    assert!(out.contains("### Overall\nMostly fine"), "{out}");
+    // The header is after the task line and before the comment.
+    assert!(out.find("## task").unwrap() < out.find("## From").unwrap());
+    assert!(out.find("## From").unwrap() < out.find("## Comment").unwrap());
+}
+
+#[test]
+fn a_waiting_verify_gate_is_taken_before_a_record() {
+    let (_sandbox, ctx) = hub();
+    task_gate(&ctx, "20260922T041000Z-diff-record", Kind::Diff, false);
+    task_gate(&ctx, "20260922T041233Z-verify", Kind::Verify, true);
+    let items = [point("a", Some("src/a.rs"), None, "x", false)];
+    let sent = send_back_read(&ctx, TASK, &items, None, handoff()).unwrap();
+    assert_eq!(sent.gate.id, "20260922T041233Z-verify");
+    assert!(outbox(&ctx).contains("### 1. src/a.rs (the file)"));
+    // The record was not written.
+    let record = load(
+        &ctx.state,
+        &ctx.repo.slug,
+        Shelf::Record,
+        "20260922T041000Z-diff-record",
+    )
+    .unwrap();
+    assert!(record.answers.is_empty());
+}
+
+#[test]
+fn the_newest_diff_record_gets_the_answer_appended() {
+    let (_sandbox, ctx) = hub();
+    task_gate(&ctx, "20260922T040000Z-diff-record", Kind::Diff, false);
+    task_gate(&ctx, "20260922T041233Z-diff-record", Kind::Diff, false);
+    let mut left = point("a", Some("src/a.rs"), Some(12), "old", false);
+    left.start_line = Some(10);
+    left.left = true;
+    let sent = send_back_read(&ctx, TASK, &[left], None, handoff()).unwrap();
+    assert_eq!(sent.shelf, Shelf::Record);
+    assert_eq!(sent.gate.id, "20260922T041233Z-diff-record");
+    let stored = load(&ctx.state, &ctx.repo.slug, Shelf::Record, &sent.gate.id).unwrap();
+    assert_eq!(stored.answers.len(), 1);
+    let h = stored.answers[0].handoff.clone().unwrap();
+    assert_eq!((h.count, h.overall), (1, false));
+    assert!(outbox(&ctx).contains("### 1. src/a.rs:10-12 (old side)"));
+    let older = load(
+        &ctx.state,
+        &ctx.repo.slug,
+        Shelf::Record,
+        "20260922T040000Z-diff-record",
+    )
+    .unwrap();
+    assert!(older.answers.is_empty());
+    assert!(!exists(
+        &ctx.state,
+        &ctx.repo.slug,
+        Shelf::Answered,
+        &sent.gate.id
+    ));
+}
+
+#[test]
+fn a_waiting_gate_of_another_kind_refuses_and_writes_nothing() {
+    for kind in [Kind::Plan, Kind::Question, Kind::Result] {
+        let (_sandbox, ctx) = hub();
+        task_gate(&ctx, "20260922T041000Z-diff-record", Kind::Diff, false);
+        task_gate(&ctx, "20260922T041233Z-x", kind, true);
+        let items = [point("a", None, None, "x", false)];
+        let err = send_back_read(&ctx, TASK, &items, None, handoff()).unwrap_err();
+        assert_eq!(err, SendBackRefused::GateWaiting { kind });
+        assert_eq!(outbox(&ctx), "");
+        let record = load(
+            &ctx.state,
+            &ctx.repo.slug,
+            Shelf::Record,
+            "20260922T041000Z-diff-record",
+        )
+        .unwrap();
+        assert!(record.answers.is_empty());
+        assert!(exists(
+            &ctx.state,
+            &ctx.repo.slug,
+            Shelf::Open,
+            "20260922T041233Z-x"
+        ));
+    }
+}
+
+#[test]
+fn no_diff_gate_or_record_refuses_and_an_answered_gate_is_not_written_to() {
+    let (_sandbox, ctx) = hub();
+    let items = [point("a", None, None, "x", false)];
+    assert_eq!(
+        send_back_read(&ctx, TASK, &items, None, handoff()).unwrap_err(),
+        SendBackRefused::NoGate
+    );
+    // Another task's record, a verify record and an answered gate are not the task's diff record.
+    let mut other = task_gate(&ctx, "20260922T041233Z-diff-record", Kind::Diff, false);
+    other.task = Some("another".to_string());
+    save(&ctx, Shelf::Record, &other).unwrap();
+    task_gate(&ctx, "20260922T041300Z-verify-record", Kind::Verify, false);
+    let answered = task_gate(&ctx, "20260922T041400Z-diff", Kind::Diff, true);
+    archive(&ctx, &answered).unwrap();
+    assert_eq!(
+        send_back_read(&ctx, TASK, &items, None, handoff()).unwrap_err(),
+        SendBackRefused::NoGate
+    );
+    assert_eq!(outbox(&ctx), "");
+}
+
+#[test]
+fn nothing_chosen_is_refused() {
+    let (_sandbox, ctx) = hub();
+    task_gate(&ctx, "20260922T041233Z-diff", Kind::Diff, true);
+    assert_eq!(
+        send_back_read(&ctx, TASK, &[], Some("  "), handoff()).unwrap_err(),
+        SendBackRefused::Nothing
+    );
+    assert_eq!(outbox(&ctx), "");
+}
+
+#[test]
+fn keys_this_binary_does_not_know_survive_on_an_answer_and_a_gate() {
+    let answer: Answer = serde_json::from_value(json!({
+        "decision": "changes", "answeredAt": "20260922T041233Z",
+        "handoff": {"pr": "a/b#1", "count": 1, "futureHandoff": 1},
+        "futureAnswer": "x"
+    }))
+    .unwrap();
+    let back = serde_json::to_value(&answer).unwrap();
+    assert_eq!(back["futureAnswer"], "x");
+    assert_eq!(back["handoff"]["futureHandoff"], 1);
+
+    let mut raw = serde_json::to_value(gate(Kind::Diff)).unwrap();
+    raw["handoff"] = json!({"pr": "a/b#1", "count": 2, "overall": true, "futureHandoff": 1});
+    let g: Gate = serde_json::from_value(raw).unwrap();
+    assert_eq!(g.handoff().unwrap().count, 2);
+    assert_eq!(
+        serde_json::to_value(&g).unwrap()["handoff"]["futureHandoff"],
+        1
+    );
+}
+
+#[test]
+fn without_a_handoff_the_body_has_no_from_line() {
+    assert!(!answer_body(&gate(Kind::Diff), "changes", None, Some("x")).contains("## From"));
+}
+
+#[test]
+fn an_overall_comment_alone_is_said_as_a_comment_and_not_as_no_points() {
+    let (_sandbox, ctx) = hub();
+    task_gate(&ctx, "20260922T041233Z-diff", Kind::Diff, true);
+    send_back_read(&ctx, TASK, &[], Some("Looks close"), handoff()).unwrap();
+    let out = outbox(&ctx);
+    assert!(
+        out.contains("sends you a comment on the whole PR."),
+        "{out}"
+    );
+    assert!(!out.contains("0 points"), "{out}");
+    assert!(out.contains("### Overall\nLooks close"), "{out}");
+}
+
+#[test]
+fn a_gate_settled_by_somebody_else_is_a_typed_refusal_and_writes_nothing() {
+    let (_sandbox, ctx) = hub();
+    let g = task_gate(&ctx, "20260922T041233Z-diff", Kind::Diff, true);
+    // Chosen, then archived by another answer before this one takes the lock.
+    archive(&ctx, &g).unwrap();
+    std::fs::remove_file(path_of(&dir_of(&ctx, Shelf::Open), &g.id)).ok();
+    let err = super::answer::answer_with(&ctx, &g.id, "changes", None, Some("x"), None)
+        .err()
+        .unwrap();
+    assert!(err.1, "{}", err.0);
+    assert_eq!(outbox(&ctx), "");
 }

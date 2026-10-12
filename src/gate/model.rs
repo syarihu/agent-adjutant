@@ -222,6 +222,65 @@ pub struct Answer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
     pub answered_at: String,
+    /// Set when the answer carries points a person chose from a read-through of the task's PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<ReadHandoff>,
+    /// Keys this binary does not know, kept from the file (rule 10).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// One point a person sends the worker from a read-through of the task's PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instruction {
+    /// The draft's key, so the page can mark it sent.
+    pub key: String,
+    /// Absent for a point on the whole PR.
+    pub path: Option<String>,
+    /// Absent for a point on the whole file.
+    pub line: Option<u32>,
+    pub start_line: Option<u32>,
+    /// The line is of the old side of the diff.
+    pub left: bool,
+    pub body: String,
+    /// The reader wrote it and the person kept it.
+    pub by_reader: bool,
+}
+
+/// What an answer says about the read-through it came from: kept on the answer (or on the gate
+/// that was waiting) so the timeline can say it, and so the worker's message can name it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadHandoff {
+    /// The PR, `owner/repo#N`.
+    pub pr: String,
+    /// The head the read-through was made at: the lines the points name are of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+    /// How many points were sent.
+    pub count: u32,
+    /// The comment on the whole was sent too.
+    #[serde(default)]
+    pub overall: bool,
+    /// The head the reader's points that were kept were taken from, when that is not `sha`: the
+    /// person read again and kept drafts of the earlier read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafts_sha: Option<String>,
+    /// Keys this binary does not know, kept from the file (rule 10).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ReadHandoff {
+    /// The short form of the head the lines are of.
+    pub fn short_sha(&self) -> Option<&str> {
+        self.sha.as_deref().map(|s| s.get(..7).unwrap_or(s))
+    }
+
+    /// The short form of `drafts_sha`.
+    pub fn short_drafts_sha(&self) -> Option<&str> {
+        self.drafts_sha.as_deref().map(|s| s.get(..7).unwrap_or(s))
+    }
 }
 
 /// One of the designs an agent is asking a person to choose between.
@@ -518,6 +577,20 @@ pub fn resumed_at(
 }
 
 impl Gate {
+    /// The read-through points this gate was answered with, when it was a waiting gate: the
+    /// top-level `handoff`, kept among the keys the struct does not name so that nothing built
+    /// before it has to change. Only the tests read it back: the board page reads the JSON.
+    #[cfg(test)]
+    pub fn handoff(&self) -> Option<ReadHandoff> {
+        serde_json::from_value(self.extra.get("handoff")?.clone()).ok()
+    }
+
+    pub(super) fn set_handoff(&mut self, handoff: &ReadHandoff) {
+        if let Ok(v) = serde_json::to_value(handoff) {
+            self.extra.insert("handoff".to_string(), v);
+        }
+    }
+
     /// Whether a person decided this on the board: it has a decision, and that decision is
     /// not one of the two ways a gate is closed without the board's answer.
     pub fn answered_on_board(&self) -> bool {
@@ -565,16 +638,30 @@ pub fn answer_subject(gate: &Gate, decision: &str) -> String {
     format!("[gate {}] {decision}", gate.id)
 }
 
-/// What the worker reads in its outbox.
-///
-/// Written as prose rather than JSON because the reader is an agent mid-task: it has to be
-/// obvious what was decided from the first line, and the comment is the part that changes
-/// what happens next.
+/// `answer_body_from` for an answer that names no read-through, as the tests of the wording
+/// use it.
+#[cfg(test)]
 pub fn answer_body(
     gate: &Gate,
     decision: &str,
     choice: Option<&str>,
     comment: Option<&str>,
+) -> String {
+    answer_body_from(gate, decision, choice, comment, None)
+}
+
+/// What the worker reads in its outbox, naming the read-through the points in the comment come
+/// from when there is one.
+///
+/// Written as prose rather than JSON because the reader is an agent mid-task: it has to be
+/// obvious what was decided from the first line, and the comment is the part that changes
+/// what happens next.
+pub(super) fn answer_body_from(
+    gate: &Gate,
+    decision: &str,
+    choice: Option<&str>,
+    comment: Option<&str>,
+    handoff: Option<&ReadHandoff>,
 ) -> String {
     let mut out = format!("## Decision   {decision}\n");
     if let Some(choice) = choice {
@@ -598,6 +685,18 @@ pub fn answer_body(
     // finds it. The hub has to know which task it just decided on from the message alone.
     if let Some(task) = &gate.task {
         out.push_str(&format!("## task       {task}\n"));
+    }
+    // Said as a header so the worker sees from the first lines whose points these are: a
+    // second reader's notes, chosen by the person, and not the person's own words.
+    if let Some(handoff) = handoff {
+        let at = handoff
+            .short_sha()
+            .map(|sha| format!(" @ {sha}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "## From       AI 下読み {}{at} (a separate read-only reader; the person chose and sent these)\n",
+            handoff.pr
+        ));
     }
     match comment.map(str::trim).filter(|c| !c.is_empty()) {
         Some(comment) => out.push_str(&format!("\n## Comment\n\n{comment}\n")),
