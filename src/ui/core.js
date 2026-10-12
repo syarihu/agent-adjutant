@@ -84,6 +84,19 @@ prefs.notify = notifyPrefs(prefs.notify);
 // `prPrefsToSave` (pr-panel.js) keeps the tab a PR link switched to out of what is saved.
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(typeof prPrefsToSave === 'function' ? prPrefsToSave() : prefs)); } catch {} };
 
+/* The sidebar's toggle: its icon, and its name, which carries the 新着 count its badge shows while the sidebar is hidden (the label
+   replaces the button's content for a screen reader). Called when the pref changes and when the count does. */
+function renderRailToggle() {
+  const rt = document.getElementById('rail-toggle');
+  if (!rt) return;
+  const n = Number(document.getElementById('rail-toggle-count')?.textContent) || 0;
+  const label = !prefs.railHidden ? 'サイドバーを隠す' : n ? `サイドバーを表示（新着 ${n} 件）` : 'サイドバーを表示';
+  rt.setAttribute('aria-expanded', String(!prefs.railHidden));
+  rt.setAttribute('aria-label', label);
+  rt.title = label;
+  rt.querySelector('.material-symbols-outlined').textContent = prefs.railHidden ? 'left_panel_open' : 'left_panel_close';
+}
+
 function applyLayout() {
   const boards = document.getElementById('boards');
   if (!boards) return;
@@ -91,14 +104,7 @@ function applyLayout() {
   document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
   // The class only takes effect in 「いまの仕事」, whose middle has the toggle (my-work.css).
   document.body.classList.toggle('rail-hidden', prefs.railHidden);
-  const rt = document.getElementById('rail-toggle');
-  if (rt) {
-    const label = prefs.railHidden ? 'サイドバーを表示' : 'サイドバーを隠す';
-    rt.setAttribute('aria-expanded', String(!prefs.railHidden));
-    rt.setAttribute('aria-label', label);
-    rt.title = label;
-    rt.querySelector('.material-symbols-outlined').textContent = prefs.railHidden ? 'left_panel_open' : 'left_panel_close';
-  }
+  renderRailToggle();
   boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
   document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
   document.body.classList.toggle('layout-split', prefs.layout === 'split');

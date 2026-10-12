@@ -2,9 +2,9 @@
    lays out a review request's. Colours are the page's tokens only, so the dark theme follows without a rule of its own. */
 
 /* The row over the head of the middle: the sidebar's toggle, then the tabs, which are shown for a task only. The row is the height
-   it has with the tabs, so the head does not jump between a task and what is not one. */
+   it has with the tabs, so the head does not jump between a task and what is not one: 43px is the tab row's height (6px of top
+   padding, the tab or the button, 36px at most, and the 1px border). */
 .wk-mid-row { flex: none; min-height: 43px; display: flex; align-items: center; gap: 8px; padding: 6px 14px 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-.wk-mid-row[hidden] { display: none; }
 .wk-mid-lead { flex: none; display: flex; align-items: center; }
 .rail-toggle { position: relative; margin-bottom: 1px; }
 .rail-toggle:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }

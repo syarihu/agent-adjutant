@@ -266,6 +266,7 @@ function renderWorkBadge() {
     box.textContent = n;
     box.classList.toggle('zero', !n);
   }
+  renderRailToggle();
   renderDocTitle();
 }
 
