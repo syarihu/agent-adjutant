@@ -115,6 +115,19 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     ] {
         assert_eq!(UI_HTML.matches(id).count(), 1, "{id}");
     }
+    // The row is always shown: its lead holds the sidebar's toggle, and only the tabs go away for what is not a task.
+    assert!(!UI_HTML.contains("id=\"wk-mid-row\" hidden"));
+    assert_eq!(UI_HTML.matches("id=\"rail-toggle\"").count(), 1);
+    let (lead, toggle, tabs) = (
+        UI_HTML.find("id=\"wk-mid-lead\"").unwrap(),
+        UI_HTML.find("id=\"rail-toggle\"").unwrap(),
+        UI_HTML.find("id=\"wk-mid-tabs\"").unwrap(),
+    );
+    assert!(
+        lead < toggle && toggle < tabs,
+        "the toggle goes in the lead, before the tabs"
+    );
+    assert!(UI_HTML.contains(".wk-mid-tabs[hidden] { display: none; }"));
     for function in [
         "function taskReadTabState(",
         "function taskReadTabsHtml(",
@@ -1368,6 +1381,12 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "id=\"notify-dialog\"",
         "function notifyEndEvents",
         "id=\"rail-resize\"",
+        // The sidebar is hidden from the toggle at the head of the middle, in this view only, and the choice is kept.
+        "aria-controls=\"nav-rail\"",
+        "data-action=\"rail-toggle\"",
+        "body.view-work.rail-hidden #nav-rail { display: none; }",
+        "body.view-work.rail-hidden { --rail-w: 0px; }",
+        "prefs.railHidden = prefs.railHidden === true",
         // The list is the resident's own document, not a merge made in the page.
         "boardApi('', '/api/work')",
         "view=work",
@@ -1378,6 +1397,7 @@ fn the_page_has_the_work_view_and_no_review_queue() {
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
+    assert_eq!(UI_HTML.matches("id=\"rail-toggle-count\"").count(), 1);
     // A board served alone has no list of boards to read the work from.
     assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
     // One sidebar with a switch at its top: the boards, and the list of the work under way beside the

@@ -517,7 +517,7 @@ PR shows that PR's record; `task` says what the record is for, and does not deci
   is closed by the sync); an approval or a request going away does not. 「同期」 and each request bring its facts up to date. A done one is
   kept past its day while its task exists. The pending review is not refused here: it is for the PR whoever asked.
 
-**The page.** A task selected in 「いまの仕事」 has two tabs over the middle, 「タスク」 and 「AI 下読み」 (a selection that is not a task has none;
+**The page.** A task selected in 「いまの仕事」 has two tabs over the middle, 「タスク」 and 「AI 下読み」 (a selection that is not a task has none, but the row itself is always shown in this view and leads with the toggle that hides and shows the sidebar, kept in `prefs.railHidden`, with the 新着 count on it while hidden;
 a review request's middle is already its reader). 「タスク」 is the view as it was: the worker's terminal in the middle and the task's panel. 「AI 下読み」
 shows the read-through in the middle, laid out as 「拡大」 lays out a review request's (the index on the left and one scroll, 要点, 見るポイント, 読む順,
 設計判断・テスト・書かれていないこと, and the annotated diff stored with the read-through, with its files in the index in reading order; the

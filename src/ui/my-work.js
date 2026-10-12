@@ -259,7 +259,8 @@ const workBadgeCount = () => workNewCount() + othersNewCount();
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
-  const counts = [[el, workNewCount() + othersNewCount()], [wk('wk-tab-count-task'), workNewCount()], [wk('wk-tab-count-others'), othersNewCount()]];
+  const all = workBadgeCount();
+  const counts = [[el, all], [wk('rail-toggle-count'), all], [wk('wk-tab-count-task'), workNewCount()], [wk('wk-tab-count-others'), othersNewCount()]];
   for (const [box, n] of counts) {
     if (!box) continue;
     box.textContent = n;

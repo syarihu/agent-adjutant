@@ -129,14 +129,15 @@ const TASK_READ_WHY = {
 
 /* ── the tabs ── */
 
-/* The row over the middle, and which of its two views is shown. Returns what the caller needs to finish its own draw. */
+/* The tabs of the row over the middle (the row itself is always shown, it leads with the sidebar's toggle), and which of the
+   two views is shown. Returns what the caller needs to finish its own draw. */
 function renderTaskReadTabs(task) {
-  const row = wk('wk-mid-row');
   const pane = wk('wk-term-pane');
   const read = wk('task-read');
   if (!task) {
-    // A selection that is not a task has no tabs, and is the middle as it always was.
-    row.hidden = true;
+    // A selection that is not a task has no tabs (the row stays, for the toggle), and is the middle as it always was.
+    wk('wk-mid-tabs').hidden = true;
+    setWorkTermPart('tabs', wk('wk-mid-tabs'), '');
     read.hidden = true;
     taskRead.shownFor = null;
     const revealed = pane.hidden;
@@ -150,7 +151,7 @@ function renderTaskReadTabs(task) {
   const before = workTermPart.tabs;
   setWorkTermPart('tabs', wk('wk-mid-tabs'), taskReadTabsHtml(taskReadTabState(task, doc, othersNowEst()), reading ? 'ai' : 'task'));
   if (focused && workTermPart.tabs !== before) wk(`wk-mid-tab-${focused}`)?.focus({ preventScroll: true });
-  row.hidden = false;
+  wk('wk-mid-tabs').hidden = false;
   // The other view is not kept at a place to come back to by the page: it is the address's.
   const revealed = pane.hidden && !reading;
   pane.hidden = reading;

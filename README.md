@@ -561,7 +561,7 @@ the middle terminal), or, for a parent, its overview: how far it is, the stack f
 「次を着手させる」 and 「子タスクを足す」. The address is `/?view=work` with nothing selected and
 `/b/<slug>/?view=work&task=<ref>&pane=<tab>` with a row selected, where `<ref>` is a task id, `hub:<id>`,
 `session:<id>`, `gate:<board>/<id>` (a gate with no task card, below) or `parent:<key>`. The widths of the task panel and the sidebar are dragged from their
-edges (arrow keys too; a double click puts one back) and kept in this browser; the sidebar has one width, shared by 「ボード」 and 「いまの仕事」. The list is
+edges (arrow keys too; a double click puts one back) and kept in this browser; the sidebar has one width, shared by 「ボード」 and 「いまの仕事」. In 「いまの仕事」 the button at the left end of the row over the middle hides and shows the sidebar (for any selection); the choice is kept in this browser, and while the sidebar is hidden the button carries the 新着 count. The list is
 `GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
 where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
 (see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub

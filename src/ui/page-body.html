@@ -178,9 +178,10 @@
          board's state: the list is /api/work, and only the panel and the terminal read the board that was selected. -->
     <div id="work-view">
       <section class="wk-term" aria-label="選んだ仕事のターミナル">
-        <!-- The tabs of a task that has a PR: 「タスク」 (the worker's terminal below) and 「AI 下読み」 (#task-read), see task-read-view.js.
-             #wk-mid-lead is a place for something that goes before the tabs. Hidden for what is not a task. -->
-        <div class="wk-mid-row" id="wk-mid-row" hidden><div class="wk-mid-lead" id="wk-mid-lead"></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示"></div></div>
+        <!-- The row over the middle is always shown in this view. #wk-mid-lead holds the toggle that hides and shows the sidebar
+             (core.js applyLayout); the tabs of a task that has a PR, 「タスク」 (the worker's terminal below) and 「AI 下読み」
+             (#task-read), are shown for a task only, see task-read-view.js. -->
+        <div class="wk-mid-row" id="wk-mid-row"><div class="wk-mid-lead" id="wk-mid-lead"><button type="button" class="tool-btn rail-toggle" id="rail-toggle" data-action="rail-toggle" aria-controls="nav-rail" aria-expanded="true" aria-label="サイドバーを隠す" title="サイドバーを隠す"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span><span class="rail-badge zero" id="rail-toggle-count" title="新着の数">0</span></button></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示" hidden></div></div>
         <div class="wk-term-head" id="wk-term-head"></div>
         <div class="tp-pane tp-term wk-term-pane" id="wk-term-pane" role="tabpanel" aria-labelledby="wk-mid-tab-task">
           <div class="tp-term-bar" id="wk-term-bar"></div>

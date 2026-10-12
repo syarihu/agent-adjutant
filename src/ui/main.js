@@ -112,6 +112,7 @@ const ACTIONS = {
   'new-task': () => openForm(),
   work: () => { if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
   boards: () => { if (view === 'work') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
+  'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; if (prefs.railHidden) closeWorkGroupMenu(); applyLayout(); },
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),

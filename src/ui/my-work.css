@@ -22,6 +22,9 @@ body { --rail-w: var(--rail-w-set, 300px); }
   body.view-work #nav-rail .wk-list { min-height: 220px; }
   body.view-work #app-main { flex: 1; min-height: 0; }
 }
+/* Hidden by the toggle at the head of the middle (#rail-toggle): only in this view, whose middle has the toggle to bring it back. */
+body.view-work.rail-hidden #nav-rail { display: none; }
+body.view-work.rail-hidden { --rail-w: 0px; }
 #nav-rail { position: relative; }
 .rail-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
 .rail-resize:hover, .rail-resize:focus-visible, body.wk-dragging .rail-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }

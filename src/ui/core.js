@@ -53,9 +53,10 @@ const PREF_KEY = 'adj-board-split';
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
-// reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row.
+// reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
+// railHidden is whether the sidebar is hidden in 「いまの仕事」 (the toggle at the head of the middle).
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  railWidth:300, workGroup:'parent', workFolded:[], workTab:'task', othersRepo:'' },
+  railWidth:300, workGroup:'parent', workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -64,6 +65,7 @@ delete prefs.panelSide;
 delete prefs.sessionsFolded;
 if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
+prefs.railHidden = prefs.railHidden === true;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // What is in the browser's storage is not trusted: a width outside its range is the default, a fold
@@ -87,6 +89,16 @@ function applyLayout() {
   if (!boards) return;
   // The widths of the sidebar and of the work view's list; the panel's own is set by renderTaskPanel.
   document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
+  // The class only takes effect in 「いまの仕事」, whose middle has the toggle (my-work.css).
+  document.body.classList.toggle('rail-hidden', prefs.railHidden);
+  const rt = document.getElementById('rail-toggle');
+  if (rt) {
+    const label = prefs.railHidden ? 'サイドバーを表示' : 'サイドバーを隠す';
+    rt.setAttribute('aria-expanded', String(!prefs.railHidden));
+    rt.setAttribute('aria-label', label);
+    rt.title = label;
+    rt.querySelector('.material-symbols-outlined').textContent = prefs.railHidden ? 'left_panel_open' : 'left_panel_close';
+  }
   boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
   document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
   document.body.classList.toggle('layout-split', prefs.layout === 'split');
