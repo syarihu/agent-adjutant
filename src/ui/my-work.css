@@ -318,6 +318,24 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .ov-act .material-symbols-outlined { font-size: 15px; }
 .ov-act:hover:not(:disabled) { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
 .ov-act:disabled, .ov-act[aria-disabled="true"] { opacity: .5; cursor: default; }
+/* A PR row's buttons sit at the right end of its state line. They cannot live inside the row button, so they are laid over it, in the
+   same grid cell, at its bottom right; the state line ends with an invisible copy of them (.ov-acts-ghost) that keeps their room, so the
+   text wraps around them and the title and the lines get the whole width. */
+.wk-band-row.ov-row-wrap { display: grid; grid-template-columns: minmax(0, 1fr); }
+.ov-row-wrap > .ov-row, .ov-row-wrap > .ov-acts { grid-area: 1 / 1; }
+.ov-row-wrap > .ov-row { min-width: 0; width: 100%; }
+/* The margins are the row's own padding (right 8px, bottom 7px); the layer lets clicks through to the row except on the buttons. */
+.ov-row-wrap > .ov-acts {
+  flex-direction: row; align-items: center; gap: 2px; padding: 0; justify-self: end; align-self: end; margin: 0 8px 7px 0;
+  pointer-events: none; z-index: 1;
+}
+.ov-row-wrap > .ov-acts > * { pointer-events: auto; }
+.ov-row-wrap:hover > .ov-row:not([aria-current="true"]) { background: var(--wk-hover); }
+.ov-acts-ghost { display: inline-flex; align-items: center; gap: 2px; margin-left: 8px; vertical-align: bottom; visibility: hidden; }
+.ov-line-bare .ov-acts-ghost { margin-left: 0; }
+/* The same box for a button and its ghost (a span): the shared .wk-act sets no font, line height or box sizing, a button brings its own. */
+.ov-acts > *, .ov-acts-ghost > * { box-sizing: border-box; margin: 0; font-family: inherit; font-size: 11px; line-height: 1.2; }
+.ov-acts .wk-act, .ov-acts-ghost .wk-act { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 0; border-radius: 50%; }
 .wk-glyph.ov-requested { color: var(--md-sys-color-warning); }
 .wk-glyph.ov-reading { color: var(--md-sys-color-primary); animation: wk-spin 1.1s linear infinite; }
 .wk-glyph.ov-ready { color: var(--md-sys-color-success); }
