@@ -1,28 +1,29 @@
+/* A session terminal has the keyboard: its keys, Escape included, are the agent's. */
+const inSessionTerminal = el => !!el?.closest?.('.adj-terminal');
+
 document.addEventListener('keydown', e => {
-  // Keys typed in a session terminal belong to the agent, Escape included.
-  if (e.target.closest?.('.adj-terminal')) return;
+  if (inSessionTerminal(e.target) || inSessionTerminal(document.activeElement)) return;
   if (e.key === 'Escape') {
     // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
     // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.
     if (e.isComposing || e.keyCode === 229) return;
-    // An open dialog takes Escape, whichever it is; the task panel behind it stays.
+    // Escape is never a page shortcut: the panel and the selection close with their own buttons,
+    // and a terminal that is not focused (a fresh mount, a head click) still needs Escape later.
+    // An open dialog takes it, whichever it is; the task panel behind it stays.
     const dialog = document.querySelector('dialog[open]');
-    if (dialog) {
-      if (dialog.id === 'handover-dialog') closeHandoverDialog();
-      else if (dialog.id === 'form') dialog.close();
-      // Any other dialog closes itself on Escape.
-      return;
-    }
-    // Escape in a text field must not close what it is in and drop what was typed.
-    if (e.target.matches('textarea,input,select')) return;
-    if ((view === 'board' || view === 'work') && selectedTaskId) {
-      closeTaskPanel();
-      return;
-    }
+    if (dialog?.id === 'handover-dialog') closeHandoverDialog();
+    else if (dialog?.id === 'form') dialog.close();
+    // Any other dialog closes itself on Escape.
   }
   // Judging a gate has no single-key shortcuts. A bare `c` closed the gate on screen, so a
   // Cmd+C to copy from it closed it too; answering stays a click on a button.
 });
+
+/* A dialog closes itself on Escape through `cancel`, not while a terminal in it has the keyboard.
+   `cancel` does not bubble, hence capture. */
+document.addEventListener('cancel', e => {
+  if (e.target.matches?.('dialog') && inSessionTerminal(document.activeElement)) e.preventDefault();
+}, true);
 
 function setView(v) {
   const prev = view;
