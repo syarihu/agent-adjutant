@@ -19,6 +19,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/my-work.css"),
     include_str!("../../ui/pr-panel.css"),
     include_str!("../../ui/pr-diff.css"),
+    include_str!("../../ui/task-read.css"),
     include_str!("../../ui/page-body.html"),
     include_str!("../../ui/util.js"),
     include_str!("../../ui/core.js"),
@@ -40,6 +41,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/my-work-others.js"),
     include_str!("../../ui/pr-read.js"),
     include_str!("../../ui/pr-diff.js"),
+    include_str!("../../ui/task-read.js"),
     include_str!("../../ui/my-work-notify.js"),
     include_str!("../../ui/my-work-away.js"),
     include_str!("../../ui/my-work.js"),
@@ -47,6 +49,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/pr-panel.js"),
     include_str!("../../ui/pr-dialog.js"),
     include_str!("../../ui/pr-diff-view.js"),
+    include_str!("../../ui/task-read-view.js"),
     include_str!("../../ui/main.js"),
     include_str!("../../ui/page-end.html"),
 );

@@ -211,7 +211,7 @@ function prDialogClosed() {
 
 // The column's buttons and boxes are the panel's (`prAct`, `prInput`); 「聞く」 closes the dialog first.
 cardDialogEl().addEventListener('click', e => {
-  if (cardDialog.mode === 'review') prAct(e, { inDialog: true });
+  if (cardDialog.mode === 'review') prAct(e, { place: 'dialog' });
 });
 cardDialogEl().addEventListener('input', e => {
   if (cardDialog.mode === 'review') prInput(e);

@@ -173,7 +173,11 @@ async function othersCloseReader(id) {
     note('下読みを閉じる', true, e.message);
   } finally {
     // Not before the records are read again: the button would be on again against the record as it was.
-    try { await refreshOthers(true); } finally {
+    try {
+      await refreshOthers(true);
+      // A task's own document says the same, and its panel must not offer the button against the old one.
+      if (typeof taskReadRefresh === 'function') await taskReadRefresh(true);
+    } finally {
       others.closing.delete(id);
       prRedraw();
     }

@@ -246,7 +246,8 @@ function renderTaskPanelNow() {
   // The work view marks the row, and draws the terminal, of what the address names.
   // The middle terminal is the work view's: one the panel mounted earlier is not kept beside it.
   if (view === 'work') {
-    if (panelTerm.term) disposePanelTerminal();
+    // The 「AI 下読み」 tab keeps its reader's terminal in the panel (task-read-view.js); any other panel has none.
+    if (panelTerm.term && !taskReadActive(task)) disposePanelTerminal();
     syncWorkSelection();
   }
   // A PR waiting on your review has no board behind it: its panel is drawn from its own record (pr-panel.js).
@@ -284,6 +285,8 @@ function renderTaskPanelNow() {
     renderWorkAway(null);
     return renderWorkPanelOnly(parent);
   }
+  // A task's 「AI 下読み」 tab: the panel is its reader's.
+  if (taskReadActive(task)) return renderTaskReaderPanel(task);
   tp('tp-tabs').hidden = false;
 
   const colId = task ? columnOf(task) : null;
@@ -940,6 +943,7 @@ function termPlaceholderHtml(s) {
 /* Events are heard on the panel itself: its parts are drawn again, it is not. */
 tp('task-panel').addEventListener('click', e => {
   if (isPrRef(selectedTaskId)) return view === 'work' ? prPanelClick(e) : undefined;
+  if (taskReadActive(taskById(selectedTaskId))) return taskReaderPanelClick(e);
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;

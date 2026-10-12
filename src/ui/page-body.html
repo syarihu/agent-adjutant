@@ -178,12 +178,16 @@
          board's state: the list is /api/work, and only the panel and the terminal read the board that was selected. -->
     <div id="work-view">
       <section class="wk-term" aria-label="選んだ仕事のターミナル">
+        <!-- The tabs of a task that has a PR: 「タスク」 (the worker's terminal below) and 「AI 下読み」 (#task-read), see task-read-view.js.
+             #wk-mid-lead is a place for something that goes before the tabs. Hidden for what is not a task. -->
+        <div class="wk-mid-row" id="wk-mid-row" hidden><div class="wk-mid-lead" id="wk-mid-lead"></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示"></div></div>
         <div class="wk-term-head" id="wk-term-head"></div>
-        <div class="tp-pane tp-term wk-term-pane">
+        <div class="tp-pane tp-term wk-term-pane" id="wk-term-pane">
           <div class="tp-term-bar" id="wk-term-bar"></div>
           <div class="tp-term-host" id="wk-term-host"></div>
           <div class="tp-term-ph" id="wk-term-ph"></div>
         </div>
+        <div class="task-read" id="task-read" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
       </section>
     </div>
   </main>

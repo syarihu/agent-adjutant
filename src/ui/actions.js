@@ -89,7 +89,7 @@ document.getElementById('close-dialog').addEventListener('close', e => {
 let readerCloseTarget = null;
 function openReaderCloseDialog(id) {
   readerCloseTarget = id;
-  const rec = othersById(id);
+  const rec = prRecOf(id);
   document.getElementById('reader-close-name').textContent = rec ? `${rec.repo} #${rec.number}` : id;
   document.getElementById('reader-close-running').hidden = rec?.ai?.status !== 'running';
   const dialog = document.getElementById('reader-close-dialog');
@@ -99,7 +99,7 @@ function openReaderCloseDialog(id) {
 document.getElementById('reader-close-dialog').addEventListener('close', e => {
   const id = readerCloseTarget;
   readerCloseTarget = null;
-  if (e.target.returnValue === 'close' && id && prReaderOpen(othersById(id))) othersCloseReader(id);
+  if (e.target.returnValue === 'close' && id && prReaderOpen(prRecOf(id))) othersCloseReader(id);
 });
 
 /* How a hub is named in its panel and where a hub is chosen. */

@@ -100,6 +100,68 @@ fn the_page_has_one_task_panel_and_no_drawer() {
 }
 
 #[test]
+fn the_page_shows_a_tasks_read_through_in_the_middle() {
+    // The tabs and the read-through are one each: a second copy would be a second place to type into.
+    for id in [
+        "id=\"wk-mid-row\"",
+        "id=\"wk-mid-lead\"",
+        "id=\"wk-mid-tabs\"",
+        "id=\"wk-term-pane\"",
+        "id=\"task-read\"",
+        "id=\"task-read-index\"",
+        "id=\"task-read-body\"",
+        "id=\"task-read-band\"",
+        "id=\"task-read-content\"",
+    ] {
+        assert_eq!(UI_HTML.matches(id).count(), 1, "{id}");
+    }
+    for function in [
+        "function taskReadTabState(",
+        "function taskReadTabsHtml(",
+        "function taskReadGroups(",
+        "function taskReaderHeadHtml(",
+        "function taskReaderTabsHtml(",
+        "function taskReadShown(",
+        "function taskReadRefresh(",
+        "function taskReadAsk(",
+        "function renderTaskReadTabs(",
+        "function renderTaskReadMiddle(",
+        "function renderTaskReaderPanel(",
+        "function prShown(",
+        "function prRecOf(",
+        "function markIndexCurrent(",
+        "function scrollToCard(",
+        "function keepReadingPlace(",
+        "function syncReaderTerm(",
+    ] {
+        assert_eq!(UI_HTML.matches(function).count(), 1, "{function}");
+    }
+    // What a later change builds on.
+    for piece in [
+        "const OWN_HOOKS = { drafts: null }",
+        "data-drafts=\"off\"",
+        "id=\"tp-read-drafts\"",
+        "const READ_PANES = ['ai', 'ai-drafts']",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The scripts share one scope and run in order: the pure half after the diff's, the page's half after the diff's page half and
+    // before the entry point, which draws the first screen.
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("function prParseDiff(") < at("function taskReadTabState("));
+    assert!(at("function taskReadTabState(") < at("function prShown("));
+    assert!(at("function prdGoto(") < at("function taskReadShown("));
+    assert!(at("function taskReadShown(") < at("function setView("));
+    // The tabs are above the head of the middle, and the read-through is beside the terminal's pane, not inside it.
+    assert!(at("id=\"wk-mid-row\"") < at("id=\"wk-term-head\""));
+    assert!(at("id=\"wk-term-pane\"") < at("id=\"task-read\""));
+    let pane = at("id=\"wk-term-pane\"");
+    let read = at("id=\"task-read\"");
+    assert!(!UI_HTML[pane..read].contains("</section>"));
+    assert!(at(".prd-root {") < at(".wk-mid-row {"));
+}
+
+#[test]
 fn the_task_panel_has_the_tabs_and_the_full_view_is_gone() {
     for piece in [
         "const PANES = ['detail', 'term', 'review', 'check', 'history']",

@@ -1,0 +1,45 @@
+/* A task's 「AI 下読み」 (src/ui/task-read.js, task-read-view.js): the tabs over the middle, and the read-through in it, laid out as 「拡大」
+   lays out a review request's. Colours are the page's tokens only, so the dark theme follows without a rule of its own. */
+
+/* The tabs. They sit over the head of the middle; the row is hidden for what is not a task. */
+.wk-mid-row { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.wk-mid-row[hidden] { display: none; }
+.wk-mid-lead:empty { display: none; }
+.wk-mid-tabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.wk-mid-tab { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 7px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  color: var(--md-sys-color-on-surface-variant); background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0 0; white-space: nowrap; }
+.wk-mid-tab:hover { background: var(--md-sys-color-surface-container-high); }
+.wk-mid-tab.active { color: var(--md-sys-color-on-surface); border-bottom-color: var(--md-sys-color-primary); }
+.wk-mid-tab:disabled { opacity: .55; cursor: not-allowed; }
+.wk-mid-tab:disabled:hover { background: transparent; }
+.wk-mid-tab:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
+.wk-mid-sub { font-size: 11px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
+
+/* The read-through: the index on the left (the 「拡大」's own look, `.cd-index`), one scroll on the right. The middle is what the layout
+   asks (below), since its width depends on the sidebar and the panel and not on the window. */
+.wk-term { container: wk-mid / inline-size; }
+.task-read { flex: 1; min-height: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "index body"; }
+.task-read[hidden] { display: none; }
+.task-read-body { grid-area: body; min-width: 0; min-height: 0; overflow: auto; position: relative; }
+.task-read-content { padding: 20px 28px 32px; display: flex; flex-direction: column; gap: 28px; }
+/* The head over the read-through is the band that says it is of an earlier push; it stays in view while the person reads. */
+.task-read-band { position: sticky; top: 0; z-index: 1; padding: 8px 28px; font-size: 12.5px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.task-read-band:empty { display: none; }
+.task-read-band .tp-line { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+/* The band says it, so the diff's own line about it is not drawn a second time. */
+.task-read .prd-stale { display: none; }
+/* Nothing receives a draft yet: the buttons that would start one are not drawn (the drafts are on while a later change sets `data-drafts`). */
+.task-read[data-drafts="off"] :is([data-pr-todraft], [data-prd-todraft], [data-prd-plus]) { display: none; }
+
+/* A narrow middle: the index is one strip of the groups over the read-through, scrolling sideways, and the cards under a group are
+   not listed (the groups are what a short strip can hold). */
+@container wk-mid (max-width: 759px) {
+  .task-read { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "index" "body"; }
+  .task-read-index { width: auto; padding: 6px 14px; border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); overflow-x: auto; overflow-y: hidden; }
+  .task-read-index > ol { display: flex; gap: 4px; }
+  .task-read-index > ol > li { flex: none; }
+  .task-read-index ol ol { display: none; }
+  .task-read-index button { width: auto; white-space: nowrap; }
+  .task-read-content { padding: 16px 14px 28px; }
+  .task-read-band { padding: 8px 14px; }
+}

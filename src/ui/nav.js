@@ -123,6 +123,8 @@ function go(patch = {}, { replace = false } = {}) {
   // A session with no task is shown over 「いまの仕事」: it does not follow a move off it.
   // A PR waiting on your review is shown over 「いまの仕事」 only, as a session with no task is.
   if (nav.view !== 'work' && !('task' in patch) && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
+  // A task's read-through is a view of the work view only.
+  if (nav.view !== 'work' && READ_PANES.includes(nav.pane)) nav.pane = 'detail';
   const boardChanged = nav.board !== prev.board;
   if (boardChanged) switchBoard(); else leaveWork(prev);
   const url = urlOf();

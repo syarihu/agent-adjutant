@@ -274,7 +274,7 @@ async function boardApi(base, path, options = {}) {
     headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status, problems: Array.isArray(data.problems) ? data.problems : null });
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status, why: data.why || null, problems: Array.isArray(data.problems) ? data.problems : null });
   return data;
 }
 
@@ -668,6 +668,8 @@ async function refresh(force = false) {
   if (view === 'work') {
     refreshWork(force);
     refreshOthers(force);
+    // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).
+    taskReadRefresh(force);
     if (nav.board === 'all' || !nav.board) return;
   }
   if (scopeAll()) {

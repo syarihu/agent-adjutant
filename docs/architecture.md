@@ -515,6 +515,19 @@ PR shows that PR's record; `task` says what the record is for, and does not deci
   is closed by the sync); an approval or a request going away does not. 「同期」 and each request bring its facts up to date. A done one is
   kept past its day while its task exists. The pending review is not refused here: it is for the PR whoever asked.
 
+**The page.** A task selected in 「いまの仕事」 has two tabs over the middle, 「タスク」 and 「AI 下読み」 (a selection that is not a task has none;
+a review request's middle is already its reader). 「タスク」 is the view as it was: the worker's terminal in the middle and the task's panel. 「AI 下読み」
+shows the read-through in the middle, laid out as 「拡大」 lays out a review request's (the index on the left and one scroll, 要点, 見るポイント, 読む順,
+設計判断・テスト・書かれていないこと, and the annotated diff stored with the read-through, with its files in the index in reading order; the
+index is a strip of the groups over the read-through while the middle is narrower than 760px, whatever the window), and the reader in the panel: its terminal (`/api/others/terminal`, the same socket a review
+request's middle uses, kept while the tab is on) and 「worker への指示」, which holds the drafts and shows their number. A PR that has moved on since the read shows a band over the read-through with
+「下読みし直す」. The tab is the address's (`pane=ai`, `pane=ai-drafts`, kept only for a task in the work view), so a reload, back and a link keep it, and a task
+selected afresh opens on 「タスク」; while the page is open, the tab of the task's panel that 「タスク」 returns to and the reading place are kept per task. The label of the tab carries the state of the read (要注意 N · 確認 N,
+下読み中…, 前の push 時点 with a dot, 失敗しました), and the tab cannot be chosen before the task has a PR or when its PR is not one this can read. The page reads `GET …/ai` on every poll
+while a task with a PR is selected, in either tab, and asks for a read with `POST …/ai`. The buttons are the review request's (`prAct`), which ask which view the page is on (`prShown`) and not
+what is selected, so the diff's places are the panel, 「拡大」 and the middle of a task. There is no 「拡大」 for a task's read-through, and no 前回のレビューから (a review of yours it compares with).
+The draft buttons are not drawn until something takes the drafts (`OWN_HOOKS.drafts` in task-read-view.js); the diff and the read-through are cached by PR, shared with a review request for the same PR.
+
 ### The read-through
 
 The code-review hub (`adj hub --review`) belongs to no repository. Its hub identifier is the reserved `@review` (an `@` cannot be in a
