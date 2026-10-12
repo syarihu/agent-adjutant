@@ -145,7 +145,7 @@ function prdStatusHtml(rec, e, dialog) {
 /* The stale note, the bar, and the annotations of files the diff does not have. */
 function prdBarHtml(rec, read, e) {
   const stale = rec.headSha && read.sha !== rec.headSha
-    ? `<div class="tp-muted prd-stale" role="note">${esc(`この差分は ${prSha7(read.sha)} で下読みしたときのものです（PR の head は ${prSha7(rec.headSha)}）`)}</div>` : '';
+    ? `<div class="tp-muted prd-stale" role="note">${esc(prStaleText(read, rec))}</div>` : '';
   const anns = read.annotations || [];
   const orphans = e.resolved.orphans.length
     ? `<div class="wk-notice" role="note">差分にないファイルの注釈が ${e.resolved.orphans.length} 件あります<ul class="pr-list">${e.resolved.orphans.map(i => `<li><code class="pr-loc">${esc(anns[i].path)}</code> ${esc(anns[i].text)}</li>`).join('')}</ul></div>` : '';

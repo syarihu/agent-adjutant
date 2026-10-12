@@ -395,8 +395,8 @@ test('the dialog of a task fills the width: a grid of cards two to a row, an ind
   assert.match(rules('.cd-gate-head'), /surface-container-highest/);
   const gateRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(x => /\.cd-gate|\.cd-part/.test(x[1])).map(x => x[2]).join(' ');
   assert.doesNotMatch(gateRules, /#[0-9a-f]{3,8}\b/i);
-  assert.match(rules('.card-dialog-index'), /(?:flex:\s*0 0 232px|width:\s*232px)/);
-  assert.match(rules('.card-dialog-index'), /overflow:\s*auto/);
+  assert.match(rules('.card-dialog-index, .cd-index'), /(?:flex:\s*0 0 232px|width:\s*232px)/);
+  assert.match(rules('.card-dialog-index, .cd-index'), /overflow:\s*auto/);
   const media = css.match(/@media \(max-width: 720px\) \{([\s\S]*?\})\s*\}/);
   assert.ok(media);
   assert.match(media[1], /\.card-dialog-index\s*\{\s*display:\s*none/);

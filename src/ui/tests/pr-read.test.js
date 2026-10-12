@@ -526,3 +526,36 @@ test('「下読みを閉じる」 is disabled while this page\'s close is out', 
   assert.ok(!/data-pr-close-reader disabled/.test(prHeadHtml(open())));
   assert.ok(!/data-pr-close-reader disabled/.test(prHeadHtml(open(), { closing: false })));
 });
+
+test('the close button and the stale line are the head\'s and the bar\'s own, drawn the same where a task reuses them', () => {
+  const prCloseReaderBtnHtml = run('prCloseReaderBtnHtml');
+  const prStaleText = run('prStaleText');
+  assert.ok(prHeadHtml(open()).includes(prCloseReaderBtnHtml(open(), false)));
+  assert.ok(prHeadHtml(open(), { closing: true }).includes(prCloseReaderBtnHtml(open(), true)));
+  assert.strictEqual(prCloseReaderBtnHtml(open({ pid: undefined }), false), '');
+  assert.strictEqual(prCloseReaderBtnHtml(rec({ ai: null }), false), '');
+  assert.match(prCloseReaderBtnHtml(open(), true), /data-pr-close-reader disabled[^>]*>閉じています…</);
+  assert.strictEqual(prStaleText({ sha: A }, { headSha: B }), `この差分は ${'a'.repeat(7)} で下読みしたときのものです（PR の head は ${'b'.repeat(7)}）`);
+});
+
+test('the middle says where the read-through is: in the panel for a review request, in the middle for a task', () => {
+  const closed = open({ status: 'ready', readerClosedAt: '20261001T000009Z' });
+  assert.ok(prMiddleHtml(closed, [closed], hub, T0, { readAt: 'middle' }).includes('下読みは真ん中に残っています。'));
+  assert.ok(!prMiddleHtml(closed, [closed], hub, T0, { readAt: 'middle' }).includes('パネル'));
+  assert.ok(prMiddleHtml(closed, [closed], hub, T0, { readAt: 'panel' }).includes('下読み・下書きはパネルに残っています。'));
+  const ended = prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404, readAt: 'middle' });
+  assert.ok(ended.includes('下読みは真ん中に残っています。') && !ended.includes('パネル'));
+  assert.ok(prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404 }).includes('下読みはパネルに残っています。'));
+  const done = rec();
+  assert.ok(prMiddleHtml(done, [done], hub, T0, { readAt: 'middle' }).includes('下読みは真ん中にあります。worker の画面は開けません。'));
+  assert.ok(prMiddleHtml(done, [done], hub, T0).includes('下読みは右のパネルにあります。worker の画面は開けません。'));
+});
+
+test('the card before a read names where the reader can be talked to, when it is asked to', () => {
+  const r = rec({ ai: null, state: 'requested' });
+  assert.ok(!prBeforeRead(r, [r], hub, T0).html.includes('聞けます'));
+  assert.ok(prBeforeRead(r, [r], hub, T0, false, '右のターミナル').html.includes('読んだあとは、右のターミナルでその worker に差分のことを聞けます。'));
+  // What a read under way says is not added to.
+  const q = rec({ ai: { status: 'queued', startedAt: '20261001T000000Z' }, state: 'ai-reading' });
+  assert.ok(!prBeforeRead(q, [q], hub, T0, false, '右のターミナル').html.includes('聞けます'));
+});

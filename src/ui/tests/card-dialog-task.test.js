@@ -623,11 +623,11 @@ test('the index keeps the group that was clicked until the person scrolls', () =
   const body = { scrollTop: 800, clientHeight: 300, scrollHeight: 1100, getBoundingClientRect: () => ({ top: 0 }) };
   const followed = [];
   const c = vm.createContext({
-    cardDialogEl: () => ({ querySelector: () => body, querySelectorAll: () => ['a', 'b', 'c'].map(button) }),
+    cardDialogEl: () => ({ querySelector: sel => sel === '.card-dialog-index' ? { querySelectorAll: () => ['a', 'b', 'c'].map(button) } : body }),
     cardDialogContent: () => ({ querySelectorAll: () => ['a', 'b', 'c'].map(section) }),
     cardDialogFollowDock: k => followed.push(k), cardDialogSeeUpdated() {},
   });
-  vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), ...['cardDialogActiveGroup', 'cardDialogSpy'].map(n => fnSrc(dlgSrc, n)),
+  vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), ...['cardDialogActiveGroup', 'markIndexCurrent', 'cardDialogSpy'].map(n => fnSrc(dlgSrc, n)),
     cut(dlgSrc, /^const cardDialogIndexed = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogUserMoved = [^\n]*/m), "cardDialog.mode = 'task';"].join('\n'), c);
   const spy = () => vm.runInContext('cardDialogSpy()', c);
@@ -644,6 +644,59 @@ test('the index keeps the group that was clicked until the person scrolls', () =
   assert.deepStrictEqual(followed, ['c', 'b', 'c']);
   spy();
   assert.deepStrictEqual(followed, ['c', 'b', 'c']);
+});
+
+test('markIndexCurrent marks the group being read in the index it is given, and says whether that changed', () => {
+  // The groups scroll with the body, as the page's do.
+  let scrolled = 0;
+  const section = (key, top) => ({ dataset: { cdGroup: key }, getBoundingClientRect: () => ({ top: top - scrolled }) });
+  const marks = {};
+  const button = (key, card = false) => ({ dataset: { cdGoGroup: key }, hasAttribute: () => card, scrolled: 0,
+    setAttribute() { marks[key] = true; }, removeAttribute() { marks[key] = false; }, scrollIntoView() { this.scrolled++; } });
+  const buttons = [button('a'), button('b'), button('b', true), button('c')];
+  const index = { querySelectorAll: () => buttons };
+  const content = { querySelectorAll: () => [section('a', 0), section('b', 400), section('c', 900)] };
+  const c = vm.createContext({});
+  vm.runInContext([...['cardDialogActiveGroup', 'markIndexCurrent'].map(n => fnSrc(dlgSrc, n))].join('\n'), c);
+  const mark = (scrollTop, extra = {}) => {
+    scrolled = scrollTop;
+    const body = { scrollTop, clientHeight: 300, scrollHeight: 1100, getBoundingClientRect: () => ({ top: 0 }) };
+    c.args = { index, body, content, pinned: null, was: null, ...extra };
+    return JSON.parse(JSON.stringify(vm.runInContext('markIndexCurrent(args)', c)));
+  };
+  assert.deepStrictEqual(mark(0), { key: 'a', changed: true });
+  assert.deepStrictEqual(mark(380), { key: 'b', changed: true }, 'the last group whose top has reached the top of the scroll');
+  assert.strictEqual(marks.b, true);
+  assert.strictEqual(marks.a, false);
+  assert.deepStrictEqual(mark(380, { was: 'b' }), { key: 'b', changed: false });
+  assert.strictEqual(buttons[1].scrolled, 1, 'brought into view in the index only when it changed');
+  // At the very end the last group wins though its top is below; a pinned group wins over both.
+  assert.deepStrictEqual(mark(800), { key: 'c', changed: true });
+  assert.deepStrictEqual(mark(800, { pinned: 'a' }), { key: 'a', changed: true });
+  // A group that is not there is no pin; no group at all is nothing to mark.
+  assert.deepStrictEqual(mark(0, { pinned: 'zzz' }), { key: 'a', changed: true });
+  content.querySelectorAll = () => [];
+  assert.strictEqual(mark(0), null);
+});
+
+test('scrollToCard brings a card or a group to the top of the body it is given, and flashes it when asked', () => {
+  const el = { focused: 0, scrolled: 0, offsetWidth: 0, flashed: false, classList: { remove() {}, add() { el.flashed = true; } }, scrollIntoView() { this.scrolled++; }, focus() { this.focused++; } };
+  const group = { ...el, dataset: { cdGroup: 'g' }, focused: 0, scrolled: 0, classList: { remove() {}, add() {} }, scrollIntoView() { this.scrolled++; }, focus() { this.focused++; } };
+  const card = Object.assign(el, { dataset: { cdCard: 'k' } });
+  const content = { querySelectorAll: sel => sel === '[data-cd-card]' ? [card] : [group] };
+  const c = vm.createContext({ setTimeout() {} });
+  vm.runInContext(fnSrc(dlgSrc, 'scrollToCard'), c);
+  const body = { scrollTop: 77 };
+  c.args = [content, body];
+  const go = (k, g, f) => { c.k = k; c.g = g; c.f = f; return vm.runInContext('scrollToCard(args[0], args[1], k, g, f)', c); };
+  const hit = go('k', null, true);
+  assert.strictEqual(hit.el, card);
+  assert.strictEqual(hit.at, 77);
+  assert.deepStrictEqual([card.scrolled, card.focused, card.flashed], [1, 1, true]);
+  assert.strictEqual(go(null, 'g', false).el, group);
+  assert.strictEqual(group.scrolled, 1);
+  assert.strictEqual(go('nothing', null, false), null);
+  assert.strictEqual(go(null, 'nothing', false), null);
 });
 
 test('the column follows into another waiting gate\'s group, and not while typing, answering, or in the same group', () => {
@@ -711,10 +764,10 @@ test('a jump pins its group, remembers where it landed and focuses the card', ()
   const el = { focused: 0, scrolled: 0, offsetWidth: 0, classList: { remove() {}, add() {} }, scrollIntoView() { this.scrolled++; }, focus() { this.focused++; } };
   const body = { scrollTop: 640 };
   const c = vm.createContext({
-    cardDialogEl: () => ({ querySelector: () => body }), cardDialogCardEl: k => k === 'plan:goal' ? el : null, cardDialogGroupEl: () => null,
+    cardDialogEl: () => ({ querySelector: () => body }), cardDialogContent: () => ({ querySelectorAll: sel => sel === '[data-cd-card]' ? [Object.assign(el, { dataset: { cdCard: 'plan:goal' } })] : [] }),
     cardDialogSpy() {}, setTimeout() {},
   });
-  vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), fnSrc(dlgSrc, 'cardDialogGo'),
+  vm.runInContext([cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m), fnSrc(dlgSrc, 'scrollToCard'), fnSrc(dlgSrc, 'cardDialogGo'),
     "cardDialog.groups = [{ key: 'plan', cards: [{ key: 'plan:goal' }] }]; cardDialog.target = { section: 'x' };"].join('\n'), c);
   assert.strictEqual(vm.runInContext("cardDialogGo('plan:goal', null, true)", c), true);
   assert.strictEqual(el.scrolled, 1);

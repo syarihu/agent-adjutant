@@ -32,15 +32,16 @@ const prDialogDrawn = { order: '', html: new Map() };
 
 /* Put `frag` (the content as nodes) into `content`. A card is the person's to select and scroll in, so when only some cards
    changed (a relative time in 要点 changes every minute) only those are replaced, and the others, with the diff files drawn in
-   them, stay as they are. Different cards or places, or a first draw, replace the whole content. */
-function prDialogPatch(content, frag, groups) {
+   them, stay as they are. Different cards or places, or a first draw, replace the whole content. `drawn` is what `content` was
+   last drawn from: the dialog's, or the one a task's read-through keeps for itself. */
+function prDialogPatch(content, frag, groups, drawn = prDialogDrawn) {
   const order = groups.map(g => `${g.key}[${g.cards.map(c => c.key).join('|')}]`).join('\n');
   const html = new Map(groups.flatMap(g => g.cards.map(c => [c.key, c.html])));
-  const was = prDialogDrawn.html;
+  const was = drawn.html;
   const kept = content.children;
-  const same = prDialogDrawn.order === order && !!kept && kept.length === groups.length && !!frag.children && frag.children.length === groups.length;
-  prDialogDrawn.order = order;
-  prDialogDrawn.html = html;
+  const same = drawn.order === order && !!kept && kept.length === groups.length && !!frag.children && frag.children.length === groups.length;
+  drawn.order = order;
+  drawn.html = html;
   if (!same) return content.replaceChildren(frag);
   groups.forEach((g, i) => {
     const old = kept[i];
@@ -52,6 +53,29 @@ function prDialogPatch(content, frag, groups) {
     const newCards = fresh.querySelectorAll('[data-cd-card]');
     g.cards.forEach((c, j) => { if (was.get(c.key) !== c.html) oldCards[j].replaceWith(newCards[j]); });
   });
+}
+
+/* What the person has open and where they are reading in `body`, taken before `content` is drawn anew; the function it returns puts
+   it back afterwards: the `details` that were open, then the scroll, kept on the card that was at the top. `live` is false where
+   nothing can be measured yet (a dialog still closed): only the scroll top is kept then. Called with `false`, it puts back the
+   `details` only. */
+function keepReadingPlace(body, content, live = true) {
+  const opened = new Map();
+  if (live) content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => opened.set(`${c.dataset.cdCard}#${i}`, d.open)));
+  const scroll = body.scrollTop;
+  const top = body.getBoundingClientRect().top;
+  const first = live ? [...content.querySelectorAll('[data-cd-card]')].find(c => c.getBoundingClientRect().bottom > top + 1) : null;
+  const anchor = first && { key: first.dataset.cdCard, offset: first.getBoundingClientRect().top - top };
+  return (place = true) => {
+    content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => {
+      const was = opened.get(`${c.dataset.cdCard}#${i}`);
+      if (was !== undefined) d.open = was;
+    }));
+    if (!place) return;
+    body.scrollTop = scroll;
+    const same = anchor && [...content.querySelectorAll('[data-cd-card]')].find(c => c.dataset.cdCard === anchor.key);
+    if (same) body.scrollTop += same.getBoundingClientRect().top - body.getBoundingClientRect().top - anchor.offset;
+  };
 }
 
 function openPrDialog(btn) {
@@ -146,12 +170,7 @@ function prDialogSync(force = false, initial = false) {
   const content = cardDialogContent();
   const body = dlg.querySelector('.card-dialog-body');
   // What the person has open, and where they are reading, survive the redraw.
-  const opened = new Map();
-  if (dlg.open) content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => opened.set(`${c.dataset.cdCard}#${i}`, d.open)));
-  const scroll = body.scrollTop;
-  const top = body.getBoundingClientRect().top;
-  const first = dlg.open ? [...content.querySelectorAll('[data-cd-card]')].find(c => c.getBoundingClientRect().bottom > top + 1) : null;
-  const anchor = first && { key: first.dataset.cdCard, offset: first.getBoundingClientRect().top - top };
+  const restore = keepReadingPlace(body, content, dlg.open);
   const focus = cardDialogFocusOf(dlg);
   const dockKeep = dlg.open ? prFocusKeep(col) : null;
 
@@ -170,14 +189,8 @@ function prDialogSync(force = false, initial = false) {
     // The box an action asked for, else the control that had the keyboard; one that is gone goes to the overall comment.
     if (!prRestoreFocus(col, dockKeep, true) && dockKeep) col.querySelector('[data-pr-overall]')?.focus({ preventScroll: true });
   }
-  content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => {
-    const was = opened.get(`${c.dataset.cdCard}#${i}`);
-    if (was !== undefined) d.open = was;
-  }));
+  restore(!contentSame);
   if (!contentSame) {
-    body.scrollTop = scroll;
-    const same = anchor && cardDialogCardEl(anchor.key);
-    if (same) body.scrollTop += same.getBoundingClientRect().top - body.getBoundingClientRect().top - anchor.offset;
     cardDialogFocusBack(dlg, focus);
     if (cardDialog.pinned) cardDialog.pinnedAt = body.scrollTop;
   }

@@ -43,6 +43,11 @@ const PR_REF = 'pr:';
 const isPrRef = id => typeof id === 'string' && id.startsWith(PR_REF);
 const prIdOfRef = id => id.slice(PR_REF.length);
 const PR_PANES = ['detail', 'diff', 'drafts'];
+/* A task with a PR has a second view in the work view, its read-through (task-read-view.js): `ai` is the reader's terminal beside
+   it, `ai-drafts` its 「worker への指示」. Any other pane of a task is the board's. */
+const READ_PANES = ['ai', 'ai-drafts'];
+/* The ref of a task: its id, which carries none of the prefixes of the other things the work view opens. */
+const isTaskRef = id => typeof id === 'string' && id !== '' && ![PR_REF, HUB_REF, SESS_REF, PARENT_REF, WORK_GATE_REF].some(prefix => id.startsWith(prefix));
 
 const PREF_KEY = 'adj-board-split';
 // boardsFolded holds the repositories (owner/name) whose hubs are folded away in the sidebar;

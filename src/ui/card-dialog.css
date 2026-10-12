@@ -35,16 +35,16 @@
 .card-dialog-content[data-mode="task"] { gap: 28px; }
 
 /* The index: groups, and the cards in them, as buttons; it scrolls by itself. */
-.card-dialog-index { grid-area: index; width: 232px; box-sizing: border-box; overflow: auto; padding: 16px 8px 24px 16px; border-right: 1px solid var(--md-sys-color-outline-variant); font-size: 12.5px; }
-.card-dialog-index[hidden] { display: none; }
-.card-dialog-index ol { list-style: none; margin: 0; padding: 0; }
-.card-dialog-index ol ol { margin: 2px 0 8px 10px; }
-.card-dialog-index button { display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 5px 8px; border-radius: 8px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
-.card-dialog-index button > span:first-child { margin-right: auto; }
-.card-dialog-index > ol > li > button { font-weight: 700; color: var(--md-sys-color-on-surface); }
-.card-dialog-index button:hover { background: var(--md-sys-color-surface-container-high); }
-.card-dialog-index button[aria-current="location"] { background: var(--md-sys-color-secondary-container, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface); }
-.card-dialog-index button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.card-dialog-index, .cd-index { grid-area: index; width: 232px; box-sizing: border-box; overflow: auto; padding: 16px 8px 24px 16px; border-right: 1px solid var(--md-sys-color-outline-variant); font-size: 12.5px; }
+.card-dialog-index[hidden], .cd-index[hidden] { display: none; }
+.card-dialog-index ol, .cd-index ol { list-style: none; margin: 0; padding: 0; }
+.card-dialog-index ol ol, .cd-index ol ol { margin: 2px 0 8px 10px; }
+.card-dialog-index button, .cd-index button { display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 5px 8px; border-radius: 8px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
+.card-dialog-index button > span:first-child, .cd-index button > span:first-child { margin-right: auto; }
+.card-dialog-index > ol > li > button, .cd-index > ol > li > button { font-weight: 700; color: var(--md-sys-color-on-surface); }
+.card-dialog-index button:hover, .cd-index button:hover { background: var(--md-sys-color-surface-container-high); }
+.card-dialog-index button[aria-current="location"], .cd-index button[aria-current="location"] { background: var(--md-sys-color-secondary-container, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface); }
+.card-dialog-index button:focus-visible, .cd-index button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
 .cd-badge { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface-variant); }
 /* 「更新」: a part that changed since it was drawn, until it has been seen (card-dialog.js). */
 .cd-badge.cd-upd { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
