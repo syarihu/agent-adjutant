@@ -433,6 +433,7 @@ function openHubStopDialog(id, mode = 'stop') {
   dialog.returnValue = '';
   dialog.showModal();
 }
+// The dialog is shared with the code-review hub's (my-work-others-view.js), whose own listener acts when `hubStopTarget` is null here.
 document.getElementById('hub-stop-dialog').addEventListener('close', e => {
   const id = hubStopTarget;
   hubStopTarget = null;

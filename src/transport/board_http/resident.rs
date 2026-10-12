@@ -166,6 +166,7 @@ pub(super) fn route_resident(
         ("POST", "/api/others/ai") => ask_for_read(resident, req, out),
         ("POST", "/api/others/reader/close") => close_reader(resident, req, out),
         ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
+        ("POST", "/api/others/hub/stop") => stop_review_hub(resident, out),
         ("GET", "/api/others/read") => stored_read(resident, req, out),
         ("GET", "/api/others/diff") => stored_diff(resident, req, out),
         ("GET", "/api/others/drafts") => stored_drafts(resident, req, out),
@@ -306,6 +307,19 @@ fn start_review_hub(
             &json!({ "started": false, "running": true, "pid": status.pid }).to_string(),
         ),
         // The input was fine and the start itself failed: not the caller's mistake.
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `POST /api/others/hub/stop`: close the pane of the code-review hub. The body is ignored; the
+/// records, the read-throughs and the queue stay, and so do the readers that are running.
+fn stop_review_hub(resident: &Resident, out: &mut impl Write) -> std::io::Result<()> {
+    match crate::board::review::stop(&resident.root) {
+        Ok(was_running) => http::json(
+            out,
+            200,
+            &json!({ "stopped": true, "wasRunning": was_running }).to_string(),
+        ),
         Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
 }

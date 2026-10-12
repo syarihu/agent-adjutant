@@ -1852,6 +1852,19 @@ mod others_drafts {
         assert_eq!(body["nothing"], true, "{body}");
     }
 
+    #[test]
+    fn stopping_the_code_review_hub_with_none_running_says_so() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let r = resident(&sandbox.state());
+        let req = request("POST", "/api/others/hub/stop", &[]);
+        let mut out = Vec::new();
+        route_resident(&r, &req, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.split(' ').nth(1), Some("200"), "{text}");
+        let body: Value = serde_json::from_str(text.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body, json!({"stopped": true, "wasRunning": false}));
+    }
+
     /// `POST /api/others/reader/close` with `body`.
     fn close(resident: &Resident, body: &Value) -> (u16, Value) {
         let mut req = request("POST", "/api/others/reader/close", &[]);

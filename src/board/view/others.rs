@@ -40,6 +40,9 @@ pub struct ReviewHub {
     /// Whether the board may start the hub: it is stopped, and the terminal is one a hub can be
     /// opened in.
     pub startable: bool,
+    /// Whether the board may stop the hub: it is running, and the terminal is one the board can
+    /// close its pane in.
+    pub stoppable: bool,
     /// Whether a read can be started now: the hub is running, and the terminal is one a reader
     /// can be opened in (`terminal.preset` is tmux). A running hub with another terminal is not
     /// `startable` either way, and answers `request` with `not-startable`.
@@ -83,6 +86,7 @@ fn review_hub(root: &Path, records: &[Record]) -> ReviewHub {
         queued: count("queued"),
         max: MAX_READING,
         startable,
+        stoppable: up && tmux,
         can_read: up && tmux,
     }
 }

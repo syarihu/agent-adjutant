@@ -25,7 +25,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(read(file), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { taskReadTabState, taskReadTabsHtml, taskReadHeadHtml, taskReadGroups, taskReadNoRecordHtml, taskReadBandHtml, taskReaderHeadHtml,
+const { taskReadTabState, taskReadTabsHtml, taskReadHeadHtml, taskReadGroups, taskReadNoRecordHtml, taskReadBandHtml, taskReadHubHtml, taskReaderHeadHtml,
   taskReaderTabsHtml } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -397,4 +397,31 @@ test('a reader\'s terminal is not mounted into a pane that is hidden, and one al
   const before = disposed.length;
   vm.runInContext("syncReaderTerm(slot, rec, 'pr:x/s1', false)", c);
   assert.ok(slot.term && disposed.length === before, 'kept while hidden');
+});
+
+test('the tab says the code-review hub is stopped, and offers to start it only where the page can', () => {
+  assert.equal(taskReadHubHtml(rec(), { state: 'running', canRead: true, why: '' }), '');
+  assert.equal(taskReadHubHtml(null, undefined), '');
+  const startable = { state: 'stopped', canRead: false, startable: true, why: 'x' };
+  const html = taskReadHubHtml(rec(), startable);
+  assert.match(html, /コードレビュー hub が止まっています/);
+  assert.match(html, /<button type="button" class="btn-m3-tonal" data-task-read-hub-start>/);
+  assert.match(html, /hub を起動/);
+  assert.doesNotMatch(html, /aria-disabled/);
+  const starting = taskReadHubHtml(rec(), startable, true);
+  assert.match(starting, /data-task-read-hub-start aria-disabled="true"/);
+  assert.match(starting, /起動中…/);
+  // Before there is a record, the same.
+  assert.match(taskReadHubHtml(null, startable), /data-task-read-hub-start/);
+  const cannot = taskReadHubHtml(rec(), { state: 'stopped', canRead: false, startable: false, why: 'x' });
+  assert.match(cannot, /adj hub --review/);
+  assert.match(cannot, /tmux/);
+  assert.doesNotMatch(cannot, /<button/);
+});
+
+test('the hub note is not offered for a PR that is done, and what a running hub lacks is escaped', () => {
+  assert.equal(taskReadHubHtml(rec({ state: 'merged' }), { state: 'stopped', canRead: false, startable: true }), '');
+  const html = taskReadHubHtml(rec(), { state: 'running', canRead: false, why: '<b>tmux</b> が要ります' });
+  assert.match(html, /&lt;b&gt;tmux&lt;\/b&gt; が要ります/);
+  assert.doesNotMatch(html, /<b>|<button/);
 });

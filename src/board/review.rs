@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use crate::lifecycle::hub::{HubStart, TabOutcome, start_hub};
+use crate::lifecycle::hub::{HubStart, TabOutcome, start_hub, stop_hub};
 use crate::lifecycle::review::{self, AskError, Asked, CloseError, ClosedReader, TaskAskError};
 use crate::others::{self, ReadMode, Record, SyncError, Synced, pr_of};
 use crate::registry::{self, Context};
@@ -73,4 +73,10 @@ pub fn sync(root: &Path) -> Result<(Synced, Vec<(String, String)>), SyncError> {
 /// Start the code-review hub in a new window, as `adj hub --review --tab` would.
 pub fn start(root: &Path, start: HubStart) -> Result<TabOutcome, String> {
     start_hub(&registry::review_context(root)?, start)
+}
+
+/// Stop the code-review hub by closing its tmux pane, as a repository's hub is stopped from the
+/// board; `true` when one was running.
+pub fn stop(root: &Path) -> Result<bool, String> {
+    stop_hub(&registry::review_context(root)?)
 }

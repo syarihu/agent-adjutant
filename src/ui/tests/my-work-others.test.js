@@ -11,7 +11,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersStaleMinutes, othersGroups, othersRepoChips,
+const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersSyncWords, othersHubStopText, othersGroups, othersRepoChips,
   othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
   othersOutOfReviewLine, othersReadMode } = ctx;
 
@@ -84,8 +84,37 @@ test('a list is stale after exactly 30 minutes, and one never synced is not', ()
   assert.equal(othersStale(ls, T0 + 1801), true);
   assert.equal(othersStale(null, T0 + 99999), false);
   assert.equal(othersStale({ at: null }, T0 + 99999), false);
-  assert.equal(othersStaleMinutes(ls, T0 + 1861), 31);
-  assert.equal(othersStaleMinutes(null, T0), 0);
+});
+
+test('the sync button says it is syncing, that there was no sync, or how long ago the last one was', () => {
+  const ls = { at: stamp(T0) };
+  assert.equal(othersSyncWords(ls, T0 + 60, true), '同期中…');
+  assert.equal(othersSyncWords(null, T0, true), '同期中…');
+  assert.equal(othersSyncWords(null, T0, false), 'まだ同期していません');
+  assert.equal(othersSyncWords({ at: null }, T0, false), 'まだ同期していません');
+  assert.match(othersSyncWords(ls, T0 + 2 * 3600, false), /^同期・最終同期: 2時間前$/);
+  assert.equal(othersSyncWords(ls, T0 + 10, false), '同期・最終同期: たった今');
+});
+
+test('the confirmation of stopping the hub names the readers that keep running and the reads that wait, and only those there are', () => {
+  const some = plain(othersHubStopText({ running: 2, queued: 1 }));
+  assert.match(some.lead, /ペインを閉じます/);
+  assert.equal(some.warnings.length, 2);
+  assert.match(some.warnings[0], /^AI 下読み中の worker 2 件は止まりません/);
+  assert.match(some.warnings[1], /^順番待ちの 1 件は、hub をもう一度起動するまで始まりません/);
+  assert.match(some.note, /下読み・下書き・順番待ちは残ります/);
+  assert.equal(plain(othersHubStopText({ running: 0, queued: 3 })).warnings.length, 1);
+  assert.match(plain(othersHubStopText({ running: 0, queued: 3 })).warnings[0], /^順番待ちの 3 件/);
+  assert.match(plain(othersHubStopText({ running: 1, queued: 0 })).warnings[0], /worker 1 件/);
+  assert.deepStrictEqual(plain(othersHubStopText({ running: 0, queued: 0 })).warnings, []);
+});
+
+test('the hub can be stopped from the page only while it runs and the server says it can', () => {
+  assert.equal(plain(othersHubView({ state: 'running', stoppable: true }, [])).stoppable, true);
+  assert.equal(plain(othersHubView({ state: 'running' }, [])).stoppable, false);
+  assert.equal(plain(othersHubView({ state: 'running', stoppable: false }, [])).stoppable, false);
+  assert.equal(plain(othersHubView({ state: 'stopped', stoppable: true }, [])).stoppable, false);
+  assert.equal(plain(othersHubView(undefined, [])).stoppable, false);
 });
 
 test('groups are by repository with case ignored, labelled as GitHub spells it, and flag one that is not registered', () => {
@@ -218,7 +247,7 @@ test('the hub row: absent and stopped say AI 下読み is unavailable, and runni
 test('the hub row takes its numbers from the document, and a hub that is up has no reason to give', () => {
   const records = [rec(1, { ai: { status: 'running' } })];
   const running = plain(othersHubView({ state: 'running', slug: 'review', running: 2, queued: 1, max: 3, startable: false }, records));
-  assert.deepStrictEqual(running, { state: 'running', running: 2, queued: 1, max: 3, startable: false, canRead: true, why: '' });
+  assert.deepStrictEqual(running, { state: 'running', running: 2, queued: 1, max: 3, startable: false, stoppable: false, canRead: true, why: '' });
   const stopped = plain(othersHubView({ state: 'stopped', running: 0, queued: 4, max: 3, startable: true }, records));
   assert.deepStrictEqual([stopped.state, stopped.running, stopped.queued, stopped.startable], ['stopped', 0, 4, true]);
   assert.match(stopped.why, /hub が止まっています/);

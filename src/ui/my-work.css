@@ -297,12 +297,6 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .ov-chip:hover { background: var(--wk-hover); }
 .ov-chip[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
 .ov-note { margin-top: 6px; padding: 0 2px; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
-.ov-stale {
-  margin-top: 8px; padding: 6px 8px; border-radius: var(--md-shape-corner-sm); font-size: 12px; font-weight: 600;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
-  background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container);
-}
-.ov-stale .ov-sync-btn { color: inherit; border-color: currentColor; }
 .wk-empty .ov-sync-btn { margin-top: 8px; }
 .ov-hub { margin-top: 8px; cursor: default; }
 .ov-hub:hover { background: transparent; }
