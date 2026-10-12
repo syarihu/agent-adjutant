@@ -36,10 +36,11 @@ const terminalLostToNothing = (e, { now = Date.now(), pointerAt = termPointerAt,
   !!e.target?.classList?.contains('xterm-helper-textarea') && !!e.target.closest?.('.adj-terminal')
   && e.relatedTarget == null && hasFocus && now - pointerAt > 500;
 // Settled a task later: the page's own disposal (another row, another view, the panel closed) and
-// hiding (another tab of the panel) blur the text area too, and leave it gone or hidden by then.
+// hiding (another tab of the panel) blur the text area too, and leave it gone or hidden by then. A
+// window that lost the focus meanwhile does not spend the one note either.
 const terminalStillThere = (ta, active = document.activeElement) =>
-  ta.isConnected && !!ta.closest('.adj-terminal') && ta.closest('.adj-terminal').checkVisibility()
-  && !active?.closest?.('.adj-terminal');
+  document.hasFocus() && ta.isConnected && !!ta.closest('.adj-terminal')
+  && (ta.closest('.adj-terminal').checkVisibility?.() ?? true) && !active?.closest?.('.adj-terminal');
 let terminalTakenNoted = false;
 document.addEventListener('focusout', e => {
   if (terminalTakenNoted || !terminalLostToNothing(e)) return;

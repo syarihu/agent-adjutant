@@ -122,6 +122,25 @@ test('quiet when the window lost the focus', () => {
   assert.strictEqual(r.notes.length, 0);
 });
 
+test('quiet when the window loses the focus before the check runs, and the note is kept for later', () => {
+  const r = setup();
+  r.focusout(textarea());
+  r.doc.hasFocus = () => false;
+  r.settle();
+  assert.strictEqual(r.notes.length, 0);
+  r.doc.hasFocus = () => true;
+  r.focusout(textarea());
+  r.settle();
+  assert.strictEqual(r.notes.length, 1);
+});
+
+test('a browser without checkVisibility still notes', () => {
+  const r = setup();
+  r.focusout(textarea({ host: {} }));
+  r.settle();
+  assert.strictEqual(r.notes.length, 1);
+});
+
 test('quiet for a text area outside .adj-terminal or without the xterm class', () => {
   const r = setup();
   r.focusout(textarea({ inTerminal: false }));
