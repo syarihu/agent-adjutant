@@ -92,10 +92,11 @@ function othersStale(lastSync, nowEst) {
   return age != null && age > OTHERS_STALE_SECS;
 }
 
-/* Whole minutes since the last sync (0 when there was none). */
-function othersStaleMinutes(lastSync, nowEst) {
-  const age = othersSyncAge(lastSync, nowEst);
-  return age == null ? 0 : Math.max(0, Math.floor(age / 60));
+/* The words of the sync button: 同期中… while one is out, the time of the last sync, or that there was none. */
+function othersSyncWords(lastSync, nowEst, syncing) {
+  if (syncing) return '同期中…';
+  const at = stampSecs(lastSync?.at);
+  return at == null ? 'まだ同期していません' : `同期・最終同期: ${agoLabel(minutesSince(at, nowEst))}`;
 }
 
 /* `依頼 5分前`, or nothing when the record has no request time. */
@@ -265,8 +266,8 @@ function othersOutOfReviewLine(oor) {
 }
 
 /* The code-review hub's row: `hub` is the `hub` of the document (absent from an older server). An absent or stopped hub is
-   stopped, and says that AI 下読み is unavailable while sync and the list still work. `running`, `queued`, `max` and `startable`
-   are the hub's; when it does not say how many are running, they are counted from the records. `canRead` is whether a read can
+   stopped, and says that AI 下読み is unavailable while sync and the list still work. `running`, `queued`, `max`, `startable`
+   and `stoppable` are the hub's; when it does not say how many are running, they are counted from the records. `canRead` is whether a read can
    be asked for now: the hub is running and a reader can be opened (the server says; an older one that does not is taken to
    mean that a running hub can). When it cannot, `why` says what is missing, and is the title of the buttons. */
 function othersHubView(hub, records) {
@@ -281,7 +282,20 @@ function othersHubView(hub, records) {
     state: stopped ? 'stopped' : String(hub.state),
     running: Number.isFinite(hub?.running) ? hub.running : counted('running'),
     queued: Number.isFinite(hub?.queued) ? hub.queued : counted('queued'),
-    max, startable: stopped && !!hub?.startable, canRead, why,
+    max, startable: stopped && !!hub?.startable, stoppable: !stopped && !!hub?.stoppable, canRead, why,
+  };
+}
+
+/* What the confirmation of 「hub を止める」 says: `lead` is what happens, `warnings` are the lines about the readers that run and the
+   reads that wait (only those that there are), and `note` is what stays and what changes. */
+function othersHubStopText(hubView) {
+  const warnings = [];
+  if (hubView.running > 0) warnings.push(`AI 下読み中の worker ${hubView.running} 件は止まりません。そのまま読み終えて、下読みを残します（途中で止めるときは、PR ごとに「下読みを閉じる」を使います）。`);
+  if (hubView.queued > 0) warnings.push(`順番待ちの ${hubView.queued} 件は、hub をもう一度起動するまで始まりません。`);
+  return {
+    lead: 'コードレビュー hub が動いている tmux のペインを閉じます。hub は止まります。',
+    warnings,
+    note: 'PR の記録・下読み・下書き・順番待ちは残ります。下読みの worker からの報告は受信箱に残り、次に起動した hub が読みます。止めているあいだは AI 下読みを頼めません（同期と一覧はそのまま使えます）。次に起動すると、hubAutoResumeHours 以内なら同じ会話を再開します。',
   };
 }
 

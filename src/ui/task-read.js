@@ -80,6 +80,20 @@ function taskReadNoRecordHtml(pr, hubView, asking) {
     + `${prAiButtonHtml({ action: 'AI 下読み' }, hubView, asking)}</div>`;
 }
 
+/* What the 「AI 下読み」 tab says while the code-review hub cannot be asked: that it is stopped, with the button that starts it when this
+   page can (the list's hub row starts it the same way), or why a read cannot be opened. `rec` is the record, null before there is
+   one; a PR that is done is not read again, so says nothing. `starting` is a start of this page's that is out. Nothing when a read
+   can be asked for. */
+function taskReadHubHtml(rec, hubView, starting = false) {
+  if (!hubView || hubView.canRead) return '';
+  if (rec && !OTHERS_LIVE.includes(rec.state)) return '';
+  const line = text => `<div class="tp-line" role="note">${esc(text)}`;
+  if (hubView.state !== 'stopped') return `${line(hubView.why)}</div>`;
+  if (!hubView.startable) return `${line('コードレビュー hub が止まっています。このページから起動できるのは terminal.preset が tmux のときだけです。ターミナルで adj hub --review を実行すると起動します。')}</div>`;
+  return `${line('コードレビュー hub が止まっています。AI 下読みを頼むには、hub を起動してください。')} <button type="button" class="btn-m3-tonal" data-task-read-hub-start${starting ? ' aria-disabled="true"' : ''}>`
+    + `<span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span>${starting ? '起動中…' : 'hub を起動'}</span></button></div>`;
+}
+
 /* The band over the read-through when the PR has moved on since it was made, with the button to read it again. Nothing otherwise. */
 function taskReadBandHtml(rec, read, hubView, asking) {
   if (!rec?.ai?.stale) return '';

@@ -190,6 +190,21 @@ function taskReadSay(html) {
   if (content.innerHTML !== html) content.innerHTML = html;
 }
 
+/* After a redraw: the start button had the keyboard, so it keeps it; once the hub is up the button is gone and the keyboard goes to
+   the button that asks for a read. */
+function keepHubStartFocus(held) {
+  if (!held) return;
+  const root = wk('task-read');
+  const next = root.querySelector('[data-task-read-hub-start]') || root.querySelector('[data-pr-ai]:not([disabled]):not([aria-disabled="true"])');
+  if (next) next.focus({ preventScroll: true });
+}
+
+/* The no-record card, with what the stopped hub says (and its start button) over it. */
+function taskReadNoRecordWithHubHtml(pr, hubView) {
+  const hub = taskReadHubHtml(null, hubView, others.starting);
+  return (hub ? `<div class="m3-filled-card pr-sec">${hub}</div>` : '') + taskReadNoRecordHtml(pr, hubView, others.asking.has(pr));
+}
+
 /* The middle of the 「AI 下読み」 tab. Called from `renderWorkTerm`, which has made the pane visible. */
 function renderTaskReadMiddle(task) {
   const key = taskReadKey(task);
@@ -197,13 +212,15 @@ function renderTaskReadMiddle(task) {
   const body = wk('task-read-body');
   wk('task-read').dataset.drafts = OWN_HOOKS.drafts ? 'on' : 'off';
   const rec = doc?.record || null;
+  const startHeld = !!document.activeElement?.matches?.('[data-task-read-hub-start]');
   if (!doc || !doc.pr || !rec) {
     const hubView = othersHubView(doc?.hub, []);
     // A poll that failed keeps the last document: say that what is shown may be behind.
     const behind = doc && taskRead.error ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>` : '';
     taskReadSay(behind + (!doc ? (taskRead.error ? `<div class="wk-notice" role="alert">${esc(`読み込めませんでした: ${taskRead.error}`)}</div>` : '<div class="tp-muted" role="status">読み込み中…</div>')
       : !doc.pr ? `<div class="m3-filled-card"><div class="tp-muted">${esc(TASK_READ_UNREADABLE_WHY)}</div></div>`
-        : taskReadNoRecordHtml(doc.pr, hubView, others.asking.has(doc.pr))));
+        : taskReadNoRecordWithHubHtml(doc.pr, hubView)));
+    keepHubStartFocus(startHeld);
     return;
   }
 
@@ -224,7 +241,7 @@ function renderTaskReadMiddle(task) {
   const failed = taskRead.error
     ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>`
     : '';
-  const band = failed + taskReadBandHtml(rec, read, hubView, asking);
+  const band = failed + taskReadHubHtml(rec, hubView, others.starting) + taskReadBandHtml(rec, read, hubView, asking);
   const sig = `${band}\u0000${html.index}\u0000${html.content}`;
   const content = wk('task-read-content');
   if (sig !== taskRead.contentSig) {
@@ -240,6 +257,7 @@ function renderTaskReadMiddle(task) {
     // The files that were drawn are drawn again from the cache, before the reading place is put back.
     hook?.onDrawnAt?.('read');
     restore(taskRead.shownFor === key);
+    keepHubStartFocus(startHeld);
   }
   // A task the middle was not drawn for, or the tab coming back: the reading place it had, else the top.
   if (taskRead.shownFor !== key) {
@@ -297,6 +315,11 @@ wk('task-read-body').addEventListener('scroll', e => {
 
 /* The buttons of the middle are the review request's: a button that asks for a read goes to the task, the rest to `prAct`. */
 wk('task-read').addEventListener('click', e => {
+  const start = e.target.closest('[data-task-read-hub-start]');
+  if (start) {
+    if (start.getAttribute('aria-disabled') !== 'true') othersStartHub();
+    return;
+  }
   const b = e.target.closest('[data-pr-ai], [data-pr-split], [data-pr-reread]');
   if (b) {
     if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') taskReadAsk(b.matches('[data-pr-split]') ? 'split' : undefined);

@@ -17,6 +17,8 @@ const others = {
   asking: new Set(),  // ids whose AI 下読み this page asked for and the answer is not back
   closing: new Set(), // ids whose reader this page is closing and the answer is not back
   starting: false,    // the code-review hub's start this page asked for is out
+  stopping: false,    // the code-review hub's stop this page asked for is out
+  stopAsked: false,   // the confirmation of stopping the code-review hub is open (the dialog is shared with the repositories' hubs)
 };
 
 /* The server's clock now, as far as this page can tell: the document's `now` and the time since it was read. */
@@ -184,20 +186,76 @@ async function othersCloseReader(id) {
   }
 }
 
-/* Start the code-review hub in a new window. */
+/* Start the code-review hub in a new window. `starting` stays on until the records are read again (the task's document too, unless
+   a read of it is already out), which narrows the time a start button is offered against a hub that is already up. */
 async function othersStartHub() {
   if (!multiBoard || others.starting) return;
   others.starting = true;
   renderOthersList(true);
+  prRedraw();
   try {
     const res = await boardApi('', '/api/others/hub/start', { method: 'POST', body: JSON.stringify({}) });
     if (res.started === false) note('adj hub --review', false, 'すでに動いています');
   } catch (e) {
     note('adj hub --review', true, e.message);
   } finally {
-    others.starting = false;
+    try {
+      await refreshOthers(true);
+      if (typeof taskReadRefresh === 'function') await taskReadRefresh(true);
+    } finally {
+      others.starting = false;
+      renderOthersList(true);
+      prRedraw();
+    }
   }
-  await refreshOthers(true);
+}
+
+/* Ask whether to stop the code-review hub, in the dialog the repositories' hubs use (`openHubStopDialog` in actions.js fills it
+   for those). Its `close` listener below stops the hub when it was confirmed. */
+function othersOpenHubStop() {
+  if (!multiBoard || others.stopping) return;
+  if (others.starting) return note('hub を止める', true, 'hub を起動しています。起動してから止めてください');
+  const text = othersHubStopText(othersHubView(others.doc?.hub, othersRecords()));
+  document.getElementById('hub-stop-heading').textContent = 'hub を止める';
+  document.getElementById('hub-stop-confirm').textContent = 'hub を止める';
+  document.getElementById('hub-stop-icon').textContent = 'stop_circle';
+  document.getElementById('hub-stop-submit').className = 'btn-m3-danger';
+  fillWarnings('hub-stop-warnings', text.warnings);
+  document.getElementById('hub-stop-lead').textContent = text.lead;
+  document.getElementById('hub-stop-note').textContent = text.note;
+  const dialog = document.getElementById('hub-stop-dialog');
+  others.stopAsked = true;
+  dialog.returnValue = '';
+  dialog.showModal();
+}
+// The dialog is shared with actions.js's listener, which does nothing unless it was opened for a repository's hub.
+document.getElementById('hub-stop-dialog').addEventListener('close', e => {
+  if (!others.stopAsked) return;
+  others.stopAsked = false;
+  if (e.target.returnValue === 'stop') othersStopHub();
+});
+
+/* Stop the code-review hub (its pane closes). The records, the read-throughs and the queue stay, and so do the readers that run.
+   The records are read again before the button is drawn, since it would be offered against the hub as it was. */
+async function othersStopHub() {
+  if (!multiBoard || others.stopping) return;
+  others.stopping = true;
+  renderOthersList(true);
+  try {
+    const res = await boardApi('', '/api/others/hub/stop', { method: 'POST', body: JSON.stringify({}) });
+    note('tmux kill-pane (hub コードレビュー)', false, res.wasRunning ? 'hub を止めました' : 'hub はすでに止まっていました（記録を片付けました）');
+  } catch (e) {
+    note('tmux kill-pane (hub コードレビュー)', true, e.message);
+  } finally {
+    try {
+      await refreshOthers(true);
+      if (typeof taskReadRefresh === 'function') await taskReadRefresh(true);
+    } finally {
+      others.stopping = false;
+      renderOthersList(true);
+      prRedraw();
+    }
+  }
 }
 
 /* ── the list ── */
@@ -253,24 +311,29 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
   </div>`;
 }
 
-/* The code-review hub's row. Not a button: it opens nothing here; its own button starts it when it is stopped and can be started. */
+/* The code-review hub's row. Not a button: it opens nothing here; its own button starts it when it is stopped and can be started, and
+   stops it (after asking) when it runs and can be stopped. */
 function othersHubHtml(hubView) {
   const stopped = hubView.state === 'stopped';
+  const hubActHtml = hubView.startable
+    ? `<span class="wk-acts"><button type="button" class="ov-act" data-ov-hub-start${others.starting ? ' aria-disabled="true"' : ''}>${others.starting ? '起動中…' : 'hub を起動'}</button></span>`
+    : hubView.stoppable
+      ? `<span class="wk-acts"><button type="button" class="ov-act" data-ov-hub-stop${others.stopping ? ' aria-disabled="true"' : ''}>${others.stopping ? '止めています…' : 'hub を止める'}</button></span>` : '';
   return `<div class="wk-row ov-hub${stopped ? ' dim' : ''}" data-ov-hub>
     <span class="material-symbols-outlined wk-glyph ${stopped ? 'ov-dim' : 'ov-ready'}" aria-hidden="true">smart_toy</span><span class="wk-main">
       <span class="wk-title"><span class="wk-tag">hub</span>コードレビュー</span>
       <span class="wk-meta"><span>AI 下読み ${hubView.running} / ${hubView.max}${hubView.queued ? ` · 順番待ち ${hubView.queued}` : ''}</span><span>${esc(stopped ? '止まっています' : hubView.state === 'running' ? '動いています' : hubView.state)}</span></span>
       ${hubView.why ? `<span class="wk-line">${esc(hubView.why)}</span>` : ''}
-    </span>${hubView.startable ? `<span class="wk-acts"><button type="button" class="ov-act" data-ov-hub-start${others.starting ? ' aria-disabled="true"' : ''}>${others.starting ? '起動中…' : 'hub を起動'}</button></span>` : ''}
+    </span>${hubActHtml}
   </div>`;
 }
 
 /* The sync button: its words are the time of the last sync; while one is out it says so and does nothing (aria-disabled, so the
-   keyboard stays where it is). */
+   keyboard stays where it is). It is highlighted when the last sync is old. */
 function othersSyncButtonHtml(lastSync, nowEst, stale, label = '', lite = false) {
   const at = stampSecs(lastSync?.at);
-  const words = others.syncing ? '同期中…' : label || (at == null ? 'まだ同期していません' : `同期 · ${agoLabel(minutesSince(at, nowEst))}`);
-  const tip = at == null ? '' : `最後の同期: ${when(lastSync.at)}`;
+  const words = others.syncing ? '同期中…' : label || othersSyncWords(lastSync, nowEst, false);
+  const tip = at == null ? '' : `最後の同期: ${when(lastSync.at)}${stale ? '（30 分以上たっています）' : ''}`;
   return `<button type="button" class="ov-sync-btn${stale ? ' stale' : ''}${lite ? ' lite' : ''}" data-ov-sync${others.syncing ? ' aria-disabled="true"' : ''}${tip ? ` title="${esc(tip)}"` : ''}><span class="material-symbols-outlined" aria-hidden="true">sync</span>${esc(words)}</button>`;
 }
 
@@ -307,12 +370,10 @@ function othersListHtml() {
     ...(others.error ? [{ alert: true, text: '最新の状態を読めませんでした（表示は前回のものです）' }] : []),
     ...othersNotes(lastSync),
   ].map(n => n.alert ? `<div class="wk-notice" role="alert">${esc(n.text)}</div>` : `<div class="ov-note">${esc(n.text)}</div>`).join('');
-  const staleHtml = stale
-    ? `<div class="ov-stale" role="status">最後に同期してから ${othersStaleMinutes(lastSync, nowEst)} 分たっています ${othersSyncButtonHtml(lastSync, nowEst, false, 'いま同期する', true)}</div>` : '';
 
   let body;
   if (never && !records.length) {
-    body = `<div class="wk-empty">まだ同期していません。「同期」で、あなたにレビューを頼んでいる PR を読み込みます<br>${othersSyncButtonHtml(lastSync, nowEst, false, 'いま同期する', true)}</div>`;
+    body = `<div class="wk-empty">あなたにレビューを頼んでいる PR は、同期すると読み込みます<br>${othersSyncButtonHtml(lastSync, nowEst, false, 'いま同期する', true)}</div>`;
   } else if (!records.length) {
     body = '<div class="wk-empty">あなたにレビューを頼んでいる PR はありません</div>';
   } else {
@@ -321,7 +382,7 @@ function othersListHtml() {
       <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, records)).join('')}</div>
     </section>`).join('');
   }
-  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}</div>${alerts}${staleHtml}${othersHubHtml(hubView)}${body}`;
+  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}</div>${alerts}${othersHubHtml(hubView)}${body}`;
 }
 
 /* How to find again what has the keyboard focus after a redraw: the control by its own data, else (a button that has gone, as
@@ -333,17 +394,18 @@ function othersHeldSel(el) {
   if (d.ov != null) return [rowOf(d.ov)];
   if (d.ovRead != null) return [q('ov-read', d.ovRead), rowOf(d.ovRead)];
   if (d.ovAi != null) return [q('ov-ai', d.ovAi), rowOf(d.ovAi)];
-  if (d.ovHubStart != null) return ['[data-ov-hub-start]', '[data-ov-hub]'];
+  if (d.ovHubStart != null) return ['[data-ov-hub-start]', '[data-ov-hub-stop]', '[data-ov-hub]'];
+  if (d.ovHubStop != null) return ['[data-ov-hub-stop]', '[data-ov-hub-start]', '[data-ov-hub]'];
   if (d.ovSplit != null) return [q('ov-split', d.ovSplit), rowOf(d.ovSplit)];
   if (d.ovRepo != null) return [q('ov-repo', d.ovRepo)];
-  if (d.ovSync != null) return [el.closest('.ov-stale') ? '.ov-stale [data-ov-sync]' : '.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
+  if (d.ovSync != null) return ['.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   return [];
 }
 
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || prefs.workTab !== 'others') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, nav.task]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');
@@ -382,6 +444,10 @@ wk('ov-groups').addEventListener('click', e => {
   if ((b = e.target.closest('[data-ov-split]'))) {
     if (b.disabled || b.getAttribute('aria-disabled') === 'true') return;
     return othersRequestAi(b.dataset.ovSplit, 'split');
+  }
+  if ((b = e.target.closest('[data-ov-hub-stop]'))) {
+    if (b.getAttribute('aria-disabled') === 'true') return;
+    return othersOpenHubStop();
   }
   // The hub's row opens nothing.
   if (e.target.closest('[data-ov-hub]')) return;

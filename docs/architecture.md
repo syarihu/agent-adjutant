@@ -205,7 +205,7 @@ those with 404 unless the server is the resident. The terminal is never a live r
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
 `POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/reader/close`, `POST /api/others/hub/start`,
-`GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts`, `POST /api/others/drafts` and `POST /api/others/pending`. It also answers the WebSocket
+`POST /api/others/hub/stop`, `GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts`, `POST /api/others/drafts` and `POST /api/others/pending`. It also answers the WebSocket
 handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the
 PR's record (`ai.terminal` and `ai.pid`, by `board::review::reader_window`), never from the request, and it
 shares the terminal code and the cap of 8 open terminals with a board's. A PR with no reader window, or whose
@@ -466,7 +466,8 @@ The 差分 tab and the 差分 group of 「拡大」 show the stored diff (`GET /
 first. A diff over 2000 rows is drawn file by file as each comes near the screen, and a file of more than 1500 rows starts closed behind a button. The cards keep the keys `diff:<path>` and `diff-bar`.
 
 - **Stale.** The list is stale when `lastSync.at` is more than 30 minutes before the server's time (the document's `now` plus the time since it was read):
-  a banner, the sync time in the warning colour and a dot on the switch, until the next sync. A list never synced is not stale.
+  the one sync button is in the warning colour (its title adds that it is 30 minutes or more old) and the switch gets a dot, until the next sync. The button reads
+  「同期・最終同期: <time ago>」 (「まだ同期していません」 before the first sync, 「同期中…」 while one is out); there is no second line or button for it. A list never synced is not stale.
 - **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
   time the person acted on it (`ai.startedAt`). A record in `waiting-on-author` or `done` is never new. The marks are
   `{ "<record id>": { read } }`, in server seconds, in the browser's local storage under `adj.seenOthers`. The sidebar's badge and the page
@@ -478,10 +479,10 @@ first. A diff over 2000 rows is drawn file by file as each comes near the screen
   as `下読み済み（前の push 時点 <sha7>）`) and 「もう一度 AI 下読み」 after a failure. A queued read says its place, `（N 番目）`, by
   `startedAt` and then `id`. The buttons work only while `hub.canRead` is true; otherwise they are disabled and the hub's `why`
   (stopped, or not tmux) is their title. Each send is guarded per PR and followed by a read of the list; a refusal is shown in the page's log.
-- **The code-review hub's row.** `hub` is `{state, slug, sessionId, running, queued, max, startable, canRead}`: `state` is `running` or
+- **The code-review hub's row.** `hub` is `{state, slug, sessionId, running, queued, max, startable, stoppable, canRead}`: `state` is `running` or
   `stopped`, `running` and `queued` count the records by `ai.status`, `max` is 3, `startable` is true when it is stopped and
-  `terminal.preset` is `tmux`, and `canRead` is true when it is running and `terminal.preset` is `tmux` (a reader cannot be opened
-  otherwise, and a request answers 409 `not-startable`). 「hub を起動」 is `POST /api/others/hub/start` (200 `{started: true, description}`, or `{started: false, running: true, pid}` when it is already up; 400 for a `start` that is not `auto`, `new` or `resume`; 500 when the start itself failed, for example a terminal that is not tmux or a window that closed at once). An older server sends no `hub`, and the page then shows
+  `terminal.preset` is `tmux`, `stoppable` is true when it is running and `terminal.preset` is `tmux` (the pane is closed with tmux), and `canRead` is true when it is running and `terminal.preset` is `tmux` (a reader cannot be opened
+  otherwise, and a request answers 409 `not-startable`). 「hub を起動」 is `POST /api/others/hub/start` (200 `{started: true, description}`, or `{started: false, running: true, pid}` when it is already up; 400 for a `start` that is not `auto`, `new` or `resume`; 500 when the start itself failed, for example a terminal that is not tmux or a window that closed at once). 「hub を止める」 is offered in place of it while the hub is `stoppable`, after one confirmation (the dialog the repositories' hubs use), and is `POST /api/others/hub/stop` (body ignored; 200 `{stopped: true, wasRunning}`, `wasRunning` false when none was up and a record it left was cleared; 500 `{error}`), the same stop as a repository's hub (`stop_hub`). The records, the read-throughs, the drafts and the queue stay. The readers that run are separate windows and keep running, and give their read-throughs as usual (their reports wait in the inbox for the next hub); the queued reads start when the hub is started again, and no read can be asked for while it is down. A task's 「AI 下読み」 tab says so in the tab while the hub is stopped (a PR that is done says nothing), with 「hub を起動」 (the same start, offered when `startable`) and, where it is not, that `adj hub --review` starts it; a running hub that cannot open a reader gives its `why`. An older server sends no `hub`, and the page then shows
   it as stopped.
 - **Out of review.** A PR is out of review when the change of **one file** (`additions` plus `deletions`) is strictly over 1,500 lines
   (1,500 itself is not), judged by `othersOutOfReview` in `my-work-others.js` from `files`, the one place the rule is written: the row, the

@@ -1492,3 +1492,13 @@ fn a_parent_hub_card_follows_only_the_worker_of_its_own_hub() {
     assert!(!cards[0].waits_on_person);
     assert!(cards[0].owner_hub.as_ref().unwrap().human_col.is_none());
 }
+
+/// The board may stop the code-review hub only while one runs; with none, the document says so
+/// under the key the page reads.
+#[test]
+fn the_code_review_hub_is_not_stoppable_when_none_runs() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let state = serde_json::to_value(crate::board::view::others(&sandbox.state())).unwrap();
+    assert_eq!(state["hub"]["state"], "stopped");
+    assert_eq!(state["hub"]["stoppable"], false);
+}
