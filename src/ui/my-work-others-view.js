@@ -225,15 +225,17 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
   // Disabled for good while a read cannot be asked for (the hub is down, or no reader can be opened), with why as the title; while a request is out it only ignores the click.
   const askAttrs = `${hubView.canRead ? '' : ` disabled title="${esc(hubView.why || OTHERS_SYNC_WHY)}"`}${asking ? ' aria-disabled="true"' : ''}`;
   // What a button asks for follows whether the PR is out of review now (`othersAiView` words it so), not what was asked before.
-  const aiButton = ai.action && !oor
-    ? `<button type="button" class="ov-act" data-ov-ai="${esc(rec.id)}"${askAttrs}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span>${esc(asking ? '依頼中…' : ai.action)}</button>` : '';
-  const splitButton = ai.action && oor
-    ? `<button type="button" class="ov-act" data-ov-split="${esc(rec.id)}"${askAttrs}><span class="material-symbols-outlined" aria-hidden="true">call_split</span>${esc(asking ? '依頼中…' : '分割案')}</button>` : '';
-  const acts = [
-    aiButton,
-    splitButton,
-    isNew ? `<button type="button" class="wk-act" data-ov-read="${esc(rec.id)}" aria-label="既読にする" title="既読にする"><span class="material-symbols-outlined" aria-hidden="true">done</span></button>` : '',
-  ].filter(Boolean).join('');
+  // The actions are described once: drawn for real beside the row button (a button cannot hold buttons) and again, invisible, at the end of the state line, which reserves their room there.
+  const acts = [];
+  if (ai.action) {
+    const [name, icon, label] = oor ? ['split', 'call_split', '分割案'] : ['ai', 'menu_book', ai.action];
+    acts.push({ cls: 'ov-act', attrs: ` data-ov-${name}="${esc(rec.id)}"${askAttrs}`, html: `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>${esc(asking ? '依頼中…' : label)}` });
+  }
+  if (isNew) acts.push({ cls: 'wk-act', attrs: ` data-ov-read="${esc(rec.id)}" aria-label="既読にする" title="既読にする"`, html: '<span class="material-symbols-outlined" aria-hidden="true">done</span>' });
+  const realActs = acts.map(a => `<button type="button" class="${a.cls}"${a.attrs}>${a.html}</button>`).join('');
+  const ghostActs = acts.length ? `<span class="ov-acts-ghost" aria-hidden="true">${acts.map(a => `<span class="${a.cls}">${a.html}</span>`).join('')}</span>` : '';
+  const stateLine = line.text || acts.length
+    ? `<span class="wk-line ov-line${line.cls ? ` ${line.cls}` : ''}${line.text ? '' : ' ov-line-bare'}">${esc(line.text)}${ghostActs}</span>` : '';
   const dim = othersStateOf(rec)[2] === 'ov-dim' ? ' dim' : '';
   const selected = nav.task === PR_REF + rec.id;
   return `<div class="wk-band-row ov-row-wrap" data-ov-cell="${esc(rec.id)}">
@@ -241,9 +243,9 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
       ${othersGlyphHtml(rec)}<span class="wk-main">
         <span class="wk-title">${isNew ? '<span class="ov-new">新着</span>' : ''}${esc(rec.title)}</span>
         <span class="wk-meta">${meta}</span>
-        <span class="wk-line ov-line${line.cls ? ` ${line.cls}` : ''}">${esc(line.text)}</span>${oor ? `
-        <span class="wk-line ov-oor-line">${esc(othersOutOfReviewLine(oor))}</span>` : ''}
-      </span></button>${acts ? `<span class="wk-acts">${acts}</span>` : ''}
+        ${oor ? `<span class="wk-line ov-oor-line">${esc(othersOutOfReviewLine(oor))}</span>
+        ` : ''}${stateLine}
+      </span></button>${realActs ? `<span class="wk-acts ov-acts">${realActs}</span>` : ''}
   </div>`;
 }
 

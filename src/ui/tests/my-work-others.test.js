@@ -333,6 +333,38 @@ test('the row of a PR out of review says so, offers 分割案 and not AI 下読�
   assert.ok(reading.includes('分割案を作成中') && !reading.includes('data-ov-split') && !reading.includes('data-ov-ai'));
 });
 
+test('the buttons are drawn beside the row button, and the state line ends with an invisible copy of them', () => {
+  const html = rowOf(rec(1, { files: [file('src/a.rs', 100)] }), {});
+  const row = html.indexOf('</button>');
+  // The real buttons follow the row button, in a layer of their own.
+  const acts = html.indexOf('<span class="wk-acts ov-acts">');
+  assert.ok(row > 0 && acts > row && html.indexOf('data-ov-ai=') > acts);
+  assert.ok(!html.slice(0, row).includes('data-ov-ai'));
+  // The ghost sits in the state line, hidden from assistive technology, with the label and no hook.
+  const line = html.match(/<span class="wk-line ov-line[^"]*">[\s\S]*?<\/span><\/span>/)[0];
+  assert.match(line, /<span class="ov-acts-ghost" aria-hidden="true"><span class="ov-act">[\s\S]*AI 下読み<\/span><\/span>$/);
+  assert.ok(!line.includes('data-ov-') && !line.includes('</button>'));
+  // The new mark is the second action, in both.
+  const fresh = ctx.othersRowHtml(rec(1, { files: [file('src/a.rs', 100)] }), true, { canRead: true }, T0 + 60, [rec(1)]);
+  assert.ok(fresh.indexOf('data-ov-ai=') < fresh.indexOf('data-ov-read=') && fresh.includes('<span class="wk-act"><span'));
+  // The line of a PR out of review comes above the state line, which stays the last line.
+  const big = rowOf(rec(1, { files: [file('src/b.rs', 2000)] }));
+  assert.ok(big.indexOf('ov-oor-line') < big.indexOf('wk-line ov-line'));
+  // Nothing to offer: no layer and no ghost.
+  const none = rowOf(rec(1, { state: 'waiting-on-author', files: [file('src/a.rs', 100)] }));
+  assert.ok(!none.includes('ov-acts') && !none.includes('ov-acts-ghost'));
+});
+
+test('a row with no state text keeps its state line only for the ghost', () => {
+  const { othersStateLine: stateLine, othersAiView: aiView } = ctx;
+  const row = (text, action) => {
+    Object.assign(ctx, { othersStateLine: () => ({ cls: '', text }), othersAiView: () => ({ text: '', action }) });
+    try { return rowOf(rec(1, { files: [file('src/a.rs', 100)] })); } finally { Object.assign(ctx, { othersStateLine: stateLine, othersAiView: aiView }); }
+  };
+  assert.match(row('', 'AI 下読み'), /ov-line ov-line-bare"><span class="ov-acts-ghost"/);
+  assert.ok(!row('', null).includes('ov-line'));
+});
+
 test('what a button asks for follows whether the PR is out of review now, not the mode of the stored proposal', () => {
   const small = [file('src/a.rs', 100)];
   // Out of review now: the proposal is asked for again.
