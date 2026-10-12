@@ -17,7 +17,17 @@ pub fn answer(
     choice: Option<&str>,
     comment: Option<&str>,
 ) -> Result<(Gate, crate::mail::DeliveryOutcome), String> {
-    answer_with(ctx, id, decision, choice, comment, None)
+    answer_with(ctx, id, decision, choice, comment, None).map_err(|e| e.0)
+}
+
+/// Why `answer_with` did not answer: the gate was settled by somebody else first (a typed case, so
+/// a caller can tell it from a failure without reading the words), or something failed.
+pub(super) struct AnswerError(pub String, pub bool);
+
+impl From<String> for AnswerError {
+    fn from(why: String) -> Self {
+        AnswerError(why, false)
+    }
 }
 
 /// `answer`, for an answer whose comment is made of points chosen from a read-through (see
@@ -29,14 +39,17 @@ pub(super) fn answer_with(
     choice: Option<&str>,
     comment: Option<&str>,
     handoff: Option<&ReadHandoff>,
-) -> Result<(Gate, crate::mail::DeliveryOutcome), String> {
+) -> Result<(Gate, crate::mail::DeliveryOutcome), AnswerError> {
     // Locked before the gate is read, and held until it is archived: the worker's close and
     // the board's sweep decide a gate under the same lock, and an answer delivered to a gate
     // somebody else has just closed would wake a worker to something that was settled.
     let held = if exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
         let lock = lock(ctx, Shelf::Open, id)?;
         if !exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id) {
-            return Err(already_decided(ctx, id).unwrap_or_else(|| format!("no open gate: {id}")));
+            return Err(AnswerError(
+                already_decided(ctx, id).unwrap_or_else(|| format!("no open gate: {id}")),
+                true,
+            ));
         }
         Some(lock)
     } else {
@@ -44,7 +57,12 @@ pub(super) fn answer_with(
     };
     let mut gate = match get(&ctx.state, &ctx.repo.slug, id) {
         Ok(gate) => gate,
-        Err(e) => return Err(already_decided(ctx, id).unwrap_or(e)),
+        Err(e) => {
+            return Err(match already_decided(ctx, id) {
+                Some(settled) => AnswerError(settled, true),
+                None => e.into(),
+            });
+        }
     };
     // Nothing else means anything to a worker that is not waiting: an approval of a record
     // would wake it to be told to carry on with what it is already doing.
@@ -56,12 +74,13 @@ pub(super) fn answer_with(
             } else {
                 ""
             }
-        ));
+        )
+        .into());
     }
     if let Some(choice) = choice
         && !gate.choices.iter().any(|c| c.id == choice)
     {
-        return Err(format!("no such choice on this gate: {choice}"));
+        return Err(format!("no such choice on this gate: {choice}").into());
     }
 
     let subject = answer_subject(&gate, decision);

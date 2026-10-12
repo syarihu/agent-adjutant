@@ -1159,6 +1159,48 @@ fn the_task_read_routes_are_resident_only() {
 }
 
 #[test]
+fn the_hand_over_route_comes_before_the_task_update_and_is_resident_only() {
+    let route = parsed("POST", "/api/tasks/t1/hand").unwrap().unwrap();
+    assert_eq!(route, Route::HandToWorker("t1".into()));
+    assert!(route.resident_only());
+    // The id is the segment as written, never decoded.
+    assert_eq!(
+        parsed("POST", "/api/tasks/a%2Fb/hand"),
+        Ok(Some(Route::HandToWorker("a%2Fb".into())))
+    );
+    // A task named `hand` is still updated at its own address.
+    assert_eq!(
+        parsed("POST", "/api/tasks/hand"),
+        Ok(Some(Route::UpdateTask("hand".into())))
+    );
+    assert_eq!(parsed("GET", "/api/tasks/t1/hand"), Ok(None));
+}
+
+#[test]
+fn each_refusal_to_hand_the_drafts_over_has_its_status_and_why() {
+    use super::handlers::hand_status;
+    use crate::board::review::HandRefused as R;
+    use crate::gate::Kind;
+    for (why, status, because) in [
+        (R::NoTask, 404, None),
+        (R::Nothing, 400, None),
+        (R::NoPr, 409, Some("no-pr")),
+        (R::PrChanged, 409, Some("pr-changed")),
+        (R::PrDone, 409, Some("pr-done")),
+        (R::NoRecord, 409, Some("no-record")),
+        (R::NoWorker, 409, Some("no-worker")),
+        (R::NoGate, 409, Some("no-gate")),
+        (R::GateWaiting(Kind::Plan), 409, Some("gate-waiting")),
+        (R::GateChanged, 409, Some("gate-changed")),
+        (R::Busy, 409, Some("busy")),
+        (R::Unreadable("x".into()), 500, None),
+        (R::Failed("x".into()), 500, None),
+    ] {
+        assert_eq!(hand_status(&why), (status, because), "{why:?}");
+    }
+}
+
+#[test]
 fn only_the_resident_serves_what_reaches_outside_the_repository() {
     for (method, path) in [
         ("POST", "/api/sessions/x/resume"),

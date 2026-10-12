@@ -60,6 +60,8 @@ pub enum HandRefused {
     /// The task, the record, the drafts or the read-through could not be read, and why. Not the
     /// same as there being none.
     Unreadable(String),
+    /// The gate chosen was answered or closed by somebody else meanwhile: nothing was sent.
+    GateChanged,
     /// The gate could not be read, delivered to or written, and why.
     Failed(String),
 }
@@ -178,6 +180,7 @@ pub fn hand_to_worker(ctx: &Context, task_id: &str, pr_seen: &str) -> Result<Han
             SendBackRefused::NoGate => HandRefused::NoGate,
             SendBackRefused::GateWaiting { kind } => HandRefused::GateWaiting(kind),
             SendBackRefused::Nothing => HandRefused::Nothing,
+            SendBackRefused::GateChanged => HandRefused::GateChanged,
             SendBackRefused::Failed(why) => HandRefused::Failed(why),
         })?;
     let at = sent

@@ -148,6 +148,7 @@ pub fn hand_refusal(why: &HandRefused) -> String {
         HandRefused::NoRecord => "this pull request has not been read".to_string(),
         HandRefused::PrDone => "the pull request is merged or closed".to_string(),
         HandRefused::Nothing => "there is nothing to hand over".to_string(),
+        HandRefused::GateChanged => "the gate was answered meanwhile; nothing was sent".to_string(),
         HandRefused::Busy => "the drafts are being handed over already".to_string(),
         HandRefused::NoGate => {
             "the task has no diff waiting and no diff record to send them back on".to_string()

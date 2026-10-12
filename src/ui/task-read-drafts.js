@@ -15,6 +15,7 @@ const TASK_HAND_WHY = {
   'no-worker': 'このタスクは Jules に渡してあり、worker がいません。渡せません',
   'no-gate': '差し戻せる差分の確認も記録も、このタスクにはまだありません。worker が差分を出してからにしてください',
   'gate-waiting': 'worker が別の確認（計画や質問）を待っています。先にそれに答えてください',
+  'gate-changed': '渡そうとした確認が、そのあいだに答えられました。何も送っていません。もう一度押してください',
   busy: 'いま渡しているところです。終わるまで待ってください',
 };
 
@@ -36,6 +37,7 @@ async function taskReadHand() {
   if (!e.doc) prEditDrafts(id, read, () => {});
   e.handing = true;
   e.handResult = null;
+  let sent = null;
   prRedrawNow();
   try {
     await prSaveSettled(id, '渡していません');
@@ -46,19 +48,23 @@ async function taskReadHand() {
     if (res.overall) doc.overall = { ...(doc.overall || {}), body: '' };
     e.doc = doc; e.dirty = true; e.rev++;
     e.handResult = { sent: res.sent || [], overall: !!res.overall, present: !!res.present, woken: !!res.woken };
-    note(`adj hand ${task.id}`, false, outboxNote(`${(res.sent || []).length} 件の指示を worker の outbox に追記`, res));
+    sent = res;
+    // From here on it went: nothing below may turn it into a failure.
     prScheduleSave(id, true);
-    // The answer is on the task and its gate, and on its timeline: read again, as after answering a gate.
-    if (taskRead.key === key) {
-      try { await Promise.all([refresh(true), taskReadRefresh(true)]); } catch {}
-      refreshBoards();
-    }
   } catch (err) {
     e.handResult = { error: TASK_HAND_WHY[err.why] || err.message };
     note(`adj hand ${task.id}`, true, e.handResult.error);
   } finally {
     e.handing = false;
-    if (prShown()?.id === id) prRedrawNow();
+    try { if (prShown()?.id === id) prRedrawNow(); } catch {}
+  }
+  if (!sent) return;
+  // The note and the reads after a hand-over that went through: each on its own, so that one failing says nothing of the hand-over.
+  try { note(`adj hand ${task.id}`, false, outboxNote(`${(sent.sent || []).length} 件の指示を worker の outbox に追記`, sent)); } catch {}
+  // The answer is on the task and its gate, and on its timeline: read again, as after answering a gate.
+  if (taskRead.key === key) {
+    try { await Promise.all([refresh(true), taskReadRefresh(true)]); } catch {}
+    try { refreshBoards(); } catch {}
   }
 }
 

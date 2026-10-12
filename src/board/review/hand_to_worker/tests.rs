@@ -281,7 +281,7 @@ fn drafts_kept_from_an_earlier_read_say_so_in_the_message() {
     let out = outbox(&ctx);
     assert!(out.contains("Lines are of 0123456"), "{out}");
     assert!(
-        out.contains("kept from an earlier read, so their lines are of bbbbbbb"),
+        out.contains("kept from an earlier read at bbbbbbb; their lines are of that head"),
         "{out}"
     );
 }

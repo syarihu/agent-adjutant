@@ -125,6 +125,19 @@ test('handing over saves first, sends the PR the drafts are of, marks what was s
   assert.deepStrictEqual(plain(run(`prDraftsEntry('${PR}').handResult`)), { sent: ['r1', 'p1'], overall: true, present: true, woken: true });
 });
 
+test('a failure after the 200 (the note, the reads, the boards) never turns a hand-over that went through into a failed one', async () => {
+  const { w, c, run } = await loaded({ stored: null });
+  c.read = readOf;
+  c.refresh = async () => { throw new Error('poll failed'); };
+  c.refreshBoards = () => { throw new Error('boards failed'); };
+  c.outboxNote = () => { throw new Error('wording failed'); };
+  run(`prEditDrafts('${PR}', read, () => {})`);
+  await run('taskReadHand()');
+  assert.deepStrictEqual(plain(run(`prDraftsEntry('${PR}').handResult`)), { sent: ['r1', 'p1'], overall: true, present: true, woken: true });
+  assert.ok(w.notes.every(n => n[1] !== true), 'no error note');
+  assert.ok(run(`prDoc('${PR}', read)`).drafts.every(d => d.sentAt));
+});
+
 test('while it is on its way the drafts cannot be edited and a second click sends nothing', async () => {
   const { w, c, run, tick } = await loaded();
   c.read = readOf;
@@ -141,7 +154,7 @@ test('while it is on its way the drafts cannot be edited and a second click send
 });
 
 test('a refusal is said in the page\'s words, marks nothing and keeps the drafts and the comment', async () => {
-  for (const [why, text] of [['no-gate', '差し戻せる差分の確認も記録も'], ['gate-waiting', '別の確認'], ['pr-changed', 'タスクの PR が変わりました'], ['busy', 'いま渡している']]) {
+  for (const [why, text] of [['no-gate', '差し戻せる差分の確認も記録も'], ['gate-waiting', '別の確認'], ['pr-changed', 'タスクの PR が変わりました'], ['busy', 'いま渡している'], ['gate-changed', 'そのあいだに答えられました']]) {
     const { w, c, run } = await loaded();
     c.read = readOf;
     run(`prEditDrafts('${PR}', read, d => { d.overall = { body: 'keep me' }; })`);

@@ -31,6 +31,12 @@ test('an answer of a record with the read-through\'s points says how many went t
   assert.ok(one.includes('AI 下読みの指示 1 件を worker に渡した — ') && !one.includes('全体のコメントも') && !one.includes('<details'));
 });
 
+test('a hand-over of the comment on the whole alone does not say 0 points', () => {
+  const text = vm.runInContext('handoffText', ctx);
+  assert.strictEqual(text({ count: 0, overall: true }), 'AI 下読みから全体のコメントを worker に渡した');
+  assert.strictEqual(text({ count: 2, overall: false }), 'AI 下読みの指示 2 件を worker に渡した');
+});
+
 test('a waiting gate answered with them says so too, and an ordinary send-back is as it was', () => {
   const waiting = rec({ id: 'g1', wait: true, answeredAt: '20261012T0005', decision: 'changes', comment: 'the message', handoff });
   const [, , sent] = events([waiting]);

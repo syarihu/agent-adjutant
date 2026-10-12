@@ -740,9 +740,11 @@ The route is resident-only, and is placed before the task update, so `POST /api/
 - **What is kept.** The answer (or the answered waiting gate, as a top-level key) carries `handoff: {pr, sha, count, overall}`, and its comment is the message. The timeline of the task (経過), 離れていた間に and the decision column say
   「AI 下読みの指示 N 件を worker に渡した」 (and 「・全体のコメントも」), with the comment folded. Unknown keys inside an answer and its `handoff` are kept (rule 10).
 - **Refusals.** 400 for a body that is not an object with a `pr`, and for nothing to send; 404 for a task that is not there; 409 `{error, why}` with `why` `no-pr`, `pr-changed` (the task's PR is not the one the drafts are of), `pr-done` (merged or closed), `no-record` (never read),
-  `no-worker` (a task handed to Jules), `no-gate`, `gate-waiting` or `busy`; 500 for a record, drafts or gate that cannot be read or written. 200 answers `{gate: {id, kind, shelf}, sent: [key], overall, at, present, woken}`: `shelf` is `answered` for a gate that was waiting and `record` for a record, and `present`
+  `no-worker` (a task handed to Jules), `no-gate`, `gate-waiting`, `gate-changed` or `busy`; 500 for a record, drafts or gate that cannot be read or written. 200 answers `{gate: {id, kind, shelf}, sent: [key], overall, at, present, woken}`: `shelf` is `answered` for a gate that was waiting and `record` for a record, and `present`
   and `woken` are what delivery says of the worker, as an answered gate's do.
 - **Known limits.** (a) With no waiting diff or verify gate and no diff record (for example the waiting diff gate was approved and the worker has not put out a record since) the hand-over is refused with `no-gate`; the points can be sent once the worker opens its next diff record or gate.
   (b) The sent marks are written by the page after the 200, so if that save is lost the drafts show unsent again and could be sent twice (the timeline shows both hand-overs).
   (c) An older binary that rewrites a record drops `handoff` from earlier answers, which then show as a plain send-back.
-  (d) Drafts kept across a re-read are of the head they were taken from: when that differs from the read-through's, the comment says so (`handoff.draftsSha`).
+  (d) Points kept from an earlier read (the drafts' `fromSha` differs from the read-through's) are of that head, and the comment says so (`handoff.draftsSha`).
+  (e) A waiting gate the hub opened for the task (`dispatch`, `issue`, `relay`) is not looked at when choosing the gate, since the worker does not wait on it.
+  (f) A gate answered or closed by somebody else between choosing it and answering is refused with `gate-changed` (409); nothing was sent.

@@ -185,6 +185,7 @@ pub(super) fn hand_status(why: &HandRefused) -> (u16, Option<&'static str>) {
         HandRefused::NoWorker => (409, Some("no-worker")),
         HandRefused::NoGate => (409, Some("no-gate")),
         HandRefused::GateWaiting(_) => (409, Some("gate-waiting")),
+        HandRefused::GateChanged => (409, Some("gate-changed")),
         HandRefused::Busy => (409, Some("busy")),
         HandRefused::Unreadable(_) | HandRefused::Failed(_) => (500, None),
     }

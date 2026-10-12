@@ -837,3 +837,31 @@ fn keys_this_binary_does_not_know_survive_on_an_answer_and_a_gate() {
 fn without_a_handoff_the_body_has_no_from_line() {
     assert!(!answer_body(&gate(Kind::Diff), "changes", None, Some("x")).contains("## From"));
 }
+
+#[test]
+fn an_overall_comment_alone_is_said_as_a_comment_and_not_as_no_points() {
+    let (_sandbox, ctx) = hub();
+    task_gate(&ctx, "20260922T041233Z-diff", Kind::Diff, true);
+    send_back_read(&ctx, TASK, &[], Some("Looks close"), handoff()).unwrap();
+    let out = outbox(&ctx);
+    assert!(
+        out.contains("sends you a comment on the whole PR."),
+        "{out}"
+    );
+    assert!(!out.contains("0 points"), "{out}");
+    assert!(out.contains("### Overall\nLooks close"), "{out}");
+}
+
+#[test]
+fn a_gate_settled_by_somebody_else_is_a_typed_refusal_and_writes_nothing() {
+    let (_sandbox, ctx) = hub();
+    let g = task_gate(&ctx, "20260922T041233Z-diff", Kind::Diff, true);
+    // Chosen, then archived by another answer before this one takes the lock.
+    archive(&ctx, &g).unwrap();
+    std::fs::remove_file(path_of(&dir_of(&ctx, Shelf::Open), &g.id)).ok();
+    let err = super::answer::answer_with(&ctx, &g.id, "changes", None, Some("x"), None)
+        .err()
+        .unwrap();
+    assert!(err.1, "{}", err.0);
+    assert_eq!(outbox(&ctx), "");
+}

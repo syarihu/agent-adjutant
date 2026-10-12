@@ -1,6 +1,6 @@
 //! Sending the worker the points a person chose from a read-through of its task's PR.
 
-use super::answer::answer_with;
+use super::answer::{AnswerError, answer_with};
 use super::store::dir;
 use super::*;
 
@@ -17,6 +17,8 @@ pub enum SendBackRefused {
     GateWaiting { kind: Kind },
     /// Nothing was chosen to send.
     Nothing,
+    /// The gate chosen was answered or closed by somebody else before this could answer it.
+    GateChanged,
     /// A gate could not be read, delivered to or written, and why.
     Failed(String),
 }
@@ -96,7 +98,10 @@ pub fn send_back_read(
         Some(&comment),
         Some(&handoff),
     )
-    .map_err(SendBackRefused::Failed)?;
+    .map_err(|e| match e {
+        AnswerError(_, true) => SendBackRefused::GateChanged,
+        AnswerError(why, false) => SendBackRefused::Failed(why),
+    })?;
     Ok(SentBack { gate, shelf, told })
 }
 
@@ -107,16 +112,16 @@ fn comment_of(items: &[Instruction], overall: Option<&str>, handoff: &ReadHandof
         .short_sha()
         .map(|sha| format!("Lines are of {sha} (right side unless said)."))
         .unwrap_or_else(|| "Lines are of the read head (right side unless said).".to_string());
-    let points = if n == 1 {
-        "1 point".to_string()
-    } else {
-        format!("{n} points")
+    let points = match n {
+        0 => "a comment on the whole PR".to_string(),
+        1 => "1 point".to_string(),
+        _ => format!("{n} points"),
     };
     // Drafts kept across a re-read: the reader's points are of the earlier head, which is said.
     let earlier = handoff
         .short_drafts_sha()
         .map(|sha| {
-            format!(" The (AI) points were kept from an earlier read, so their lines are of {sha}.")
+            format!(" Some points were kept from an earlier read at {sha}; their lines are of that head.")
         })
         .unwrap_or_default();
     let mut out = format!(
