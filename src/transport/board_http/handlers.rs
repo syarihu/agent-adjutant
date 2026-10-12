@@ -10,6 +10,7 @@ use super::resident::{read_mode_of, refusal_status};
 use super::routes::HubAction;
 use super::sessions::{input_of, text};
 use crate::board::hub::{Reopened, close, find, reset, restart, start, start_for_key, stop};
+use crate::board::review::HandRefused;
 use crate::board::{Server, settings_now};
 use crate::infra::http;
 use crate::jules::{findings as jules_findings, relay as jules_relay};
@@ -107,6 +108,85 @@ pub(super) fn ask_for_task_read(
                     .to_string(),
             )
         }
+    }
+}
+
+/// `POST /api/tasks/<id>/hand`: hand the drafts of the task's PR to its worker. The body is
+/// `{"pr": "owner/repo#N"}`, the PR the page showed them for. Writes its own status: a body that is
+/// not that is 400, a task that is not there 404, a refusal that is about the state of the task, its
+/// PR or its gates 409 with `why`, and what could not be read or written 500.
+pub(super) fn hand_to_worker(
+    server: &Server,
+    id: &str,
+    body: &[u8],
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    let pr = match serde_json::from_slice::<Value>(body) {
+        Ok(input) if input.is_object() => match input.get("pr").and_then(Value::as_str) {
+            Some(pr) if !pr.trim().is_empty() => pr.to_string(),
+            _ => {
+                return http::json(
+                    out,
+                    400,
+                    &json!({ "error": "the PR the drafts are of is required" }).to_string(),
+                );
+            }
+        },
+        Ok(_) => {
+            return http::json(
+                out,
+                400,
+                &json!({ "error": "bad JSON: expected an object" }).to_string(),
+            );
+        }
+        Err(e) => {
+            return http::json(
+                out,
+                400,
+                &json!({ "error": format!("bad JSON: {e}") }).to_string(),
+            );
+        }
+    };
+    match crate::board::review::hand_to_worker(&server.ctx, id, &pr) {
+        Ok(done) => http::json(
+            out,
+            200,
+            &json!({
+                "gate": { "id": done.gate_id, "kind": done.kind, "shelf": done.shelf },
+                "sent": done.sent,
+                "overall": done.overall,
+                "at": done.at,
+                "present": done.present,
+                "woken": done.woken,
+            })
+            .to_string(),
+        ),
+        Err(why) => {
+            let (status, because) = hand_status(&why);
+            http::json(
+                out,
+                status,
+                &json!({ "error": crate::transport::wording::hand_refusal(&why), "why": because })
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// The status a refusal to hand the drafts over is answered with, and the `why` the page words it by.
+pub(super) fn hand_status(why: &HandRefused) -> (u16, Option<&'static str>) {
+    match why {
+        HandRefused::NoTask => (404, None),
+        HandRefused::Nothing => (400, None),
+        HandRefused::NoPr => (409, Some("no-pr")),
+        HandRefused::PrChanged => (409, Some("pr-changed")),
+        HandRefused::PrDone => (409, Some("pr-done")),
+        HandRefused::NoRecord => (409, Some("no-record")),
+        HandRefused::NoWorker => (409, Some("no-worker")),
+        HandRefused::NoGate => (409, Some("no-gate")),
+        HandRefused::GateWaiting(_) => (409, Some("gate-waiting")),
+        HandRefused::Busy => (409, Some("busy")),
+        HandRefused::Unreadable(_) | HandRefused::Failed(_) => (500, None),
     }
 }
 

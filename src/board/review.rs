@@ -10,8 +10,10 @@ use crate::lifecycle::review::{self, AskError, Asked, CloseError, ClosedReader, 
 use crate::others::{self, ReadMode, Record, SyncError, Synced, pr_of};
 use crate::registry::{self, Context};
 
+mod hand_to_worker;
 mod reader_window;
 
+pub use hand_to_worker::*;
 pub use reader_window::*;
 
 /// Why a read was not asked for.

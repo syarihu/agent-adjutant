@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 
+use crate::board::review::HandRefused;
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
@@ -132,6 +133,29 @@ pub fn task_review_refusal(why: &TaskAskError) -> String {
             format!("not a pull request on github.com this can read: {pr}")
         }
         TaskAskError::Refused(why) => review_refusal(why),
+    }
+}
+
+/// Why the drafts of a task's PR were not handed to its worker, as the board says it.
+pub fn hand_refusal(why: &HandRefused) -> String {
+    match why {
+        HandRefused::NoTask => "no such task".to_string(),
+        HandRefused::NoPr => "the task has no pull request yet".to_string(),
+        HandRefused::PrChanged => "the task's PR is not the one the drafts are of".to_string(),
+        HandRefused::NoWorker => {
+            "the task is handed to Jules: it has no worker to tell".to_string()
+        }
+        HandRefused::NoRecord => "this pull request has not been read".to_string(),
+        HandRefused::PrDone => "the pull request is merged or closed".to_string(),
+        HandRefused::Nothing => "there is nothing to hand over".to_string(),
+        HandRefused::Busy => "the drafts are being handed over already".to_string(),
+        HandRefused::NoGate => {
+            "the task has no diff waiting and no diff record to send them back on".to_string()
+        }
+        HandRefused::GateWaiting(kind) => {
+            format!("the task has a {} waiting: answer it first", kind.as_str())
+        }
+        HandRefused::Unreadable(why) | HandRefused::Failed(why) => why.clone(),
     }
 }
 
