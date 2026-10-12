@@ -446,7 +446,7 @@ test('an error is retried by a redraw it schedules, for the PR still shown, and 
 function readWorld() {
   const x = world();
   const scroll = el({}, { scrollTop: 0 });
-  x.w.byId = { 'task-read-content': x.w.dialog.root, 'task-read-body': scroll };
+  x.w.byId = { 'task-read': el({}, { hidden: false }), 'task-read-content': x.w.dialog.root, 'task-read-body': scroll };
   x.w.shown = { id: 'acme/widget#1', rec: rec(), kind: 'task', hubView: x.w.hubView, asking: false };
   x.w.selected = 'task-1';
   x.scroll = scroll;
@@ -464,6 +464,13 @@ test('the middle of a task is a place of its own: its root is the read-through\'
   const p = c.prdPlace('read');
   assert.strictEqual(p.root, w.dialog.root);
   assert.strictEqual(p.scroll, scroll);
+  // Kept but not on screen (the other tab, or a review request selected): no place, so another PR's state does not reach it.
+  w.byId['task-read'].hidden = true;
+  assert.strictEqual(c.prdPlace('read'), null);
+  w.byId['task-read'].hidden = false;
+  w.shown = { ...w.shown, kind: 'pr' };
+  assert.strictEqual(c.prdPlace('read'), null);
+  w.shown = { ...w.shown, kind: 'task' };
   // Nothing drawn in it yet: no place.
   w.byId['task-read-content'] = el({}, { querySelector: () => null });
   assert.strictEqual(c.prdPlace('read'), null);

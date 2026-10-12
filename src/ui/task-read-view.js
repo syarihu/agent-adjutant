@@ -216,7 +216,11 @@ function renderTaskReadMiddle(task) {
     diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
   });
   const html = cardDialogTaskHtml(groups);
-  const band = taskReadBandHtml(rec, read, hubView, asking);
+  // A poll that failed keeps the last document, so say that what is shown may be behind.
+  const failed = taskRead.error
+    ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>`
+    : '';
+  const band = failed + taskReadBandHtml(rec, read, hubView, asking);
   const sig = `${band}\u0000${html.index}\u0000${html.content}`;
   const content = wk('task-read-content');
   if (sig !== taskRead.contentSig) {

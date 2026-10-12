@@ -195,6 +195,8 @@ function prdPlace(place, filling = false) {
     return root ? { root, scroll: tp('tp-detail') } : null;
   }
   if (place === 'read') {
+    // Kept while the other tab or a review request is on, but not on screen: what another PR puts in place must not reach it.
+    if (document.getElementById('task-read')?.hidden !== false || prShown()?.kind !== 'task') return null;
     const root = document.getElementById('task-read-content');
     return root?.querySelector('[data-prd-file], [data-prd-tab]') ? { root, scroll: document.getElementById('task-read-body') } : null;
   }
