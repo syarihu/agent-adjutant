@@ -140,10 +140,11 @@ function prEnsureRead(rec) {
 /* What the page holds of one PR's drafts. `doc` is the file's document (null while there is no file: the reader's drafts then
    stand in, `prSeedDrafts`); `loaded` is that the file has been asked for (editing waits for it, or a save could replace what
    is stored); `dirty` that `doc` has something the server does not; `rev` counts edits, so that a save knows whether more came;
-   `inflight` is the promise of the save on its way; `pending` that a push into the pending review is on its way, `pendResult` how the last one went. */
+   `inflight` is the promise of the save on its way; `pending` that a push into the pending review is on its way, `pendResult` how the last one went; `handing` and `handResult` are the same for
+   handing a task's drafts to its worker (task-read-drafts.js). */
 function prDraftsEntry(id) {
   let e = prView.drafts.get(id);
-  if (!e) prView.drafts.set(id, e = { doc: null, saved: false, loaded: false, loading: false, error: null, dirty: false, saving: false, saveError: null, timer: 0, rev: 0, inflight: null, pending: false, pendResult: null });
+  if (!e) prView.drafts.set(id, e = { doc: null, saved: false, loaded: false, loading: false, error: null, dirty: false, saving: false, saveError: null, timer: 0, rev: 0, inflight: null, pending: false, pendResult: null, handing: false, handResult: null });
   return e;
 }
 /* The stored document without what the server adds. */
@@ -177,11 +178,11 @@ function prSaveBody(doc) {
 const prDoc = (id, read) => prDraftsEntry(id).doc || prSeedDrafts(read);
 
 /* Change the drafts of `id`: `fn` edits a copy, which is kept and saved. False when they cannot be edited yet, or while they are
-   being put into the pending review (what is sent is what was saved). Redrawing is the caller's (typing must not redraw the box
+   being put into the pending review or handed to a worker (what is sent is what was saved). Redrawing is the caller's (typing must not redraw the box
    being typed in). */
 function prEditDrafts(id, read, fn) {
   const e = prDraftsEntry(id);
-  if (!e.loaded || e.pending) return false;
+  if (!e.loaded || e.pending || e.handing) return false;
   const doc = structuredClone(prDoc(id, read));
   fn(doc);
   e.doc = doc;
@@ -189,6 +190,7 @@ function prEditDrafts(id, read, fn) {
   e.rev++;
   // What the last push said (a draft it refused) is about the drafts as they were.
   e.pendResult = null;
+  e.handResult = null;
   prScheduleSave(id);
   prShowSave(id);
   return true;
@@ -235,7 +237,7 @@ function prShowSave(id) {
   const st = prSaveState(e);
   const text = st.status === 'error' ? `保存できませんでした: ${st.error} 入力はこのページに残っています` : st.status === 'saving' ? '保存しています…' : st.status === 'saved' ? '保存しました' : '';
   for (const root of [tp('task-panel'), cardDialogEl()]) {
-    if (!root || selectedTaskId !== PR_REF + id) continue;
+    if (!root || prShown()?.id !== id) continue;
     root.querySelectorAll('[data-pr-save]').forEach(el => {
       if (el.textContent !== text) el.textContent = text;
       el.classList.toggle('err', st.status === 'error');
@@ -247,8 +249,9 @@ window.addEventListener('beforeunload', e => {
   if ([...prView.drafts.values()].some(d => d.dirty)) { e.preventDefault(); e.returnValue = ''; }
 });
 
-/* The drafts as a body: the panel's 下書き tab and the dialog's column draw the same, `place` being the only difference. */
-function prDraftsBodyHtml(rec, read, place) {
+/* The drafts as a body: the panel's 下書き tab and the dialog's column draw the same, `place` being the only difference. `to` is
+   where they are going: 'pending' (a review request's: a pending review on GitHub) or 'worker' (a task's: its worker). */
+function prDraftsBodyHtml(rec, read, place, to = 'pending') {
   const e = prDraftsEntry(rec.id);
   // `read` is undefined while the read-through is on its way: drafts seeded from it would be the wrong ones.
   if (!e.loaded || read === undefined) {
@@ -258,7 +261,8 @@ function prDraftsBodyHtml(rec, read, place) {
   const doc = prDoc(rec.id, read);
   // After a re-read the person's drafts stay; the reader's new ones are offered.
   const notice = e.saved && read && prFromElsewhere(doc, read) ? prNewReaderDrafts(doc, read).length + (prNewReaderOverall(doc, read) ? 1 : 0) : 0;
-  return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e), pend: { sending: e.pending, result: e.pendResult, prUrl: rec.url } });
+  const where = to === 'worker' ? { to, hand: { sending: e.handing, result: e.handResult } } : { pend: { sending: e.pending, result: e.pendResult, prUrl: rec.url } };
+  return prDraftsHtml(doc, read, { place, notice, save: prSaveState(e), ...where });
 }
 
 /* What a draft box being focused holds the redraw for. */
@@ -378,6 +382,17 @@ async function prCopy(text) {
   }
 }
 
+/* Wait until nothing of `id`'s drafts is unsaved: the saves in flight and the edits since. Throws, saying `notDone` is what was not
+   done, when one fails or they do not settle. What the server reads is the file, so whatever sends the drafts waits for this first. */
+async function prSaveSettled(id, notDone) {
+  const e = prDraftsEntry(id);
+  for (let n = 0; n < 20 && (e.dirty || e.saving); n++) {
+    if (e.saving) await e.inflight; else await prSave(id);
+    if (e.saveError != null) throw new Error(`下書きを保存できなかったので、${notDone}: ${e.saveError}`);
+  }
+  if (e.dirty || e.saving) throw new Error(`下書きの保存が終わらなかったので、${notDone}`);
+}
+
 /* Put the stored drafts into the person's pending review on GitHub. The server sends what is stored, so what is held here is saved
    first (and the reader's drafts, which are not a file until the first edit, are made the file). One push in flight per PR: a
    second click does nothing. A failed one keeps the drafts as they are and says so; a successful one takes the server's document, in
@@ -390,12 +405,7 @@ async function prPend(id, read) {
   e.pendResult = null;
   prRedrawNow();
   try {
-    // Saves in flight and edits since: until nothing is unsaved, or one fails.
-    for (let n = 0; n < 20 && (e.dirty || e.saving); n++) {
-      if (e.saving) await e.inflight; else await prSave(id);
-      if (e.saveError != null) throw new Error(`下書きを保存できなかったので、積んでいません: ${e.saveError}`);
-    }
-    if (e.dirty || e.saving) throw new Error('下書きの保存が終わらなかったので、積んでいません');
+    await prSaveSettled(id, '積んでいません');
     const res = await boardApi('', '/api/others/pending', { method: 'POST', body: JSON.stringify({ id }) });
     if (res.drafts) { e.doc = prDocOfStored(res.drafts); e.saved = true; e.dirty = false; }
     else {
@@ -416,12 +426,17 @@ async function prPend(id, read) {
     note('pending review', true, err.message);
   } finally {
     e.pending = false;
-    if (selectedTaskId === PR_REF + id) prRedrawNow();
+    if (prShown()?.id === id) prRedrawNow();
   }
 }
 
+/* The tab of the panel the drafts are in: a task's 「worker への指示」, else a review request's 下書き. */
+function prDraftsPane() {
+  return prShown()?.kind === 'task' ? 'ai-drafts' : 'drafts';
+}
+
 /* The click of a button that belongs to a PR, in the panel, in 「拡大」 (`place`: 'panel' or 'dialog') or in a task's read-through
-   (`place` 'read', which has no drafts to add to). True when it was one. */
+   (`place` 'read'). True when it was one. */
 function prAct(e, { place = 'panel' } = {}) {
   const hit = sel => e.target.closest(sel);
   const shown = prShown();
@@ -457,7 +472,6 @@ function prAct(e, { place = 'panel' } = {}) {
     return true;
   }
   if ((b = hit('[data-pr-todraft]'))) {
-    if (place === 'read') return true;
     const point = read?.points?.[Number(b.dataset.prTodraft)];
     if (!point) return true;
     if (!prDraftsEntry(id).loaded) {
@@ -465,7 +479,7 @@ function prAct(e, { place = 'panel' } = {}) {
       return true;
     }
     // The tab first, so the box that is made is drawn in it; it takes the keyboard, where the person finishes it.
-    if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
+    if (!inDialog && nav.pane !== prDraftsPane()) go({ pane: prDraftsPane() }, { replace: true });
     const key = prNextKey(doc(), 'p');
     edited(d => { d.drafts.push(prDraftFromPoint(point, d)); }, boxSel(key));
     return true;
@@ -536,11 +550,11 @@ function prCloseReader() {
 // Typing into a draft changes the document and schedules a save; nothing is drawn, so the box keeps its caret and its composition.
 function prInput(e) {
   const t = e.target;
-  if (!t.matches?.(PR_BOX_SEL) || !isPrRef(selectedTaskId)) return;
+  // Nothing while a task is selected but its read-through is not on screen: the box is not one of this PR's.
+  const shown = prShown();
+  if (!t.matches?.(PR_BOX_SEL) || !shown?.rec) return;
   if (t.closest?.('#card-dialog') && cardDialog.subject !== selectedTaskId) return;
-  const id = prIdOfRef(selectedTaskId);
-  const rec = othersById(id);
-  if (!rec) return;
+  const { id, rec } = shown;
   const read = prReadOf(rec) || null;
   const value = t.value;
   // What is in the pending review is not edited here.
@@ -565,8 +579,9 @@ function prInput(e) {
 }
 // Leaving a box saves at once, and lets a redraw that waited for it be made.
 function prFocusOut(e, root, held, again) {
-  if (!e.target.matches?.(PR_BOX_SEL) || !isPrRef(selectedTaskId)) return;
-  prScheduleSave(prIdOfRef(selectedTaskId), true);
+  const shown = prShown();
+  if (!e.target.matches?.(PR_BOX_SEL) || !shown) return;
+  prScheduleSave(shown.id, true);
   prHeldFlush(root, e.relatedTarget, held, again);
 }
 tp('task-panel').addEventListener('input', e => prInput(e));

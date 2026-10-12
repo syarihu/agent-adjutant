@@ -26,7 +26,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const { taskReadTabState, taskReadTabsHtml, taskReadHeadHtml, taskReadGroups, taskReadNoRecordHtml, taskReadBandHtml, taskReaderHeadHtml,
-  taskReaderTabsHtml, taskReadDraftsPlaceholderHtml } = ctx;
+  taskReaderTabsHtml } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const A = 'a'.repeat(40);
@@ -202,15 +202,6 @@ test('the reader\'s tabs are the terminal and 「worker への指示」 with its
   assert.ok(!/id="tp-tab-read-term"[^>]* disabled/.test(before));
 });
 
-test('「worker への指示」 says how many drafts there are and that nothing is passed on yet, in the place a later change fills', () => {
-  const html = taskReadDraftsPlaceholderHtml(3);
-  assert.ok(html.includes('id="tp-read-drafts"') && html.includes('data-read-drafts'));
-  // It sits inside #tp-detail, the panel the tab names: not a tab panel of its own.
-  assert.ok(!html.includes('role="tabpanel"'));
-  assert.ok(html.includes('下読みの下書きが 3 件あります。worker に渡す操作は、まだありません。'));
-  assert.ok(taskReadDraftsPlaceholderHtml(undefined).includes('0 件'));
-});
-
 /* ── what the buttons are on ── */
 
 function resolver({ selected = 'pr:acme/widget#12', task: shownTask = null } = {}) {
@@ -224,7 +215,7 @@ function resolver({ selected = 'pr:acme/widget#12', task: shownTask = null } = {
     PR_HOOKS: { diff: null }, cardDialog: { subject: selected }, closeCardDialog: () => w.calls.push('close'), prDraftsEntry: () => ({ loaded: true }), prReadOf: () => readOf(), prDoc: () => ({ drafts: [] }),
     prEditDrafts: () => { w.edits++; return true; }, prRedrawNow() {}, prNextKey: () => 'p1', prDraftFromPoint: () => ({}), prDraftLocation: () => 'loc',
   });
-  vm.runInContext(['prShown', 'prRecOf', 'prRedrawFor', 'prAsk', 'prAct'].map(n => fnSrc(panelSrc, n)).join('\n'), c);
+  vm.runInContext(['prShown', 'prRecOf', 'prRedrawFor', 'prDraftsPane', 'prAsk', 'prAct'].map(n => fnSrc(panelSrc, n)).join('\n'), c);
   return { w, c, run: e => vm.runInContext(e, c) };
 }
 const onButton = sel => ({ target: { closest: s => (s.split(',').some(x => x.trim() === sel) ? { matches: m => m.split(',').some(x => x.trim() === sel), disabled: false, getAttribute: () => null, dataset: { prTodraft: '0', prAsk: '0' } } : null) } });
@@ -285,18 +276,29 @@ test('the buttons of a place belong to the place the page is on: a task\'s read 
   assert.strictEqual(bare.run("prAct(e, { place: 'read' })"), false);
 });
 
-test('a task\'s read-through has no drafts to add to: 「下書きに」 is taken and does nothing', () => {
+test('a task\'s read-through takes drafts as a review request does, and the panel goes to 「worker への指示」', () => {
   const shown = { id: 'acme/widget#12', rec: rec(), kind: 'task', hubView: hub, asking: false, ask() {}, slot: {} };
   const t = resolver({ selected: 't1', task: shown });
+  t.c.nav.pane = 'ai';
   t.c.e = onButton('[data-pr-todraft]');
   assert.strictEqual(t.run("prAct(e, { place: 'read' })"), true);
-  assert.strictEqual(t.w.edits, 0);
-  assert.deepStrictEqual(t.w.calls.filter(x => Array.isArray(x)), [], 'the panel did not go to 下書き');
-  // Where drafts are offered the same click starts one.
+  assert.strictEqual(t.w.edits, 1);
+  assert.deepStrictEqual(plain(t.w.calls.filter(x => Array.isArray(x)).map(x => x[1])), [{ pane: 'ai-drafts' }]);
+  // Already there: nothing to switch.
+  const on = resolver({ selected: 't1', task: shown });
+  on.c.e = onButton('[data-pr-todraft]');
+  on.c.nav.pane = 'ai-drafts';
+  on.run("prAct(e, { place: 'read' })");
+  assert.strictEqual(on.w.edits, 1);
+  assert.deepStrictEqual(on.w.calls.filter(x => Array.isArray(x)), []);
+  // A review request's goes to 下書き.
   const pr = resolver();
   pr.c.e = onButton('[data-pr-todraft]');
   pr.run('prAct(e)');
   assert.strictEqual(pr.w.edits, 1);
+  assert.deepStrictEqual(plain(pr.w.calls.filter(x => Array.isArray(x)).map(x => x[1])), [{ pane: 'drafts' }]);
+  assert.strictEqual(pr.run('prDraftsPane()'), 'drafts');
+  assert.strictEqual(t.run('prDraftsPane()'), 'ai-drafts');
 });
 
 test('「聞く」 of a task goes to the reader\'s terminal in the panel, showing it first when 「worker への指示」 is on, and says when there is none', () => {

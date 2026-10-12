@@ -657,6 +657,9 @@ this shape:
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
   moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
   through §3 again (opening a new gate or record). The record that was sent back stays as it is.
+- A `changes` that carries a `## From       AI 下読み …` line is **the person's instruction, chosen from a second reader's notes**: a separate, read-only reader read your PR, and the person kept the points that follow
+  (`(AI)` marks a point the reader wrote; the rest the person wrote) and sent them to you. Fix them as you would a record that was sent back, and put the fixed diff through §3 again.
+  The line numbers are of the sha named on that line: if you have pushed since, find the place again before editing. If an `(AI)` point looks wrong, do not skip it silently: say so in `unsure` of the next gate you open.
 - **Do not close a gate yourself when answered on the board.** Answering on the board archives it automatically. Close it with `adjutant_gate_close` (or `adj gate close --id {gate id}`) only when the person answered in the terminal tab instead (`terminal: true`), or when `server` was `down` (a plain close).
 
 ### Do not

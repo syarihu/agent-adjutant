@@ -297,3 +297,10 @@ const decisionLabel = (decision, kind) =>
 
 const DECISION = { approve:'承認した', changes:'差し戻した', reject:'見送った', choice:'案を選んだ',
                    ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };
+
+/* What an answer that carries the points a person chose from a read-through of the task's PR (`handoff`: { pr, sha, count, overall })
+   says, wherever the answers are listed: how many went to the worker, and the comment on the whole when it did too. */
+const handoffText = h => `AI 下読みの指示 ${Number(h?.count) || 0} 件を worker に渡した${h?.overall ? '・全体のコメントも' : ''}`;
+/* What was sent, folded: the comment of the answer is the message the worker read, one point to a heading. */
+const handoffDetailsHtml = comment => comment
+  ? `<details class="handoff"><summary>渡した内容</summary><div class="who" style="white-space:pre-wrap">${esc(comment)}</div></details>` : '';

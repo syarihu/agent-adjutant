@@ -19,6 +19,7 @@ const taskRead = {
   contentSig: '',     // the middle's markup as drawn
   groups: [],         // the groups drawn
   shownFor: null,     // the key the middle is drawn for while it is on screen, null while the other tab is
+  draftsFor: null,    // the key the PR's drafts were last asked for while the tab was on: asked again when the tab is chosen again
   scroll: new Map(),  // key -> the middle's scroll top
   active: null,       // the group the index marks
   pinned: null,       // the group a jump left, marked until the person scrolls
@@ -26,7 +27,7 @@ const taskRead = {
   spying: false,
 };
 
-/* What a later change fills in to put the drafts in the reader's panel: `html(rec, read)` is what 「worker への指示」 shows,
+/* What task-read-drafts.js fills in to put the drafts in the reader's panel: `html(rec, read)` is what 「worker への指示」 shows,
    `act(e)` answers a click in the panel (true when it was one of its own) and `input(e)` an input. While `drafts` is set the
    middle's draft buttons are drawn (`data-drafts` on #task-read). */
 const OWN_HOOKS = { drafts: null };
@@ -154,7 +155,7 @@ function renderTaskReadTabs(task) {
   const revealed = pane.hidden && !reading;
   pane.hidden = reading;
   read.hidden = !reading;
-  if (!reading) taskRead.shownFor = null;
+  if (!reading) taskRead.shownFor = taskRead.draftsFor = null;
   return { reading, revealed };
 }
 
@@ -336,8 +337,17 @@ function renderTaskReaderPanel(task) {
   const pane = nav.pane === 'ai-drafts' && hasRead ? 'ai-drafts' : 'ai';
   setPanelPart('head', tp('tp-head'), rec ? taskReaderHeadHtml(rec, others.closing.has(rec.id))
     : `<div class="tp-head-main"><h2 class="tp-title">下読みの worker</h2></div>${panelBtnsHtml('')}`);
-  const drafts = rec?.ai?.counts?.drafts;
-  setPanelPart('tabs', tp('tp-tabs'), taskReaderTabsHtml(pane, Number.isFinite(drafts) ? drafts : 0, hasRead));
+  // The PR's drafts are the file's, asked for when the tab is chosen (and again after it was left, unless something is unsaved), and the
+  // panel is drawn when they come.
+  if (rec && taskRead.draftsFor !== key) {
+    taskRead.draftsFor = key;
+    const e = prDraftsEntry(rec.id);
+    if (!e.dirty && !e.saving && !e.handing) { e.loaded = false; e.error = null; }
+  }
+  if (rec) prEnsureDrafts(rec.id);
+  // What is left to hand over once the drafts are in; until then what the read-through brought.
+  const held = rec && hasRead && read !== undefined && prDraftsEntry(rec.id).loaded ? prHandable(prDoc(rec.id, read)).drafts : rec?.ai?.counts?.drafts;
+  setPanelPart('tabs', tp('tp-tabs'), taskReaderTabsHtml(pane, Number.isFinite(held) ? held : 0, hasRead));
 
   // Shown before the terminal is mounted: a hidden host has no size to fit to.
   const reveal = pane === 'ai' && tp('tp-term').hidden;
@@ -357,7 +367,19 @@ function renderTaskReaderPanel(task) {
           readAt: 'middle', asking: others.asking.has(rec.id), read, readError: !!prReadEntry(rec.id)?.error, ...(panelTerm.term ? { ended: panelTerm.ended } : {}),
         });
   setPanelPart('ph', ph, text);
-  setPanelPart('rest', tp('tp-rest'), pane === 'ai-drafts' ? (OWN_HOOKS.drafts ? OWN_HOOKS.drafts.html(rec, read) : taskReadDraftsPlaceholderHtml(drafts)) : '');
+  const restHtml = pane === 'ai-drafts' && rec && OWN_HOOKS.drafts ? OWN_HOOKS.drafts.html(rec, read) : '';
+  const restKey = `${key}/${pane}`;
+  // What is typed in a box is kept: the redraw waits until the box is left (prHeldFlush).
+  if (restHtml && prBoxFocused(tp('task-panel')) && panelSig.paneKey === restKey && !prView.force) prView.held = true;
+  else {
+    prView.held = false;
+    const keep = prFocusKeep(tp('tp-rest'));
+    const scroll = tp('tp-detail').scrollTop;
+    setPanelPart('rest', tp('tp-rest'), restHtml);
+    prRestoreFocus(tp('tp-rest'), keep, false);
+    tp('tp-detail').scrollTop = panelSig.paneKey === restKey ? scroll : 0;
+    panelSig.paneKey = restKey;
+  }
   // It was sized while hidden, which it skips; asked again now that it has a size.
   if (reveal && panelTerm.term) panelTerm.term.fit();
 }

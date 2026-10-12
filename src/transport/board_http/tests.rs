@@ -128,6 +128,9 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         "function renderTaskReadMiddle(",
         "function renderTaskReaderPanel(",
         "function prShown(",
+        "function prDraftsPane(",
+        "function prSaveSettled(",
+        "function taskReadHand(",
         "function prRecOf(",
         "function markIndexCurrent(",
         "function scrollToCard(",
@@ -139,6 +142,7 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     // What a later change builds on.
     for piece in [
         "const OWN_HOOKS = { drafts: null }",
+        "OWN_HOOKS.drafts = {",
         "data-drafts=\"off\"",
         "id=\"tp-read-drafts\"",
         "const READ_PANES = ['ai', 'ai-drafts']",
@@ -152,6 +156,9 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     assert!(at("function taskReadTabState(") < at("function prShown("));
     assert!(at("function prdGoto(") < at("function taskReadShown("));
     assert!(at("function taskReadShown(") < at("function setView("));
+    // The drafts' hook is set after the view that declares it, and before the entry point that draws the first screen.
+    assert!(at("const OWN_HOOKS = {") < at("OWN_HOOKS.drafts = {"));
+    assert!(at("OWN_HOOKS.drafts = {") < at("function setView("));
     // The tabs are above the head of the middle, and the read-through is beside the terminal's pane, not inside it.
     assert!(at("id=\"wk-mid-row\"") < at("id=\"wk-term-head\""));
     assert!(at("id=\"wk-term-pane\"") < at("id=\"task-read\""));

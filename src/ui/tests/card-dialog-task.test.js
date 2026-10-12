@@ -37,7 +37,7 @@ function boxWorld() {
     handedNote: () => '', note() {}, gateAnswered() {}, dropGate() {}, refresh: async () => {}, refreshBoards() {},
     boardApi: async (base, url, o) => { posts.push([url, JSON.parse(o.body)]); return {}; },
   });
-  vm.runInContext([fnSrc(decSrc, 'commentBox'), fnSrc(decSrc, 'answer'), fnSrc(decSrc, 'closeGate')].join('\n'), c);
+  vm.runInContext([fnSrc(decSrc, 'commentBox'), fnSrc(decSrc, 'outboxNote'), fnSrc(decSrc, 'answer'), fnSrc(decSrc, 'closeGate')].join('\n'), c);
   return { c, posts, dialog };
 }
 

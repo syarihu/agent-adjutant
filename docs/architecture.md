@@ -91,9 +91,10 @@ fixtures.
 - `task`: task records, one file per task, and their operations (`create`, `update`, `edit`,
   `remove`, `get`, `list`, `next`, `hand_over`, `refresh`, `write_brief`, ...), plus the GitHub
   reads behind them. It does not wake or type into a terminal itself; it hands a message to `mail`.
-- `gate`: gate records and `open`, `answer`, `close`, `close_resumed`, `get`, `list`. An answer
+- `gate`: gate records and `open`, `answer`, `send_back_read`, `close`, `close_resumed`, `get`, `list`. An answer
   goes back through `mail`, to the worker's outbox or, for a gate the hub opened, to the hub's
-  inbox; a gate has no channel of its own and delivers nothing itself.
+  inbox; a gate has no channel of its own and delivers nothing itself. `send_back_read` is `answer` for the
+  points a person chose from a read-through of a task's PR: it picks the task's gate and sends `changes` on it.
 - `jules`: Jules sessions (`start`, `follow`, `findings`, `relay`, ...). It has no `store`: the
   session id and what was relayed are fields of the task record, and the private `api` client takes
   the store's place.
@@ -118,7 +119,8 @@ fixtures.
   `HubStart` and `TabOutcome` and prints nothing, and it changes other modules' records only
   through their operations.
 - `board`: the resident daemon and server, a hub's or `adj serve`'s own board (`dedicated`), the read model, the
-  background jobs, and the page's actions. It does not name `transport` or parse HTTP (see
+  background jobs, and the page's actions. `board::review::hand_to_worker` reads the drafts of a task's PR (`others`) and hands them to the
+  task's worker through `gate::send_back_read`; it writes nothing to `others`. It does not name `transport` or parse HTTP (see
   [How the board gets its handler](#how-the-board-gets-its-handler)).
 - `transport`: `cli` (clap args, dispatch, one file per command or family), `mcp` (the stdio
   JSON-RPC server and its tools), `board_http` (HTTP and WebSocket routes) and `wording` (answers
@@ -198,7 +200,7 @@ transport passes the handler in. `cli/serve.rs` passes `board_http::handle` for 
 `cli/server.rs` passes `board_http::handle_resident` to the resident. The resident strips
 `/b/<slug>` (`split_board_path`) and hands the rest to the same `routes::route`. Every board
 answers the same routes except the ones `Route::resident_only` lists (a session's resume, restart,
-open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
+open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai` and handing its drafts to the worker `POST /api/tasks/<id>/hand`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
 resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
@@ -526,7 +528,10 @@ selected afresh opens on 「タスク」; while the page is open, the tab of the
 下読み中…, 前の push 時点 with a dot, 失敗しました), and the tab cannot be chosen before the task has a PR or when its PR is not one this can read. The page reads `GET …/ai` on every poll
 while a task with a PR is selected, in either tab, and asks for a read with `POST …/ai`. The buttons are the review request's (`prAct`), which ask which view the page is on (`prShown`) and not
 what is selected, so the diff's places are the panel, 「拡大」 and the middle of a task. There is no 「拡大」 for a task's read-through, and no 前回のレビューから (a review of yours it compares with).
-The draft buttons are not drawn until something takes the drafts (`OWN_HOOKS.drafts` in task-read-view.js); the diff and the read-through are cached by PR, shared with a review request for the same PR.
+「worker への指示」 is the drafts of the PR as instructions for the task's worker: the same boxes as a review request's 下書き (the reader's drafts marked AI, the person's own, 「下書きに」 and 「＋」 of the diff, a comment on the whole),
+but a pending review is not offered for a task's PR (GitHub does not let you ask for changes on your own PR, and the one who fixes it is the worker): the button is 「N 件を worker に渡す」 (see [Handing the drafts to the worker](#handing-the-drafts-to-the-worker)).
+`src/ui/task-read-drafts.js` sets `OWN_HOOKS.drafts` (the hook task-read-view.js leaves) and does the handing; the diff and the read-through are cached by PR, shared with a review request for the same PR. The drafts are the PR's file either way, loaded
+when the tab is chosen; the page draws the reader's panel again when they come.
 
 ### The read-through
 
@@ -708,7 +713,7 @@ wrote is an argument or part of a query's text.
 - When GitHub took something, the drafts file and the record are written under the record's lock: each sent draft gets `sentAt` (when
   the draft is still the same in everything but `sentAt`), `pending` is set, and the record's `pendingReviewAt` is set, which takes the row off 新着.
   A write that fails then is a `warning` in the answer, not an error. When GitHub took nothing, nothing is written.
-  A sent draft stays in the list, read-only, with 「積みました」 and its copy button; copying stays available for every draft.
+  A sent draft stays in the list, read-only, with 「積みました」 and its copy button; copying stays available for every draft. (`sentAt` also means a draft was handed to a task's worker, see below; the page never puts a task's PR into a pending review.)
 - One push runs per PR at a time (a second answers 409). A pending review pinned to an older commit still gets the threads; the ones
   GitHub cannot place come back as `failed`.
 
@@ -716,3 +721,24 @@ wrote is an argument or part of a query's text.
 "none"|"set"|"appended", drafts, record, warning}`; 400 for a bad id, a PR that is merged or closed, drafts that break the contract
 (`problems`), or nothing left to send (`{"error", "nothing": true}`); 404 for a PR adj has no record of or one with no drafts; 409 while a push
 of it runs; 502 when GitHub took none of it; 500 for a file that cannot be read or written.
+
+#### Handing the drafts to the worker
+
+On a task's PR the drafts are instructions for the task's worker, and 「N 件を worker に渡す」 (under the drafts in 「worker への指示」, `data-pr-hand`) sends the ones not sent yet
+the way a person sends back a gate (`board::review::hand_to_worker`, `gate::send_back_read`, `POST /b/<slug>/api/tasks/<id>/hand`, body `{"pr": "<owner/repo#N>"}`, the PR the page showed the drafts for; there is no CLI verb).
+The route is resident-only, and is placed before the task update, so `POST /api/tasks/hand` still updates a task named `hand`.
+
+- **What is sent.** The drafts with a body that is not blank and no `sentAt` (a draft with no `path` is a point on the whole PR), in the file's order, and the overall comment when it is not blank; `source: reader` is marked `(AI)`.
+  The operation reads the stored file (`others::drafts`; an unreadable file is an error and not "none") and **writes nothing to `others`**: the page marks the sent drafts (`sentAt` is the answer's stamp, which the server returns as `at`), clears the overall comment (it went with them)
+  and saves at once; a save that fails stays unsaved and is tried again as any edit is. The page saves before it asks, and locks the drafts while the request is out. One hand-over runs per task at a time (409 `busy`).
+- **Which gate.** In order: a waiting `diff` or `verify` gate of the task is answered with `changes` and archived, exactly as `gate::answer` does; else the task's newest `diff` record gets the answer appended, as a record is sent back today; else it is refused (`no-gate`).
+  A waiting gate of another kind (a plan, a question, a result) is refused (`gate-waiting`): answering around it would skip what the worker waits on. Nothing is ever written into an archived gate. Every refusal is made before any write.
+- **The message.** The same as an answer's (`[gate <id>] changes`, which wakes the worker; the same delivery, and a worker that is not running finds it in the same outbox), with one more header after `## task`:
+  `## From       AI 下読み <owner/repo#N> @ <sha7> (a separate read-only reader; the person chose and sent these)`, and a comment of the numbered points:
+  `The person read this PR with an AI read-through and sends you N points. Lines are of <sha7> (right side unless said).`, then `### 1. src/a.rs:40-42 (AI)`, `### 2. src/b.rs (the file)` or `### 3. the whole PR` each followed by its text
+  (`(old side)` after a line of the left side), then `### Overall`. `sha7` is the head the stored read-through was made at, which the lines are of.
+- **What is kept.** The answer (or the answered waiting gate, as a top-level key) carries `handoff: {pr, sha, count, overall}`, and its comment is the message. The timeline of the task (経過), 離れていた間に and the decision column say
+  「AI 下読みの指示 N 件を worker に渡した」 (and 「・全体のコメントも」), with the comment folded. Unknown keys inside an answer and its `handoff` are kept (rule 10).
+- **Refusals.** 400 for a body that is not an object with a `pr`, and for nothing to send; 404 for a task that is not there; 409 `{error, why}` with `why` `no-pr`, `pr-changed` (the task's PR is not the one the drafts are of), `pr-done` (merged or closed), `no-record` (never read),
+  `no-worker` (a task handed to Jules), `no-gate`, `gate-waiting` or `busy`; 500 for a record, drafts or gate that cannot be read or written. 200 answers `{gate: {id, kind, shelf}, sent: [key], overall, at, present, woken}`: `shelf` is `answered` for a gate that was waiting and `record` for a record, and `present`
+  and `woken` are what delivery says of the worker, as an answered gate's do.

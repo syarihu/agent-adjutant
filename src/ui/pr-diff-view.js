@@ -403,7 +403,7 @@ function prdStartDraft(rec, read, { path, at, body }, inDialog) {
     note('下書き', true, '下書きを読み込んでいます。少し待ってからもう一度押してください');
     return;
   }
-  if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
+  if (!inDialog && nav.pane !== prDraftsPane()) go({ pane: prDraftsPane() }, { replace: true });
   const key = prNextKey(prDoc(id, read), 'p');
   if (prEditDrafts(id, read, d => { d.drafts.push(prDiffDraft(d, { path, line: at?.line, side: at?.side, body })); })) {
     prRedrawNow({ sel: `[data-pr-body="${CSS.escape(key)}"]`, inDialog });
@@ -444,8 +444,6 @@ function prdAct(e, { place = 'panel' } = {}) {
     }
     return true;
   }
-  // A task's read-through has no drafts to add to: the buttons are not drawn there, and a click that gets here does nothing.
-  if (place === 'read' && (hit('[data-prd-plus]') || hit('[data-prd-todraft]'))) return true;
   if ((b = hit('[data-prd-plus]'))) {
     const f = entry.layout.files[Number(b.closest('[data-prd-file]')?.dataset.prdFile)];
     if (f && rec) prdStartDraft(rec, read, { path: f.path, at: prDiffAtOf(b.dataset.prdPlus), body: '' }, inDialog);

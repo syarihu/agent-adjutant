@@ -607,12 +607,17 @@ function historyEventsOf(task, all, waiting = isWaiting) {
     }
     push(g.openedAt, `<div>${tag} ${title}${extra}</div><div class="who">${opened}</div>${why}`, g.id);
     if (g.answeredAt && g.decision) {
-      push(g.answeredAt, `<div>人が${esc(DECISION[g.decision] || g.decision)} — ${esc(label)}「${esc(g.title)}」</div>` +
-        (g.comment ? `<div class="who">${esc(g.comment)}</div>` : ''), g.id);
+      // A waiting gate answered with the points of a read-through says so, with what was sent folded.
+      push(g.answeredAt, g.handoff
+        ? `<div>${esc(handoffText(g.handoff))} — ${esc(label)}「${esc(g.title)}」</div>${handoffDetailsHtml(g.comment)}`
+        : `<div>人が${esc(DECISION[g.decision] || g.decision)} — ${esc(label)}「${esc(g.title)}」</div>` +
+          (g.comment ? `<div class="who">${esc(g.comment)}</div>` : ''), g.id);
     }
     for (const a of g.answers || []) {
-      push(a.answeredAt, `<div>人が差し戻した — ${esc(label)}の記録「${esc(g.title)}」</div>` +
-        (a.comment ? `<div class="who">${esc(a.comment)}</div>` : ''), g.id);
+      push(a.answeredAt, a.handoff
+        ? `<div>${esc(handoffText(a.handoff))} — ${esc(label)}の記録「${esc(g.title)}」</div>${handoffDetailsHtml(a.comment)}`
+        : `<div>人が差し戻した — ${esc(label)}の記録「${esc(g.title)}」</div>` +
+          (a.comment ? `<div class="who">${esc(a.comment)}</div>` : ''), g.id);
     }
   }
   return events.sort((a, b) => a.at - b.at);

@@ -122,9 +122,9 @@ function workLastAction(e, answered = []) {
       const said = DECISION[g.decision] || g.decision;
       // 「質問『t』に答えた」 reads; 「質問『t』を答えた」 does not.
       const particle = ['answer', 'terminal', 'ask'].includes(g.decision) ? 'に' : g.decision === 'choice' ? 'で' : 'を';
-      take(awaySecs(g.answeredAt), `${label}${title}${particle}${said}`);
+      take(awaySecs(g.answeredAt), g.handoff ? `${handoffText(g.handoff)} — ${label}${title}` : `${label}${title}${particle}${said}`);
     }
-    for (const a of g.answers || []) take(awaySecs(a.answeredAt), `${label}の記録${title}を差し戻した`);
+    for (const a of g.answers || []) take(awaySecs(a.answeredAt), a.handoff ? `${handoffText(a.handoff)} — ${label}の記録${title}` : `${label}の記録${title}を差し戻した`);
   }
   // What the page has not loaded the answered gates for still says when the last one was answered.
   take(awaySecs(e.task?.gateAnsweredAt), '判定を返した');

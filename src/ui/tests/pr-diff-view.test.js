@@ -65,6 +65,8 @@ function world({ io = false } = {}) {
     // What the page is on, as pr-panel.js says it: the selected review request.
     prShown: () => w.shown !== undefined ? w.shown : (typeof w.selected === 'string' && w.selected.startsWith('pr:') ? { id: w.selected.slice(3), rec: rec(w.selected.slice(3)), kind: 'pr', hubView: w.hubView, asking: false } : null),
     prRecOf: () => rec(), prRedrawFor: id => { if (w.selected === `pr:${id}`) w.calls.push(['render']); },
+    // The tab the drafts are in, as pr-panel.js says it.
+    prDraftsPane: () => (w.shown?.kind === 'task' ? 'ai-drafts' : 'drafts'),
     prDraftsEntry: () => ({ loaded: w.loaded }), prDoc: () => ({ drafts: w.drafts }),
     prEditDrafts: (id, rd, fn) => { if (!w.loaded) return false; const doc = { drafts: [...w.drafts] }; fn(doc); w.edits.push(doc.drafts[doc.drafts.length - 1]); return true; },
     prRedrawNow: f => { w.calls.push(['redraw', f]); }, go: (p, o) => { w.calls.push(['gopane', p, o]); }, nav: { get pane() { return w.pane; } },
@@ -514,15 +516,22 @@ test('a link meant for the middle of a task is dropped when the task on show is 
   assert.ok(!w.calls.some(x => x[0] === 'rgo'));
 });
 
-test('the draft buttons of the diff do nothing in the middle of a task, where there is nowhere to put a draft', async () => {
+test('the draft buttons of the diff start a draft in the middle of a task too, and the panel goes to 「worker への指示」', async () => {
   const { w, c, run } = readWorld();
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
   assert.strictEqual(c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' }), true);
+  assert.strictEqual(w.edits.length, 1);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: '' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane')[1])), { pane: 'ai-drafts' });
   // The explanation's own button, found by the selector the real DOM would match it by.
   const btn = el({ prdAt: 'right:3' }, { closest: sel => (sel === '[data-prd-ann]' ? el({ prdAnn: '0' }) : null), matches: sel => sel === '[data-prd-todraft]' });
   const click = { target: { closest: sel => (sel.split(',').some(x => x.trim() === '[data-prd-todraft]') ? btn : null) } };
   assert.strictEqual(c.prdAct(click, { place: 'read' }), true);
-  assert.deepStrictEqual(w.edits, []);
-  assert.ok(!w.calls.some(x => x[0] === 'redraw'));
+  assert.strictEqual(w.edits.length, 2);
+  // Already on that tab: nothing to switch.
+  w.pane = 'ai-drafts';
+  w.calls.length = 0;
+  c.prdAct(onLine(c, { prdPlus: 'right:4' }, { hit: '[data-prd-plus]' }), { place: 'read' });
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
 });

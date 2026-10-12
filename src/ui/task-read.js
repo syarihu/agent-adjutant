@@ -115,8 +115,3 @@ function taskReaderTabsHtml(pane, draftCount = 0, hasRead = false) {
   const badge = draftCount > 0 ? `<span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${draftCount}</span>` : '';
   return tab('ai', 'term', 'ターミナル', '', '', 'tp-term') + tab('ai-drafts', 'drafts', 'worker への指示', badge, hasRead ? '' : PR_NO_READ_WHY, 'tp-detail');
 }
-
-/* What 「worker への指示」 says until it can do something: how many drafts there are, and that nothing is passed on yet. */
-function taskReadDraftsPlaceholderHtml(n) {
-  return `<div id="tp-read-drafts" data-read-drafts class="m3-filled-card"><div class="tp-muted">${esc(`下読みの下書きが ${Number(n) || 0} 件あります。worker に渡す操作は、まだありません。`)}</div></div>`;
-}

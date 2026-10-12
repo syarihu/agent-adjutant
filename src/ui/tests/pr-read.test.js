@@ -17,7 +17,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 const plain = x => JSON.parse(JSON.stringify(x));
 const run = expr => vm.runInContext(expr, ctx);
 const { prPaneOf, prTabsHtml, prDetailHtml, prBeforeRead, prSeedDrafts, prNewReaderDrafts, prDraftFromPoint, prDraftLocation, prCopyAllText,
-  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml, prPendable,
+  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml, prPendable, prHandable, prHandHtml,
   prOorActions, prOutOfReview, prSplitProposal, prNewReaderOverall, prFromElsewhere } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -558,4 +558,64 @@ test('the card before a read names where the reader can be talked to, when it is
   // What a read under way says is not added to.
   const q = rec({ ai: { status: 'queued', startedAt: '20261001T000000Z' }, state: 'ai-reading' });
   assert.ok(!prBeforeRead(q, [q], hub, T0, false, '右のターミナル').html.includes('聞けます'));
+});
+
+/* ── the drafts of a task's PR go to its worker ── */
+
+const handDoc = () => ({ drafts: [
+  { key: 'r1', source: 'reader', path: 'a.rs', line: 1, body: 'one' }, { key: 'p1', source: 'person', body: 'whole PR' },
+  { key: 'b', source: 'person', path: 'b.rs', body: '  ' }, { key: 's', source: 'person', path: 'c.rs', line: 2, body: 'sent', sentAt: '20261012T000000Z' }], overall: { body: 'all' } });
+
+test('what can be handed to the worker: the drafts with something written that are not sent (a draft with no file too), and a written overall comment', () => {
+  assert.deepStrictEqual(plain(prHandable(handDoc())), { drafts: 2, overall: true });
+  assert.deepStrictEqual(plain(prHandable({ drafts: [], overall: { body: ' \n' } })), { drafts: 0, overall: false });
+  assert.deepStrictEqual(plain(prHandable({ drafts: [], overall: { body: 'x' } })), { drafts: 0, overall: true });
+  assert.deepStrictEqual(plain(prHandable(null)), { drafts: 0, overall: false });
+  // Not the pending review's rule: a draft with no file counts here, and a note of an overall comment already in a review does not hide it.
+  assert.deepStrictEqual(plain(prPendable(handDoc())), { drafts: 1, overall: true });
+  assert.deepStrictEqual(plain(prHandable({ drafts: [], overall: { body: 'x' }, pending: { overall: 'x' } })), { drafts: 0, overall: true });
+});
+
+test('drafts for the worker: 渡しました for what was sent, the button counts what is left, and there is no pending review', () => {
+  const html = prDraftsHtml(handDoc(), read(), { to: 'worker', hand: {} });
+  assert.ok(html.includes('class="pr-chip pr-chip-sent" title="worker に渡した指示です">渡しました</span>'));
+  assert.ok(!html.includes('積みました') && !/data-pr-pend[ >]/.test(html) && !html.includes('pending review に積む') && !html.includes('GitHub で仕上げる'));
+  assert.ok(/<button type="button" class="btn-m3-filled" data-pr-hand>2 件を worker に渡す（全体のコメントも）<\/button>/.test(html), html);
+  // What was sent is read-only; AI marks the reader's.
+  const [first, , , sent] = html.split('data-pr-draft="').slice(1);
+  assert.ok(first.includes('title="AI 下読みの下書きです">AI</span>') && !first.includes('渡しました'));
+  assert.ok(sent.includes('渡しました</span>') && /readonly>/.test(sent) && sent.includes('data-pr-copy="s"'));
+  assert.ok(html.includes('data-pr-pending-slot'));
+  // A review request's drafts are as they were.
+  const pr = prDraftsHtml(handDoc(), read(), { pend: { prUrl: rec().url } });
+  assert.ok(/data-pr-pend[ >]/.test(pr) && pr.includes('積みました</span>') && !pr.includes('data-pr-hand') && !pr.includes('渡しました'));
+  assert.ok(prDraftsHtml(handDoc(), read(), {}).includes('積みました</span>'), 'the default is the pending review');
+});
+
+test('the hand-over button: only the comment, nothing to send (disabled with the reason), busy, and how the last one went', () => {
+  const only = prHandHtml({ drafts: [], overall: { body: 'x' } }, {});
+  assert.ok(/data-pr-hand>全体のコメントを worker に渡す<\/button>/.test(only), only);
+  const none = prHandHtml({ drafts: [], overall: { body: '' } }, {});
+  assert.ok(/data-pr-hand disabled title="[^"]+">worker に渡す<\/button>/.test(none), none);
+  assert.ok(none.includes('<div class="pr-pend-note">渡せるものがありません。</div>'));
+  const html = prHandHtml(handDoc(), {});
+  assert.ok(!html.includes('渡せるものがありません'));
+  // Where it goes: a waiting diff or verify is answered with 差し戻す, else the latest diff record.
+  assert.ok(html.includes('差し戻す') && html.includes('最新の差分の記録'));
+  const busy = prHandHtml(handDoc(), { sending: true });
+  assert.ok(busy.includes('data-pr-hand disabled aria-busy="true"') && busy.includes('渡しています…'));
+  assert.ok(prHandHtml(handDoc(), { result: { sent: ['a', 'b'], overall: true } }).includes('role="status">2 件を渡しました／全体のコメントも渡しました</div>'));
+  assert.ok(prHandHtml(handDoc(), { result: { sent: ['a'], overall: false } }).includes('1 件を渡しました</div>'));
+  // A refusal is said as text, never as markup.
+  const refused = prHandHtml(handDoc(), { result: { error: '<b>no</b>' } });
+  assert.ok(refused.includes('role="note">&lt;b&gt;no&lt;/b&gt;</div>') && !refused.includes('<b>no'));
+});
+
+test('everything is locked while the drafts are on their way to the worker', () => {
+  const html = prDraftsHtml(handDoc(), read(), { to: 'worker', notice: 1, hand: { sending: true } });
+  assert.ok(/class="pr-overall"[^>]* readonly>/.test(html) && /data-pr-discard="r1" disabled/.test(html) && html.includes('data-pr-take-new disabled'));
+  assert.strictEqual((html.match(/<textarea class="pr-draft-body"[^>]*readonly>/g) || []).length, 4);
+  // The pending review's `sending` is not the worker's.
+  const other = prDraftsHtml(handDoc(), read(), { to: 'worker', hand: {}, pend: { sending: true } });
+  assert.ok(!/class="pr-overall"[^>]* readonly>/.test(other));
 });

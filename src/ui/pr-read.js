@@ -480,19 +480,50 @@ function prPendHtml(doc, pend = {}) {
   return `<div class="pr-pend">${button}${note}${status}</div>`;
 }
 
+/* What handing the drafts of a task's PR to its worker would send: the drafts with something written that are not sent yet (a draft
+   with no file is sent as a point on the whole PR), and whether the overall comment has something written. The server decides the
+   same way. */
+function prHandable(doc) {
+  const drafts = (doc?.drafts || []).filter(d => String(d.body || '').trim() && !d.sentAt).length;
+  const overall = String(doc?.overall?.body || '').trim() !== '';
+  return { drafts, overall };
+}
+
+/* The button that hands the drafts of a task's PR to its worker, what it does, and how the last hand-over went: the slot under the
+   drafts of 「worker への指示」. `hand`: `sending`, `result` ({ sent, overall, present, woken } of the last one, or { error }). */
+function prHandHtml(doc, hand = {}) {
+  const n = prHandable(doc);
+  const empty = !n.drafts && !n.overall;
+  const label = (n.drafts ? `${n.drafts} 件を worker に渡す` : '全体のコメントを worker に渡す') + (n.drafts && n.overall ? '（全体のコメントも）' : '');
+  const title = empty ? '渡せるものがありません。書き込みのある下書きか、全体のコメントがあると渡せます' : '';
+  const button = `<button type="button" class="btn-m3-filled" data-pr-hand${empty || hand.sending ? ' disabled' : ''}${hand.sending ? ' aria-busy="true"' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(hand.sending ? '渡しています…' : empty ? 'worker に渡す' : label)}</button>`;
+  const why = empty && !hand.sending ? '<div class="pr-pend-note">渡せるものがありません。</div>' : '';
+  const note = `${why}<div class="pr-pend-note">worker が差分の確認を待っているときは、その確認を「差し戻す」で答えます。待っていないときは、最新の差分の記録に差し戻しとして渡します。渡した下書きは「渡しました」と印が付き、残ります。</div>`;
+  const r = hand.result;
+  const done = r && !r.error ? [`${(r.sent || []).length} 件を渡しました`, r.overall ? '全体のコメントも渡しました' : ''].filter(Boolean).join('／') : '';
+  const status = r ? (r.error ? `<div class="pr-why" role="note">${esc(r.error)}</div>` : `<div class="pr-pend-result" role="status">${esc(done)}</div>`) : '';
+  return `<div class="pr-pend">${button}${note}${status}</div>`;
+}
+
 const PR_SAVE_TEXT = { saved: '保存しました', saving: '保存しています…' };
 /* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('panel' or 'dock': only the class of the
-   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `pend` (`prPendHtml`'s). */
+   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `to` (where they go:
+   'pending', the default, a pending review on GitHub, with `pend` (`prPendHtml`'s); or 'worker', a task's worker, with `hand`
+   (`prHandHtml`'s) and no pending review). */
 function prDraftsHtml(doc, read, opts = {}) {
   const drafts = doc?.drafts || [];
-  const failed = new Map((opts.pend?.result?.failed || []).map(f => [f.key, f.why]));
+  const toWorker = opts.to === 'worker';
+  // What is going somewhere is not edited, and its buttons are off.
+  const sending = toWorker ? !!opts.hand?.sending : !!opts.pend?.sending;
+  const failed = new Map(toWorker ? [] : (opts.pend?.result?.failed || []).map(f => [f.key, f.why]));
+  const sentChip = toWorker ? '<span class="pr-chip pr-chip-sent" title="worker に渡した指示です">渡しました</span>' : '<span class="pr-chip pr-chip-sent" title="pending review に積んだ下書きです">積みました</span>';
   const items = drafts.map(d => {
     const loc = prDraftLocation(d);
     // What is in the pending review is read-only here (edit it on GitHub), and so is everything while a push is on its way.
-    const locked = !!d.sentAt || !!opts.pend?.sending;
+    const locked = !!d.sentAt || sending;
     const why = !d.sentAt && failed.has(d.key) ? `<div class="pr-why" role="note">積めませんでした: ${esc(failed.get(d.key))}</div>` : '';
     return `<div class="pr-draft" data-pr-draft="${esc(d.key)}">
-      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}${d.sentAt ? '<span class="pr-chip pr-chip-sent" title="pending review に積んだ下書きです">積みました</span>' : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${opts.pend?.sending ? ' disabled' : ''}>捨てる</button></span></div>
+      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}${d.sentAt ? sentChip : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${sending ? ' disabled' : ''}>捨てる</button></span></div>
       <textarea class="pr-draft-body" data-pr-body="${esc(d.key)}" aria-label="${esc(`${loc} への下書き`)}" spellcheck="false"${locked ? ' readonly' : ''}>
 ${esc(d.body)}</textarea>${why}
     </div>`;
@@ -500,7 +531,7 @@ ${esc(d.body)}</textarea>${why}
   const suggestion = read?.overall?.suggestion
     ? `<div class="pr-suggestion">AI の判定の目安: <b>${esc(read.overall.suggestion)}</b>（文字だけ。判定を選んで送るのは GitHub です）</div>` : '';
   const notice = opts.notice > 0
-    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new${opts.pend?.sending ? ' disabled' : ''}>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep${opts.pend?.sending ? ' disabled' : ''}>このままにする</button></div>` : '';
+    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new${sending ? ' disabled' : ''}>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep${sending ? ' disabled' : ''}>このままにする</button></div>` : '';
   const save = opts.save?.status === 'error'
     ? `保存できませんでした: ${opts.save.error || ''} 入力はこのページに残っています`
     : PR_SAVE_TEXT[opts.save?.status] || '';
@@ -509,10 +540,10 @@ ${esc(d.body)}</textarea>${why}
     ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。見るポイントの「下書きに」から足せます。</div>'}
     <label class="pr-overall-label">全体のコメント
       ${suggestion}
-      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${opts.pend?.sending ? ' readonly' : ''}>
+      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${sending ? ' readonly' : ''}>
 ${esc(doc?.overall?.body || '')}</textarea>
     </label>
-    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot>${opts.pend ? prPendHtml(doc, opts.pend) : ''}</div></div>
+    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot>${toWorker ? prHandHtml(doc, opts.hand) : opts.pend ? prPendHtml(doc, opts.pend) : ''}</div></div>
     <div class="pr-save${opts.save?.status === 'error' ? ' err' : ''}" role="status" data-pr-save>${esc(save)}</div>
   </div>`;
 }
