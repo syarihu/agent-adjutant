@@ -455,6 +455,7 @@ function prAct(e, { place = 'panel' } = {}) {
   const edited = (fn, sel = null) => {
     if (prEditDrafts(id, read, fn)) prRedrawNow(sel && { sel, inDialog });
     else if (prDraftsEntry(id).pending) note('下書き', true, 'pending review に積んでいるあいだは、下書きを変えられません');
+    else if (prDraftsEntry(id).handing) note('下書き', true, 'worker に渡しているあいだは、下書きを変えられません');
   };
   let b;
   if ((b = hit('[data-pr-ai], [data-pr-split], [data-pr-reread]'))) {

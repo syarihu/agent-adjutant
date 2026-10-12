@@ -407,6 +407,8 @@ function prdStartDraft(rec, read, { path, at, body }, inDialog) {
   const key = prNextKey(prDoc(id, read), 'p');
   if (prEditDrafts(id, read, d => { d.drafts.push(prDiffDraft(d, { path, line: at?.line, side: at?.side, body })); })) {
     prRedrawNow({ sel: `[data-pr-body="${CSS.escape(key)}"]`, inDialog });
+  } else if (prDraftsEntry(id).handing) {
+    note('下書き', true, 'worker に渡しているあいだは、下書きを変えられません');
   }
 }
 
