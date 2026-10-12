@@ -677,6 +677,11 @@ The open task and tab are in the address (`task=<id>`, `pane=term`, `review`, `c
 タスクサマリ is the default), so back and forward and a
 pasted link open the same task and tab.
 
+A browser extension that takes keys before the page, such as Vimium, can take Escape (and Ctrl+[) from a session
+terminal, so it never reaches the agent; the board says so once when a terminal loses the focus to nothing. Exclude
+the board's URL in that extension: for Vimium, add an "Excluded URLs and keys" rule for e.g. `http://127.0.0.1:*/*`
+with no pass keys (a rule that only lists pass keys still takes Escape).
+
 **Judging a gate.** A gate waiting on you is judged in the panel, wherever you meet it: its task's panel, on the tab of
 its kind, when the task is on the board (the gate's chip on a card, 「判定画面を開く」, a row of 「いまの仕事」 and a
 notification all open it there); and, for a gate with no task card (a gate the hub opened to confirm a dispatch, an issue or a
