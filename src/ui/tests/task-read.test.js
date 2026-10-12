@@ -376,3 +376,23 @@ test('a queued read says 順番待ち without a place: the task\'s document hold
   assert.ok(html.includes('AI 下読みの順番待ち'), html);
   assert.ok(!html.includes('番目'));
 });
+
+test('a reader\'s terminal is not mounted into a pane that is hidden, and one already mounted is kept', () => {
+  const mounts = [];
+  const disposed = [];
+  const c = vm.createContext({
+    mountSessionTerminal: (host, o) => { mounts.push(o.path); return { name: 'term' }; }, disposeTermSlot: slot => { disposed.push(slot.taskId); Object.assign(slot, { taskId: null, term: null }); },
+  });
+  vm.runInContext(['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js'].map(read).join('\n'), c);
+  vm.runInContext(fnSrc(panelSrc, 'syncReaderTerm'), c);
+  const slot = { host: () => ({}), taskId: null, term: null, ended: null, reconnect: false, redraw() {} };
+  c.slot = slot; c.rec = open({ status: 'ready' });
+  vm.runInContext("syncReaderTerm(slot, rec, 'pr:x/s1', false)", c);
+  assert.deepStrictEqual(mounts, [], 'hidden: nothing mounted');
+  assert.strictEqual(slot.taskId, 'pr:x/s1');
+  vm.runInContext("syncReaderTerm(slot, rec, 'pr:x/s1', true)", c);
+  assert.strictEqual(mounts.length, 1);
+  const before = disposed.length;
+  vm.runInContext("syncReaderTerm(slot, rec, 'pr:x/s1', false)", c);
+  assert.ok(slot.term && disposed.length === before, 'kept while hidden');
+});

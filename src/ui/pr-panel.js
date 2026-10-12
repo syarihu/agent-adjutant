@@ -594,11 +594,12 @@ const prReaderSubject = rec => rec ? `${PR_REF}${rec.id}/${rec.ai?.sessionId || 
 /* The reader's terminal in `slot` (the middle's for a review request, the panel's for a task): kept while the record still names
    the same reader, disposed when it names another (a re-read) or the PR changes, and mounted when there is a window to attach to.
    The socket is the reader's (`/api/others/terminal`), resolved on the server from the record. */
-function syncReaderTerm(slot, rec, subject) {
+function syncReaderTerm(slot, rec, subject, mount = true) {
   const mountable = prReaderOpen(rec);
   if (slot.taskId !== subject || (slot.reconnect && mountable)) disposeTermSlot(slot);
   slot.taskId = subject;
-  if (!mountable || slot.term) return;
+  // `mount` is false while its pane is hidden: a terminal mounted there has no size to fit to. One already mounted is kept.
+  if (!mountable || slot.term || !mount) return;
   slot.sessionId = rec.ai.sessionId || subject;
   slot.ended = null;
   const handle = mountSessionTerminal(slot.host(), {

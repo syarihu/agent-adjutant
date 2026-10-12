@@ -197,9 +197,11 @@ function renderTaskReadMiddle(task) {
   const rec = doc?.record || null;
   if (!doc || !doc.pr || !rec) {
     const hubView = othersHubView(doc?.hub, []);
-    taskReadSay(!doc ? (taskRead.error ? `<div class="wk-notice" role="alert">${esc(`読み込めませんでした: ${taskRead.error}`)}</div>` : '<div class="tp-muted" role="status">読み込み中…</div>')
+    // A poll that failed keeps the last document: say that what is shown may be behind.
+    const behind = doc && taskRead.error ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>` : '';
+    taskReadSay(behind + (!doc ? (taskRead.error ? `<div class="wk-notice" role="alert">${esc(`読み込めませんでした: ${taskRead.error}`)}</div>` : '<div class="tp-muted" role="status">読み込み中…</div>')
       : !doc.pr ? `<div class="m3-filled-card"><div class="tp-muted">${esc(TASK_READ_UNREADABLE_WHY)}</div></div>`
-        : taskReadNoRecordHtml(doc.pr, hubView, others.asking.has(doc.pr)));
+        : taskReadNoRecordHtml(doc.pr, hubView, others.asking.has(doc.pr))));
     return;
   }
 
@@ -341,7 +343,7 @@ function renderTaskReaderPanel(task) {
   const reveal = pane === 'ai' && tp('tp-term').hidden;
   tp('tp-detail').hidden = pane === 'ai';
   tp('tp-term').hidden = pane !== 'ai';
-  syncReaderTerm(panelTerm, rec, prReaderSubject(rec));
+  syncReaderTerm(panelTerm, rec, prReaderSubject(rec), pane === 'ai');
   setPanelPart('bar', tp('tp-term-bar'), '');
   const ph = tp('tp-term-ph');
   const live = !!panelTerm.term && panelTerm.ended == null;

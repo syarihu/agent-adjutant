@@ -1103,7 +1103,8 @@ function renderWorkTerm() {
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
-  syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own ? 'term' : 'none');
+  // Not mounted while it is hidden behind the read-through: a hidden host has no size, and the terminal would tell the window 80x24. One already mounted is kept.
+  syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
   setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true) : '');
   const ph = wk('wk-term-ph');
   ph.hidden = !!workTerm.term;
