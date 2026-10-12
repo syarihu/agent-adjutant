@@ -159,6 +159,13 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     let read = at("id=\"task-read\"");
     assert!(!UI_HTML[pane..read].contains("</section>"));
     assert!(at(".prd-root {") < at(".wk-mid-row {"));
+    // The tabs control panels that name them back.
+    for piece in [
+        "id=\"wk-term-pane\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-task\"",
+        "id=\"task-read\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-ai\"",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
 }
 
 #[test]

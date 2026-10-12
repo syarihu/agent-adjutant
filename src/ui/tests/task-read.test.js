@@ -189,6 +189,8 @@ test('the reader\'s tabs are the terminal and 「worker への指示」 with its
   const tabs = taskReaderTabsHtml('ai', 4, true);
   assert.match(tabs, /id="tp-tab-read-term"[^>]*data-read-pane="ai"[^>]*aria-selected="true"/);
   assert.match(tabs, /id="tp-tab-read-drafts"[^>]*data-read-pane="ai-drafts"[^>]*aria-selected="false"/);
+  assert.match(tabs, /id="tp-tab-read-term"[^>]*aria-controls="tp-term"/);
+  assert.match(tabs, /id="tp-tab-read-drafts"[^>]*aria-controls="tp-read-drafts"/);
   assert.ok(tabs.includes('ターミナル') && tabs.includes('worker への指示') && tabs.includes('>4</span>'));
   assert.ok(!/id="tp-tab-read-drafts"[^>]* disabled/.test(tabs));
   const second = taskReaderTabsHtml('ai-drafts', 0, true);
@@ -203,6 +205,7 @@ test('the reader\'s tabs are the terminal and 「worker への指示」 with its
 test('「worker への指示」 says how many drafts there are and that nothing is passed on yet, in the place a later change fills', () => {
   const html = taskReadDraftsPlaceholderHtml(3);
   assert.ok(html.includes('id="tp-read-drafts"') && html.includes('data-read-drafts'));
+  assert.ok(html.includes('role="tabpanel"') && html.includes('aria-labelledby="tp-tab-read-drafts"'));
   assert.ok(html.includes('下読みの下書きが 3 件あります。worker に渡す操作は、まだありません。'));
   assert.ok(taskReadDraftsPlaceholderHtml(undefined).includes('0 件'));
 });

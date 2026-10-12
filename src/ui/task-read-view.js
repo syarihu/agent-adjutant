@@ -14,7 +14,7 @@ const taskRead = {
   error: null,        // why the last read failed
   busy: false,        // a read is out
   again: false,       // a forced read asked for while one was out
-  taskPane: new Map(),  // task id -> the pane of the task's panel before this tab was chosen, which 「タスク」 goes back to
+  taskPane: new Map(),  // `<board>/<task id>` -> the pane of the task's panel before this tab was chosen, which 「タスク」 goes back to
   drawn: { order: '', html: new Map() },  // what the middle was last drawn from (`prDialogPatch`)
   contentSig: '',     // the middle's markup as drawn
   groups: [],         // the groups drawn
@@ -55,7 +55,12 @@ async function taskReadRefresh(force = false) {
   const task = taskReadTaskOf();
   if (!task?.pr || !multiBoard || !nav.board || nav.board === 'all') return;
   const key = taskReadKey(task);
-  if (taskRead.key !== key) Object.assign(taskRead, { key, doc: null, sig: '', error: null, contentSig: '' });
+  if (taskRead.key !== key) {
+    Object.assign(taskRead, { key, doc: null, sig: '', error: null, contentSig: '', groups: [], shownFor: null, active: null, pinned: null });
+    // What the middle was drawn from is another PR's: cards are reused by their place, so it must not be patched into this one.
+    taskRead.drawn.order = '';
+    taskRead.drawn.html = new Map();
+  }
   if (taskRead.busy) {
     if (force) taskRead.again = true;
     return;
@@ -161,10 +166,10 @@ wk('wk-mid-tabs').addEventListener('click', e => {
   if (b.dataset.midTab === 'ai') {
     if (on) return;
     // 「タスク」 goes back to the tab of the task's panel that was on.
-    taskRead.taskPane.set(task.id, nav.pane);
+    taskRead.taskPane.set(`${nav.board}/${task.id}`, nav.pane);
     go({ pane: 'ai' }, { replace: true });
   } else if (on) {
-    go({ pane: taskRead.taskPane.get(task.id) || 'detail' }, { replace: true });
+    go({ pane: taskRead.taskPane.get(`${nav.board}/${task.id}`) || 'detail' }, { replace: true });
   }
 });
 
