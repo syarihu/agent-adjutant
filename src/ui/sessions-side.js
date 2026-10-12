@@ -83,12 +83,68 @@ function gitFactsHtml(s) {
     `<div class="source">${esc(when)} <button type="button" class="btn-m3-text sess-side-btn" data-side-act="git-refresh"${g.loading ? ' disabled' : ''}>更新</button></div>`;
 }
 
+/* ── The whole last message ── */
+
+/* The board's state carries the first 1000 characters (what the registry keeps in the row); the whole text is read when
+   the expanded view opens, and again for each new message, never on a timer. */
+const LAST_MESSAGE_SHOWN_CHARS = 1000;
+const lastMessageKey = (s, a) => JSON.stringify([s.id, a.sessionId, a.lastMessageAt]);
+/* The same test the registry's `looks_cut` makes: a text that is not cut has nothing more to read. */
+const lastMessageCut = text => {
+  const n = [...text].length;
+  return n > LAST_MESSAGE_SHOWN_CHARS || (text.endsWith('…') && n >= LAST_MESSAGE_SHOWN_CHARS * 0.9);
+};
+
+/* Asks for the whole text of `s`'s last message, once for each message: a key that is loaded, in flight or failed is
+   not asked again. An answer for another message than the one asked for is dropped, so the cut text stays. */
+function ensureLastMessage(s) {
+  const a = s?.present ? s.agentSession : null;
+  if (!a?.sessionId || a.lastMessageAt == null || !a.lastMessage || !lastMessageCut(a.lastMessage)) return;
+  const key = lastMessageKey(s, a);
+  if (sessView.lastMsg?.key === key) return;
+  const mine = sessView.lastMsg = { key, data: null, loading: true, error: null };
+  // The page's own route: its board lists every session of the repository.
+  api(`/api/sessions/${enc(s.id)}/message`).then(data => {
+    if (sessView.lastMsg !== mine) return;
+    if (data?.sessionId === a.sessionId && data.at === a.lastMessageAt) mine.data = data;
+  }).catch(e => {
+    if (sessView.lastMsg !== mine) return;
+    mine.error = e.message;
+  }).then(() => {
+    if (sessView.lastMsg !== mine) return;
+    mine.loading = false;
+    lastMessageArrived();
+  });
+}
+
+/* Opening the expanded view asks afresh, whatever was kept: a failure may have passed, and the same words said again
+   can have a new tail under the same time. Only the open does: a redraw keeps the entry, or the redraw that follows an
+   answer would ask again, and again. */
+function forgetLastMessage() {
+  sessView.lastMsg = null;
+}
+
+/* What the expanded view draws: the whole text once it is here, the cut one until then and when it is not to be had,
+   with one line saying which it is. */
+function lastMessageBodyHtml(a, s) {
+  const m = sessView.lastMsg;
+  const mine = s && m?.key === lastMessageKey(s, a) ? m : null;
+  let note = '';
+  if (mine?.loading) note = '全文を読み込んでいます…';
+  else if (mine?.error) note = `全文を読み込めませんでした: ${mine.error}（先頭の ${LAST_MESSAGE_SHOWN_CHARS} 文字までを表示しています）`;
+  else if (mine?.data?.whole === false) note = `全文は残っていないため、先頭の ${LAST_MESSAGE_SHOWN_CHARS} 文字までを表示しています`;
+  // The note is above the text: a whole report is long, and what is said about it must be seen first.
+  return (note ? `<div class="tp-muted lastmsg-note" role="status">${esc(note)}</div>` : '') + md(mine?.data?.text || a.lastMessage);
+}
+
 /* What the agent said at the end of its last turn and how long ago it said it. The message is the agent's own words,
-   Markdown and all: md() escapes it before it parses, so none of it is ever HTML. */
-function lastMessageHtml(a) {
+   Markdown and all: md() escapes it before it parses, so none of it is ever HTML. `s` names the session for the expanded
+   view to ask about; with `expanded` the body is the whole text (see lastMessageBodyHtml) rather than the cut one. */
+function lastMessageHtml(a, s = null, opts = {}) {
   if (!a.lastMessage) return '';
   const mins = a.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
-  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div class="body">${md(a.lastMessage)}</div></div>`;
+  const body = opts.expanded ? lastMessageBodyHtml(a, s) : md(a.lastMessage);
+  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}${s ? ` data-lastmsg-session="${esc(s.id)}"` : ''}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div class="body">${body}</div></div>`;
 }
 
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a
@@ -110,7 +166,7 @@ function agentFactsHtml(s) {
     ${doing}
     ${a.pending ? kv('ターン終了（保留）', esc(a.pending)) : ''}
     ${a.subagents?.length > 0 ? kv('サブエージェント', esc(`${a.subagents.length} 件`)) : ''}
-  </div>${lastMessageHtml(a)}`;
+  </div>${lastMessageHtml(a, s)}`;
 }
 
 /* ── 詳細 of a session with no task ── */

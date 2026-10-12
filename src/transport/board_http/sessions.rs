@@ -9,7 +9,7 @@ use crate::board::session::{
     BranchRemoval, CleanUp, CleanUpRequest, LinkSession, Loss, OpenedIn, StartSession, clean_up,
     inbox_name, link, open, restart, resume, start,
 };
-use crate::board::view::{find_session, session_git};
+use crate::board::view::{find_session, session_git, session_last_message};
 use crate::board::{Server, settings_now};
 use crate::lifecycle::worker::LinkTo;
 use crate::mail::Handed;
@@ -85,6 +85,17 @@ pub(super) fn git_of_session(server: &Server, id: &str) -> Result<Value, String>
             Err(format!("{} does not exist", session.worktree))
         }
     }
+}
+
+/// The whole last message of a session's agent, as `{sessionId, at, text, whole}`.
+pub(super) fn last_message_of_session(server: &Server, id: &str) -> Result<Value, String> {
+    let read = session_last_message(server, id)?;
+    Ok(json!({
+        "sessionId": read.session_id,
+        "at": read.at,
+        "text": read.text,
+        "whole": read.whole,
+    }))
 }
 
 /// Ask a hub to start a session with no task. The body is read before the board is asked, so a

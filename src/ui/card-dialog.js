@@ -139,10 +139,37 @@ function cardDialogSync(force = false, initial = false) {
   // The controls already stripped (and their comment) stay as they are while the card is redrawn.
   const kept = gateLost ? [...content.children].slice(1).filter(el => el.hasAttribute('data-gate-gone')) : [];
   content.replaceChildren(cardDialogClone(source), ...controls.map(cardDialogClone), ...kept);
+  if (cardDialog.section === 'lastmsg') cardDialogLastMessage(content);
   const box = cardDialogBox();
   if (box && typed) box.value = typed;
   content.querySelectorAll('details').forEach((d, i) => { if (opened[i] !== undefined) d.open = opened[i]; });
   body.scrollTop = scroll;
+}
+
+/* The clone of the panel's 最後のメッセージ is the cut text: its body is redrawn from the whole one, which is asked for
+   here. Done on every sync, as a redraw brings the clone back. */
+function cardDialogLastMessage(content) {
+  const el = content.querySelector('.tp-lastmsg[data-lastmsg-session]');
+  const s = el && (state.sessions || []).find(x => x.id === el.dataset.lastmsgSession);
+  const a = s?.present ? s.agentSession : null;
+  const body = el?.querySelector(':scope > .body');
+  if (!a?.lastMessage || !body) return;
+  ensureLastMessage(s);
+  body.innerHTML = lastMessageBodyHtml(a, s);
+}
+
+/* The whole text has come (or failed to): drawn again where the dialog shows it. A sync that a typed comment holds
+   waits for its turn. A task's dialog takes the redraw over without marking the card 「更新」, as nothing was said. */
+function lastMessageArrived() {
+  const dlg = cardDialogEl();
+  if (!dlg?.open) return;
+  if (cardDialog.mode === 'card' && cardDialog.section === 'lastmsg') {
+    cardDialog.sig = '';
+    cardDialogSync();
+  } else if (cardDialog.mode === 'task') {
+    cardDialog.rebase = true;
+    cardDialogSync();
+  }
 }
 
 function openCardDialog(btn) {
@@ -163,6 +190,7 @@ function openCardDialog(btn) {
     answering: false, gateGone: false, pressing: false, target: null, dock: null, dockSig: '', groups: [],
     answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
   });
+  forgetLastMessage();
   cardDialogShell('card', btn.dataset.expandLabel || '', tp('tp-head').querySelector('.tp-title')?.textContent || '');
   cardDialogSync(true, true);
   dlg.showModal();
@@ -487,7 +515,8 @@ function cardDialogTaskGroups(task, all) {
 
   // 7. the agent's last words, and the rest of what is known of the task
   const sess = sessionOfTask(task);
-  const last = sess?.present && sess.agentSession ? lastMessageHtml(sess.agentSession) : '';
+  // Read in full for this card only: the panel's own view stays the cut text.
+  const last = sess?.present && sess.agentSession ? (ensureLastMessage(sess), lastMessageHtml(sess.agentSession, sess, { expanded: true })) : '';
 
   return [
     ...waiting,
@@ -743,6 +772,7 @@ function openCardDialogTask(task, btn) {
     target, targetAt: Date.now(), pinned: null, dock: dock ? gateRef(dock) : null, dockSig: '', groups: [], gateIds: {}, active: null,
     answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
   });
+  forgetLastMessage();
   cardDialogShell('task', task.title, 'タスク全体');
   cardDialogSync(true, true);
   dlg.showModal();

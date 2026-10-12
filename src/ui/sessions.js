@@ -180,6 +180,7 @@ const sessView = {
   dismissed: [],     // pending rows closed on this page, by key
   boards: {},        // slug -> { data, at, key, loading, error }: other boards' state, read for titles
   git: null,         // { id, at, data, error, loading }: the panel's session's git state (sessions-side.js)
+  lastMsg: null,     // { key, data, error, loading }: the whole last message the expanded view asked for, for one message (sessions-side.js)
   screens: {},       // session id -> { lines, at }: the last lines this page saw of its terminal
 };
 const sessEl = id => document.getElementById(id);

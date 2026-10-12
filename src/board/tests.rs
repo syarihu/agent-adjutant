@@ -13,8 +13,8 @@ use crate::task;
 
 use super::view::{
     GateCard, HumanCol, WorkerRow, WorkerSeen, board_counts, board_session, branch_of, cut_chars,
-    history_of, hub_task_cards, socket_key_in, state, waits_on_person, with_records, worker_of,
-    worker_session_ids,
+    history_of, hub_task_cards, session_last_message, socket_key_in, state, waits_on_person,
+    with_records, worker_of, worker_session_ids,
 };
 use super::*;
 
@@ -1501,4 +1501,84 @@ fn the_code_review_hub_is_not_stoppable_when_none_runs() {
     let state = serde_json::to_value(crate::board::view::others(&sandbox.state())).unwrap();
     assert_eq!(state["hub"]["state"], "stopped");
     assert_eq!(state["hub"]["stoppable"], false);
+}
+
+/// The whole last message is asked for through the board's own session, and the answer says whether
+/// it is the whole text; a session the board does not know, or one with no agent session, is refused.
+#[test]
+fn the_last_message_of_a_session_is_read_through_the_boards_join() {
+    use crate::registry::{AgentEvent, HookEvent, LAST_MESSAGE_CHARS, record_agent_event};
+    let sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir_all(&main).unwrap();
+    crate::testing::init_repo(&main, "main");
+    let record = crate::registry::worker_record_path(&main);
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    let me = std::process::id();
+    std::fs::write(&record, json!({"pid": me, "task": "WID-4"}).to_string()).unwrap();
+    // The session id the worker's agent was started with, which the board joins the ledger row by.
+    std::fs::write(
+        main.join(".claude").join("adjutant-session.json"),
+        json!({"sessionId": "agent-1"}).to_string(),
+    )
+    .unwrap();
+    let repo = crate::kernel::identity::RepoInfo {
+        main: main.to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let server = Server {
+        ctx: crate::registry::context_of(repo).unwrap(),
+        token: String::new(),
+        port: 0,
+        resident: false,
+        jules: Arc::default(),
+        hub_titles: Arc::default(),
+        last_lines: Arc::default(),
+        diffs: Arc::default(),
+        tmux: None,
+        terminals: Arc::default(),
+        pr_poll: None,
+        waits: Arc::default(),
+    };
+    let at = crate::infra::clock::now_secs();
+    let event = |hook: HookEvent| AgentEvent {
+        agent: "claude".to_string(),
+        session_id: "agent-1".to_string(),
+        hook,
+        agent_id: None,
+        agent_type: None,
+        cwd: Some(main.to_string_lossy().to_string()),
+        summary: None,
+        pid: Some(me),
+        config_dir: None,
+        at,
+    };
+
+    // Not a session of this board.
+    let err = session_last_message(&server, "worker-nope").unwrap_err();
+    assert!(err.contains("no such session"), "{err}");
+    // A session with no agent session says so.
+    let err = session_last_message(&server, "worker-main").unwrap_err();
+    assert!(err.contains("no agent session"), "{err}");
+
+    let whole = format!("start\n{}", "x".repeat(LAST_MESSAGE_CHARS * 2));
+    record_agent_event(&sandbox.state(), &event(HookEvent::PostToolUse)).unwrap();
+    record_agent_event(
+        &sandbox.state(),
+        &event(HookEvent::Stop {
+            message: Some(whole.clone()),
+        }),
+    )
+    .unwrap();
+    let read = session_last_message(&server, "worker-main").unwrap();
+    assert_eq!(read.session_id, "agent-1");
+    assert_eq!(read.at, Some(at));
+    assert_eq!(read.text.as_deref(), Some(whole.as_str()));
+    assert!(read.whole);
 }

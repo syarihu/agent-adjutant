@@ -38,6 +38,7 @@ mod slot;
 mod status;
 mod store;
 mod unregister;
+mod whole_last_message;
 
 pub use address::*;
 pub use agent_session_of::*;
@@ -57,6 +58,7 @@ pub use set_phase::*;
 pub use slot::*;
 pub use status::*;
 pub use unregister::*;
+pub use whole_last_message::*;
 
 // For the tests outside `registry` that write record fixtures (the inbox tests,
 // `board/tests.rs`).

@@ -350,6 +350,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `dashboards/<slug>.json` | a hub's or `adj serve`'s own board | registry (`store.rs`) |
 | `boards/<slug>.json`, `server.json` | the resident's address book and record | registry (`store.rs`) |
 | `agent-sessions/<session id>.json` (+ `.lock`, `.json.broken`) | what one agent session's hooks last said | registry (`store.rs`) |
+| `agent-sessions/messages/<session id>.json` | the whole last message of a session, when the row had to cut it | registry (`store.rs`) |
 | `agent-hooks/claude-<digest>.json` | the hook settings passed with `--settings`, one per `adj` binary | lifecycle (`write_agent_hooks.rs`) |
 | `inbox/<slug>/`, `inbox/<slug>/read/` | messages to the hub, read ones archived | mail (`store.rs`) |
 | `tasks/<slug>/<id>.json` (+ `<id>.lock`) | task records | task (`store.rs`) |

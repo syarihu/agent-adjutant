@@ -952,8 +952,9 @@ the gate directories.
   name) and `contextPercent` (0 to 100, rounded) when the status line has said them, and `subagents`:
   the ones that run, each `{id, type, startedAt, activity}` (`activity` is the tool it last ran, first
   line, cut to 200 characters; keys it has not said are left out). `lastMessage` and `lastMessageAt`
-  are what the agent said at the end of its last turn (whole, line breaks kept, cut to 1000
-  characters) and when, left out until it has said one. Left out
+  are what the agent said at the end of its last turn (line breaks kept, cut to 1000
+  characters; the expanded view reads the whole text through `GET /api/sessions/<id>/message`) and
+  when, left out until it has said one. Left out
   for a session that is not running or has no row (no hooks); a running session with no row shows as
   状態不明 (state unknown) rather than as working or idle, since the window's activity is not read as a
   state (a resize redraws it); so does one whose `agentSession` is `{error}` or whose `status` is a word the
@@ -1074,6 +1075,16 @@ is merged. The base is the task's own when it has one, otherwise the remote's de
 merged, because the commits it left in the base are not the ones in the worktree. The whole
 check has a 10-second deadline, and a worktree that is gone is refused. An unknown session id
 is a 400, as for `link`.
+
+`GET /api/sessions/<id>/message` reads the whole last message of the session's agent when the
+expanded 「最後のメッセージ」 opens, not on the poll, which carries the first 1000 characters
+only. It answers `{sessionId, at, text, whole}`: `sessionId` is the agent session's id, `at` the
+time the message was received (the state's `lastMessageAt`), and `text` the message. The hook keeps
+the whole text, up to 50,000 characters (cut there with an ellipsis), in a file beside the session's
+row when the row had to cut it. `whole` is `false` when only the cut text is left (a row written
+before this was kept, an agent whose hook gives no last message, or a file that is gone or belongs
+to another message), and `text` is then the cut text. A session with no agent session, or an
+unknown session id, is a 400, as for `git`.
 
 ### Acting on a session
 

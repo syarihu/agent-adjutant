@@ -16,7 +16,7 @@ use crate::infra::clock::now_secs;
 use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CLAUDE_PID_ENV, CODEX_HOME_ENV};
 use crate::infra::paths::home_dir;
 use crate::infra::terminal::is_wake_line;
-use crate::registry::{self, AgentEvent, HookEvent, LAST_MESSAGE_CHARS, RateWindow};
+use crate::registry::{self, AgentEvent, HookEvent, LAST_MESSAGE_WHOLE_CHARS, RateWindow};
 
 /// What is shown of a tool call or a notification: enough to tell what is going on, and a
 /// bounded size for the row that keeps it.
@@ -308,14 +308,14 @@ fn text(payload: &Value, key: &str) -> Option<String> {
 }
 
 /// What the agent said last in the turn the payload ends: trimmed, blank the same as absent,
-/// line breaks kept, and cut to `LAST_MESSAGE_CHARS` on a character boundary with an ellipsis.
+/// line breaks kept. The whole text, cut only at `LAST_MESSAGE_WHOLE_CHARS`: the registry cuts
+/// what the row keeps and puts the rest in a side file.
 fn last_message(payload: &Value) -> Option<String> {
     let message = text(payload, "last_assistant_message")?;
-    let message = message.trim();
-    Some(match message.char_indices().nth(LAST_MESSAGE_CHARS) {
-        Some((end, _)) => format!("{}…", message[..end].trim_end()),
-        None => message.to_string(),
-    })
+    Some(registry::cut_last_message(
+        message.trim(),
+        LAST_MESSAGE_WHOLE_CHARS,
+    ))
 }
 
 /// `Edit: src/lib.rs`: the tool, and the first thing its input names.

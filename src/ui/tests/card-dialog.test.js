@@ -431,3 +431,54 @@ test('the head of a task has a button for the whole task, in the panel head and 
   assert.match(src, /class="cd-group" data-cd-group="[^"]*" aria-label="\$\{esc\(g\.label\)\}"/);
   assert.doesNotMatch(cut(src, /^function cardDialogFill\([\s\S]*?\n\}/m), /removeAttribute\('aria-label'\)/);
 });
+
+/* The expanded 最後のメッセージ of a session with no task: the clone of the panel's card is redrawn from the whole text. */
+const bodyEl = { innerHTML: 'cut' };
+const lastEl = { dataset: { lastmsgSession: 'w1' }, querySelector: () => bodyEl };
+const asked = [];
+const redraws = [];
+const lctx = vm.createContext({
+  state: { sessions: [{ id: 'w1', present: true, agentSession: { lastMessage: 'cut text' } }] },
+  ensureLastMessage: s => asked.push(s.id),
+  lastMessageBodyHtml: (a, s) => `whole of ${s.id}`,
+  cardDialogEl: () => ({ open: lctx.dialogOpen }), dialogOpen: true,
+  cardDialogSync: () => redraws.push(vm.runInContext('JSON.stringify([cardDialog.sig, cardDialog.rebase])', lctx)),
+});
+vm.runInContext([
+  cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};/m),
+  cut(dlgSrc, /^function cardDialogLastMessage\(content\) \{[\s\S]*?\n\}/m),
+  cut(dlgSrc, /^function lastMessageArrived\(\) \{[\s\S]*?\n\}/m),
+].join('\n'), lctx);
+
+test('the clone of the last message is redrawn from the whole text, every time it is drawn', () => {
+  const content = { querySelector: sel => sel === '.tp-lastmsg[data-lastmsg-session]' ? lastEl : null };
+  vm.runInContext('cardDialogLastMessage', lctx)(content);
+  assert.strictEqual(bodyEl.innerHTML, 'whole of w1');
+  assert.deepStrictEqual(asked, ['w1']);
+  bodyEl.innerHTML = 'cut again';
+  vm.runInContext('cardDialogLastMessage', lctx)(content);
+  assert.strictEqual(bodyEl.innerHTML, 'whole of w1');
+  // A clone of something else, or of a session that has left, is left as it is.
+  bodyEl.innerHTML = 'untouched';
+  vm.runInContext('cardDialogLastMessage', lctx)({ querySelector: () => null });
+  lastEl.dataset.lastmsgSession = 'gone';
+  vm.runInContext('cardDialogLastMessage', lctx)(content);
+  assert.strictEqual(bodyEl.innerHTML, 'untouched');
+});
+
+test('the whole text arriving redraws the card dialog that shows it, and a task dialog without marking an update', () => {
+  const set = (mode, section) => { vm.runInContext(`cardDialog.mode = ${JSON.stringify(mode)}; cardDialog.section = ${JSON.stringify(section)}; cardDialog.sig = 'x'; cardDialog.rebase = false;`, lctx); redraws.length = 0; };
+  set('card', 'lastmsg');
+  vm.runInContext('lastMessageArrived', lctx)();
+  assert.deepStrictEqual(redraws.map(JSON.parse), [['', false]]);
+  set('card', 'decided');
+  vm.runInContext('lastMessageArrived', lctx)();
+  assert.deepStrictEqual(redraws, []);
+  set('task', null);
+  vm.runInContext('lastMessageArrived', lctx)();
+  assert.deepStrictEqual(redraws.map(JSON.parse), [['x', true]]);
+  lctx.dialogOpen = false;
+  set('card', 'lastmsg');
+  vm.runInContext('lastMessageArrived', lctx)();
+  assert.deepStrictEqual(redraws, []);
+});
