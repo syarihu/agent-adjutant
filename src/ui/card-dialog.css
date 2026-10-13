@@ -41,6 +41,9 @@
 .card-dialog-index ol ol, .cd-index ol ol { margin: 2px 0 8px 10px; }
 .card-dialog-index button, .cd-index button { display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 5px 8px; border-radius: 8px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
 .card-dialog-index button > span:first-child, .cd-index button > span:first-child { margin-right: auto; }
+/* A gate's badge takes line 1 and the title wraps below it at full width (the badge is `flex: none`, so beside it the title wrapped every few characters). */
+.card-dialog-index button.cd-ix-stack, .cd-index button.cd-ix-stack { flex-wrap: wrap; justify-content: flex-start; row-gap: 2px; }
+.card-dialog-index button.cd-ix-stack > span:first-child, .cd-index button.cd-ix-stack > span:first-child { order: 1; flex: 1 0 100%; margin-right: 0; }
 .card-dialog-index > ol > li > button, .cd-index > ol > li > button { font-weight: 700; color: var(--md-sys-color-on-surface); }
 .card-dialog-index button:hover, .cd-index button:hover { background: var(--md-sys-color-surface-container-high); }
 .card-dialog-index button[aria-current="location"], .cd-index button[aria-current="location"] { background: var(--md-sys-color-secondary-container, var(--md-sys-color-surface-container-high)); color: var(--md-sys-color-on-surface); }

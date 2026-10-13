@@ -552,8 +552,12 @@ function cardDialogDockGate(all, ref) {
 
 /* The index and the content, as markup. Every label and key is escaped; a key is only ever an attribute value. */
 function cardDialogTaskHtml(groups) {
-  const entry = (g, c) => `<li><button type="button" data-cd-go-group="${esc(g.key)}"${c ? ` data-cd-go-card="${esc(c.key)}"` : ''}${c?.title ? ` title="${esc(c.title)}"` : ''}>` +
-    `<span>${esc((c || g).label)}</span>${(c || g).badge ? `<span class="cd-badge">${esc((c || g).badge)}</span>` : ''}</button>`;
+  // A decision or 判断待ち badge goes on its own line above the title, so the title keeps the index's width; count badges ("5") stay beside it.
+  const entry = (g, c) => {
+    const e = c || g, stack = e.badge && e.gate;
+    return `<li><button type="button" data-cd-go-group="${esc(g.key)}"${c ? ` data-cd-go-card="${esc(c.key)}"` : ''}${c?.title ? ` title="${esc(c.title)}"` : ''}${stack ? ' class="cd-ix-stack"' : ''}>` +
+      `<span>${esc(e.label)}</span>${e.badge ? `<span class="cd-badge">${esc(e.badge)}</span>` : ''}</button>`;
+  };
   const index = `<ol>` + groups.map(g => entry(g) + `<ol>${g.cards.map(c => entry(g, c) + '</li>').join('')}</ol></li>`).join('') + `</ol>`;
   const content = groups.map(g => `<section class="cd-group" data-cd-group="${esc(g.key)}" aria-label="${esc(g.label)}" tabindex="-1">` +
     `<h3 class="cd-group-title"><span>${esc(g.label)}</span>${g.badge ? `<span class="cd-badge">${esc(g.badge)}</span>` : ''}</h3>` +

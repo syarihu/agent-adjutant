@@ -374,6 +374,42 @@ test('a second click while an answer is on its way returns at once and leaves `a
   assert.strictEqual(vm.runInContext('cardDialog.answering', c), false);
 });
 
+test('an index entry whose badge comes from a gate stacks it above the title; count badges and plain entries do not', () => {
+  const c = vm.createContext({ esc });
+  vm.runInContext(cut(dlgSrc, /^function cardDialogTaskHtml\(groups\) \{[\s\S]*?\n\}/m), c);
+  const groups = [
+    { key: 'waiting:w1', label: 'Waiting', badge: '判断待ち', gate: 'w1', cards: [{ key: 'gate:w1:head', label: 'Head', html: '' }] },
+    { key: 'answered', label: 'Answered', cards: [{ key: 'gate:a1', label: 'Answer <1>', title: 'Full "title"', badge: '承認した', gate: 'y', html: '' }] },
+    { key: 'points', label: 'Points', badge: '5', cards: [] },
+  ];
+  c.groups = groups;
+  const { index } = vm.runInContext('cardDialogTaskHtml(groups)', c);
+  const buttons = index.match(/<button [^>]*>.*?<\/button>/g);
+  assert.strictEqual(buttons.length, 5);
+  const [waiting, head, answered, answeredCard, points] = buttons;
+  assert.ok(waiting.includes('class="cd-ix-stack"'));
+  assert.ok(!head.includes('cd-ix-stack'));
+  assert.ok(answeredCard.includes('class="cd-ix-stack"'));
+  assert.ok(answeredCard.includes('title="Full &quot;title&quot;"'));
+  assert.ok(answeredCard.endsWith('<span>Answer &lt;1&gt;</span><span class="cd-badge">承認した</span></button>'));
+  assert.ok(!answered.includes('cd-ix-stack'));
+  assert.ok(!points.includes('cd-ix-stack'));
+});
+
+test('the stacked index entry wraps its badge above the title at full width, and the badge itself is unchanged', () => {
+  const css = read('card-dialog.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = sel => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(x => x[1].trim() === sel).map(x => x[2]).join(' ');
+  const stack = rules('.card-dialog-index button.cd-ix-stack, .cd-index button.cd-ix-stack');
+  assert.match(stack, /flex-wrap:\s*wrap/);
+  assert.match(stack, /justify-content:\s*flex-start/);
+  const title = rules('.card-dialog-index button.cd-ix-stack > span:first-child, .cd-index button.cd-ix-stack > span:first-child');
+  assert.match(title, /order:\s*1/);
+  assert.match(title, /flex:\s*1 0 100%/);
+  assert.doesNotMatch(rules('.card-dialog-index button, .cd-index button'), /flex-wrap/);
+  assert.match(rules('.cd-badge'), /flex:\s*none/);
+  assert.match(rules('.cd-badge'), /font-size:\s*10\.5px/);
+});
+
 test('the dialog of a task fills the width: a grid of cards two to a row, an index that goes at 720px', () => {
   const raw = read('card-dialog.css');
   const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');

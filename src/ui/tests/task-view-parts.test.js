@@ -292,7 +292,7 @@ test('the index and the content are escaped, and carry no answer controls', () =
   const h = call('cardDialogTaskHtml', gs);
   assert.ok(!h.index.includes('<img') && !h.content.includes('<img src=x>'));
   assert.ok(!/\sid=/.test(h.index));
-  assert.ok(/<button type="button" data-cd-go-group="waiting:w-&lt;1&gt;">/.test(h.index));
+  assert.ok(/<button type="button" data-cd-go-group="waiting:w-&lt;1&gt;" class="cd-ix-stack">/.test(h.index));
   assert.ok(/<button type="button" data-cd-go-group="waiting:w-&lt;1&gt;" data-cd-go-card="gate:w-&lt;1&gt;:head">/.test(h.index));
   assert.ok(h.content.includes('data-cd-card="gate:w-&lt;1&gt;:head"'));
   assert.ok(!h.content.includes('cd-dock') && !h.content.includes('<decide'));
