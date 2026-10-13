@@ -21,7 +21,7 @@ const rec = { id: PR, url: 'https://github.com/acme/widget/pull/12', ai: { sha: 
 function world({ shown = 'task', stored = { id: PR, savedAt: 's', version: 1, drafts: [], overall: { body: '' } } } = {}) {
   const w = { notes: [], posts: [], hands: [], order: [], redrawn: 0, saves: [], handFail: null, handGate: null, refreshed: 0, timeline: 0, stored, shown };
   const c = vm.createContext({
-    structuredClone, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console, BASE: '/b/acme',
+    structuredClone, wk: () => null, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console, BASE: '/b/acme',
     selectedTaskId: 't1', PR_REF: 'pr:', PR_SAVE_MS: 800, cardDialog: {},
     note: (...a) => { w.notes.push(a); }, prRedrawNow: () => { w.redrawn++; }, prRedrawFor() {}, tp: () => null, cardDialogEl: () => null, renderTaskPanel() {},
     prNextKey: (doc, prefix) => { let n = 1; while (doc.drafts.some(d => d.key === `${prefix}${n}`)) n++; return `${prefix}${n}`; },

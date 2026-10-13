@@ -1,4 +1,4 @@
-/* A task's 「AI 下読み」 (src/ui/task-read.js, task-read-view.js): the tabs over the middle, and the read-through in it, laid out as 「拡大」
+/* A task's 「AI 下読み」 and a review request's (src/ui/task-read.js, task-read-view.js, pr-panel.js): the tabs over the middle, and the read-through in it, laid out as 「拡大」
    lays out a review request's. Colours are the page's tokens only, so the dark theme follows without a rule of its own. */
 
 /* The row over the head of the middle: the sidebar's toggle, then the tabs, which are shown for a task only. The row is the height
@@ -22,6 +22,11 @@ body:not(.rail-hidden) #rail-toggle .rail-badge { display: none; }
 .wk-mid-tab:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
 .wk-mid-sub { font-size: 11px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
 
+/* A review request's head over the middle has 「GitHub で開く」 and 「拡大」 at its right end (a task's has none). */
+.wk-term-head:has(.wk-head-acts) { display: flex; align-items: flex-start; gap: 8px; }
+.wk-head-main { min-width: 0; flex: 1; }
+.wk-head-acts { margin-left: auto; flex: none; display: flex; align-items: center; gap: 2px; }
+
 /* The read-through: the index on the left (the 「拡大」's own look, `.cd-index`), one scroll on the right. The middle is what the layout
    asks (below), since its width depends on the sidebar and the panel and not on the window. */
 .wk-term { container: wk-mid / inline-size; }
@@ -32,6 +37,8 @@ body:not(.rail-hidden) #rail-toggle .rail-badge { display: none; }
 /* The head over the read-through is the band that says it is of an earlier push; it stays in view while the person reads. */
 .task-read-band { position: sticky; top: 0; z-index: 1; padding: 8px 28px; font-size: 12.5px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .task-read-band:empty { display: none; }
+/* A review request's 下書き tab is one column of boxes, as wide as is readable. */
+.task-read-content > .pr-drafts { max-width: 960px; }
 .task-read-band .tp-line { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 /* A jump lands below the band that stays in view. */
 .task-read:has(.task-read-band:not(:empty)) :is(.cd-group, .cd-card, [data-prd-file]) { scroll-margin-top: 72px; }

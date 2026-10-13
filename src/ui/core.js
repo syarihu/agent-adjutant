@@ -38,7 +38,7 @@ const isParentRef = id => typeof id === 'string' && id.startsWith(PARENT_REF);
 const parentKeyOfRef = id => id.slice(PARENT_REF.length);
 const parentOfRef = id => isParentRef(id) ? workParentOf(parentKeyOfRef(id)) : null;
 /* A PR waiting on your review opens in the work view as `pr:<owner/repo#N>` (its record's id), on board `all`: it belongs to
-   no board. The panel's tabs are 下読み (`detail`), 差分 (`diff`) and 下書き (`drafts`) (pr-panel.js). */
+   no board. The tabs over the middle are 下読み (`detail`), 差分 (`diff`) and 下書き (`drafts`), and the panel is its reader's (pr-panel.js). */
 const PR_REF = 'pr:';
 const isPrRef = id => typeof id === 'string' && id.startsWith(PR_REF);
 const prIdOfRef = id => id.slice(PR_REF.length);

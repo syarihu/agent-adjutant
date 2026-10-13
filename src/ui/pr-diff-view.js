@@ -196,7 +196,7 @@ function prdPlace(place, filling = false) {
   }
   if (place === 'read') {
     // Kept while the other tab or a review request is on, but not on screen: what another PR puts in place must not reach it.
-    if (document.getElementById('task-read')?.hidden !== false || prShown()?.kind !== 'task') return null;
+    if (document.getElementById('task-read')?.hidden !== false) return null;
     const root = document.getElementById('task-read-content');
     return root?.querySelector('[data-prd-file], [data-prd-tab]') ? { root, scroll: document.getElementById('task-read-body') } : null;
   }
@@ -353,7 +353,7 @@ function prdApplyTarget() {
   if (!t) return;
   const shown = prShown();
   if (Date.now() - t.at > CARD_DIALOG_TARGET_MS || !shown || shown.id !== t.id) { prDiff.target = null; return; }
-  const v = PRD_VIEWS[shown.kind === 'task' ? 'read' : 'dialog'];
+  const v = PRD_VIEWS.dialog.ready() && cardDialog.subject === selectedTaskId ? PRD_VIEWS.dialog : PRD_VIEWS.read;
   if (!v?.ready()) return;
   const e = prDiff.cache.get(t.id);
   if (!e || e.state === 'loading') return;
@@ -383,6 +383,8 @@ function prdGoto(path, line, { place = 'panel', opener = null } = {}) {
   if (!id) return;
   prDiff.target = { id, path, line: line || null, at: Date.now() };
   if (place === 'panel') openPrDialog(opener);
+  // The diff of a review request is its own tab of the middle: a link from the 下読み tab goes there first.
+  else if (place === 'read' && prShown().kind === 'pr' && nav.pane !== 'diff') go({ pane: 'diff' }, { replace: true });
   prdApplyTarget();
 }
 

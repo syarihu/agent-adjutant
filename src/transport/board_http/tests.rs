@@ -149,6 +149,12 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         "function scrollToCard(",
         "function keepReadingPlace(",
         "function syncReaderTerm(",
+        "function showMidTabs(",
+        "function drawReadMiddle(",
+        "function drawReaderTerm(",
+        "function readPaneGroups(",
+        "function renderPrRead(",
+        "function renderPrPanel(",
     ] {
         assert_eq!(UI_HTML.matches(function).count(), 1, "{function}");
     }

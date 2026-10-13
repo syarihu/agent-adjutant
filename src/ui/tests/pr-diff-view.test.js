@@ -470,8 +470,9 @@ test('the middle of a task is a place of its own: its root is the read-through\'
   w.byId['task-read'].hidden = true;
   assert.strictEqual(c.prdPlace('read'), null);
   w.byId['task-read'].hidden = false;
+  // A review request's middle is the same place (its 差分 tab).
   w.shown = { ...w.shown, kind: 'pr' };
-  assert.strictEqual(c.prdPlace('read'), null);
+  assert.strictEqual(c.prdPlace('read').root, w.dialog.root);
   w.shown = { ...w.shown, kind: 'task' };
   // Nothing drawn in it yet: no place.
   w.byId['task-read-content'] = el({}, { querySelector: () => null });
@@ -502,6 +503,46 @@ test('a link in the middle of a task goes there and opens no dialog, after the t
   c.prdGoto('nope.rs', null, { place: 'read' });
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'rgo').map(x => x.slice(1, 4)), [[null, 'diff', true]]);
   assert.ok(!w.calls.some(x => x[0] === 'go'), 'not the dialog\'s');
+});
+
+/* The same place for a review request: its 差分 tab is where the diff is, and 「拡大」 is the other place a link can land in. */
+function prReadWorld() {
+  const x = readWorld();
+  x.w.shown = { id: 'acme/widget#1', rec: rec(), kind: 'pr', hubView: x.w.hubView, asking: false };
+  x.w.selected = 'pr:acme/widget#1';
+  x.w.pane = 'detail';
+  return x;
+}
+
+test('a link from the 下読み tab of a review request goes to the 差分 tab first, and lands in the middle', async () => {
+  const { w, c, run } = prReadWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  c.prdGoto('docs/x.md', 1, { place: 'read', opener: el() });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane').slice(1))), [{ pane: 'diff' }, { replace: true }]);
+  assert.deepStrictEqual(w.calls.find(x => x[0] === 'rgo').slice(1, 3), ['diff:docs/x.md', null]);
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'no 「拡大」 for it');
+  // Already on the 差分 tab: nothing to switch.
+  w.pane = 'diff';
+  w.calls.length = 0;
+  c.prdGoto('src/a.rs', 1, { place: 'read' });
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
+});
+
+test('a link lands in 「拡大」 while it is open on the PR, else in the middle', async () => {
+  const { w, c, run } = prReadWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  w.pane = 'diff';
+  w.dialogOpen = true;
+  c.prdGoto('docs/x.md', null, { place: 'dialog' });
+  assert.ok(w.calls.some(x => x[0] === 'go'), 'the dialog');
+  assert.ok(!w.calls.some(x => x[0] === 'rgo'));
+  // Open on another PR: not that one's.
+  w.calls.length = 0;
+  c.cardDialog.subject = 'pr:acme/widget#2';
+  c.prdGoto('docs/x.md', null, { place: 'read' });
+  assert.ok(w.calls.some(x => x[0] === 'rgo') && !w.calls.some(x => x[0] === 'go'));
 });
 
 test('a link meant for the middle of a task is dropped when the task on show is another', async () => {

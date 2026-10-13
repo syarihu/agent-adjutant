@@ -42,11 +42,13 @@ function taskReadTabsHtml(ai, on) {
   return tab('task', 'タスク', 'wk-term-pane') + tab('ai', 'AI 下読み', 'task-read', ai);
 }
 
-/* The head over the middle in the 「AI 下読み」 tab. `rec` is the record, null before there is one. */
-function taskReadHeadHtml(task, rec) {
+/* The head over the middle in the 「AI 下読み」 tab. `rec` is the record, null before there is one. `acts` is markup for the buttons at its
+   right end (a review request's 「GitHub で開く」 and 「拡大」). */
+function taskReadHeadHtml(task, rec, acts = '') {
   const number = rec?.number ?? prRefNumber(task?.pr);
   const sub = rec ? `${rec.title} · ${rec.repo}` : task?.title || '';
-  return `<div class="wk-term-title">${esc(`AI 下読み${number ? ` — PR #${number}` : ''}`)}</div><div class="wk-term-sub">${esc(sub)}</div>`;
+  const main = `<div class="wk-term-title">${esc(`AI 下読み${number ? ` — PR #${number}` : ''}`)}</div><div class="wk-term-sub">${esc(sub)}</div>`;
+  return acts ? `<div class="wk-head-main">${main}</div><span class="wk-head-acts">${acts}</span>` : main;
 }
 
 /* The card that says what the reader is: its state when there is a read to put it beside, and where it can be talked to. */
@@ -61,16 +63,22 @@ function taskReaderCard(rec, read, records, nowSecs) {
   return { key: s.key, label: s.label, badge: '', wide: false, html: prSecHtml(s), expand: null };
 }
 
-/* The groups of the middle: the dialog's (`prDialogGroups`, whose `opts` these are), without 前回のレビューから, which compares with
-   a review of yours, and with the reader's card first in 要点. The task's document holds its own record only, not the queue, so a
-   queued read says 順番待ち without a place: with its record alone it would always be the first. */
+/* The groups of the middle: the dialog's (`prDialogGroups`, whose `opts` these are), and with the reader's card first in 要点. A task's
+   have no 前回のレビューから, which compares with a review of yours (`opts.since` keeps it, for a review request), and its document
+   holds its own record only, not the queue, so a queued read says 順番待ち without a place: with its record alone it would always be
+   the first (`opts.records` is the queue, for a review request). */
 function taskReadGroups(rec, read, hubView, nowSecs, opts = {}) {
-  const records = [];
-  const groups = prDialogGroups(rec, read, records, hubView, nowSecs, { readerWhere: '右のターミナル', ...opts }).filter(g => g.key !== 'since');
+  const { records = [], since = false, ...rest } = opts;
+  const groups = prDialogGroups(rec, read, records, hubView, nowSecs, { readerWhere: '右のターミナル', ...rest }).filter(g => since || g.key !== 'since');
   const reader = taskReaderCard(rec, read, records, nowSecs);
   const top = groups.find(g => g.key === 'top');
   if (top && reader) top.cards.unshift(reader);
   return groups;
+}
+
+/* The groups one tab of a review request's middle shows: 差分 is the diff alone, 下読み is the rest. */
+function readPaneGroups(groups, pane) {
+  return groups.filter(g => (g.key === 'diff') === (pane === 'diff'));
 }
 
 /* What the middle says for a task whose PR has no record yet, and one button. */
@@ -111,10 +119,11 @@ function taskReaderHeadHtml(rec, closing) {
   const chip = url
     ? `<a class="btn-m3-tonal sess-act tp-head-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で PR #${esc(rec.number)} を開く"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span>PR #${esc(rec.number)}</span></a>`
     : `<span class="tp-key">PR #${esc(rec?.number)}</span>`;
+  const unreg = rec?.registered === false ? ' <span class="ov-unreg" title="adj に登録していないリポジトリです（同じオーナーなので依頼だけ出ます）">未登録</span>' : '';
   return `<div class="tp-head-main">
       <div class="tp-badges">
         ${chip}
-        <span class="origin-chip" title="${esc(rec?.repo)}"><span class="material-symbols-outlined" aria-hidden="true">folder</span><span>${esc(rec?.repo)}</span></span>
+        <span class="origin-chip" title="${esc(rec?.repo)}"><span class="material-symbols-outlined" aria-hidden="true">folder</span><span>${esc(rec?.repo)}</span></span>${unreg}
         <span class="m3-pill pill-neutral">読むだけ</span>
       </div>
       <h2 class="tp-title">下読みの worker</h2>
