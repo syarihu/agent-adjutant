@@ -5,10 +5,9 @@
    file holds what the page keeps for it: the stored read-through of the selected PR, the drafts the person is writing and their
    saving, and the terminal. Loaded after my-work-others-view.js, whose records (`others`) it reads. */
 
-/* What pr-diff-view.js sets (the annotated diff): `tabHtml(rec, read)` the 差分 tab; `dialogFileHtml(rec, read, path)`,
-   `dialogPaths(rec, read)`, `dialogHeadHtml(rec, read)` and `dialogLabel(rec, path)` the cards of 「拡大」 (keys `diff:<path>` and
-   `diff-bar`); `goto(path, line, { place, opener })` (`place`: 'panel', 'dialog' or 'read'); `onShown()` and `onLeft()`
-   for the panel's tab (left by another tab, another item or a close); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { place })`
+/* What pr-diff-view.js sets (the annotated diff): `dialogFileHtml(rec, read, path)`, `dialogPaths(rec, read)`,
+   `dialogHeadHtml(rec, read)` and `dialogLabel(rec, path)` the cards of the diff (keys `diff:<path>` and `diff-bar`), in 「拡大」 and in
+   the middle's 差分 tab; `goto(path, line, { place })` (`place`: 'dialog' or 'read'); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { place })`
    for a click of the diff's own buttons. While it is null the 差分 tab is disabled and 「差分で見る」 is not drawn. */
 const PR_HOOKS = { diff: null };
 /* The drafts are saved a moment after the last key. */
@@ -80,11 +79,9 @@ function prRestoreFocus(root, keep, inDialog) {
   if (!asked && keep.a != null) { try { el.setSelectionRange(keep.a, keep.b); } catch {} }
   return el;
 }
-/* The panel is on something else (or closed): the next PR it shows, even this one again, is a new selection. */
+/* The page is on something else (or closed): the next PR it shows, even this one again, is a new selection. */
 function prLeft() {
   prView.shownFor = null;
-  // The 差分 tab was left too: its reading place is kept, and what comes of the panel's own reset of the scroll is not it.
-  PR_HOOKS.diff?.onLeft?.();
   prView.held = false;
 }
 /* A deliberate choice of 「AI 下読み」 ends the override a link made of the saved tab; true when there was one. */
@@ -577,12 +574,12 @@ function prAct(e, { place = 'read' } = {}) {
   }
   if ((b = hit('[data-pr-goto-diff]'))) {
     const point = read?.points?.[Number(b.dataset.prGotoDiff)];
-    if (point) PR_HOOKS.diff?.goto(point.path, point.line, { place, opener: b });
+    if (point) PR_HOOKS.diff?.goto(point.path, point.line, { place });
     return true;
   }
   if ((b = hit('[data-pr-goto-file], [data-pr-goto-deleted]'))) {
     const item = b.dataset.prGotoFile != null ? read?.order?.[Number(b.dataset.prGotoFile)] : read?.deleted?.[Number(b.dataset.prGotoDeleted)];
-    if (item) PR_HOOKS.diff?.goto(item.path, null, { place, opener: b });
+    if (item) PR_HOOKS.diff?.goto(item.path, null, { place });
     return true;
   }
   return PR_HOOKS.diff?.act?.(e, { place }) || false;

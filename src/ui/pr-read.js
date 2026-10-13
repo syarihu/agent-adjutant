@@ -31,7 +31,7 @@ const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && !r
 const PR_ASK_OFF_WHY = 'worker が動いていません';
 /* The boxes the person types a draft in. */
 const PR_BOX_SEL = '.pr-draft-body, .pr-overall';
-/* What the panel and the middle say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
+/* What the middle and the panel say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
 const prMissingText = (doc, error) => doc ? 'この PR は、いまの一覧にありません' : error ? `読み込めませんでした: ${error}` : '読み込み中…';
 
 /* The tab that is shown: 下読み unless the one named can be used (下書き and 差分 need a read-through; 差分 also needs the
@@ -517,7 +517,7 @@ ${esc(d.body)}</textarea>${why}
   const save = opts.save?.status === 'error'
     ? `保存できませんでした: ${opts.save.error || ''} 入力はこのページに残っています`
     : PR_SAVE_TEXT[opts.save?.status] || '';
-  return `<div class="pr-drafts" data-pr-place="${esc(opts.place || 'panel')}">
+  return `<div class="pr-drafts" data-pr-place="${esc(opts.place || 'read')}">
     ${notice}
     ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。見るポイントの「下書きに」から足せます。</div>'}
     <label class="pr-overall-label">全体のコメント

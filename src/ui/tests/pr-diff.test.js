@@ -16,7 +16,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const { prParseDiff, prDiffCategory, prDiffIsGenerated, prDiffLayout, prDiffAnchor, prDiffCommentBlock, prDiffResolve, prDiffDraft, prDiffSideOf,
-  prDiffShownNo, prDiffFindLine, prDiffBarHtml, prDiffIndexHtml, prDiffShellHtml, prDiffBodyHtml, prDiffLabels, prDiffAtOf } = ctx;
+  prDiffShownNo, prDiffFindLine, prDiffBarHtml, prDiffShellHtml, prDiffBodyHtml, prDiffLabels, prDiffAtOf } = ctx;
 
 const SAMPLE = [
   'diff --git a/src/a.rs b/src/a.rs',
@@ -231,7 +231,7 @@ test('everything of the diff and of the reader is escaped in the markup', () => 
   const layout = prDiffLayout(files, read, null);
   const res = prDiffResolve(files, read);
   const html = prDiffBodyHtml(layout.files[0], res.files.get(files[0].path), read) + prDiffShellHtml(layout.files[0], res.files.get(files[0].path))
-    + prDiffIndexHtml(layout, res) + prDiffBarHtml(layout);
+    + prDiffBarHtml(layout);
   assert.ok(!html.includes('<script>'), html);
   assert.ok(html.includes('&lt;script&gt;'));
 });
@@ -315,8 +315,8 @@ test('every control the diff draws has a value no other control of its kind has,
     { path: 'a.rs', anchor: 'y', kind: 'ex', text: 'A' }, { path: 'b.rs', anchor: 'y', kind: 'ex', text: 'B' }] });
   const layout = prDiffLayout(files, read, null);
   const res = prDiffResolve(files, read);
-  const html = layout.files.map(e => prDiffShellHtml(e, res.files.get(e.path)) + prDiffBodyHtml(e, res.files.get(e.path), read)).join('') + prDiffIndexHtml(layout, res);
-  for (const attr of ['plus', 'todraft', 'ask', 'open', 'jump']) {
+  const html = layout.files.map(e => prDiffShellHtml(e, res.files.get(e.path)) + prDiffBodyHtml(e, res.files.get(e.path), read)).join('');
+  for (const attr of ['plus', 'todraft', 'ask', 'open']) {
     const values = [...html.matchAll(new RegExp(`data-prd-${attr}="([^"]*)"`, 'g'))].map(m => m[1]);
     assert.ok(values.length >= 2 || attr === 'open', attr);
     assert.strictEqual(new Set(values).size, values.length, `${attr}: ${values}`);

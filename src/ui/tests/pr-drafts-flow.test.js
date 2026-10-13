@@ -143,8 +143,7 @@ test('a refused save shows the server\'s problems with the message', async () =>
 });
 
 function miscWorld(prefs) {
-  const left = [];
-  const c = vm.createContext({ prefs, left, PR_HOOKS: { diff: { onLeft: () => left.push('left') } } });
+  const c = vm.createContext({ prefs });
   vm.runInContext(['const prView = { tabWas: null, focusNext: null, shownFor: "acme/widget#1" };', fn('prPrefsToSave'), fn('prKeepTab'), fn('prRestoreFocus'), fn('prLeft')].join('\n'), c);
   return { c, run: e => vm.runInContext(e, c) };
 }
@@ -202,7 +201,6 @@ test('only three of the server\'s problems are shown, and how many more there ar
 test('leaving the PR makes the next showing of it a new selection', () => {
   const { run } = miscWorld({ workTab: 'others' });
   run('prLeft()');
-  assert.strictEqual(run('left.join()'), 'left', 'the 差分 tab is left with it');
   assert.strictEqual(run('prView.shownFor'), null);
 });
 
