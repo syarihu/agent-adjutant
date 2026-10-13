@@ -246,8 +246,8 @@ function renderTaskPanelNow() {
   // The work view marks the row, and draws the terminal, of what the address names.
   // The middle terminal is the work view's: one the panel mounted earlier is not kept beside it.
   if (view === 'work') {
-    // The 「AI 下読み」 tab keeps its reader's terminal in the panel (task-read-view.js); any other panel has none.
-    if (panelTerm.term && !taskReadActive(task)) disposePanelTerminal();
+    // The 「AI 下読み」 tab and a review request keep their reader's terminal in the panel (task-read-view.js, pr-panel.js); any other panel has none.
+    if (panelTerm.term && !taskReadActive(task) && !isPrRef(selectedTaskId)) disposePanelTerminal();
     syncWorkSelection();
   }
   // A PR waiting on your review has no board behind it: its panel is drawn from its own record (pr-panel.js).
@@ -903,7 +903,7 @@ function disposeTermSlot(slot) {
     keepScreen({ sessionId, term });
     term.dispose();
   }
-  Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
+  Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, endReason: null, reconnect: false });
 }
 
 function termBarHtml(s, slot = panelTerm, actions = true) {

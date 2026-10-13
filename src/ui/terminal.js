@@ -55,10 +55,13 @@ document.addEventListener('focusout', e => {
 
 const TERMINAL_ENDS = {
   1000: '切り離しました',
+  4410: 'ウィンドウは終わっています',
   4404: 'セッションが見つからないか、tmux 上にありません',
   1006: '接続できませんでした',
 };
 function terminalEndText(code, reason) {
+  // Not a close code: the page could not start the terminal at all, and says why.
+  if (code === 0) return reason || '接続できませんでした';
   if (code === 4500) return `tmux の操作に失敗しました: ${reason || '理由は不明です'}`;
   return TERMINAL_ENDS[code] || `接続が閉じました（${code}）`;
 }
@@ -89,7 +92,7 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
     try {
       await loadXterm(base);
     } catch (e) {
-      if (!disposed) { container.textContent = e.message; onEnd?.(1006); }
+      if (!disposed) { container.textContent = e.message; onEnd?.(0, e.message); }
       return;
     }
     if (disposed) return;
@@ -118,7 +121,7 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
     ws.onclose = e => {
       if (disposed) return;
       line(terminalEndText(e.code, e.reason));
-      onEnd?.(e.code);
+      onEnd?.(e.code, e.reason);
     };
     term.onData(data => { if (open()) ws.send(encoder.encode(data)); });
     // Mouse reports and the like arrive as a string of bytes, not of characters.

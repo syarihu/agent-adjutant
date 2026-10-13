@@ -6,13 +6,14 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'pr-panel.js'), 'utf8');
+const viewSrc = fs.readFileSync(path.join(__dirname, '..', 'task-read-view.js'), 'utf8');
 const cut = re => { const m = src.match(re); assert.ok(m, `not found: ${re}`); return m[0]; };
 const fn = name => cut(new RegExp(`^(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm'));
 
 function world({ stored = null } = {}) {
   const w = { notes: [], redrawn: 0, posts: [], gets: 0, stored, gate: null, selected: 'pr:acme/widget#1', order: [], pends: [], refreshed: 0, pendGate: null, pendFail: null, pendRes: { sent: [], failed: [], skipped: [] } };
   const c = vm.createContext({
-    structuredClone, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console,
+    structuredClone, wk: () => null, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console,
     get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_SAVE_MS: 800,
     note: (...a) => { w.notes.push(a); }, prRedrawNow: () => { w.redrawn++; },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => ({ id: 'acme/widget#1' }), prReadOf: () => c.read,
@@ -97,14 +98,22 @@ test('the save body has only the known keys, even when the stored document had a
 
 test('the file is not asked for again while an unsaved edit is held', async () => {
   const { w, c, run } = world();
+  Object.assign(c, { prefs: { workTab: 'others' }, prEnsureRead() {}, renderWorkTabs() {}, renderOthersList() {} });
+  run(fn('prEnter'));
+  run(`prView.shownFor = null; prView.tabWas = null;`);
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'unsaved'; })`);
-  // What renderPrPanel does for a new selection: reload only when clean.
-  run(`{ const e = prDraftsEntry('acme/widget#1'); if (!e.dirty && !e.saving) { e.loaded = false; e.error = null; } prEnsureDrafts('acme/widget#1'); }`);
+  // A new selection reloads the drafts only when they are clean.
+  run(`prEnter('acme/widget#1', { id: 'acme/widget#1' })`);
   await tick();
   assert.strictEqual(w.gets, 1);
   assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].body`), 'unsaved');
+  // Clean, and entered again as another selection: asked for again.
+  await run(`prSave('acme/widget#1')`);
+  run(`prView.shownFor = null; prEnter('acme/widget#1', { id: 'acme/widget#1' })`);
+  await tick();
+  assert.strictEqual(w.gets, 2);
 });
 
 test('typing into a box whose draft is gone keeps the text as a draft of its own', async () => {
@@ -134,8 +143,7 @@ test('a refused save shows the server\'s problems with the message', async () =>
 });
 
 function miscWorld(prefs) {
-  const left = [];
-  const c = vm.createContext({ prefs, left, PR_HOOKS: { diff: { onLeft: () => left.push('left') } } });
+  const c = vm.createContext({ prefs });
   vm.runInContext(['const prView = { tabWas: null, focusNext: null, shownFor: "acme/widget#1" };', fn('prPrefsToSave'), fn('prKeepTab'), fn('prRestoreFocus'), fn('prLeft')].join('\n'), c);
   return { c, run: e => vm.runInContext(e, c) };
 }
@@ -193,7 +201,6 @@ test('only three of the server\'s problems are shown, and how many more there ar
 test('leaving the PR makes the next showing of it a new selection', () => {
   const { run } = miscWorld({ workTab: 'others' });
   run('prLeft()');
-  assert.strictEqual(run('left.join()'), 'left', 'the 差分 tab is left with it');
   assert.strictEqual(run('prView.shownFor'), null);
 });
 
@@ -436,27 +443,40 @@ test('a full read-through at the head a proposal was made at offers its drafts, 
   assert.ok(!vm.runInContext(`prDraftsBodyHtml({ id: 'acme/widget#1', url: 'u' }, ${JSON.stringify(full)}, 'panel')`, same.c).includes('下読みし直した'));
 });
 
-test('the middle is drawn with the stored read-through, so a PR out of review with a stale one is offered its buttons', () => {
+test('the reader\'s place is drawn with the stored read-through, so a PR out of review with a stale one is offered its buttons', () => {
   const rec = { id: 'acme/widget#1', repo: 'a/w', number: 1, state: 'ai-ready', headSha: 'b'.repeat(40),
     files: [{ path: 'src/big.rs', additions: 2000, deletions: 0, change: 'modified' }], ai: { status: 'ready', sha: 'a'.repeat(40), stale: true } };
   let read = { sha: 'a'.repeat(40), three: {}, overall: null };
   let readError = null;
+  const drawn = [];
+  const panelTerm = { term: null, ended: null };
   const c = vm.createContext({
-    esc: x => String(x), others: { doc: {}, error: null, asking: new Set() }, workTerm: { term: null, ended: null }, prMissingText: () => '',
-    prReadOf: () => read, prReadEntry: () => ({ error: readError }), othersRecords: () => [rec], othersNowEst: () => 0, console,
+    esc: x => String(x), others: { doc: {}, error: null, asking: new Set() }, panelTerm,
+    prReadOf: () => read, prReadEntry: () => ({ error: readError }), othersNowEst: () => 0, console,
+    syncReaderTerm() {}, prReaderSubject: () => 's', prTermEnd: () => ({}), tp: () => ({ hidden: true }), setPanelPart: (name, el, html) => { drawn.push([name, html]); },
   });
   const files = ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js'];
   vm.runInContext(files.map(f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n'), c);
-  vm.runInContext(fn('prMiddleText'), c);
+  const draw = () => {
+    drawn.length = 0;
+    vm.runInContext(viewSrc.match(/^function drawReaderTerm\([^)]*\) \{[\s\S]*?\n\}/m)[0] + '\ndrawReaderTerm(rec, [rec], { canRead: true, why: "" }, "missing");', c);
+    return drawn.find(([name]) => name === 'ph')[1];
+  };
   c.rec = rec;
-  const html = vm.runInContext('prMiddleText(rec, { canRead: true, why: "" })', c);
+  const html = draw();
   assert.ok(html.includes('data-pr-split') && html.includes('src/big.rs'), html);
   // Still being fetched: nothing is offered yet.
   read = undefined;
-  assert.ok(!vm.runInContext('prMiddleText(rec, { canRead: true, why: "" })', c).includes('data-pr-split'));
+  assert.ok(!draw().includes('data-pr-split'));
   // Fetching it keeps failing: the buttons come back, since a request does not depend on it.
   readError = 'boom';
-  assert.ok(vm.runInContext('prMiddleText(rec, { canRead: true, why: "" })', c).includes('data-pr-split'));
+  assert.ok(draw().includes('data-pr-split'));
+  // No record: what the caller says. A live terminal: nothing stands over it.
+  c.rec = null;
+  assert.strictEqual(draw(), 'missing');
+  c.rec = rec;
+  panelTerm.term = {};
+  assert.strictEqual(draw(), '');
 });
 
 test('a PR that is out of review but waits for nothing keeps its status line', () => {

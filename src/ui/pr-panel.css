@@ -1,4 +1,4 @@
-/* A PR waiting on your review, in the task panel and in 「拡大」 (src/ui/pr-panel.js, pr-dialog.js, pr-read.js). Colours are the
+/* A PR waiting on your review, in the middle and in 「拡大」 (src/ui/pr-panel.js, pr-dialog.js, pr-read.js). Colours are the
    page's tokens only, so the dark theme follows without a rule of its own. */
 .pr-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .pr-sec > .tp-sec-title { margin-bottom: 0; }

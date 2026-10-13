@@ -1,4 +1,4 @@
-/* ── A PR waiting on your review, in the panel and in 「拡大」: what the read-through says, as markup ─────────
+/* ── A PR waiting on your review, in the middle and in 「拡大」: what the read-through says, as markup ─────────
    Pure, like my-work-others.js: a record of `GET /api/others`, the read-through of `GET /api/others/read` and the drafts
    of `GET /api/others/drafts` (docs/architecture.md, "The read-through" and "Draft comments") go in, strings and plain values
    come out, with no page and no storage, so `src/ui/tests/pr-read.test.js` runs them under `node --test`. The task's
@@ -11,8 +11,6 @@ const PR_LEVEL = { attention: '要注意', check: '確認', info: '参考' };
 const PR_CATEGORY = { logic: 'ロジック', ui: 'UI', doc: 'ドキュメント', test: 'テスト', resource: 'リソース' };
 const PR_REVIEW_STATE = { approved: '承認', 'changes-requested': '変更を依頼', commented: 'コメント', requested: '依頼中' };
 const PR_SINCE_STATUS = { addressed: '対応済み', replied: '返信だけ', untouched: '手つかず' };
-/* The state pill's colour, by the class the list's glyph is coloured with (othersStateOf). */
-const PR_STATE_PILL = { 'ov-requested': 'pill-warn', 'ov-reading': 'pill-blue', 'ov-ready': 'pill-good', 'ov-pushed': 'pill-purple', 'ov-dim': 'pill-neutral' };
 /* The placeholder of a file's card in 「拡大」 where there is no annotated diff hook (a fallback: the page sets one). */
 const PR_DIFF_PLACEHOLDER = 'この PR の差分はまだここに表示できません。GitHub で開いて読んでください。';
 const PR_NO_READ_WHY = 'AI 下読みのあとに使えます';
@@ -33,7 +31,7 @@ const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && !r
 const PR_ASK_OFF_WHY = 'worker が動いていません';
 /* The boxes the person types a draft in. */
 const PR_BOX_SEL = '.pr-draft-body, .pr-overall';
-/* What the panel and the middle say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
+/* What the middle and the panel say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
 const prMissingText = (doc, error) => doc ? 'この PR は、いまの一覧にありません' : error ? `読み込めませんでした: ${error}` : '読み込み中…';
 
 /* The tab that is shown: 下読み unless the one named can be used (下書き and 差分 need a read-through; 差分 also needs the
@@ -44,12 +42,13 @@ function prPaneOf(pane, hasRead, diffOn = false) {
   return 'detail';
 }
 
-/* The panel's tabs. They are not `panelTab`s: those carry the board's `data-pane`, which the task panel's own click
-   handler answers. A tab that cannot be used is disabled, with why as its title. */
+/* The tabs over the middle, the same component a task's tabs are (`wk-mid-tab`, task-read.js), named by `data-mid-tab`. A tab that
+   cannot be used is disabled, with why as its title. */
 function prTabsHtml(rec, read, pane, draftCount = 0, diffOn = false) {
   const has = prHasRead(rec, read);
   const tab = (id, label, extra, off) =>
-    `<button type="button" role="tab" id="tp-tab-pr-${id}" class="m3-seg-tab${pane === id ? ' active' : ''}" data-pr-pane="${id}" aria-selected="${pane === id}" aria-controls="tp-detail"${off ? ` disabled title="${esc(off)}"` : ''}>${esc(label)}${extra}</button>`;
+    `<button type="button" role="tab" id="wk-mid-tab-pr-${id}" class="wk-mid-tab${pane === id ? ' active' : ''}" data-mid-tab="${id}" aria-selected="${pane === id}" aria-controls="task-read"${off ? ` disabled title="${esc(off)}"` : ''}>`
+      + `<span class="wk-mid-label">${esc(label)}</span>${extra}</button>`;
   const dot = OTHERS_LIVE.includes(rec?.state) && rec?.events?.pushed ? '<span class="tp-dot" role="img" aria-label="前回のレビューのあとに push されました" title="前回のレビューのあとに push されました"></span>' : '';
   const badge = draftCount > 0 ? `<span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${draftCount}</span>` : '';
   return tab('detail', '下読み', dot, '')
@@ -57,34 +56,15 @@ function prTabsHtml(rec, read, pane, draftCount = 0, diffOn = false) {
     + tab('drafts', '下書き', badge, !has ? PR_NO_READ_WHY : '');
 }
 
-/* The badges and the title of the panel's head; the buttons are added by the caller (prHeadHtml). */
-function prHeadMainHtml(rec) {
-  const [, stateLabel, stateCls] = othersStateOf(rec);
-  const url = httpUrl(rec?.url);
-  const chip = url
-    ? `<a class="btn-m3-tonal sess-act tp-head-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で PR #${esc(rec.number)} を開く"><span class="material-symbols-outlined" aria-hidden="true">merge</span><span>PR #${esc(rec.number)}</span></a>`
-    : `<span class="tp-key">PR #${esc(rec?.number)}</span>`;
-  const unreg = rec?.registered === false ? ' <span class="ov-unreg" title="adj に登録していないリポジトリです（同じオーナーなので依頼だけ出ます）">未登録</span>' : '';
-  return `<div class="tp-head-main">
-      <div class="tp-badges">
-        ${chip}
-        <span class="origin-chip" title="${esc(rec?.repo)}"><span class="material-symbols-outlined" aria-hidden="true">folder</span><span>${esc(rec?.repo)}</span></span>${unreg}
-        <span class="m3-pill ${PR_STATE_PILL[stateCls] || 'pill-neutral'}">${esc(stateLabel)}</span>
-      </div>
-      <h2 class="tp-title">${esc(rec?.title)}</h2>
-    </div>`;
-}
 /* 「下読みを閉じる」, while a reader runs that has a process to stop; `closing` is a close of this page's that is out. */
 const prCloseReaderBtnHtml = (rec, closing) => prReaderOpen(rec) && rec.ai.pid
   ? `<button type="button" class="btn-m3-text tp-jump" data-pr-close-reader${closing ? ' disabled' : ''} title="読み取り専用の worker を止めて、ウィンドウを閉じます">${closing ? '閉じています…' : '下読みを閉じる'}</button>` : '';
-/* The panel's head: 「GitHub で開く」, 「下読みを閉じる」 (while a reader runs that has a process to stop), 「拡大」 and close (panelBtnsHtml adds the close). */
-function prHeadHtml(rec, opts = {}) {
+/* What sits at the head of the middle: 「GitHub で開く」 and 「拡大」. */
+function prMidActsHtml(rec) {
   const url = httpUrl(rec?.url);
   const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）">GitHub で開く</a>` : '';
-  // `opts.closing`: a close of this page's is out, and it is not asked for twice.
-  const closeReader = prCloseReaderBtnHtml(rec, opts.closing);
   const expand = '<button type="button" class="tool-btn" data-pr-expand aria-haspopup="dialog" title="拡大" aria-label="PR 全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>';
-  return prHeadMainHtml(rec) + panelBtnsHtml(open + closeReader + expand);
+  return open + expand;
 }
 
 /* ── the sections: `{ key, label, html }`, or null when there is nothing to say ── */
@@ -325,27 +305,27 @@ function prDetailHtml(rec, read, records, hubView, nowSecs, opts = {}) {
   return [secs[0], ...notes, ...secs.slice(1)].filter(Boolean).join('');
 }
 
-/* ── the middle, before there is a terminal in it ── */
+/* ── the reader's place in the panel, while there is no live terminal in it ── */
 
-/* Where the read-through is, as the middle's notes say it: `opts.readAt` is 'panel' (a review request's, in the panel on the right,
-   the default) or 'middle' (a task's, in the middle, with the reader in the panel). */
-const PR_READ_AT = {
-  panel: { kept: '下読み・下書きはパネルに残っています。', keptRead: '下読みはパネルに残っています。', is: '右のパネルにあります' },
-  middle: { kept: '下読みは真ん中に残っています。', keptRead: '下読みは真ん中に残っています。', is: '真ん中にあります' },
-};
+/* What the panel says over the reader's terminal while there is none (or over one that has ended): the read-through is in the middle. */
+const PR_RECONNECT_BTN = '<button type="button" class="btn-m3-tonal" data-pr-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>';
+/* Why an attach failed, as its own line, unless it only says again what the line over it says. */
+const prFailedWhyHtml = why => why && why !== '接続できませんでした' ? `<div class="tp-muted">${esc(why)}</div>` : '';
 function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
-  const at = PR_READ_AT[opts.readAt] || PR_READ_AT.panel;
   const ai = othersAiView(rec, records, nowSecs);
   const oor = othersOutOfReview(rec);
   // A PR that is out of review offers its two ways on until a reader is at work on it, in either mode. `opts.read` is the stored
   // read-through, which says whether a proposal is there already.
   // Also for a reader that has hung, and for a read-through that is stale or whose window cannot be opened.
-  const offers = ['none', 'failed', 'stale', 'hung'].includes(ai.kind) || opts.ended != null || (ai.kind === 'done' && !prReaderOpen(rec));
+  const offers = ['none', 'failed', 'stale', 'hung'].includes(ai.kind) || opts.ended != null || !!opts.failed || (ai.kind === 'done' && !prReaderOpen(rec));
   if (oor && OTHERS_LIVE.includes(rec?.state) && offers) {
     const why = ai.kind !== 'none' && ai.text ? `<div class="tp-line">${esc(ai.text)}</div>` : '';
-    const gone = opts.ended != null ? '<div class="tp-muted">worker は終わっています。</div>' : '';
+    const gone = opts.ended != null ? '<div class="tp-muted">worker は終わっています。</div>'
+      : opts.failed ? `<div class="tp-muted">worker に接続できませんでした</div>${prFailedWhyHtml(opts.failed)}` : '';
     const closed = rec?.ai?.readerClosedAt ? '<div class="tp-line">AI 下読みの worker を閉じました</div>' : '';
-    return `<div class="tp-ph-head">レビュー対象外</div>${prOorFilesHtml(oor)}${why}${closed}${gone}`
+    // Only a reader that is still there can be tried again: for another there is nothing to mount.
+    const reconnect = gone && prReaderOpen(rec) ? PR_RECONNECT_BTN : '';
+    return `<div class="tp-ph-head">レビュー対象外</div>${prOorFilesHtml(oor)}${why}${closed}${gone}${reconnect}`
       + '<div class="tp-muted">worker はファイルの構成と hunk の見出しだけを読んで、この PR の分割案を下書きにします。</div>'
       + prOorButtonsHtml(prOorActions(rec, opts.read, ai, !!opts.readError), hubView, opts.asking);
   }
@@ -353,11 +333,13 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   if (rec?.ai?.readerClosedAt) {
     const again = OTHERS_LIVE.includes(rec.state)
       ? `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, opts.asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(opts.asking ? '依頼中…' : '下読みし直す')}</span></button>` : '';
-    return `<div class="tp-ph-head">AI 下読みの worker を閉じました</div><div class="tp-muted">${esc(at.kept)}</div>` + again;
+    return `<div class="tp-ph-head">AI 下読みの worker を閉じました</div><div class="tp-muted">${esc('下読みは真ん中に残っています。')}</div>` + again;
   }
-  if (opts.ended != null) {
-    return `<div class="tp-ph-head">AI 下読みの worker は終わっています</div><div class="tp-muted">${esc(at.keptRead)}</div>`
-      + '<button type="button" class="btn-m3-tonal" data-pr-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>'
+  // `opts.ended` is a worker that really has ended; `opts.failed` is why the attach to a running one failed, in words.
+  if (opts.ended != null || opts.failed) {
+    const head = opts.ended != null ? 'AI 下読みの worker は終わっています' : 'AI 下読みの worker に接続できませんでした';
+    return `<div class="tp-ph-head">${esc(head)}</div>${prFailedWhyHtml(opts.failed)}<div class="tp-muted">${esc('下読みは真ん中に残っています。')}</div>`
+      + (prReaderOpen(rec) ? PR_RECONNECT_BTN : '')
       + prAiButtonHtml(ai, hubView, opts.asking);
   }
   if (ai.kind === 'none') {
@@ -367,7 +349,7 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   }
   const mountable = prReaderOpen(rec);
   const note = mountable ? '接続しています…'
-    : ['done', 'stale'].includes(ai.kind) ? `${ai.mode === 'split' ? '分割案' : '下読み'}は${at.is}。worker の画面は開けません。`
+    : ['done', 'stale'].includes(ai.kind) ? `${ai.mode === 'split' ? '分割案' : '下読み'}は真ん中にあります。worker の画面は開けません。`
     : ai.kind === 'running' || ai.kind === 'hung' ? 'worker の画面は開けません（tmux のウィンドウが記録されていません）。' : '';
   return `<div class="tp-ph-head">${esc(ai.text)}</div>${note ? `<div class="tp-muted">${esc(note)}</div>` : ''}${mountable ? '' : prAiButtonHtml(ai, hubView, opts.asking)}`;
 }
@@ -506,7 +488,7 @@ function prHandHtml(doc, hand = {}) {
 }
 
 const PR_SAVE_TEXT = { saved: '保存しました', saving: '保存しています…' };
-/* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('panel' or 'dock': only the class of the
+/* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('read' for a review request's 下書き tab, 'panel' for a task's 「worker への指示」, 'dock' for 「拡大」: only the class of the
    wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `to` (where they go:
    'pending', the default, a pending review on GitHub, with `pend` (`prPendHtml`'s); or 'worker', a task's worker, with `hand`
    (`prHandHtml`'s) and no pending review). */
@@ -535,7 +517,7 @@ ${esc(d.body)}</textarea>${why}
   const save = opts.save?.status === 'error'
     ? `保存できませんでした: ${opts.save.error || ''} 入力はこのページに残っています`
     : PR_SAVE_TEXT[opts.save?.status] || '';
-  return `<div class="pr-drafts" data-pr-place="${esc(opts.place || 'panel')}">
+  return `<div class="pr-drafts" data-pr-place="${esc(opts.place || 'read')}">
     ${notice}
     ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。見るポイントの「下書きに」から足せます。</div>'}
     <label class="pr-overall-label">全体のコメント

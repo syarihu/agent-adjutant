@@ -203,13 +203,16 @@ answers the same routes except the ones `Route::resident_only` lists (a session'
 open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai` and handing its drafts to the worker `POST /api/tasks/<id>/hand`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
-resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
+resident also serves the page at `/`, `GET /vendor/xterm.js` and `/vendor/xterm.css` at its root (a reader's terminal has no board to load them from), `GET /api/boards`, `GET /api/work`, `GET /api/others`,
 `POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/reader/close`, `POST /api/others/hub/start`,
 `POST /api/others/hub/stop`, `GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts`, `POST /api/others/drafts` and `POST /api/others/pending`. It also answers the WebSocket
 handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the
 PR's record (`ai.terminal` and `ai.pid`, by `board::review::reader_window`), never from the request, and it
 shares the terminal code and the cap of 8 open terminals with a board's. A PR with no reader window, or whose
-reader's process is gone, is closed with 4404. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
+reader's process is gone, is closed with a code the page reads: 4410 when the reader (its process or its tmux window) is gone, 4404 for the other
+reader-window errors (no record, no window recorded, no tmux, an unreadable record), 4500 for a tmux failure. The page says 「終わっています」 only for 4410 and 1000
+(detached); any other end is shown as a failed attach with its reason. A refusing close frame is followed by shutting the sending side and reading what the page
+sent until it closes, since closing with that unread resets the connection and takes the frame with it. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
 the sync runs on the connection's own thread, as the resident gives each connection one. `GET /api/work` is the work
 under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
 repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,
@@ -457,9 +460,11 @@ chosen by the switch in its heading row, and only on the resident server. It rea
 (every 2 s while 「いまの仕事」 is open, every 10 s elsewhere) and calls `POST /api/others/sync` only when the person presses 「同期」. A read
 that fails keeps the list and the count as they were.
 
-Selecting a row opens the PR in the task panel, as a task opens: the address is `/?view=work&task=pr:<id>` (`<id>` is `owner/repo#N`,
-escaped) with `pane=detail` (下読み, the default), `diff` or `drafts`, on board `all`. The reader's terminal is in the middle and 「拡大」 uses
-the task dialog's structure (index, one scroll, the drafts in the right column). `src/ui/pr-read.js` is the pure half; `pr-panel.js` and `pr-dialog.js` draw it.
+Selecting a row opens the PR as a task's 「AI 下読み」 tab opens (see [A task's PR](#a-tasks-pr)): the address is `/?view=work&task=pr:<id>` (`<id>` is `owner/repo#N`,
+escaped) with `pane=detail` (下読み, the default), `diff` or `drafts`, on board `all`. Those are the tabs over the middle, which holds the read-through; the reader's
+terminal is in the panel on the right (`renderPrRead` draws the middle, `renderPrPanel` the panel), and 「拡大」, which is at the head of the middle with 「GitHub で開く」, uses
+the task dialog's structure (index, one scroll, the drafts in the right column). `src/ui/pr-read.js` is the pure half; `pr-panel.js` and `pr-dialog.js` draw it, with the middle's
+parts a task's tab uses (`task-read.js`, `task-read-view.js`).
 
 The 差分 tab and the 差分 group of 「拡大」 show the stored diff (`GET /api/others/diff`) with the reader's annotations under their lines.
 `src/ui/pr-diff.js` is the pure half (parsing, the category of a path, anchoring, markup) and `pr-diff-view.js` the page's: it sets
@@ -520,16 +525,17 @@ PR shows that PR's record; `task` says what the record is for, and does not deci
   kept past its day while its task exists. The pending review is not refused here: it is for the PR whoever asked.
 
 **The page.** A task selected in 「いまの仕事」 has two tabs over the middle, 「タスク」 and 「AI 下読み」 (a selection that is not a task has none, but the row itself is always shown in this view and leads with the toggle that hides and shows the sidebar, kept in `prefs.railHidden`, with the 新着 count on it while hidden;
-a review request's middle is already its reader). 「タスク」 is the view as it was: the worker's terminal in the middle and the task's panel. 「AI 下読み」
+a review request has tabs of its own, 下読み, 差分 and 下書き, named by `pane=detail|diff|drafts`, which are the same component and draw in the same place). 「タスク」 is the view as it was: the worker's terminal in the middle and the task's panel. 「AI 下読み」
 shows the read-through in the middle, laid out as 「拡大」 lays out a review request's (the index on the left and one scroll, 要点, 見るポイント, 読む順,
 設計判断・テスト・書かれていないこと, and the annotated diff stored with the read-through, with its files in the index in reading order; the
 index is a strip of the groups over the read-through while the middle is narrower than 760px, whatever the window), and the reader in the panel: its terminal (`/api/others/terminal`, the same socket a review
-request's middle uses, kept while the tab is on) and 「worker への指示」, which holds the drafts and shows their number. A PR that has moved on since the read shows a band over the read-through with
+request's panel uses, kept while the tab is on) and 「worker への指示」, which holds the drafts and shows their number. A PR that has moved on since the read shows a band over the read-through with
 「下読みし直す」. The tab is the address's (`pane=ai`, `pane=ai-drafts`, kept only for a task in the work view), so a reload, back and a link keep it, and a task
 selected afresh opens on 「タスク」; while the page is open, the tab of the task's panel that 「タスク」 returns to and the reading place are kept per task. The label of the tab carries the state of the read (要注意 N · 確認 N,
 下読み中…, 前の push 時点 with a dot, 失敗しました), and the tab cannot be chosen before the task has a PR or when its PR is not one this can read. The page reads `GET …/ai` on every poll
 while a task with a PR is selected, in either tab, and asks for a read with `POST …/ai`. The buttons are the review request's (`prAct`), which ask which view the page is on (`prShown`) and not
-what is selected, so the diff's places are the panel, 「拡大」 and the middle of a task. There is no 「拡大」 for a task's read-through, and no 前回のレビューから (a review of yours it compares with).
+what is selected, so the diff's places are 「拡大」 and the middle (a task's, or a review request's 差分 tab). There is no 「拡大」 for a task's read-through, and no 前回のレビューから (a review of yours it compares with).
+A review request is laid out the same way: the middle is its read-through (下読み is the groups above without the diff, 差分 is the diff alone, 下書き is its drafts with 「pending review に積む」, as before), drawn by `drawReadMiddle`, which a task's tab draws with too and which forgets what it drew whenever the key (a task's, or `pr:<id>/<tab>`) is another, and the panel is the reader's terminal (`drawReaderTerm`) with 「下読みを閉じる」, saying so when no reader runs. A link to a line from 下読み goes to 差分 first.
 「worker への指示」 is the drafts of the PR as instructions for the task's worker: the same boxes as a review request's 下書き (the reader's drafts marked AI, the person's own, 「下書きに」 and 「＋」 of the diff, a comment on the whole),
 but a pending review is not offered for a task's PR (GitHub does not let you ask for changes on your own PR, and the one who fixes it is the worker): the button is 「N 件を worker に渡す」 (see [Handing the drafts to the worker](#handing-the-drafts-to-the-worker)).
 `src/ui/task-read-drafts.js` sets `OWN_HOOKS.drafts` (the hook task-read-view.js leaves) and does the handing; the diff and the read-through are cached by PR, shared with a review request for the same PR. The drafts are the PR's file either way, loaded

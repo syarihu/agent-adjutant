@@ -384,19 +384,6 @@ function prDiffBarHtml(layout) {
 const prdFileName = e => (e.file.status === 'renamed' && e.file.oldPath ? `${e.file.oldPath} → ${e.path}` : e.path);
 const prdStat = e => `<span class="prd-stat"><span class="add">+${e.add}</span> <span class="del">−${e.del}</span></span>`;
 
-/* The panel's index: the files per category, in reading order, each a button that jumps to the file. */
-function prDiffIndexHtml(layout, resolved) {
-  const cats = PRD_CATS.map(c => {
-    const items = layout.files.filter(e => e.cat === c).map(e => {
-      const n = resolved?.files.get(e.path)?.count || 0;
-      return `<li><button type="button" class="prd-jump" data-prd-jump="${e.i}"><code class="pr-loc">${esc(prdFileName(e))}</code> ${prdStat(e)}`
-        + `${n ? ` <span class="tp-muted">注釈 ${n}</span>` : ''}${e.whole ? ' <span class="pr-chip">丸ごと削除</span>' : ''}</button></li>`;
-    });
-    return items.length ? `<div class="prd-index-cat"><div class="pr-sub">${esc(PRD_CAT_TAB[c])}</div><ul class="pr-list">${items.join('')}</ul></div>` : '';
-  }).join('');
-  return cats ? `<nav class="prd-index" aria-label="差分のファイル">${cats}</nav>` : '';
-}
-
 /* A file's header and an empty body to be filled later (`--prd-rows` holds its height). A file deleted whole, or a very long one,
    starts closed behind a button (a deleted one with what the reader said of it). */
 function prDiffShellHtml(e, res) {

@@ -149,6 +149,12 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         "function scrollToCard(",
         "function keepReadingPlace(",
         "function syncReaderTerm(",
+        "function showMidTabs(",
+        "function drawReadMiddle(",
+        "function drawReaderTerm(",
+        "function readPaneGroups(",
+        "function renderPrRead(",
+        "function renderPrPanel(",
     ] {
         assert_eq!(UI_HTML.matches(function).count(), 1, "{function}");
     }
@@ -178,7 +184,7 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     let pane = at("id=\"wk-term-pane\"");
     let read = at("id=\"task-read\"");
     assert!(!UI_HTML[pane..read].contains("</section>"));
-    assert!(at(".prd-root {") < at(".wk-mid-row {"));
+    assert!(at(".prd-bar {") < at(".wk-mid-row {"));
     // The tabs control panels that name them back.
     for piece in [
         "id=\"wk-term-pane\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-task\"",
@@ -1698,6 +1704,26 @@ mod others_drafts {
         let status = text.split(' ').nth(1).unwrap().parse().unwrap();
         let body = text.split_once("\r\n\r\n").unwrap().1;
         (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn the_resident_serves_xterm_at_its_root_for_the_terminal_of_a_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        for (path, kind) in [
+            ("/vendor/xterm.js", "text/javascript"),
+            ("/vendor/xterm.css", "text/css"),
+        ] {
+            let mut out = Vec::new();
+            route_resident(&r, &request("GET", path, &[]), &mut out).unwrap();
+            let text = String::from_utf8(out).unwrap();
+            assert!(text.starts_with("HTTP/1.1 200"), "{path}: {text:.80}");
+            assert!(text.contains(kind), "{path}");
+            assert!(text.len() > 1000, "{path}");
+        }
+        let mut out = Vec::new();
+        route_resident(&r, &request("GET", "/vendor/other.js", &[]), &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().starts_with("HTTP/1.1 404"));
     }
 
     fn drafts() -> Value {

@@ -17,8 +17,10 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 const plain = x => JSON.parse(JSON.stringify(x));
 const run = expr => vm.runInContext(expr, ctx);
 const { prPaneOf, prTabsHtml, prDetailHtml, prBeforeRead, prSeedDrafts, prNewReaderDrafts, prDraftFromPoint, prDraftLocation, prCopyAllText,
-  prDialogGroups, prNextKey, prDraftsHtml, prHeadHtml, prMiddleHtml, prPendable, prHandable, prHandHtml,
+  prDialogGroups, prNextKey, prDraftsHtml, prMidActsHtml, prMiddleHtml, prPendable, prHandable, prHandHtml,
   prOorActions, prOutOfReview, prSplitProposal, prNewReaderOverall, prFromElsewhere } = ctx;
+
+const prCloseReaderBtnHtml = run('prCloseReaderBtnHtml');
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const A = 'a'.repeat(40);
@@ -64,7 +66,10 @@ test('the tabs: a dot on 下読み only when pushed, the others disabled before 
   assert.strictEqual((after.match(/ disabled /g) || []).length, 1);
   assert.ok(after.includes('差分はまだ表示できません'));
   assert.ok(after.includes('>3</span>'));
-  assert.ok(after.includes('data-pr-pane="drafts" aria-selected="true"'));
+  assert.ok(after.includes('data-mid-tab="drafts" aria-selected="true"'));
+  // The tabs of the middle, as a task's are: the same class, named by `data-mid-tab`, for the read-through's place.
+  assert.ok(after.includes('class="wk-mid-tab active"') && after.includes('aria-controls="task-read"') && after.includes('id="wk-mid-tab-pr-detail"'));
+  assert.ok(!after.includes('data-pr-pane'));
   assert.strictEqual((prTabsHtml(rec(), read(), 'detail', 0, true).match(/ disabled /g) || []).length, 0);
 });
 
@@ -102,18 +107,18 @@ test('everything the reader or the PR wrote comes out as text', () => {
     unwritten: [bad], sinceReview: { commit: B, comments: [{ commentId: 1, path: bad, status: bad, note: bad }], newChanges: [{ path: bad, note: bad }] },
   });
   const pr = rec({ title: bad, author: bad, repo: bad, base: bad, head: bad, state: 'pushed', reviewers: [{ login: bad, team: false, state: bad }] });
-  const html = prDetailHtml(pr, r, [pr], hub, T0) + prHeadHtml(pr) + prDialogGroups(pr, r, [pr], hub, T0).map(g => g.cards.map(c => c.html).join('')).join('')
+  const html = prDetailHtml(pr, r, [pr], hub, T0) + prMidActsHtml(pr) + prDialogGroups(pr, r, [pr], hub, T0).map(g => g.cards.map(c => c.html).join('')).join('')
     + prDraftsHtml({ drafts: [{ key: 'k', source: 'person', path: bad, body: bad }], overall: { body: bad } }, r, { notice: 0 });
   assert.ok(!html.includes('<img'), html.match(/.{20}<img.{20}/)?.[0]);
   assert.ok(html.includes('&lt;img'));
 });
 
 test('a link that is not http(s) is no link, and the PR\'s own opens in a new tab without the opener', () => {
-  const head = prHeadHtml(rec());
+  const head = prMidActsHtml(rec());
   assert.match(head, /href="https:\/\/github\.com\/acme\/widget\/pull\/12" target="_blank" rel="noopener noreferrer"/);
   assert.ok(head.includes('data-pr-expand') && head.includes('aria-haspopup="dialog"') && head.includes('GitHub で開く'));
-  assert.ok(!prHeadHtml(rec({ url: 'javascript:alert(1)' })).includes('javascript:'));
-  assert.ok(prHeadHtml(rec({ registered: false })).includes('未登録'));
+  const noLink = prMidActsHtml(rec({ url: 'javascript:alert(1)' }));
+  assert.ok(!noLink.includes('javascript:') && !noLink.includes('GitHub で開く') && noLink.includes('data-pr-expand'));
 });
 
 test('before a read: the button is disabled with the hub\'s reason, and a queued read says its place', () => {
@@ -131,8 +136,12 @@ test('the middle before a terminal: a note and one button, and 再接続 when th
   const none = rec({ ai: null, state: 'requested' });
   const html = prMiddleHtml(none, [none], hub, T0);
   assert.ok(html.includes('まだ AI 下読みしていません') && html.includes('data-pr-ai'));
-  const ended = prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404 });
+  const ended = prMiddleHtml(open({ status: 'ready' }), [open({ status: 'ready' })], hub, T0, { ended: 4404 });
   assert.ok(ended.includes('AI 下読みの worker は終わっています') && ended.includes('data-pr-reconnect'));
+  // An attach that failed is not an end: it says why, and still offers 再接続.
+  const failed = prMiddleHtml(open({ status: 'ready' }), [open({ status: 'ready' })], hub, T0, { failed: 'xterm.js を読み込めませんでした' });
+  assert.ok(failed.includes('AI 下読みの worker に接続できませんでした') && failed.includes('xterm.js を読み込めませんでした') && failed.includes('data-pr-reconnect'));
+  assert.ok(!failed.includes('終わっています'));
   const noWindow = prMiddleHtml(rec({ ai: { status: 'running', sha: null, launchedAt: '20261001T000000Z' } }), [], hub, T0);
   assert.ok(noWindow.includes('tmux のウィンドウが記録されていません'));
 });
@@ -471,25 +480,53 @@ test('a read-through that cannot be fetched does not hide the buttons of a PR ou
 
 const open = (extra = {}) => rec({ ai: { status: 'running', sha: null, launchedAt: '20261001T000000Z', sessionId: 's1', pid: 4242, terminal: { backend: 'tmux', window: '@3' }, ...extra } });
 
-test('「下読みを閉じる」 is in the head only while a reader runs that has a process, and before 「拡大」', () => {
-  const head = prHeadHtml(open());
-  assert.ok(head.includes('data-pr-close-reader') && head.includes('下読みを閉じる'));
-  assert.ok(head.indexOf('data-pr-close-reader') < head.indexOf('data-pr-expand') && head.indexOf('GitHub で開く') < head.indexOf('data-pr-close-reader'));
-  assert.ok(prHeadHtml(rec({ ai: { ...open().ai, status: 'ready' } })).includes('data-pr-close-reader'));
+test('「下読みを閉じる」 is offered only while a reader runs that has a process', () => {
+  const closes = r => prCloseReaderBtnHtml(r, false).includes('data-pr-close-reader');
+  assert.ok(closes(open()) && prCloseReaderBtnHtml(open(), false).includes('下読みを閉じる'));
+  assert.ok(closes(rec({ ai: { ...open().ai, status: 'ready' } })));
   // No reader, no window, no process yet, a closed one, and a read that failed or waits.
-  assert.ok(!prHeadHtml(rec({ ai: null })).includes('data-pr-close-reader'));
-  assert.ok(!prHeadHtml(rec()).includes('data-pr-close-reader'));
-  assert.ok(!prHeadHtml(open({ pid: undefined })).includes('data-pr-close-reader'));
-  assert.ok(!prHeadHtml(open({ readerClosedAt: '20261001T000009Z' })).includes('data-pr-close-reader'));
-  assert.ok(!prHeadHtml(open({ status: 'failed' })).includes('data-pr-close-reader'));
-  assert.ok(!prHeadHtml(open({ status: 'queued' })).includes('data-pr-close-reader'));
+  assert.ok(!closes(rec({ ai: null })));
+  assert.ok(!closes(rec()));
+  assert.ok(!closes(open({ pid: undefined })));
+  assert.ok(!closes(open({ readerClosedAt: '20261001T000009Z' })));
+  assert.ok(!closes(open({ status: 'failed' })));
+  assert.ok(!closes(open({ status: 'queued' })));
   assert.strictEqual(run('prReaderOpen')(open({ readerClosedAt: 'x' })), false);
+});
+
+test('a PR out of review reconnects a reader that ended or could not be reached, and says each thing once', () => {
+  const split = big({ ai: { status: 'running', mode: 'split', sessionId: 's', pid: 1, terminal: { backend: 'tmux', window: '@3' } }, state: 'requested' });
+  const failed = prMiddleHtml(split, [split], hub, T0, { failed: 'セッションが見つかりません: x' });
+  assert.ok(failed.includes('data-pr-reconnect') && failed.includes('worker に接続できませんでした'));
+  assert.strictEqual(failed.split('セッションが見つかりません: x').length - 1, 1);
+  assert.ok(!failed.includes('worker に接続できませんでした:'));
+  const ended = prMiddleHtml(split, [split], hub, T0, { ended: 4410 });
+  assert.ok(ended.includes('data-pr-reconnect') && ended.includes('worker は終わっています'));
+  assert.ok(!prMiddleHtml(split, [split], hub, T0, {}).includes('data-pr-reconnect'));
+  const closed = { ...split, ai: { ...split.ai, readerClosedAt: '20261001T000009Z' } };
+  assert.ok(!prMiddleHtml(closed, [closed], hub, T0, { failed: 'x' }).includes('data-pr-reconnect'));
+});
+
+test('再接続 is offered only while the reader can be mounted, and a reason that repeats the line over it is not said twice', () => {
+  const live = big({ ai: { status: 'running', mode: 'split', sessionId: 's', pid: 1, terminal: { backend: 'tmux', window: '@3' } }, state: 'requested' });
+  const dead = { ...live, ai: { ...live.ai, status: 'failed' } };
+  for (const r of [live, dead]) {
+    assert.strictEqual(prMiddleHtml(r, [r], hub, T0, { ended: 4410 }).includes('data-pr-reconnect'), r === live);
+    assert.strictEqual(prMiddleHtml(r, [r], hub, T0, { failed: 'x' }).includes('data-pr-reconnect'), r === live);
+  }
+  const plain = rec({ ai: { status: 'ready', sha: A, sessionId: 's', pid: 1, terminal: { backend: 'tmux', window: '@3' } } });
+  const gone = rec({ ai: { status: 'failed', sha: A, sessionId: 's', pid: 1, terminal: { backend: 'tmux', window: '@3' } } });
+  assert.ok(prMiddleHtml(plain, [plain], hub, T0, { ended: 4410 }).includes('data-pr-reconnect'));
+  assert.ok(!prMiddleHtml(gone, [gone], hub, T0, { ended: 4410 }).includes('data-pr-reconnect'));
+  const same = prMiddleHtml(plain, [plain], hub, T0, { failed: '接続できませんでした' });
+  assert.strictEqual(same.split('接続できませんでした').length - 1, 1);
+  assert.ok(prMiddleHtml(plain, [plain], hub, T0, { failed: 'boom' }).includes('boom'));
 });
 
 test('the middle of a closed reader says so and offers 「下読みし直す」, and wins over an ended terminal', () => {
   const closed = open({ status: 'ready', readerClosedAt: '20261001T000009Z' });
   const html = prMiddleHtml(closed, [closed], hub, T0);
-  assert.ok(html.includes('AI 下読みの worker を閉じました') && html.includes('下読み・下書きはパネルに残っています。'));
+  assert.ok(html.includes('AI 下読みの worker を閉じました') && html.includes('下読みは真ん中に残っています。'));
   assert.match(html, /data-pr-ai[^>]*>.*下読みし直す/s);
   const ended = prMiddleHtml(closed, [closed], hub, T0, { ended: 4404 });
   assert.ok(ended.includes('AI 下読みの worker を閉じました') && !ended.includes('data-pr-reconnect') && !ended.includes('終わっています'));
@@ -521,34 +558,27 @@ test('a closed reader of a PR out of review is said in its middle too, with the 
 });
 
 test('「下読みを閉じる」 is disabled while this page\'s close is out', () => {
-  const head = prHeadHtml(open(), { closing: true });
-  assert.match(head, /data-pr-close-reader disabled/);
-  assert.ok(!/data-pr-close-reader disabled/.test(prHeadHtml(open())));
-  assert.ok(!/data-pr-close-reader disabled/.test(prHeadHtml(open(), { closing: false })));
+  assert.match(prCloseReaderBtnHtml(open(), true), /data-pr-close-reader disabled/);
+  assert.ok(!/data-pr-close-reader disabled/.test(prCloseReaderBtnHtml(open(), false)));
+  assert.ok(!/data-pr-close-reader disabled/.test(prCloseReaderBtnHtml(open())));
 });
 
-test('the close button and the stale line are the head\'s and the bar\'s own, drawn the same where a task reuses them', () => {
-  const prCloseReaderBtnHtml = run('prCloseReaderBtnHtml');
+test('the close button and the stale line are drawn the same where a task reuses them', () => {
   const prStaleText = run('prStaleText');
-  assert.ok(prHeadHtml(open()).includes(prCloseReaderBtnHtml(open(), false)));
-  assert.ok(prHeadHtml(open(), { closing: true }).includes(prCloseReaderBtnHtml(open(), true)));
   assert.strictEqual(prCloseReaderBtnHtml(open({ pid: undefined }), false), '');
   assert.strictEqual(prCloseReaderBtnHtml(rec({ ai: null }), false), '');
   assert.match(prCloseReaderBtnHtml(open(), true), /data-pr-close-reader disabled[^>]*>閉じています…</);
   assert.strictEqual(prStaleText({ sha: A }, { headSha: B }), `この差分は ${'a'.repeat(7)} で下読みしたときのものです（PR の head は ${'b'.repeat(7)}）`);
 });
 
-test('the middle says where the read-through is: in the panel for a review request, in the middle for a task', () => {
+test('the placeholder over the reader says the read-through is in the middle', () => {
   const closed = open({ status: 'ready', readerClosedAt: '20261001T000009Z' });
-  assert.ok(prMiddleHtml(closed, [closed], hub, T0, { readAt: 'middle' }).includes('下読みは真ん中に残っています。'));
-  assert.ok(!prMiddleHtml(closed, [closed], hub, T0, { readAt: 'middle' }).includes('パネル'));
-  assert.ok(prMiddleHtml(closed, [closed], hub, T0, { readAt: 'panel' }).includes('下読み・下書きはパネルに残っています。'));
-  const ended = prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404, readAt: 'middle' });
+  assert.ok(prMiddleHtml(closed, [closed], hub, T0).includes('下読みは真ん中に残っています。'));
+  assert.ok(!prMiddleHtml(closed, [closed], hub, T0).includes('パネル'));
+  const ended = prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404 });
   assert.ok(ended.includes('下読みは真ん中に残っています。') && !ended.includes('パネル'));
-  assert.ok(prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404 }).includes('下読みはパネルに残っています。'));
   const done = rec();
-  assert.ok(prMiddleHtml(done, [done], hub, T0, { readAt: 'middle' }).includes('下読みは真ん中にあります。worker の画面は開けません。'));
-  assert.ok(prMiddleHtml(done, [done], hub, T0).includes('下読みは右のパネルにあります。worker の画面は開けません。'));
+  assert.ok(prMiddleHtml(done, [done], hub, T0).includes('下読みは真ん中にあります。worker の画面は開けません。'));
 });
 
 test('the card before a read names where the reader can be talked to, when it is asked to', () => {

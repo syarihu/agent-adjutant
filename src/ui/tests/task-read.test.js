@@ -25,7 +25,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(read(file), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { taskReadTabState, taskReadTabsHtml, taskReadHeadHtml, taskReadGroups, taskReadNoRecordHtml, taskReadBandHtml, taskReadHubHtml, taskReaderHeadHtml,
+const { taskReadTabState, taskReadTabsHtml, taskReadHeadHtml, taskReadGroups, readPaneGroups, taskReadNoRecordHtml, taskReadBandHtml, taskReadHubHtml, taskReaderHeadHtml,
   taskReaderTabsHtml } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -120,6 +120,39 @@ test('the groups are the dialog\'s without the comparison with your review, with
   assert.ok(plain(groups).every(g => g.cards.every(c => c.expand === null)));
 });
 
+test('a review request\'s groups keep the comparison with your review and the queue\'s place, and a task\'s default does not', () => {
+  const r = rec({ state: 'pushed', commitsSinceReview: 2 });
+  const rd = readOf({ sinceReview: { comments: [], newChanges: [] } });
+  const groups = plain(taskReadGroups(r, rd, hub, T0, { records: [r], since: true }));
+  assert.deepStrictEqual(groups.map(g => g.key), ['since', 'top', 'points', 'order', 'diff']);
+  assert.strictEqual(groups[1].cards[0].key, 'top:reader');
+  // The default is the task's.
+  assert.ok(!plain(taskReadGroups(r, rd, hub, T0, {})).some(g => g.key === 'since'));
+  // The queue is the list's: a queued read of a review request says its place in it.
+  const q = rec({ ai: { status: 'queued', queuedAt: '20261001T000000Z' } });
+  const other = rec({ id: 'acme/widget#3', ai: { status: 'queued', queuedAt: '20260930T000000Z' } });
+  const place = o => plain(taskReadGroups(q, null, hub, T0, o)).find(g => g.key === 'top').cards.map(c => c.html).join('');
+  assert.notStrictEqual(place({ records: [q, other] }), place({}));
+});
+
+test('each tab of a review request\'s middle takes its groups: 差分 the diff alone, 下読み the rest', () => {
+  const groups = plain(taskReadGroups(rec(), readOf(), hub, T0, { records: [rec()], since: true }));
+  assert.deepStrictEqual(readPaneGroups(groups, 'diff').map(g => g.key), ['diff']);
+  const rest = readPaneGroups(groups, 'detail').map(g => g.key);
+  assert.deepStrictEqual(rest, ['top', 'points', 'order']);
+  assert.ok(!rest.includes('diff'));
+  // Nothing of the diff before there is a read-through to show it: 差分 has no group.
+  assert.deepStrictEqual(readPaneGroups(plain(taskReadGroups(rec({ ai: null }), null, hub, T0, {})), 'diff'), []);
+});
+
+test('the head over the middle has the buttons of a review request at its right end, and a task\'s has none', () => {
+  const acts = '<a class="a">GitHub で開く</a><button data-pr-expand></button>';
+  const head = taskReadHeadHtml(null, rec(), acts);
+  assert.ok(head.includes('AI 下読み — PR #12') && head.includes('Round the amounts · acme/widget'));
+  assert.ok(head.indexOf('wk-head-acts') > head.indexOf('wk-term-sub') && head.includes(acts));
+  assert.ok(!taskReadHeadHtml(task, rec()).includes('wk-head-acts'));
+});
+
 test('the reader\'s card says what the reader is: its state beside a read, and where it can be talked to', () => {
   const card = r => plain(taskReadGroups(r, readOf(), hub, T0, {})).find(g => g.key === 'top').cards.find(c => c.key === 'top:reader');
   const live = card(open({ status: 'ready' }));
@@ -182,6 +215,7 @@ test('the reader\'s head names the PR and the repository, and offers 「下読�
   assert.ok(!taskReaderHeadHtml(open({ pid: undefined }), false).includes('data-pr-close-reader'));
   assert.ok(!taskReaderHeadHtml(open({ readerClosedAt: '20261001T000009Z' }), false).includes('data-pr-close-reader'));
   assert.ok(!taskReaderHeadHtml(rec(), false).includes('data-pr-close-reader'));
+  assert.ok(!head.includes('未登録') && taskReaderHeadHtml(rec({ registered: false }), false).includes('未登録'));
   assert.ok(!taskReaderHeadHtml(rec({ url: 'javascript:alert(1)' }), false).includes('javascript:'));
 });
 
@@ -207,7 +241,7 @@ test('the reader\'s tabs are the terminal and 「worker への指示」 with its
 function resolver({ selected = 'pr:acme/widget#12', task: shownTask = null } = {}) {
   const w = { calls: [], asked: [], notes: [], edits: 0 };
   const c = vm.createContext({
-    selectedTaskId: selected, PR_REF: 'pr:', CSS: { escape: x => x }, workTerm: { name: 'work' }, others: { doc: { hub: { state: 'running' } }, asking: new Set() },
+    selectedTaskId: selected, PR_REF: 'pr:', CSS: { escape: x => x }, panelTerm: { name: 'panel' }, others: { doc: { hub: { state: 'running' } }, asking: new Set() },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3),
     othersById: id => (id === 'acme/widget#12' ? rec() : null), othersRecords: () => [rec()], othersHubView: () => hub,
     othersRequestAi: (id, mode) => w.asked.push(['list', id, mode]), renderTaskPanel: () => w.calls.push('panel'), taskReadRedraw: () => w.calls.push('read'),
@@ -226,7 +260,7 @@ test('a review request is what the page is on while it is selected, a task\'s re
   assert.strictEqual(s.kind, 'pr');
   assert.strictEqual(s.id, 'acme/widget#12');
   assert.strictEqual(s.rec.id, 'acme/widget#12');
-  assert.strictEqual(s.slot.name, 'work', 'its reader is in the middle');
+  assert.strictEqual(s.slot.name, 'panel', 'its reader is in the panel, as a task\'s is');
   s.ask('split');
   assert.deepStrictEqual(pr.w.asked, [['list', 'acme/widget#12', 'split']]);
   // A task: what the task's own view says.
@@ -251,7 +285,7 @@ test('a redraw for a PR draws what shows it: the panel for a review request, the
   assert.deepStrictEqual(t.w.calls, ['read']);
 });
 
-test('the buttons of a place belong to the place the page is on: a task\'s read buttons ask through the task, and the panel\'s are not theirs', () => {
+test('the buttons of a place belong to the thing the page is on: a task\'s read buttons ask through the task, a review request\'s through the list', () => {
   const asked = [];
   const shown = { id: 'acme/widget#12', rec: rec(), kind: 'task', hubView: hub, asking: false, ask: mode => asked.push(mode), slot: {} };
   const t = resolver({ selected: 't1', task: shown });
@@ -261,15 +295,15 @@ test('the buttons of a place belong to the place the page is on: a task\'s read 
   assert.strictEqual(t.run("prAct(e, { place: 'read' })"), true);
   assert.deepStrictEqual(asked, ['split', undefined]);
   assert.deepStrictEqual(t.w.asked, [], 'not through the list');
-  // The panel's and the dialog's clicks are for a review request only.
-  assert.strictEqual(t.run('prAct(e)'), false);
+  // A click in a dialog that is not about what the page is on is nobody's.
+  t.run("cardDialog.subject = 'pr:acme/widget#99'");
   assert.strictEqual(t.run("prAct(e, { place: 'dialog' })"), false);
-  // And the other way: a review request is not a place 'read'.
+  // A review request's middle is the same place 'read', and asks through the list.
   const pr = resolver();
   pr.c.e = onButton('[data-pr-reread]');
-  assert.strictEqual(pr.run("prAct(e, { place: 'read' })"), false);
+  assert.strictEqual(pr.run("prAct(e, { place: 'read' })"), true);
   assert.strictEqual(pr.run('prAct(e)'), true);
-  assert.deepStrictEqual(pr.w.asked, [['list', 'acme/widget#12', undefined]]);
+  assert.deepStrictEqual(pr.w.asked, [['list', 'acme/widget#12', undefined], ['list', 'acme/widget#12', undefined]]);
   // A task whose PR has no record has no read to act on.
   const bare = resolver({ selected: 't1', task: { ...shown, rec: null } });
   bare.c.e = onButton('[data-pr-reread]');
@@ -294,7 +328,7 @@ test('a task\'s read-through takes drafts as a review request does, and the pane
   // A review request's goes to 下書き.
   const pr = resolver();
   pr.c.e = onButton('[data-pr-todraft]');
-  pr.run('prAct(e)');
+  pr.run("prAct(e, { place: 'read' })");
   assert.strictEqual(pr.w.edits, 1);
   assert.deepStrictEqual(plain(pr.w.calls.filter(x => Array.isArray(x)).map(x => x[1])), [{ pane: 'drafts' }]);
   assert.strictEqual(pr.run('prDraftsPane()'), 'drafts');
@@ -323,17 +357,17 @@ test('「聞く」 of a task goes to the reader\'s terminal in the panel, showin
   ended.run('prAsk(point)');
   assert.strictEqual(ended.w.notes.length, 1);
   assert.strictEqual(typed.length, 4, 'an ended reader is typed into by nobody');
-  // The review request's reader is in the middle: its own slot.
+  // The review request's reader is in the panel too, in the slot the page has for it.
   const pr = resolver();
-  pr.c.workTerm.term = { type: t2 => { typed.push(`pr:${t2}`); return true; }, focus() {} };
-  pr.c.workTerm.taskId = 'pr:acme/widget#12/s1';
-  pr.c.workTerm.ended = null;
+  pr.c.panelTerm.term = { type: t2 => { typed.push(`pr:${t2}`); return true; }, focus() {} };
+  pr.c.panelTerm.taskId = 'pr:acme/widget#12/s1';
+  pr.c.panelTerm.ended = null;
   pr.c.point = t.c.point;
   pr.run('prAsk(point)');
   assert.strictEqual(typed[typed.length - 1], 'pr:loc の「T」について: ');
 });
 
-test('「聞く」 in 「拡大」 closes the dialog first, and in the panel or the middle of a task it does not', () => {
+test('「聞く」 in 「拡大」 closes the dialog first, and in the middle it does not', () => {
   const pr = resolver();
   pr.c.e = onButton('[data-pr-ask]');
   assert.strictEqual(pr.run("prAct(e, { place: 'dialog' })"), true);
@@ -341,7 +375,7 @@ test('「聞く」 in 「拡大」 closes the dialog first, and in the panel or 
   assert.deepStrictEqual(pr.w.calls.filter(x => x === 'close'), ['close']);
   const panel = resolver();
   panel.c.e = onButton('[data-pr-ask]');
-  assert.strictEqual(panel.run('prAct(e)'), true);
+  assert.strictEqual(panel.run("prAct(e, { place: 'read' })"), true);
   assert.deepStrictEqual(panel.w.calls.filter(x => x === 'close'), []);
   // A click in a dialog about another subject is nobody's here.
   const other = resolver();

@@ -1,6 +1,5 @@
-/* The annotated diff of a PR waiting on your review (src/ui/pr-diff.js, pr-diff-view.js), in the panel's 差分 tab and in 「拡大」.
+/* The annotated diff of a PR waiting on your review (src/ui/pr-diff.js, pr-diff-view.js), in the middle's 差分 tab and in 「拡大」.
    Colours are the page's tokens only, so the dark theme follows without a rule of its own. */
-.prd-root { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .prd-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .prd-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .prd-tab { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer;
@@ -10,9 +9,8 @@
 .prd-tab-n { font-size: 10.5px; font-family: var(--font-mono); color: var(--md-sys-color-on-surface-variant); }
 .prd-tab[aria-pressed="true"] .prd-tab-n { color: inherit; }
 .prd-stale { font-size: 12px; }
-.prd-index { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-.prd-jump, .pr-loc-btn { font: inherit; text-align: left; cursor: pointer; background: none; border: 0; padding: 0; color: inherit; overflow-wrap: anywhere; }
-.prd-jump:hover .pr-loc, .pr-loc-btn:hover .pr-loc { text-decoration: underline; }
+.pr-loc-btn { font: inherit; text-align: left; cursor: pointer; background: none; border: 0; padding: 0; color: inherit; overflow-wrap: anywhere; }
+.pr-loc-btn:hover .pr-loc { text-decoration: underline; }
 .prd-stat { font-size: 11.5px; font-family: var(--font-mono); white-space: nowrap; }
 .prd-stat .add { color: var(--md-sys-color-success); }
 .prd-stat .del { color: var(--md-sys-color-error); }

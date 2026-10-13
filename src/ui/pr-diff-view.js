@@ -1,11 +1,11 @@
-/* ── The annotated diff on the page: the 差分 tab of a PR's panel, the 差分 group of 「拡大」 and of a task's read-through ──────────
+/* ── The annotated diff on the page: the 差分 group of 「拡大」 and of the read-through in the middle (a review request's 差分 tab, a task's 「AI 下読み」) ──
    pr-diff.js is the pure half (parsing, categories, anchoring, markup); this file holds what the page keeps: the diff of each PR
    as `GET /api/others/diff` answered it (applied only to its own PR and read-through), which category tab and fold are on, which
-   files are drawn, and what a click does. It sets `PR_HOOKS.diff`, which pr-panel.js, pr-read.js and pr-dialog.js call. Three places
-   draw it: `panel`, `dialog` and `read` (the middle of a task's 「AI 下読み」, which task-read-view.js registers in `PRD_VIEWS`).
+   files are drawn, and what a click does. It sets `PR_HOOKS.diff`, which pr-panel.js, pr-read.js and pr-dialog.js call. Two places
+   draw it: `dialog` and `read` (the middle, which task-read-view.js registers in `PRD_VIEWS`).
    Loaded after pr-dialog.js.
 
-   The markup a hook returns has no time, no draft and no tab or fold state in it (pr-diff.js), because the panel and the dialog
+   The markup a hook returns has no time, no draft and no tab or fold state in it (pr-diff.js), because the middle and the dialog
    draw again only when the markup differs. What is on is set in place afterwards (`prdApply`), so a toggle never redraws, and a
    file's lines are put in its body from a cache (`bodies`) rather than drawn again, also after the dialog replaced its content. */
 
@@ -20,12 +20,9 @@ const prDiff = {
   cat: new Map(),     // id -> the category tab that is on
   folded: false,      // every annotation folded (one switch for the whole page)
   open: new Set(),    // `id|path` of the files that start closed (deleted whole, or very long) that were opened
-  scroll: new Map(),  // id -> the panel's scroll top in the 差分 tab
   target: null,       // { id, path, line, at }: where 「拡大」 is to go once the diff is there
-  enteredFor: null,   // the PR whose 差分 tab the panel is in (a scroll is saved only then, and only while its diff is drawn)
-  restore: false,     // the panel's reading place of `enteredFor` is still to be put back (once its diff is drawn)
   tick: 0,            // counts uses of an entry, to know the least recent
-  observers: { panel: null, dialog: null, read: null },
+  observers: { dialog: null, read: null },
 };
 
 function prdNew() {
@@ -37,7 +34,7 @@ function prdNew() {
 function prdReset(e) {
   Object.assign(e, {
     gen: e.gen + 1, key: null, retryAt: 0, state: 'loading', error: null, bytes: 0, read: null, layout: null, resolved: null, labels: new Map(),
-    bodies: new Map(), filled: { panel: new Set(), dialog: new Set(), read: new Set() },
+    bodies: new Map(), filled: { dialog: new Set(), read: new Set() },
   });
 }
 
@@ -87,11 +84,11 @@ const PRD_KEEP = 3;
 function prdTrim() {
   const sel = prShown()?.id ?? null;
   const rest = [...prDiff.cache].filter(([id]) => id !== sel).sort((a, b) => b[1].used - a[1].used);
-  rest.slice(PRD_KEEP).forEach(([id]) => { prDiff.cache.delete(id); prDiff.cat.delete(id); prDiff.scroll.delete(id); });
+  rest.slice(PRD_KEEP).forEach(([id]) => { prDiff.cache.delete(id); prDiff.cat.delete(id); });
   rest.slice(0, PRD_KEEP).forEach(([, e]) => {
     if (!e.bodies.size) return;
     e.bodies = new Map();
-    e.filled = { panel: new Set(), dialog: new Set(), read: new Set() };
+    e.filled = { dialog: new Set(), read: new Set() };
     e.gen++;
   });
 }
@@ -127,11 +124,11 @@ const prdOpenLink = rec => {
 };
 const prdMb = bytes => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
-/* What is said while the diff cannot be drawn: loading, failed, not stored, empty, too large. In 「拡大」 the loading note is the
-   one the dialog's change marks know (`DIFF_LOADING`), so the diff arriving is not marked as a change. */
-function prdStatusHtml(rec, e, dialog) {
+/* What is said while the diff cannot be drawn: loading, failed, not stored, empty, too large. The loading note is the one the
+   dialog's change marks know (`DIFF_LOADING`), so the diff arriving is not marked as a change. */
+function prdStatusHtml(rec, e) {
   const card = inner => `<div class="m3-filled-card pr-sec prd-status" data-pr-sec="diff-bar">${inner}</div>`;
-  if (e.state === 'loading') return dialog ? DIFF_LOADING : '<div class="tp-muted prd-status" role="status">差分を読み込み中…</div>';
+  if (e.state === 'loading') return DIFF_LOADING;
   if (e.state === 'error') return `<div class="wk-notice" role="alert">${esc(`差分を読めませんでした（読み直しています）: ${e.error}`)}</div>`;
   if (e.state === 'empty') return card('<div class="tp-line">差分はありません</div>');
   if (e.state === 'bad') return card('<div class="tp-line">差分を読み取れませんでした。GitHub で開いて読んでください。</div>');
@@ -154,15 +151,6 @@ function prdBarHtml(rec, read, e) {
   return `${stale}${prDiffBarHtml(e.layout)}${orphans}`;
 }
 
-/* The panel's 差分 tab. */
-function prdTabHtml(rec, read) {
-  if (!read) return '<div class="tp-muted" role="status">差分を読み込み中…</div>';
-  const e = prDiffEnsure(rec, read);
-  if (e.state !== 'ok') return prdStatusHtml(rec, e, false);
-  return `<div class="prd-root" data-prd-root><div class="m3-filled-card pr-sec">${prdBarHtml(rec, read, e)}${prDiffIndexHtml(e.layout, e.resolved)}</div>`
-    + `${e.layout.files.map(f => prDiffShellHtml(f, e.resolved.files.get(f.path))).join('')}</div>`;
-}
-
 /* ── the dialog's cards ── */
 
 function prdDialogFileHtml(rec, read, path) {
@@ -174,7 +162,7 @@ function prdDialogFileHtml(rec, read, path) {
 /* The first card of the group (key `diff-bar`): the bar, or what is said while there is no diff. */
 function prdDialogHeadHtml(rec, read) {
   const e = prDiffEnsure(rec, read);
-  if (e.state !== 'ok') return prdStatusHtml(rec, e, true);
+  if (e.state !== 'ok') return prdStatusHtml(rec, e);
   return `<div class="m3-filled-card pr-sec" data-pr-sec="diff-bar">${prdBarHtml(rec, read, e)}</div>`;
 }
 function prdDialogPaths(rec, read) {
@@ -187,16 +175,12 @@ function prdDialogLabel(rec, path) {
 
 /* ── putting in place what is on, and drawing the files ── */
 
-/* Where the diff is drawn now: the panel's tab, 「拡大」 when it is open on this PR (or is being filled for opening: `filling`), and
-   the middle of a task's 「AI 下読み」. `root` holds the bar and the files, `scroll` is what scrolls them (the observer's root). */
+/* Where the diff is drawn now: 「拡大」 when it is open on this PR (or is being filled for opening: `filling`), and the middle
+   (a task's 「AI 下読み」, or a review request's 差分 tab). `root` holds the bar and the files, `scroll` is what scrolls them (the observer's root). */
 function prdPlace(place, filling = false) {
-  if (place === 'panel') {
-    const root = tp('tp-rest')?.querySelector('.prd-root');
-    return root ? { root, scroll: tp('tp-detail') } : null;
-  }
   if (place === 'read') {
-    // Kept while the other tab or a review request is on, but not on screen: what another PR puts in place must not reach it.
-    if (document.getElementById('task-read')?.hidden !== false || prShown()?.kind !== 'task') return null;
+    // Kept while the other tab or another selection is on, but not on screen: what another PR puts in place must not reach it.
+    if (document.getElementById('task-read')?.hidden !== false) return null;
     const root = document.getElementById('task-read-content');
     return root?.querySelector('[data-prd-file], [data-prd-tab]') ? { root, scroll: document.getElementById('task-read-body') } : null;
   }
@@ -246,7 +230,7 @@ function prdAskState(root, open) {
   });
 }
 
-/* A file's body, from the cache: its lines are made once for a diff, however often the panel or the dialog is drawn again. */
+/* A file's body, from the cache: its lines are made once for a diff, however often the middle or the dialog is drawn again. */
 function prdFillBody(e, place, el) {
   const i = Number(el.dataset.prdBody);
   const f = e.layout.files[i];
@@ -289,29 +273,10 @@ function prdSync(place, filling = false) {
   later.forEach(el => io.observe(el));
   prDiff.observers[place] = io;
 }
-const prdSyncAll = () => { prdSync('panel'); prdSync('dialog'); prdSync('read'); };
+const prdSyncAll = () => { prdSync('dialog'); prdSync('read'); };
 
-/* The panel drew its 差分 tab. The PR it is in is noted at once, also while its diff is not there (or will not be), so that a scroll
-   of the panel is never taken for the reading place of the PR it was in before. Coming back to the tab, or to a PR in it, puts the
-   reading place back, once there is a diff drawn to scroll in; drawing again within it does not. */
-function prdOnShown() {
-  const id = isPrRef(selectedTaskId) ? prIdOfRef(selectedTaskId) : null;
-  if (prDiff.enteredFor !== id) { prDiff.enteredFor = id; prDiff.restore = true; }
-  const cur = prdCurrent();
-  if (!cur) return;
-  prdSync('panel');
-  if (prDiff.restore) {
-    prDiff.restore = false;
-    const saved = prDiff.scroll.get(cur.id);
-    if (saved) tp('tp-detail').scrollTop = saved;
-  }
-}
 /* The person scrolled 「拡大」 by hand: a link still waiting for its diff is not theirs any more. */
 function prdOnMoved() { prDiff.target = null; }
-function prdOnLeft() { prDiff.enteredFor = null; prDiff.restore = false; }
-tp('tp-detail').addEventListener('scroll', () => {
-  if (prDiff.enteredFor && !prDiff.restore && prdCurrent()?.id === prDiff.enteredFor) prDiff.scroll.set(prDiff.enteredFor, tp('tp-detail').scrollTop);
-}, { passive: true });
 
 /* The dialog replaced its content: every file that was filled before is filled again from the cache, before the dialog puts the
    reading position back. */
@@ -338,14 +303,14 @@ function prdShowCategoryOf(path) {
   return f;
 }
 
-/* The places a link to a line or a file of the diff can land in, other than the panel's own tab: what each says of itself.
+/* The places a link to a line or a file of the diff can land in: what each says of itself.
    `ready()` is whether it is open and on the PR, `go(cardKey, groupKey, flash)` brings a card to the top, `cardEl(key)` finds a card
-   and `place` is where its files are drawn. The dialog's is here; the middle of a task's read-through sets its own. */
+   and `place` is where its files are drawn. The dialog's is here; the middle sets its own. */
 const PRD_VIEWS = {
   dialog: { ready: () => !!cardDialogEl()?.open && cardDialog.mode === 'review', go: (...a) => cardDialogGo(...a), cardEl: key => cardDialogCardEl(key), place: 'dialog' },
 };
 
-/* Take the view the PR on show is read in (「拡大」, or the middle of its task's read-through) to the place waiting in
+/* Take the view the PR on show is read in (「拡大」 when it is open on it, else the middle) to the place waiting in
    `prDiff.target`, once the diff is there: the tab first, then the file drawn at once, then the line in the middle. Dropped when
    the diff will not come or the place is not in it, and after a while. */
 function prdApplyTarget() {
@@ -353,7 +318,7 @@ function prdApplyTarget() {
   if (!t) return;
   const shown = prShown();
   if (Date.now() - t.at > CARD_DIALOG_TARGET_MS || !shown || shown.id !== t.id) { prDiff.target = null; return; }
-  const v = PRD_VIEWS[shown.kind === 'task' ? 'read' : 'dialog'];
+  const v = PRD_VIEWS.dialog.ready() && cardDialog.subject === selectedTaskId ? PRD_VIEWS.dialog : PRD_VIEWS.read;
   if (!v?.ready()) return;
   const e = prDiff.cache.get(t.id);
   if (!e || e.state === 'loading') return;
@@ -377,12 +342,13 @@ function prdApplyTarget() {
 }
 cardDialogContent().addEventListener('animationend', ev => ev.target.classList?.remove('prd-flash'));
 
-/* A link to a line or a file: from the panel it opens 「拡大」 at that place; in 「拡大」 and in a task's read-through it goes there. */
-function prdGoto(path, line, { place = 'panel', opener = null } = {}) {
+/* A link to a line or a file: in 「拡大」 and in the middle it goes there. */
+function prdGoto(path, line, { place = 'read' } = {}) {
   const id = prShown()?.id;
   if (!id) return;
   prDiff.target = { id, path, line: line || null, at: Date.now() };
-  if (place === 'panel') openPrDialog(opener);
+  // The diff of a review request is its own tab of the middle: a link from the 下読み tab goes there first.
+  if (place === 'read' && prShown().kind === 'pr' && nav.pane !== 'diff') go({ pane: 'diff' }, { replace: true });
   prdApplyTarget();
 }
 
@@ -396,7 +362,7 @@ cardDialogEl().addEventListener('click', e => {
 /* ── clicks ── */
 
 /* A draft of the person's own from a line, or from a file when the annotation has no line: as 「下書きに」 of a point does, the
-   panel goes to the 下書き tab and the new box takes the keyboard; in 「拡大」 the box appears in the column and the diff stays. */
+   middle goes to the 下書き tab and the new box takes the keyboard; in 「拡大」 the box appears in the column and the diff stays. */
 function prdStartDraft(rec, read, { path, at, body }, inDialog) {
   const id = rec.id;
   if (!prDraftsEntry(id).loaded) {
@@ -413,7 +379,7 @@ function prdStartDraft(rec, read, { path, at, body }, inDialog) {
 }
 
 /* The click of a button of the diff. True when it was one. */
-function prdAct(e, { place = 'panel' } = {}) {
+function prdAct(e, { place = 'read' } = {}) {
   const hit = sel => e.target.closest?.(sel);
   const cur = prdCurrent();
   if (!cur) return false;
@@ -432,20 +398,6 @@ function prdAct(e, { place = 'panel' } = {}) {
     if (f) { prDiff.open.add(`${id}|${f.path}`); prdSyncAll(); }
     return true;
   }
-  if ((b = hit('[data-prd-jump]'))) {
-    const f = prdShowCategoryOf(entry.layout.files[Number(b.dataset.prdJump)]?.path);
-    if (f?.closed) { prDiff.open.add(`${id}|${f.path}`); prdSyncAll(); }
-    // The panel's list jumps in the panel; the read-through's in the middle, where its diff is.
-    const at = place === 'read' ? 'read' : 'panel';
-    const p = f && prdPlace(at);
-    if (p) {
-      const section = p.root.querySelector(`[data-prd-file="${f.i}"]`);
-      const body = section?.querySelector('[data-prd-body]');
-      if (body && !body.hidden) prdFillBody(entry, at, body);
-      section?.scrollIntoView({ block: 'start' });
-    }
-    return true;
-  }
   if ((b = hit('[data-prd-plus]'))) {
     const f = entry.layout.files[Number(b.closest('[data-prd-file]')?.dataset.prdFile)];
     if (f && rec) prdStartDraft(rec, read, { path: f.path, at: prDiffAtOf(b.dataset.prdPlus), body: '' }, inDialog);
@@ -457,7 +409,7 @@ function prdAct(e, { place = 'panel' } = {}) {
     const at = prDiffAtOf(b.dataset.prdAt);
     if (b.matches('[data-prd-todraft]')) prdStartDraft(rec, read, { path: ann.path, at, body: ann.text }, inDialog);
     else {
-      // Leaving for the terminal: the dialog goes first, and focus is not given back to the panel.
+      // Leaving for the terminal: the dialog goes first, and focus is not given back to the middle.
       if (inDialog) { cardDialog.quiet = true; closeCardDialog(); }
       prAsk({ path: ann.path, line: at?.line, title: String(ann.text).slice(0, 40) });
     }
@@ -467,7 +419,7 @@ function prdAct(e, { place = 'panel' } = {}) {
 }
 
 PR_HOOKS.diff = {
-  tabHtml: prdTabHtml, dialogFileHtml: prdDialogFileHtml, goto: prdGoto, onShown: prdOnShown,
-  onLeft: prdOnLeft, onMoved: prdOnMoved, onDrawn: prdOnDrawn, onDrawnAt: prdOnDrawnAt, applyTarget: prdApplyTarget, act: prdAct,
+  dialogFileHtml: prdDialogFileHtml, goto: prdGoto,
+  onMoved: prdOnMoved, onDrawn: prdOnDrawn, onDrawnAt: prdOnDrawnAt, applyTarget: prdApplyTarget, act: prdAct,
   dialogPaths: prdDialogPaths, dialogHeadHtml: prdDialogHeadHtml, dialogLabel: prdDialogLabel,
 };

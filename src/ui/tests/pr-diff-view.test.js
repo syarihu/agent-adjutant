@@ -32,7 +32,7 @@ const wrap = el => el;
 
 function world({ io = false } = {}) {
   const w = { calls: [], gets: [], pending: [], notes: [], edits: [], drafts: [], hubView: { canRead: true }, selected: 'pr:acme/widget#1', pane: 'diff', dialogOpen: false, loaded: true };
-  // The panel's root and the dialog's content, each with the pieces the code looks for.
+  // The middle's root and the dialog's content, each with the pieces the code looks for.
   const mk = () => {
     const bodies = [el({ prdBody: '0' }), el({ prdBody: '1' })];
     const sections = bodies.map((b, i) => el({ prdFile: String(i) }, { querySelector: s => (s === '[data-prd-body]' ? b : null), closest: () => null }));
@@ -44,8 +44,10 @@ function world({ io = false } = {}) {
   };
   w.panel = mk();
   w.dialog = mk();
-  const detail = el({}, { scrollTop: 0, addEventListener: (t, f) => { w.onScroll = f; } });
-  const restEl = el({}, { querySelector: s => (s === '.prd-root' ? w.panel.root : null) });
+  // The middle: what is drawn in it is `w.panel`, and its body is what scrolls.
+  const scroll = el({}, { scrollTop: 0 });
+  w.byId = { 'task-read': el({}, { hidden: false }), 'task-read-content': w.panel.root, 'task-read-body': scroll };
+  w.scrollEl = scroll;
   const body = el({});
   const dlg = { get open() { return w.dialogOpen; }, querySelector: s => (s === '.card-dialog-body' ? body : null), addEventListener: (t, f, cap) => { w.dlgClick = f; } };
   const c = vm.createContext({
@@ -53,7 +55,6 @@ function world({ io = false } = {}) {
     IntersectionObserver: io ? class { constructor(cb, o) { w.io = { cb, o, seen: [] }; } observe(x) { w.io.seen.push(x); } unobserve() {} disconnect() { w.ioGone = true; } } : undefined,
     get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_HOOKS: { diff: null }, DIFF_LOADING: '<div class="loading">差分を読み込み中…</div>',
     secTitle: t => t, panelBtnsHtml: j => j,
-    tp: id => (id === 'tp-detail' ? detail : id === 'tp-rest' ? restEl : null),
     cardDialogEl: () => dlg, cardDialogContent: () => Object.assign(w.dialog.root, { addEventListener() {} }),
     cardDialog: { mode: 'review', subject: 'pr:acme/widget#1', quiet: false }, CARD_DIALOG_TARGET_MS: 10000,
     cardDialogCardEl: key => { w.calls.push(['cardEl', key]); return key === 'diff:src/a.rs' ? w.dialog.sections[0] : key === 'diff:docs/x.md' ? w.dialog.sections[1] : null; },
@@ -119,7 +120,7 @@ test('no diff stored, an empty one and a too-large one are answers, and a failur
   assert.strictEqual((await states(p => p.resolve({ sha: SHA, bytes: 0, diff: '' }))).state, 'empty');
   const big = await states(p => p.resolve({ sha: SHA, bytes: 9 * 1024 * 1024, diff: null }));
   assert.strictEqual(big.state, 'big');
-  assert.ok(big.c.prdStatusHtml(rec(), big.run(`prDiff.cache.get('acme/widget#1')`), false).includes('9.0 MB'));
+  assert.ok(big.c.prdStatusHtml(rec(), big.run(`prDiff.cache.get('acme/widget#1')`)).includes('9.0 MB'));
   // A diff of another head is not this read-through's.
   assert.strictEqual((await states(p => p.resolve({ sha: 'b'.repeat(40), bytes: 3, diff: 'x\n' }))).state, 'none');
   assert.strictEqual((await states(p => p.resolve({ sha: SHA, bytes: 3, diff: 'not a diff\n' }))).state, 'bad');
@@ -134,11 +135,11 @@ test('no diff stored, an empty one and a too-large one are answers, and a failur
 });
 
 test('each state says what it is, and 404 offers 「下読みし直す」 and GitHub through the existing re-read button', async () => {
-  const text = async (answer, dialog = false) => {
+  const text = async answer => {
     const { w, c } = world();
-    const html = () => (dialog ? c.prdDialogHeadHtml(rec(), w.read) : c.prdTabHtml(rec(), w.read));
+    const html = () => c.prdDialogHeadHtml(rec(), w.read);
     assert.ok(html().includes('差分を読み込み中'));
-    if (dialog) assert.ok(html().includes('class="loading"'), 'the dialog says it with the loading note its change marks know');
+    assert.ok(html().includes('class="loading"'), 'it says it with the loading note the dialog\'s change marks know');
     answer(w.pending[0]);
     await tick();
     return html();
@@ -150,15 +151,15 @@ test('each state says what it is, and 404 offers 「下読みし直す」 and Gi
   assert.ok((await text(p => p.resolve({ sha: SHA, bytes: 3 * 1024 * 1024, diff: null }))).includes('差分が大きすぎるため保存していません（3.0 MB）'));
   assert.ok((await text(p => p.reject(new Error('boom')))).includes('role="alert"'));
   const okHtml = await text(p => p.resolve({ sha: SHA, bytes: DIFF.length, diff: DIFF }));
-  assert.ok(okHtml.includes('data-prd-root') && okHtml.includes('data-prd-tab="logic"') && okHtml.includes('data-prd-file="1"'));
+  assert.ok(okHtml.includes('data-pr-sec="diff-bar"') && okHtml.includes('data-prd-tab="logic"'));
   const stale = await (async () => {
     const { w, c } = world();
     w.pending.length = 0;
     const r = { ...rec(), headSha: 'c'.repeat(40) };
-    c.prdTabHtml(r, w.read);
+    c.prdDialogHeadHtml(r, w.read);
     w.pending[0].resolve({ sha: SHA, bytes: 1, diff: DIFF });
     await tick();
-    return c.prdTabHtml(r, w.read);
+    return c.prdDialogHeadHtml(r, w.read);
   })();
   assert.ok(stale.includes('この差分は aaaaaaa で下読みしたときのものです'));
   // The dialog's cards: the bar first, then the files in the diff's order, with short labels.
@@ -185,20 +186,20 @@ test('with no IntersectionObserver every file is drawn at once, from one render 
   let renders = 0;
   const real = c.prDiffBodyHtml;
   c.prDiffBodyHtml = (...a) => { renders++; return real(...a); };
-  c.prdOnShown();
+  c.prdSync('read');
   assert.ok(w.panel.bodies.every(b => b.innerHTML.includes('prd-l')));
   assert.strictEqual(renders, 2);
   assert.strictEqual(w.panel.tabs[0].attrs['aria-pressed'], 'true');
   assert.strictEqual(w.panel.tabs[2].attrs['aria-pressed'], 'false');
   // Drawn again: nothing is rendered again, and what is there is left alone.
-  c.prdOnShown();
+  c.prdSync('read');
   assert.strictEqual(renders, 2);
 });
 
 test('a big diff is drawn file by file, as each comes near the screen, in the element that scrolls', async () => {
   const { w, c, run } = await loaded({ io: true });
   run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
-  c.prdOnShown();
+  c.prdSync('read');
   assert.strictEqual(w.io.o.rootMargin, '1200px 0px');
   assert.strictEqual(w.io.seen.length, 2);
   assert.ok(w.panel.bodies.every(b => b.innerHTML === ''));
@@ -206,11 +207,12 @@ test('a big diff is drawn file by file, as each comes near the screen, in the el
   w.io.cb([{ isIntersecting: true, target: near }, { isIntersecting: false, target: w.panel.bodies[0] }]);
   assert.ok(near.innerHTML.includes('prd-l'));
   assert.strictEqual(w.panel.bodies[0].innerHTML, '');
-  // The dialog's observer is rooted at its own body, not at the panel.
+  assert.strictEqual(w.io.o.root, w.scrollEl, 'the middle\'s observer is rooted at the element that scrolls');
+  // The dialog's observer is rooted at its own body, not at the middle's.
   w.dialogOpen = true;
   c.prdOnDrawn();
   assert.strictEqual(w.io.o.root, run(`cardDialogEl().querySelector('.card-dialog-body')`));
-  assert.notStrictEqual(w.io.o.root, run(`tp('tp-detail')`));
+  assert.notStrictEqual(w.io.o.root, w.scrollEl);
 });
 
 test('after the dialog replaced its content, the files drawn before are drawn again from the cache', async () => {
@@ -234,7 +236,7 @@ test('after the dialog replaced its content, the files drawn before are drawn ag
 
 test('a tab and the fold are set in place and hide the other categories', async () => {
   const { w, c } = await loaded();
-  c.prdOnShown();
+  c.prdSync('read');
   // The markdown file is in the doc tab: its section is hidden until that tab is on.
   assert.strictEqual(w.panel.sections[0].hidden, false);
   assert.strictEqual(w.panel.sections[1].hidden, true);
@@ -252,12 +254,12 @@ test('a tab and the fold are set in place and hide the other categories', async 
   assert.strictEqual(w.panel.root.classList.contains('prd-folded'), true);
 });
 
-test('a link switches the tab first and draws the file, then goes there; from the panel it opens 「拡大」', async () => {
+test('a link switches the tab first and draws the file, then goes there', async () => {
   const { w, c, run } = await loaded({ io: true });
   run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
-  const opener = el();
-  c.prdGoto('docs/x.md', 1, { place: 'panel', opener });
-  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [['open', opener]]);
+  w.dialogOpen = true;
+  c.prdGoto('docs/x.md', 1, { place: 'dialog' });
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'the dialog is not opened by a link');
   const go = w.calls.find(x => x[0] === 'go');
   assert.strictEqual(go[1], 'diff:docs/x.md');
   assert.strictEqual(go[3], false);
@@ -298,9 +300,9 @@ const onLine = (c, attrs, extra = {}) => {
   return { target: { closest: s => s === extra.hit ? btn : null } };
 };
 
-test('「＋」 starts a draft of the person on the right side and line, and the panel goes to 下書き', async () => {
+test('「＋」 starts a draft of the person on the right side and line, and the middle goes to 下書き', async () => {
   const { w, c } = await loaded();
-  c.prdAct(onLine(c, { prdPlus: 'left:2' }, { hit: '[data-prd-plus]' }), { place: 'panel' });
+  c.prdAct(onLine(c, { prdPlus: 'left:2' }, { hit: '[data-prd-plus]' }), { place: 'read' });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits)), [{ key: 'p1', source: 'person', path: 'src/a.rs', line: 2, side: 'left', body: '' }]);
   const order = w.calls.map(x => x[0]);
   assert.ok(order.indexOf('gopane') < order.indexOf('redraw'), 'the tab first, then the box');
@@ -308,7 +310,7 @@ test('「＋」 starts a draft of the person on the right side and line, and the
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: false });
 });
 
-test('in 「拡大」 the box appears in the column and the panel is left where it is', async () => {
+test('in 「拡大」 the box appears in the column and the middle is left where it is', async () => {
   const { w, c } = await loaded();
   c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'dialog' });
   assert.strictEqual(w.calls.some(x => x[0] === 'gopane'), false);
@@ -319,12 +321,12 @@ test('in 「拡大」 the box appears in the column and the panel is left where 
 test('an explanation\'s 「下書きに」 is the same, with its text as the body; unanchored it is a file draft; unloaded drafts say so', async () => {
   const { w, c } = await loaded();
   const hit = '[data-prd-todraft], [data-prd-ask]';
-  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit, matches: ['[data-prd-todraft]'] }), { place: 'panel' });
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit, matches: ['[data-prd-todraft]'] }), { place: 'read' });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Explains new' });
-  c.prdAct(onLine(c, {}, { hit, matches: ['[data-prd-todraft]'] }), { place: 'panel' });
+  c.prdAct(onLine(c, {}, { hit, matches: ['[data-prd-todraft]'] }), { place: 'read' });
   assert.strictEqual(w.edits[1].line, undefined);
   w.loaded = false;
-  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'panel' });
+  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' });
   assert.strictEqual(w.edits.length, 2);
   assert.strictEqual(w.notes.length, 1);
 });
@@ -338,52 +340,15 @@ test('「聞く」 in 「拡大」 closes it first, then asks with the line and 
   assert.strictEqual(run('cardDialog.quiet'), true);
 });
 
-test('the panel restores its reading place on coming back to the tab, not on every redraw', async () => {
-  const { w, c, run } = await loaded();
-  c.prdOnShown();
-  w.onScroll();
-  const detail = run(`tp('tp-detail')`);
-  detail.scrollTop = 420;
-  w.onScroll();
-  c.prdOnShown();
-  detail.scrollTop = 0;
-  c.prdOnShown();
-  assert.strictEqual(detail.scrollTop, 0, 'a redraw within the tab leaves it');
-  c.prdOnLeft();
-  c.prdOnShown();
-  assert.strictEqual(detail.scrollTop, 420);
-});
-
 test('the hook keeps its shape', () => {
   const { run } = world();
   assert.deepStrictEqual(JSON.parse(run('JSON.stringify(Object.keys(PR_HOOKS.diff).sort())')), ['act', 'applyTarget', 'dialogFileHtml', 'dialogHeadHtml', 'dialogLabel', 'dialogPaths',
-    'goto', 'onDrawn', 'onDrawnAt', 'onLeft', 'onMoved', 'onShown', 'tabHtml']);
-});
-
-test('switching to another PR in the tab never writes into the PR that was left, whether its diff is loading, missing or failed', async () => {
-  const { w, c, run } = await loaded();
-  const detail = run(`tp('tp-detail')`);
-  c.prdOnShown();
-  detail.scrollTop = 420;
-  w.onScroll();
-  assert.strictEqual(run(`prDiff.scroll.get('acme/widget#1')`), 420);
-  // The panel goes to PR 2 (its scroll is reset to the top), whose diff is on its way.
-  w.selected = 'pr:acme/widget#2';
-  detail.scrollTop = 0;
-  c.prdOnShown();
-  assert.strictEqual(run('prDiff.enteredFor'), 'acme/widget#2');
-  w.onScroll();
-  assert.strictEqual(run(`prDiff.scroll.get('acme/widget#1')`), 420);
-  assert.strictEqual(run(`prDiff.scroll.has('acme/widget#2')`), false, 'nor is a scroll over a loading note a reading place');
-  // And back: PR 1's place is put back.
-  w.selected = 'pr:acme/widget#1';
-  c.prdOnShown();
-  assert.strictEqual(detail.scrollTop, 420);
+    'goto', 'onDrawn', 'onDrawnAt', 'onMoved']);
 });
 
 test('only the selected PR and a few others are kept, and what was drawn is dropped for the others', async () => {
   const { w, c, run } = await loaded();
-  c.prdOnShown();
+  c.prdSync('read');
   assert.ok(run(`prDiff.cache.get('acme/widget#1').bodies.size`) > 0);
   for (const n of [2, 3, 4, 5, 6]) c.prDiffEnsure({ ...rec(`acme/widget#${n}`) }, w.read);
   // PR 1 is selected, so it stays with its drawn bodies; of the others the three used last stay.
@@ -399,7 +364,7 @@ test('only the selected PR and a few others are kept, and what was drawn is drop
 test('a very long file opens by a click, and a link into it opens it', async () => {
   const { w, c, run } = await loaded();
   run(`(() => { const f = prDiff.cache.get('acme/widget#1').layout.files[1]; f.closed = true; })()`);
-  c.prdOnShown();
+  c.prdSync('read');
   assert.strictEqual(w.panel.bodies[1].hidden, true);
   assert.strictEqual(w.panel.bodies[1].innerHTML, '');
   w.dialogOpen = true;
@@ -470,8 +435,9 @@ test('the middle of a task is a place of its own: its root is the read-through\'
   w.byId['task-read'].hidden = true;
   assert.strictEqual(c.prdPlace('read'), null);
   w.byId['task-read'].hidden = false;
+  // A review request's middle is the same place (its 差分 tab).
   w.shown = { ...w.shown, kind: 'pr' };
-  assert.strictEqual(c.prdPlace('read'), null);
+  assert.strictEqual(c.prdPlace('read').root, w.dialog.root);
   w.shown = { ...w.shown, kind: 'task' };
   // Nothing drawn in it yet: no place.
   w.byId['task-read-content'] = el({}, { querySelector: () => null });
@@ -502,6 +468,46 @@ test('a link in the middle of a task goes there and opens no dialog, after the t
   c.prdGoto('nope.rs', null, { place: 'read' });
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'rgo').map(x => x.slice(1, 4)), [[null, 'diff', true]]);
   assert.ok(!w.calls.some(x => x[0] === 'go'), 'not the dialog\'s');
+});
+
+/* The same place for a review request: its 差分 tab is where the diff is, and 「拡大」 is the other place a link can land in. */
+function prReadWorld() {
+  const x = readWorld();
+  x.w.shown = { id: 'acme/widget#1', rec: rec(), kind: 'pr', hubView: x.w.hubView, asking: false };
+  x.w.selected = 'pr:acme/widget#1';
+  x.w.pane = 'detail';
+  return x;
+}
+
+test('a link from the 下読み tab of a review request goes to the 差分 tab first, and lands in the middle', async () => {
+  const { w, c, run } = prReadWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  c.prdGoto('docs/x.md', 1, { place: 'read', opener: el() });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane').slice(1))), [{ pane: 'diff' }, { replace: true }]);
+  assert.deepStrictEqual(w.calls.find(x => x[0] === 'rgo').slice(1, 3), ['diff:docs/x.md', null]);
+  assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'no 「拡大」 for it');
+  // Already on the 差分 tab: nothing to switch.
+  w.pane = 'diff';
+  w.calls.length = 0;
+  c.prdGoto('src/a.rs', 1, { place: 'read' });
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
+});
+
+test('a link lands in 「拡大」 while it is open on the PR, else in the middle', async () => {
+  const { w, c, run } = prReadWorld();
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  w.pane = 'diff';
+  w.dialogOpen = true;
+  c.prdGoto('docs/x.md', null, { place: 'dialog' });
+  assert.ok(w.calls.some(x => x[0] === 'go'), 'the dialog');
+  assert.ok(!w.calls.some(x => x[0] === 'rgo'));
+  // Open on another PR: not that one's.
+  w.calls.length = 0;
+  c.cardDialog.subject = 'pr:acme/widget#2';
+  c.prdGoto('docs/x.md', null, { place: 'read' });
+  assert.ok(w.calls.some(x => x[0] === 'rgo') && !w.calls.some(x => x[0] === 'go'));
 });
 
 test('a link meant for the middle of a task is dropped when the task on show is another', async () => {

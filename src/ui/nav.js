@@ -13,7 +13,7 @@
                                                            the row's task, hub or parent (<ref> may also
                                                            be parent:<key>)
      /?view=work&task=pr:<owner/repo#N>&pane=drafts        いまの仕事 with a PR waiting on your review in the
-                                                           panel (pane: detail = 下読み, diff, drafts)
+                                                           middle (pane: detail = 下読み, diff, drafts), its reader on the right
    /b/<slug>/?view=work&task=<id>&pane=ai                 いまの仕事 with a task's AI 下読み in the middle (pane: ai, or
                                                            ai-drafts with 「worker への指示」 on the right)
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every

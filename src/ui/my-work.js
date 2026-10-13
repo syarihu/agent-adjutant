@@ -1087,11 +1087,8 @@ function workTermHeadHtml(sel, free = null) {
 function renderWorkTerm() {
   if (view !== 'work') return;
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
-  if (isPrRef(nav.task)) {
-    // A review request's middle is already its reader: it has no tabs.
-    renderTaskReadTabs(null);
-    return renderPrTerm(othersById(prIdOfRef(nav.task)));
-  }
+  // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
+  if (isPrRef(nav.task)) return renderPrRead(othersById(prIdOfRef(nav.task)));
   const sel = workSelected();
   // A worktree with no process (the hub's 「動いていない worktree」) is no row of the list, but the board lists it.
   const free = !sel && isSessRef(nav.task) ? sessOfRef(nav.task) : null;
