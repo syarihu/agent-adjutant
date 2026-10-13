@@ -1700,6 +1700,26 @@ mod others_drafts {
         (status, serde_json::from_str(body).unwrap_or(Value::Null))
     }
 
+    #[test]
+    fn the_resident_serves_xterm_at_its_root_for_the_terminal_of_a_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        for (path, kind) in [
+            ("/vendor/xterm.js", "text/javascript"),
+            ("/vendor/xterm.css", "text/css"),
+        ] {
+            let mut out = Vec::new();
+            route_resident(&r, &request("GET", path, &[]), &mut out).unwrap();
+            let text = String::from_utf8(out).unwrap();
+            assert!(text.starts_with("HTTP/1.1 200"), "{path}: {text:.80}");
+            assert!(text.contains(kind), "{path}");
+            assert!(text.len() > 1000, "{path}");
+        }
+        let mut out = Vec::new();
+        route_resident(&r, &request("GET", "/vendor/other.js", &[]), &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().starts_with("HTTP/1.1 404"));
+    }
+
     fn drafts() -> Value {
         json!({
             "version": 1, "fromSha": null,

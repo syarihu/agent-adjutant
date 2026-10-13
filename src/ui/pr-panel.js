@@ -600,12 +600,26 @@ function prMiddleText(rec, hubView) {
   if (!rec) return `<div class="tp-muted">${esc(prMissingText(others.doc, others.error))}</div>`;
   if (workTerm.term && workTerm.ended == null) return '';
   const opts = { asking: others.asking.has(rec.id), read: prReadOf(rec), readError: !!prReadEntry(rec.id)?.error };
-  if (workTerm.term) opts.ended = workTerm.ended;
+  if (workTerm.term) Object.assign(opts, prTermEnd(workTerm));
   return prMiddleHtml(rec, othersRecords(), hubView, othersNowEst(), opts);
 }
 
 /* The subject the reader's terminal is kept under: a closed reader is part of it, so that a re-read does not find the old one. */
 const prReaderSubject = rec => rec ? `${PR_REF}${rec.id}/${rec.ai?.sessionId || ''}${rec.ai?.readerClosedAt ? '/closed' : ''}` : null;
+
+/* What a terminal that has ended says to `prMiddleHtml`: `ended` when the worker really has ended (the server says its window is gone,
+   or it detached because the window left), else `failed` with why, since an attach that failed is not an end (a worker that runs
+   is not said to have ended). */
+const PR_TERM_ENDS = [1000, 4410];
+/* The words of a failed attach: the page's for the code, and the server's reason after it unless those words are the reason already. */
+const prFailedText = (code, reason) => {
+  const text = terminalEndText(code, reason);
+  return reason && !text.includes(reason) ? `${text}: ${reason}` : text;
+};
+function prTermEnd(slot) {
+  if (!slot.term || slot.ended == null) return {};
+  return PR_TERM_ENDS.includes(slot.ended) ? { ended: slot.ended } : { failed: prFailedText(slot.ended, slot.endReason) };
+}
 
 /* The reader's terminal in `slot` (the middle's for a review request, the panel's for a task): kept while the record still names
    the same reader, disposed when it names another (a re-read) or the PR changes, and mounted when there is a window to attach to.
@@ -618,13 +632,15 @@ function syncReaderTerm(slot, rec, subject, mount = true) {
   if (!mountable || slot.term || !mount) return;
   slot.sessionId = rec.ai.sessionId || subject;
   slot.ended = null;
+  slot.endReason = null;
   const handle = mountSessionTerminal(slot.host(), {
     path: `/api/others/terminal?id=${encodeURIComponent(rec.id)}`,
     base: '',
     focus: false,
-    onEnd: code => {
+    onEnd: (code, reason) => {
       if (slot.term !== handle) return;
       slot.ended = code;
+      slot.endReason = reason;
       slot.redraw();
     },
   });

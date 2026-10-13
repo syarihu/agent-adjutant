@@ -203,13 +203,16 @@ answers the same routes except the ones `Route::resident_only` lists (a session'
 open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai` and handing its drafts to the worker `POST /api/tasks/<id>/hand`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
-resident also serves the page at `/`, `GET /api/boards`, `GET /api/work`, `GET /api/others`,
+resident also serves the page at `/`, `GET /vendor/xterm.js` and `/vendor/xterm.css` at its root (a reader's terminal has no board to load them from), `GET /api/boards`, `GET /api/work`, `GET /api/others`,
 `POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/reader/close`, `POST /api/others/hub/start`,
 `POST /api/others/hub/stop`, `GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts`, `POST /api/others/drafts` and `POST /api/others/pending`. It also answers the WebSocket
 handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the
 PR's record (`ai.terminal` and `ai.pid`, by `board::review::reader_window`), never from the request, and it
 shares the terminal code and the cap of 8 open terminals with a board's. A PR with no reader window, or whose
-reader's process is gone, is closed with 4404. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
+reader's process is gone, is closed with a code the page reads: 4410 when the reader (its process or its tmux window) is gone, 4404 for the other
+reader-window errors (no record, no window recorded, no tmux, an unreadable record), 4500 for a tmux failure. The page says 「終わっています」 only for 4410 and 1000
+(detached); any other end is shown as a failed attach with its reason. A refusing close frame is followed by shutting the sending side and reading what the page
+sent until it closes, since closing with that unread resets the connection and takes the frame with it. The `others` routes are in [PRs others asked you to review](#prs-others-asked-you-to-review);
 the sync runs on the connection's own thread, as the resident gives each connection one. `GET /api/work` is the work
 under way in every repository as one document (`board/view/work.rs`): it reads one carrier board per
 repository (the repository's own board, which lists its parent-task hubs' sessions and tasks too,

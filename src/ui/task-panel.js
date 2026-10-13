@@ -903,7 +903,7 @@ function disposeTermSlot(slot) {
     keepScreen({ sessionId, term });
     term.dispose();
   }
-  Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, reconnect: false });
+  Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, endReason: null, reconnect: false });
 }
 
 function termBarHtml(s, slot = panelTerm, actions = true) {

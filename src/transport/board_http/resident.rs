@@ -8,7 +8,7 @@ use crate::infra::clock::{now_secs, utc_stamp};
 use crate::infra::http::{self, Request};
 use crate::infra::ws;
 
-use super::assets::UI_HTML;
+use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{page_rings, refuse};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
@@ -109,6 +109,12 @@ pub(super) fn route_resident(
     }
     if matches!(Route::named(req), Ok(Some(Route::Page))) {
         return http::html(out, UI_HTML);
+    }
+    // A PR's reader has no board behind it, so its terminal loads xterm from the root, not from `/b/<slug>`.
+    if req.method == "GET"
+        && let Some((kind, body)) = vendor_asset(&req.path)
+    {
+        return http::respond(out, 200, kind, body.as_bytes());
     }
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/boards") => {

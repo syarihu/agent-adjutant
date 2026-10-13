@@ -388,7 +388,7 @@ function renderTaskReaderPanel(task) {
       : !rec ? '<div class="tp-ph-head">AI 下読みの worker はまだいません</div><div class="tp-muted">AI 下読みすると、ここにその worker のターミナルが開きます。</div>'
         // No records for the queue's place: the document has this record only, which would always be the first.
         : prMiddleHtml(rec, [], othersHubView(doc.hub, records), othersNowEst(), {
-          readAt: 'middle', asking: others.asking.has(rec.id), read, readError: !!prReadEntry(rec.id)?.error, ...(panelTerm.term ? { ended: panelTerm.ended } : {}),
+          readAt: 'middle', asking: others.asking.has(rec.id), read, readError: !!prReadEntry(rec.id)?.error, ...prTermEnd(panelTerm),
         });
   setPanelPart('ph', ph, text);
   const restHtml = pane === 'ai-drafts' && rec && OWN_HOOKS.drafts ? OWN_HOOKS.drafts.html(rec, read) : '';

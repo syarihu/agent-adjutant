@@ -26,6 +26,10 @@ const MAX_TERMINALS: usize = 8;
 /// applications.
 #[cfg(any(unix, test))]
 const CLOSE_NO_SESSION: u16 = 4404;
+/// The window the page was to show is gone (its process ended or its pane closed). Apart from
+/// 4404, which is "nothing to attach to", so that a page can say a worker has ended only when it has.
+#[cfg(any(unix, test))]
+const CLOSE_GONE: u16 = 4410;
 #[cfg(any(unix, test))]
 const CLOSE_TMUX_FAILED: u16 = 4500;
 
@@ -170,26 +174,27 @@ mod imp {
         stream: TcpStream,
         reader: BufReader<TcpStream>,
     ) -> std::io::Result<()> {
-        use crate::board::review::NoReaderWindow;
         serve_on(
             &Host::of_resident(resident),
-            || {
-                crate::board::review::reader_window(&resident.root, pr).map_err(|why| {
-                    let words = match why {
-                        NoReaderWindow::NoRecord => "no such pull request".to_string(),
-                        NoReaderWindow::NoReader => {
-                            "no reader window for this pull request".to_string()
-                        }
-                        NoReaderWindow::Gone => "the reader has ended".to_string(),
-                        NoReaderWindow::Unreadable(e) => e,
-                    };
-                    (CLOSE_NO_SESSION, words)
-                })
-            },
+            || crate::board::review::reader_window(&resident.root, pr).map_err(reader_close),
             req,
             stream,
             reader,
         )
+    }
+
+    /// The close code and words for a reader that has no window to attach to.
+    pub(super) fn reader_close(why: crate::board::review::NoReaderWindow) -> (u16, String) {
+        use crate::board::review::NoReaderWindow;
+        match why {
+            NoReaderWindow::NoRecord => (CLOSE_NO_SESSION, "no such pull request".to_string()),
+            NoReaderWindow::NoReader => (
+                CLOSE_NO_SESSION,
+                "no reader window for this pull request".to_string(),
+            ),
+            NoReaderWindow::Gone => (CLOSE_GONE, "the reader has ended".to_string()),
+            NoReaderWindow::Unreadable(e) => (CLOSE_NO_SESSION, e),
+        }
     }
 
     /// Accept the handshake, and relay the terminal of whatever `resolve` names. `resolve` runs
@@ -199,7 +204,7 @@ mod imp {
         resolve: impl FnOnce() -> Result<Target, (u16, String)>,
         req: &Request,
         mut stream: TcpStream,
-        reader: BufReader<TcpStream>,
+        mut reader: BufReader<TcpStream>,
     ) -> std::io::Result<()> {
         let accept = match ws::accept_key(&req.headers) {
             Ok(accept) => accept,
@@ -231,8 +236,28 @@ mod imp {
             Ok(terminal) => relay(terminal, wire, reader),
             Err((code, why)) => {
                 let _ = send(&wire, &ws::encode_close(code, &why));
+                refuse_gracefully(&wire, &mut reader);
                 Ok(())
             }
+        }
+    }
+
+    /// After a close frame that refuses the terminal: the page's first message (its size) may
+    /// still be on its way, and closing with it unread resets the connection, which can take
+    /// the close frame with it, so that the page sees the connection fail instead of why.
+    /// So the sending side is shut, and what the page sends is read until it closes in turn.
+    fn refuse_gracefully(wire: &Wire, reader: &mut BufReader<TcpStream>) {
+        let drained = {
+            let stream = wire.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            stream.set_read_timeout(Some(Duration::from_secs(1)))
+        };
+        if drained.is_err() {
+            return;
+        }
+        let mut buf = [0u8; 1024];
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < until && matches!(reader.read(&mut buf), Ok(n) if n > 0) {
         }
     }
 
@@ -294,7 +319,7 @@ mod imp {
     /// window's end, anything else is tmux failing.
     fn tmux_failure(stderr: String) -> (u16, String) {
         match terminal::is_gone_error(&stderr) {
-            true => (CLOSE_NO_SESSION, "the tmux window is gone".to_string()),
+            true => (CLOSE_GONE, "the tmux window is gone".to_string()),
             false => (CLOSE_TMUX_FAILED, stderr),
         }
     }
@@ -333,7 +358,7 @@ mod imp {
             crate::infra::shell::run_shell(&terminal::tmux_window_home_script(socket, &window))
                 .map_err(tmux_failure)?;
         let group = terminal::parse_window_home(&home)
-            .ok_or((CLOSE_NO_SESSION, "the tmux window is gone".to_string()))?;
+            .ok_or((CLOSE_GONE, "the tmux window is gone".to_string()))?;
 
         let _ = crate::infra::shell::run_shell(&terminal::board_sweep_script(socket));
         let name = format!(
@@ -567,6 +592,16 @@ mod tests {
     fn the_cap_and_the_close_codes_are_the_ones_the_page_reads() {
         assert_eq!(MAX_TERMINALS, 8);
         assert_eq!(CLOSE_NO_SESSION, 4404);
+        assert_eq!(CLOSE_GONE, 4410);
         assert_eq!(CLOSE_TMUX_FAILED, 4500);
+    }
+
+    #[test]
+    fn only_a_reader_that_is_gone_closes_as_gone() {
+        use crate::board::review::NoReaderWindow::*;
+        assert_eq!(reader_close(Gone).0, CLOSE_GONE);
+        for other in [NoRecord, NoReader, Unreadable("x".to_string())] {
+            assert_eq!(reader_close(other).0, CLOSE_NO_SESSION);
+        }
     }
 }

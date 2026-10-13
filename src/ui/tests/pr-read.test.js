@@ -133,6 +133,10 @@ test('the middle before a terminal: a note and one button, and 再接続 when th
   assert.ok(html.includes('まだ AI 下読みしていません') && html.includes('data-pr-ai'));
   const ended = prMiddleHtml(rec(), [rec()], hub, T0, { ended: 4404 });
   assert.ok(ended.includes('AI 下読みの worker は終わっています') && ended.includes('data-pr-reconnect'));
+  // An attach that failed is not an end: it says why, and still offers 再接続.
+  const failed = prMiddleHtml(rec(), [rec()], hub, T0, { failed: 'xterm.js を読み込めませんでした' });
+  assert.ok(failed.includes('AI 下読みの worker に接続できませんでした') && failed.includes('xterm.js を読み込めませんでした') && failed.includes('data-pr-reconnect'));
+  assert.ok(!failed.includes('終わっています'));
   const noWindow = prMiddleHtml(rec({ ai: { status: 'running', sha: null, launchedAt: '20261001T000000Z' } }), [], hub, T0);
   assert.ok(noWindow.includes('tmux のウィンドウが記録されていません'));
 });

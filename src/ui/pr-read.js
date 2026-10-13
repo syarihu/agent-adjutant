@@ -340,10 +340,11 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   // A PR that is out of review offers its two ways on until a reader is at work on it, in either mode. `opts.read` is the stored
   // read-through, which says whether a proposal is there already.
   // Also for a reader that has hung, and for a read-through that is stale or whose window cannot be opened.
-  const offers = ['none', 'failed', 'stale', 'hung'].includes(ai.kind) || opts.ended != null || (ai.kind === 'done' && !prReaderOpen(rec));
+  const offers = ['none', 'failed', 'stale', 'hung'].includes(ai.kind) || opts.ended != null || !!opts.failed || (ai.kind === 'done' && !prReaderOpen(rec));
   if (oor && OTHERS_LIVE.includes(rec?.state) && offers) {
     const why = ai.kind !== 'none' && ai.text ? `<div class="tp-line">${esc(ai.text)}</div>` : '';
-    const gone = opts.ended != null ? '<div class="tp-muted">worker は終わっています。</div>' : '';
+    const gone = opts.ended != null ? '<div class="tp-muted">worker は終わっています。</div>'
+      : opts.failed ? `<div class="tp-muted">${esc(`worker に接続できませんでした: ${opts.failed}`)}</div>` : '';
     const closed = rec?.ai?.readerClosedAt ? '<div class="tp-line">AI 下読みの worker を閉じました</div>' : '';
     return `<div class="tp-ph-head">レビュー対象外</div>${prOorFilesHtml(oor)}${why}${closed}${gone}`
       + '<div class="tp-muted">worker はファイルの構成と hunk の見出しだけを読んで、この PR の分割案を下書きにします。</div>'
@@ -355,8 +356,10 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
       ? `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, opts.asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(opts.asking ? '依頼中…' : '下読みし直す')}</span></button>` : '';
     return `<div class="tp-ph-head">AI 下読みの worker を閉じました</div><div class="tp-muted">${esc(at.kept)}</div>` + again;
   }
-  if (opts.ended != null) {
-    return `<div class="tp-ph-head">AI 下読みの worker は終わっています</div><div class="tp-muted">${esc(at.keptRead)}</div>`
+  // `opts.ended` is a worker that really has ended; `opts.failed` is why the attach to a running one failed, in words.
+  if (opts.ended != null || opts.failed) {
+    const head = opts.ended != null ? 'AI 下読みの worker は終わっています' : 'AI 下読みの worker に接続できませんでした';
+    return `<div class="tp-ph-head">${esc(head)}</div>${opts.failed ? `<div class="tp-muted">${esc(opts.failed)}</div>` : ''}<div class="tp-muted">${esc(at.keptRead)}</div>`
       + '<button type="button" class="btn-m3-tonal" data-pr-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>'
       + prAiButtonHtml(ai, hubView, opts.asking);
   }
