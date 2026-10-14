@@ -356,7 +356,8 @@ function workBoxRepoGroups(boxId, rows, place, chips = []) {
 
 /* A row's place among the others in its group: what waits on the person first, the longest waiting first. */
 function workRowOrder(a, b) {
-  const wait = r => r.s.waiting ? stampSecs(r.s.waiting.openedAt) || 0 : r.s.agentSession?.updatedAt || 0;
+  // A worker that went on past its gate waits on nothing of the person's first: its own change is the clock.
+  const wait = r => r.st === 'waiting' && r.s.waiting ? stampSecs(r.s.waiting.openedAt) || 0 : r.s.agentSession?.updatedAt || 0;
   return workStateOrder(a.st) - workStateOrder(b.st)
     || (WORKS_ON_PERSON(a) ? wait(a) - wait(b) : 0)
     || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
@@ -703,16 +704,18 @@ function workRowHtml(r, cell = '', band = false, named = false) {
     subs.length ? `<span class="sub">サブエージェント ${subs.length}</span>` : '',
     diff,
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
-  const asks = !s.waiting && agentStateOf(s) === 'permission' && a.request ? `<span class="wk-line ask">${esc(requestText(s))}</span>` : '';
+  // The gate is first unless the worker went on past it; its line is drawn either way, for it can still be answered.
+  const first = gateFirst(s, data);
+  const asks = !first && agentStateOf(s) === 'permission' && a.request ? `<span class="wk-line ask">${esc(requestText(s))}</span>` : '';
   // In 新着 a row says what the agent last said when it asks for nothing, and a hub's row does wherever it is. A parked row says so wherever it is listed.
-  const said = (band || r.isHub) && !asks && !s.waiting && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
+  const said = (band || r.isHub) && !asks && !first && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
   const parked = !s.waiting ? workParkedHtml(r) : '';
   const doing = st === 'working' && a.activity ? `<span class="wk-line">${esc(a.activity)}</span>` : '';
   const tree = st === 'working' && subs.length
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
-  const gate = s.waiting ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(s.waiting.kind)[0])} · ${esc(workGateWho(task))}</span>` : '';
+  const gate = s.waiting ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(s.waiting.kind)[0])} · ${esc(workGateWho(task, !first))}</span>` : '';
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
     ${workGlyphHtml(st)}<span class="wk-main">
       ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
@@ -744,7 +747,7 @@ function workParkedHtml(r) {
 }
 
 /* The words after a gate's kind on a row: whose turn it is, or that it is parked (the gate stays open and answerable). */
-const workGateWho = task => parkOf(task) ? `置いている — ${parkLabel(parkOf(task))}` : 'あなたの判定待ち';
+const workGateWho = (task, passed = false) => parkOf(task) ? `置いている — ${parkLabel(parkOf(task))}` : passed ? 'あなたの判定待ち（答えないまま進行中）' : 'あなたの判定待ち';
 
 /* A row for something that waits on the person and has no session row of its own: a task whose PR is theirs, or whose gate
    opened with nothing running, or a session the list does not show. */

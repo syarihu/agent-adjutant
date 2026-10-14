@@ -508,7 +508,7 @@ function panelHeadHtml(task) {
   const colObj = COLUMNS.find(c => c.id === columnOf(task));
   const park = parkOf(task);
   const pill = park ? `<span class="m3-pill pill-neutral">置いている — ${esc(parkLabel(park))}</span>`
-    : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています</span>`
+    : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています${taskPassedGate(task) ? '（答えないまま進行中）' : ''}</span>`
     : stuck ? `<span class="m3-pill pill-err">${esc(stuck)}</span>`
     : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
   const b = selectedBoard();
@@ -551,7 +551,7 @@ function panelTabsHtml(task, gate, s, pane, all = []) {
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
   // The tab shows a word, so five tabs fit; the reason is its tooltip.
   // The work view has the terminal in the middle, beside the panel.
-  const term = view === 'work' ? '' : panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : s?.waiting ? '<span class="tp-wait">入力待ち</span>'
+  const term = view === 'work' ? '' : panelTab(pane, 'term', 'ターミナル', !usable ? `<span class="tp-tab-hint">${hasSession(s) ? '端末なし' : hint}</span>` : gateFirst(s) ? '<span class="tp-wait">入力待ち</span>'
     : s && sessionState(s) === 'permission' ? `<span class="tp-wait">${permissionLabel(s)}</span>` : '', !usable && hint);
   if (!task) return panelTab(pane, 'detail', '詳細', gate ? '<span class="tp-dot" title="あなたの判断待ちがあります"></span>' : '', '') + term;
   // The dot is on the tab the open gate is judged in; the counts and 新着 come from the gates.
@@ -592,7 +592,7 @@ function panelGateHtml(task, gate, here = false) {
     <div class="m3-card-attention-box">
       <div class="tp-gate-head">
         <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
-        <span>【${esc(label)}】あなたの判断待ち</span>
+        <span>【${esc(label)}】あなたの判断待ち${taskPassedGate(task) ? '（答えないまま進行中）' : ''}</span>
         <span class="tp-gate-wait">${esc(minutesLabel(waitingMinutes(task)))}待ち</span>
       </div>
       ${parkBannerHtml(task)}

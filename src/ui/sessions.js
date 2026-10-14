@@ -20,6 +20,33 @@ const isQuestion = s => {
   // Bare when the tool call carried no question text.
   return request.startsWith(QUESTION_PREFIX) || request === QUESTION_PREFIX.trim();
 };
+/* Seconds a status change must follow a gate's opening to count as the worker going on past it: the PostToolUse of
+   `adj gate open` itself, after a permission prompt or a hub wake-up, lands a few seconds after, and a person rarely
+   types an answer within half a minute. */
+const GATE_PASSED_SLACK_SECS = 30;
+/* Whether a worker went on past the gate opened at `openedSecs` without an answer: the page reads it as working, waiting
+   on a permission, or failed (so a `running` row whose pane went quiet is not), and that status began after the gate
+   opened. False whenever anything is missing or unreadable, so the gate comes first; false for a question asked in the
+   terminal (the gate's own question, asked there too); false for a hub, whose gates are its questions for the person. */
+function passedGate(s, openedSecs, data = state) {
+  if (!s || s.kind === 'hub' || !s.present) return false;
+  const a = s.agentSession;
+  if (!a || a.error) return false;
+  const st = ledgerState(s, data);
+  if (!['working', 'permission', 'failed'].includes(st)) return false;
+  if (st === 'permission' && isQuestion(s)) return false;
+  return Number.isFinite(a.updatedAt) && Number.isFinite(openedSecs) && a.updatedAt > openedSecs + GATE_PASSED_SLACK_SECS;
+}
+/* The one rule for several gates: the worker has to be past the newest, and one without a readable time (or no gate at
+   all) leaves the gate first. */
+const passedGates = (s, openedSecsList, data = state) =>
+  openedSecsList.length > 0 && openedSecsList.every(Number.isFinite) && passedGate(s, Math.max(...openedSecsList), data);
+/* Whether the session's gate is what it waits on first. With more than one gate only the oldest time is known,
+   so the gate stays first. */
+const gateFirst = (s, data = state) => !!s?.waiting && !(s.waiting.count <= 1 && passedGates(s, [stampSecs(s.waiting.openedAt)], data));
+/* Whether the task's worker went on past all the task's open gates that wait on a person (not a record, not one the hub answers) (see `passedGates`); false with no open gate. */
+const taskPassedGate = (task, data = state) => !!task && passedGates(sessionOfTask(task),
+  (data.gates || []).filter(g => g.wait !== false && !g.answeredByHub && g.task === task.id && (!task._slug || g._slug === task._slug)).map(g => stampSecs(g.openedAt)), data);
 /* What the agent asks, in a sentence: a question, or the permission for a tool. Plain text. */
 const requestText = s => {
   const request = s?.agentSession?.request || '';
@@ -117,12 +144,13 @@ function agentText(s, data = state) {
    is done reads as ended, as its card does. */
 function sessionState(s, data = state) {
   if (data === state && restartingNow(s)) return 'restarting';
-  if (s.waiting) return 'waiting';
+  if (gateFirst(s, data)) return 'waiting';
   return restingState(s, data);
 }
 
 /* `sessionState` without the gate: whether the session is running, stopped or finished, which a
-   session that waits on a gate is too. The server sets `waiting` for one that is not running. */
+   session that waits on a gate is too. A worker can go on past a gate (answered in its terminal); it is then read by
+   its own state, see `gateFirst`. */
 function restingState(s, data = state) {
   if (s.kind === 'hub') {
     if (s.present) return ledgerState(s, data);
@@ -253,7 +281,7 @@ function sessionTip(s, st, data = state) {
    wrote, else what the agent's hooks say (which is all an iTerm2 row has), else when it last
    wrote. The sub-agents are counted whichever of them it was. */
 function sessionLastText(s, data) {
-  const asks = !s.waiting && agentStateOf(s) === 'permission' && s.agentSession.request;
+  const asks = !gateFirst(s, data) && agentStateOf(s) === 'permission' && s.agentSession.request;
   const when = s.present ? lastOutputText(s, data) : null;
   const n = s.present ? s.agentSession?.subagents?.length || 0 : 0;
   const counted = n > 0 ? `サブエージェント ${n}` : '';

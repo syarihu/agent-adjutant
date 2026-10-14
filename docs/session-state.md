@@ -489,6 +489,11 @@ is listed so the ledger carries what it will need.
 - **Gates and cards.** A worker in `waiting` on a permission prompt is waiting on a person even with
   no gate open, and the card says so (landed, #506). Not yet: a worker whose row went `done` and stayed there with no phase
   change is a better "stuck" signal than the phase age alone.
+- **A worker that went on past an open gate** (UI only; `passedGate` in `src/ui/sessions.js`). When the ledger says
+  `running`, `waiting` on a permission or `failed` with a status that began after the gate opened (not a terminal
+  question, not a hub), the board's rows, cards and panels put the worker's own state first and keep the gate as a
+  second mark worded 「…（答えないまま進行中）」. The gate is never closed automatically and stays answerable; a
+  worker at rest (`idle`/`done`) keeps the gate first.
 - **The hub's line on the board** (landed, #506). [#497](https://github.com/syarihu/agent-adjutant/issues/497)
   puts one line for the hub above the board's columns, with its last tmux line and its inbox. The
   hub's row adds whether it is running, idle or waiting on a question, and how many sub-agents it

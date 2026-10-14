@@ -6,12 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const ctx = vm.createContext({});
-for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js']) {
+const ctx = vm.createContext({ state: {}, BASE: '' });
+for (const file of ['util.js', 'sessions.js', 'my-work-seen.js', 'my-work-away.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { workEntries, workActedAt, workAwaySince, workAwayEvents, workAwayCount, workAwayText, workLastAction, workNowText,
+const { workEntries, workActedAt, workAwaySince, workAwayEvents, workAwayCount, workAwayText, workLastAction, workNowText, workNowOf,
   workAwayModel, workParentAway } = ctx;
 // `const`s of a script are in its context's scope, not on its global object.
 const { secsStamp, awaySecs } = vm.runInContext('({ secsStamp, awaySecs })', ctx);
@@ -192,6 +192,40 @@ test('now says the first thing the task waits on', () => {
   assert.equal(now(session('w1', { phase: 'pr', phaseAt: NOW, agentSession: agent('running', T0) }), task('1', { prTurn: 'other-reviewer' })), 'worker が PR 中（たった今から）');
   assert.equal(now(session('w1', { present: false }), task('1', { prTurn: 'other-reviewer' })), 'PR は他の人のレビュー待ち');
   assert.equal(now(session('w1', { present: false })), 'worker はいません');
+});
+
+test('now says the worker first once it went on past an open gate, and the gate second', () => {
+  const now = (s, t = task('1')) => workNowText(entryOf(s, t), NOW);
+  const also = '設計レビューがあなたの判定待ち（答えないまま進行中）';
+  const past = { waiting: waiting('g1', T0) };
+  assert.equal(now(session('w1', { ...past, phase: 'implement', agentSession: agent('running', T0 + 60) })), `worker が実装中 · ${also}`);
+  assert.equal(now(session('w1', { ...past, agentSession: agent('waiting', T0 + 60, { request: 'Bash: make' }) })), `worker が許可を待っている — Bash: make · ${also}`);
+  assert.equal(now(session('w1', { ...past, agentSession: agent('failed', T0 + 60) })), `worker がエラーで止まっている · ${also}`);
+  assert.equal(now(session('w1', { waiting: waiting('g1', T0, 'question'), phase: 'implement', agentSession: agent('running', T0 + 60) })), 'worker が実装中 · 質問があなたの答え待ち（答えないまま進行中）');
+  // The gate stays first for a worker at rest, for a question asked in the terminal, and for anything unreadable.
+  assert.equal(now(session('w1', { ...past, agentSession: agent('done', T0 + 60) })), '設計レビューがあなたの判定待ち');
+  assert.equal(now(session('w1', { ...past, agentSession: agent('waiting', T0 + 60, { request: 'AskUserQuestion: どちら？' }) })), '設計レビューがあなたの判定待ち');
+  assert.equal(now(session('w1', { ...past, phase: 'implement', agentSession: { status: 'running' } })), '設計レビューがあなたの判定待ち');
+  assert.equal(now(session('w1', { ...past, phase: 'implement', agentSession: agent('running', T0 + 25) })), '設計レビューがあなたの判定待ち');
+  // A `running` row whose pane went quiet is not at work: the gate stays first.
+  assert.equal(now(session('w1', { ...past, phase: 'implement', lastActivityAt: NOW - 600, agentSession: agent('running', T0 + 60) })), '設計レビューがあなたの判定待ち');
+  assert.equal(workNowOf(entryOf(session('w1', { ...past, phase: 'implement', lastActivityAt: NOW - 600, agentSession: agent('running', T0 + 60) }), task('1')), NOW).kind, 'gate');
+  // Parked stays first.
+  const park = { reason: 'review', since: stamp(NOW - 3 * 3600) };
+  assert.equal(now(session('w1', { ...past, phase: 'implement', agentSession: agent('running', T0 + 60) }), task('1', { parked: park })), '置いている — エンジニアのレビュー待ち（3時間前から）');
+  // The session row says it has several gates: the gate stays first, as on the row.
+  const many = entryOf(session('w1', { waiting: { ...waiting('g1', T0), count: 2 }, phase: 'implement', agentSession: agent('running', T0 + 60) }), task('1'));
+  assert.equal(workNowOf(many, NOW).kind, 'gate');
+  // Two gates: the newer one is what the worker has to be past.
+  const two = entryOf(session('w1', { ...past, phase: 'implement', agentSession: agent('running', T0 + 60) }), task('1'));
+  two.gates.push({ kind: 'gate', gate: 'diff', title: '', since: T0 + 55, key: 'k2' });
+  assert.equal(workNowText(two, NOW), '設計レビューがあなたの判定待ち');
+});
+
+test('a parent counts a child that went on past its gate by what the child does', () => {
+  const e = entryOf(session('wa', { waiting: waiting('ga', T0), phase: 'implement', agentSession: agent('running', T0 + 60) }), task('a'));
+  const m = workParentAway([{ title: 'A', entry: e, mark: { left: T0 - 10 } }], NOW);
+  assert.equal(m.now, '作業中 1');
 });
 
 test('a parent merges its children, each by its own mark, with the child titles', () => {

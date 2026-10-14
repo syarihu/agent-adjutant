@@ -23,11 +23,11 @@ const ctx = vm.createContext({
   boards: [],
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
-  sessionState: s => s.waiting ? 'waiting' : s.state, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:',
+  sessionState: s => s.waiting && !s.went ? 'waiting' : s.state, gateFirst: s => !!s.waiting && !s.went, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:',
   workRepos: () => [], esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
   // What a row's own markup reads from the page's other files.
   sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, agentStateOf: () => 'working',
-  requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: () => 'who', WORK_SUBAGENTS_SHOWN: 4,
+  requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: (t, passed) => passed ? 'who-passed' : 'who', WORK_SUBAGENTS_SHOWN: 4,
 });
 vm.runInContext([
   cutActions(/^const hubWake = [^\n]*;/m),
@@ -690,6 +690,13 @@ test('a hub row carries what a session row does, with the inbox counts in place 
   assert.ok(rowPart.includes('<span class="wk-tag">hub</span>'));
   const withBranch = itemHtml(hubItem({}, { s: { present: true, branch: 'feat/x', agentSession: {} } }), 'tree');
   assert.ok(!withBranch.includes('feat/x'));
+});
+
+test('a row whose worker went on past its gate keeps the gate line, marked, and is not in the waiting state', () => {
+  const row = went => itemHtml({ ...hubItem(), isHub: false, id: 'k', key: 'k', st: went ? 'working' : 'waiting',
+    s: { present: true, agent: 'claude', waiting: { kind: 'plan' }, went, agentSession: {} } }, 'tree');
+  assert.ok(row(true).includes('who-passed') && row(true).includes('<g working>') && !row(true).includes('<g waiting>'));
+  assert.ok(row(false).includes('who') && !row(false).includes('who-passed') && row(false).includes('<g waiting>'));
 });
 
 test('a hub row has no inbox spans for empty counts, and names a parent-task hub by its key only when told to', () => {

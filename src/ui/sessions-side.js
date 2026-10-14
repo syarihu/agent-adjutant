@@ -220,7 +220,7 @@ function sessGateHtml(s) {
   return `<div class="m3-card-attention-box">
       <div class="tp-gate-head">
         <span class="material-symbols-outlined" style="font-size:16px;">pending_actions</span>
-        <span>【${esc(kindOf(w.kind)[0])}】確認待ち</span>
+        <span>【${esc(kindOf(w.kind)[0])}】確認待ち${gateFirst(s) ? '' : '（答えないまま進行中）'}</span>
         ${mins == null ? '' : `<span class="tp-gate-wait">${esc(minutesLabel(mins))}待ち</span>`}
       </div>
       ${w.title ? `<div style="font-size:12.5px;">${esc(w.title)}</div>` : ''}
