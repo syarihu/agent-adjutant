@@ -419,11 +419,11 @@ test('the dialog of a task fills the width: a grid of cards one to a row, an ind
   assert.match(grid, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;/);
   assert.doesNotMatch(grid, /auto-fill|440px/);
   assert.equal(rules('.cd-wide'), '');
-  // An answered gate is one block: a bar and a tinted heading, its parts in a grid of their own, wider apart than the panels.
+  // An answered gate is one block: a bar and a tinted heading, its parts one to a row, wider apart than the panels.
   const parts = rules('.cd-gate-parts');
-  assert.match(parts, /440px/);
-  assert.match(parts, /calc\(\(100% - 16px\) \/ 2\)/);
-  assert.match(rules('.cd-gate-parts > .cd-wide'), /grid-column:\s*1\s*\/\s*-1/);
+  assert.match(parts, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;/);
+  assert.doesNotMatch(parts, /auto-fill|440px/);
+  assert.equal(rules('.cd-gate-parts > .cd-wide'), '');
   const gap = sel => Number(/\bgap:\s*(\d+)px/.exec(rules(sel))?.[1]);
   assert.ok(gap('[data-cd-group="answered"] > .cd-grid') > gap('.cd-gate-parts'));
   assert.match(rules('.cd-gate'), /border-left:\s*4px solid var\(--md-sys-color-primary\)/);

@@ -55,7 +55,7 @@
 /* In a card it sits on the top edge, out of the flow, beside the card's own buttons. */
 .cd-card > .cd-upd { position: absolute; top: -9px; left: 12px; z-index: 1; }
 
-/* The cards: one to a row, the content's full width, in order. Two columns live only inside a card (a gate's parts). */
+/* The cards: one to a row, the content's full width, in order. Two columns live only inside a part (a question's options). */
 .cd-group { display: flex; flex-direction: column; gap: 12px; }
 .cd-group-title { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
 .cd-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
@@ -73,11 +73,10 @@
 .cd-gate-why.cd-bad { color: var(--md-sys-color-error); }
 .cd-gate-head .cd-badge { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .cd-gate-head .cd-badge.cd-bad { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
-/* The parts of a gate: two to a row when each can keep 440px, else one. */
-.cd-gate-parts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(440px, calc((100% - 16px) / 2))), 1fr)); gap: 16px; align-items: start; }
+/* The parts of a gate: one to a row, the gate's full width, in order. */
+.cd-gate-parts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 .cd-part { min-width: 0; }
 .cd-part > * { margin: 0; }
-.cd-gate-parts > .cd-wide { grid-column: 1 / -1; }
 .cd-group:focus-visible, .cd-card:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 4px; border-radius: 8px; }
 .cd-card.cd-updated { position: relative; outline: 2px solid var(--md-sys-color-primary); outline-offset: 6px; border-radius: 8px; }
 /* The mark must not hide that the card has focus. */
@@ -88,7 +87,7 @@
   .cd-flash { animation: none; outline: 3px solid var(--md-sys-color-primary); outline-offset: 4px; }
 }
 /* The answer column: one dock for the gate that is shown, a switch between the waiting gates over it. Below 1160px
-   (the index, the column, a 440px gate part with its padding, and the dialog's margin) it is a band under the content. */
+   (the index, the column, room for about 440px of content with its padding, and the dialog's margin) it is a band under the content. */
 .card-dialog-dock { grid-area: dock; width: 380px; box-sizing: border-box; overflow: auto; padding: 16px; border-left: 1px solid var(--md-sys-color-outline-variant); display: flex; flex-direction: column; gap: 12px; }
 .card-dialog-dock[hidden], .cd-dock[hidden] { display: none; }
 .cd-dock { display: flex; flex-direction: column; gap: 8px; }
