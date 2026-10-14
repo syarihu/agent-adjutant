@@ -43,7 +43,8 @@ pub fn issue_ref_of(url: &str) -> Option<IssueRef> {
     })
 }
 
-/// The issue a sub-issue hangs under, as the tracker says.
+/// The issue a sub-issue hangs under, as the tracker says. Also what an issue read on its own
+/// (`read_issue_summary`) comes to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackerParent {
     pub url: String,
@@ -66,18 +67,27 @@ pub struct IssueParentsRead {
     pub failed: Option<String>,
 }
 
-/// The query for `n` issues: the values travel as variables (`o0`, `r0`, `p0`, ...), so nothing
-/// from a record is ever spliced into the text.
+/// What is asked of an issue, whether it is the parent of the one named or the one named.
+const ISSUE_FIELDS: &str = "url number title state subIssuesSummary{total completed}";
+
+/// The query for the parents of `n` issues: the values travel as variables (`o0`, `r0`, `p0`,
+/// ...), so nothing from a record is ever spliced into the text.
 pub(super) fn parent_query(n: usize) -> String {
+    query_of(n, &format!("parent{{{ISSUE_FIELDS}}}"))
+}
+
+/// The query for `n` issues themselves, with the same variables as `parent_query`.
+pub(super) fn issue_query(n: usize) -> String {
+    query_of(n, ISSUE_FIELDS)
+}
+
+fn query_of(n: usize, selection: &str) -> String {
     let variables: Vec<String> = (0..n)
         .map(|i| format!("$o{i}:String!,$r{i}:String!,$p{i}:Int!"))
         .collect();
     let aliases: Vec<String> = (0..n)
         .map(|i| {
-            format!(
-                "i{i}:repository(owner:$o{i},name:$r{i}){{issue(number:$p{i}){{\
-                 parent{{url number title state subIssuesSummary{{total completed}}}}}}}}"
-            )
+            format!("i{i}:repository(owner:$o{i},name:$r{i}){{issue(number:$p{i}){{{selection}}}}}")
         })
         .collect();
     format!("query({}){{{}}}", variables.join(","), aliases.join(" "))
@@ -97,7 +107,7 @@ pub fn read_issue_parents(refs: &[IssueRef], deadline: Instant) -> IssueParentsR
         let at: Vec<usize> = (0..refs.len()).filter(|&i| refs[i].host == host).collect();
         for chunk in at.chunks(PER_QUERY) {
             let asked: Vec<&IssueRef> = chunk.iter().map(|&i| &refs[i]).collect();
-            let (read, why) = read_chunk(host, &asked, deadline);
+            let (read, why) = read_chunk(host, &asked, &parent_query(asked.len()), deadline);
             failed = failed.or(why);
             for (&i, answer) in chunk.iter().zip(read) {
                 answers[i] = Some(answer);
@@ -115,8 +125,21 @@ pub fn read_issue_parents(refs: &[IssueRef], deadline: Instant) -> IssueParentsR
 
 type Answers = (Vec<Result<Option<TrackerParent>, String>>, Option<String>);
 
-fn read_chunk(host: &str, refs: &[&IssueRef], deadline: Instant) -> Answers {
-    let query = format!("query={}", parent_query(refs.len()));
+fn read_chunk(host: &str, refs: &[&IssueRef], query: &str, deadline: Instant) -> Answers {
+    match graphql(host, refs, query, deadline) {
+        Ok(run) => answers_of(&run.stdout, &run.stderr, refs.len()),
+        Err(why) => failed_all(refs.len(), why),
+    }
+}
+
+/// `gh api graphql` for `query`, whose variables name each of `refs`.
+fn graphql(
+    host: &str,
+    refs: &[&IssueRef],
+    query: &str,
+    deadline: Instant,
+) -> Result<crate::infra::gh::GhRun, String> {
+    let query = format!("query={query}");
     let mut owned: Vec<String> = Vec::new();
     for (i, r) in refs.iter().enumerate() {
         owned.push(format!("o{i}={}", r.owner));
@@ -128,10 +151,7 @@ fn read_chunk(host: &str, refs: &[&IssueRef], deadline: Instant) -> Answers {
         args.extend(["-f", &owned[i * 3], "-f", &owned[i * 3 + 1]]);
         args.extend(["-F", &owned[i * 3 + 2]]);
     }
-    match run(None, &args, deadline) {
-        Ok(run) => answers_of(&run.stdout, &run.stderr, refs.len()),
-        Err(why) => failed_all(refs.len(), why),
-    }
+    run(None, &args, deadline)
 }
 
 fn failed_all(n: usize, why: String) -> Answers {
@@ -199,32 +219,102 @@ fn parse_parents(value: &Value, n: usize) -> Vec<Result<Option<TrackerParent>, S
             let Some(parent) = issue.get("parent").filter(|p| p.is_object()) else {
                 return Ok(None);
             };
-            let text = |key: &str| parent.get(key).and_then(Value::as_str);
-            let count = |key: &str| {
-                parent
-                    .pointer(&format!("/subIssuesSummary/{key}"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as u32
-            };
-            let (Some(url), Some(number)) =
-                (text("url"), parent.get("number").and_then(Value::as_u64))
-            else {
-                return Err("GitHub's answer names a parent without its URL".to_string());
-            };
-            Ok(Some(TrackerParent {
-                url: url.to_string(),
-                number,
-                title: text("title")
-                    .unwrap_or_default()
-                    .chars()
-                    .take(super::ISSUE_TITLE_CAP)
-                    .collect(),
-                open: text("state").is_none_or(|s| s.eq_ignore_ascii_case("open")),
-                total: count("total"),
-                completed: count("completed"),
-            }))
+            tracker_issue_of(parent).map(Some)
         })
         .collect()
+}
+
+/// An issue as GitHub's answer holds it, whether it came as a parent or on its own.
+fn tracker_issue_of(node: &Value) -> Result<TrackerParent, String> {
+    let text = |key: &str| node.get(key).and_then(Value::as_str);
+    let count = |key: &str| {
+        node.pointer(&format!("/subIssuesSummary/{key}"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32
+    };
+    let (Some(url), Some(number)) = (text("url"), node.get("number").and_then(Value::as_u64))
+    else {
+        return Err("GitHub's answer names an issue without its URL".to_string());
+    };
+    Ok(TrackerParent {
+        url: url.to_string(),
+        number,
+        title: text("title")
+            .unwrap_or_default()
+            .chars()
+            .take(super::ISSUE_TITLE_CAP)
+            .collect(),
+        open: text("state").is_none_or(|s| s.eq_ignore_ascii_case("open")),
+        total: count("total"),
+        completed: count("completed"),
+    })
+}
+
+/// What reading one issue on its own came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueSummaryRead {
+    Found(TrackerParent),
+    /// GitHub says there is no such issue (or none this login can see). Asking again will not
+    /// change that, as against `Failed`.
+    NotFound,
+    /// `gh` or GitHub could not be asked, or its answer was not an issue.
+    Failed(String),
+}
+
+/// Read one issue: its title and its sub-issue counts.
+pub fn read_issue_summary(issue: &IssueRef, deadline: Instant) -> IssueSummaryRead {
+    match graphql(&issue.host, &[issue], &issue_query(1), deadline) {
+        Ok(run) => summary_of(&run.stdout, &run.stderr),
+        Err(why) => IssueSummaryRead::Failed(why),
+    }
+}
+
+/// What `gh api graphql` printed for `issue_query(1)`, read as one issue. Whatever the exit
+/// status was is read, as in `answers_of`; an issue is told gone by the type of the error that
+/// names its alias, never by its message.
+pub(super) fn summary_of(stdout: &str, stderr: &str) -> IssueSummaryRead {
+    let value = match serde_json::from_str::<Value>(stdout) {
+        Ok(value) if value.get("data").is_some_and(Value::is_object) => value,
+        // Nothing was looked up: said as `answers_of` says it.
+        _ => {
+            let (mut answers, _) = answers_of(stdout, stderr, 1);
+            return IssueSummaryRead::Failed(
+                answers
+                    .pop()
+                    .and_then(Result::err)
+                    .unwrap_or_else(|| "GitHub answered without data".to_string()),
+            );
+        }
+    };
+    if let Some(why) = unread_error(&value) {
+        return IssueSummaryRead::Failed(why);
+    }
+    if let Some(issue) = value.pointer("/data/i0/issue").filter(|i| i.is_object()) {
+        return match tracker_issue_of(issue) {
+            Ok(found) => IssueSummaryRead::Found(found),
+            Err(why) => IssueSummaryRead::Failed(why),
+        };
+    }
+    let own = value
+        .get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| {
+            errors
+                .iter()
+                .find(|e| e.pointer("/path/0").and_then(Value::as_str) == Some("i0"))
+        });
+    match own {
+        Some(e) if e.get("type").and_then(Value::as_str) == Some("NOT_FOUND") => {
+            IssueSummaryRead::NotFound
+        }
+        Some(e) => IssueSummaryRead::Failed(
+            e.get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("GitHub reported an error")
+                .to_string(),
+        ),
+        None => IssueSummaryRead::Failed("GitHub's answer holds no issue".to_string()),
+    }
 }
 
 #[cfg(test)]

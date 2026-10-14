@@ -71,6 +71,20 @@ pub struct ParentGroup {
     /// The slug of the hub that runs the children: a parent-task hub among the children's when
     /// there is one, else the repository's own. Which terminal the page opens for the parent.
     pub hub: String,
+    /// The slug of the parent-task hub whose own read of the parent issue gave this parent its
+    /// title (and its count, when the tracker gave none): the hub the page puts the title's state
+    /// and its 「いま読む」 button beside. Absent when no hub is for this issue.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_hub: Option<String>,
+}
+
+/// What a parent-task hub's own read of its parent issue holds.
+pub(super) struct HubParent {
+    /// The issue's key as `parent_key` writes it, which is what groups are keyed by.
+    pub key: String,
+    pub slug: String,
+    pub title: Option<String>,
+    pub total: Option<u32>,
 }
 
 /// How far a child has got, for the one bar a parent draws with a segment per child.
@@ -126,6 +140,8 @@ pub(super) struct Inputs<'a> {
     /// The slugs of the parent-task hubs of the repository, which a parent's children may be
     /// run by.
     pub parent_hubs: &'a [String],
+    /// The parent-task hubs that have an issue, by that issue's key.
+    pub hub_parents: &'a [HubParent],
     /// What the tracker last said the issue at a URL has for a parent.
     pub tracker: &'a dyn Fn(&str) -> Option<TrackerParent>,
 }
@@ -353,8 +369,11 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     let merged = acc.kids.iter().filter(|k| k.merged).count();
     // Never fewer than the children listed: a child only the record knows is not among the
     // tracker's count, and "3 / 2" would read as an error.
+    // The hub's own read counts only when the tracker was never asked about a child.
+    let from_hub = inputs.hub_parents.iter().find(|h| h.key == acc.parent.key);
     let total = acc
         .tracker_total
+        .or(from_hub.and_then(|h| h.total))
         .map_or(acc.kids.len(), |total| (total as usize).max(acc.kids.len()));
     // A parent-task hub that runs one of the children runs the parent; otherwise the children
     // are the repository's own.
@@ -369,7 +388,7 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
         key: acc.parent.key,
         url: acc.parent.url,
         number: acc.parent.number,
-        title: acc.parent.title,
+        title: acc.parent.title.or(from_hub.and_then(|h| h.title.clone())),
         children: order
             .iter()
             .map(|&i| ParentChild {
@@ -389,6 +408,7 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
         total,
         stacked: on.iter().any(Option::is_some),
         hub,
+        title_hub: from_hub.map(|h| h.slug.clone()),
     }
 }
 

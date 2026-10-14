@@ -118,3 +118,69 @@ fn a_null_parent_with_no_error_is_no_parent() {
     assert_eq!(answers[0], Ok(None));
     assert_eq!(failed, None);
 }
+
+#[test]
+fn the_query_for_an_issue_itself_asks_for_its_own_fields_by_the_same_variables() {
+    let query = issue_query(1);
+    assert!(query.contains("$o0:String!,$r0:String!,$p0:Int!"));
+    assert!(query.contains(
+        "i0:repository(owner:$o0,name:$r0){issue(number:$p0){url number title state subIssuesSummary{total completed}}}"
+    ));
+    // It is the issue that is asked for, not its parent.
+    assert!(!query.contains("parent{"));
+}
+
+#[test]
+fn an_issue_read_on_its_own_is_found_with_its_counts() {
+    let stdout = format!(
+        r#"{{"data":{{"i0":{{"issue":{}}}}}}}"#,
+        parent_json(686, "OPEN", 6, 2)
+    );
+    let IssueSummaryRead::Found(found) = summary_of(&stdout, "") else {
+        panic!("not found");
+    };
+    assert_eq!((found.number, found.title.as_str()), (686, "The parent"));
+    assert_eq!((found.total, found.completed), (6, 2));
+}
+
+#[test]
+fn an_issue_that_is_not_there_is_told_by_the_error_s_type_not_its_message() {
+    let said = |kind: &str, message: &str| {
+        format!(
+            r#"{{"data":{{"i0":{{"issue":null}}}},"errors":[{{"type":"{kind}","path":["i0","issue"],"message":"{message}"}}]}}"#
+        )
+    };
+    assert_eq!(
+        summary_of(&said("NOT_FOUND", "anything at all"), ""),
+        IssueSummaryRead::NotFound
+    );
+    // Another error under the alias is not "no such issue", whatever it says.
+    assert_eq!(
+        summary_of(&said("FORBIDDEN", "Could not resolve to an issue"), ""),
+        IssueSummaryRead::Failed("Could not resolve to an issue".to_string())
+    );
+}
+
+#[test]
+fn an_issue_read_that_came_to_nothing_usable_failed() {
+    let transient = format!(
+        r#"{{"data":{{"i0":null}},"errors":[{{"type":"{}","message":"API rate limit exceeded"}}]}}"#,
+        "RATE_LIMITED"
+    );
+    assert_eq!(
+        summary_of(&transient, ""),
+        IssueSummaryRead::Failed("API rate limit exceeded".to_string())
+    );
+    assert_eq!(
+        summary_of("", "gh: not logged in"),
+        IssueSummaryRead::Failed("gh: not logged in".to_string())
+    );
+    assert!(matches!(
+        summary_of(r#"{"data":{"i0":{"issue":null}}}"#, ""),
+        IssueSummaryRead::Failed(_)
+    ));
+    assert!(matches!(
+        summary_of(r#"{"data":{"i0":{"issue":{"title":"No url"}}}}"#, ""),
+        IssueSummaryRead::Failed(_)
+    ));
+}

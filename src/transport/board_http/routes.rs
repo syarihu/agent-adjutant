@@ -12,8 +12,8 @@ use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{page_rings, refuse};
 use super::handlers::{
     act_on_hub, act_on_worktree, answer_gate, ask_for_task_read, create_task, fetch_issue,
-    focus_hub, hand_to_worker, nudge_hub, refresh_tasks, relay_findings, review_findings,
-    start_parent_hub, update_task, wake_hub,
+    focus_hub, hand_to_worker, nudge_hub, read_hub_title, refresh_tasks, relay_findings,
+    review_findings, start_parent_hub, update_task, wake_hub,
 };
 use super::sessions::{
     clean_up_session, git_of_session, last_message_of_session, link_session, open_session,
@@ -71,6 +71,7 @@ pub(super) enum Route<Id = String> {
     NudgeHub,
     WakeHub,
     FocusHub,
+    ReadHubTitle,
     Worktree(String),
     AnswerGate(String),
     Terminal(Id),
@@ -163,6 +164,7 @@ impl<'a> Route<&'a str> {
             ("POST", "/api/hub/next") => Route::NudgeHub,
             ("POST", "/api/hub/wake") => Route::WakeHub,
             ("POST", "/api/hub/focus") => Route::FocusHub,
+            ("POST", "/api/hub/title") => Route::ReadHubTitle,
             ("POST", _) => match (
                 path.strip_prefix("/api/worktrees/"),
                 path.strip_prefix("/api/gates/"),
@@ -259,6 +261,7 @@ impl<'a> Route<&'a str> {
             Route::NudgeHub => Route::NudgeHub,
             Route::WakeHub => Route::WakeHub,
             Route::FocusHub => Route::FocusHub,
+            Route::ReadHubTitle => Route::ReadHubTitle,
             Route::Worktree(action) => Route::Worktree(action),
             Route::AnswerGate(id) => Route::AnswerGate(id),
         })
@@ -322,6 +325,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::NudgeHub => reply(out, nudge_hub(server)),
         Route::WakeHub => reply(out, wake_hub(server)),
         Route::FocusHub => reply(out, focus_hub(server)),
+        Route::ReadHubTitle => reply(out, read_hub_title(server)),
         Route::Worktree(action) => reply(out, act_on_worktree(server, &action, &req.body)),
         Route::AnswerGate(id) => reply(out, answer_gate(server, &id, &req.body)),
         Route::Terminal(_) => no_such_route(out),

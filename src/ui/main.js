@@ -125,6 +125,7 @@ const ACTIONS = {
   'handover-close': () => closeHandoverDialog(),
   'nudge-hub': () => nudgeHub(),
   'wake-hub': () => wakeHub(),
+  'hub-title-read': () => readHubTitle(pageHub(), BASE),
   'hub-strip-open': () => { const h = pageHub(); if (h) openTaskPanel(HUB_REF + h.id, 'detail'); },
 };
 document.addEventListener('click', e => {

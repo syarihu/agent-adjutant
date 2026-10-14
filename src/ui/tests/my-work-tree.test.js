@@ -24,7 +24,7 @@ const ctx = vm.createContext({
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
   sessionState: s => s.waiting ? 'waiting' : s.state, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:',
-  workRepos: () => [], esc: x => String(x), workGlyphHtml: st => `<g ${st}>`,
+  workRepos: () => [], esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
   // What a row's own markup reads from the page's other files.
   sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, agentStateOf: () => 'working',
   requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: () => 'who', WORK_SUBAGENTS_SHOWN: 4,
@@ -34,6 +34,17 @@ vm.runInContext([
   cutActions(/^const HUB_WAKE_TITLE = [^\n]*;/m),
   cutActions(/^function hubWakeBlocked[\s\S]*?^}/m),
   cutActions(/^function hubWakeWhy[\s\S]*?^}/m),
+  cutActions(/^const hubTitleRead = [^\n]*;/m),
+  cutActions(/^const HUB_TITLE_READ_LABEL = [^\n]*;/m),
+  cutActions(/^const hubTitleClock = [^\n]*;/m),
+  cutActions(/^function hubTitleWords[\s\S]*?^}/m),
+  cutActions(/^function hubTitleMarkHtml[\s\S]*?^}/m),
+  cutActions(/^function hubTitleReadBlocked[\s\S]*?^}/m),
+  cutActions(/^function hubTitleReadButtonHtml[\s\S]*?^}/m),
+  cutActions(/^function hubTitleReadWhy[\s\S]*?^}/m),
+  cutActions(/^function hubTitleWhyHtml[\s\S]*?^}/m),
+  cut(/^const workHubBase = [^\n]*;/m),
+  cut(/^function workTitleToolsHtml[\s\S]*?^}/m),
   cut(/^const WORK_BOXES = [\s\S]*?^\];/m),
   cut(/^const WORK_RUNNING = [^\n]*;/m),
   cut(/^const workBoxOf = [^\n]*;/m),
@@ -699,6 +710,39 @@ test('a hub row has its wake button beside the row button, never inside it', () 
   // Nothing unseen: no wake button, and no empty actions either.
   const quiet = itemHtml(hubItem({ unseen: 0 }), 'tree');
   assert.ok(!quiet.includes('data-wk-wake') && !quiet.includes('wk-acts'));
+});
+
+test('a parent-task hub row says where its title stands in the title line, and has the read button beside the row', () => {
+  const hub = { parent: true, key: 'ALPHA-9', titleState: { status: 'read', reading: false, total: 5, completed: 2 } };
+  const html = itemHtml(hubItem(hub), 'tree');
+  const rowPart = html.match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0];
+  assert.ok(rowPart.includes('サブ Issue 完了 2 / 5') && !rowPart.includes('data-hub-title-read'));
+  const rest = outsideRow(html);
+  assert.ok(rest.includes('data-hub-title-read="b-own"') && rest.includes('hub-title-why wk-hub-why'));
+  // The repository's own hub has no title state: nothing is added.
+  const own = itemHtml(hubItem({ parent: false }), 'tree');
+  assert.ok(!own.includes('hub-title') && !own.includes('data-hub-title-read'));
+});
+
+test('a parent heading draws the title state of the hub that gave it its title, found by slug, beside its main button', () => {
+  const repo = { hubs: [
+    { slug: 'x', titleState: { status: 'pending', reading: true } },
+    { slug: 'b-own', titleState: { status: 'failed', why: 'nope', retryAt: 0 } },
+  ] };
+  const head = parent => run('workHeadHtml(node, false)', { node: { kind: 'parent', key: 'p', parent: { key: 'acme/widget#9', repo, ...parent }, rows: [], items: [], hubs: [] },
+    nav: {}, workSegments: () => [] });
+  ctx.boards = [{ slug: 'b-own' }];
+  const html = head({ titleHub: 'b-own' });
+  assert.ok(html.includes('data-hub-title-read="b-own"') && html.includes('タイトルを読めませんでした: nope'));
+  assert.ok(!html.includes('data-hub-title-read="x"') && !html.includes('タイトルを読み込み中'));
+  // Outside the heading's main button, never inside it.
+  assert.ok(!html.match(/<(button|span) class="wk-head-main"[\s\S]*?<\/(button|span)>/)[0].includes('hub-title'));
+  assert.ok(!head({}).includes('hub-title'));
+  // A hub that is read has its progress in the button's tooltip only: the heading counts merges itself.
+  repo.hubs[1].titleState = { status: 'read', reading: false, total: 5, completed: 2 };
+  const read = head({ titleHub: 'b-own' });
+  assert.ok(!read.includes('hub-title-mark') && read.includes('サブ Issue 完了 2 / 5'));
+  ctx.boards = [];
 });
 
 test('a hub row in 新着 has 既読 as well as the wake button, both beside the row', () => {

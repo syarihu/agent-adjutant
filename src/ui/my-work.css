@@ -147,6 +147,10 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-hub-why { flex-basis: 100%; text-align: end; }
 /* Empty, it takes no line: the live region stays in the markup so that its text is announced. */
 .wk-hub-why:empty { flex-basis: 0; }
+/* The title state and its read button on a parent heading sit beside the heading's button, as its hub chips do. */
+.wk-head .hub-title-tools { flex: none; max-width: 55%; }
+/* A hub's row has the mark in its title line, which has its own gap. */
+.wk-title .hub-title-mark { margin: 0 4px 0 0; }
 /* Waiting on the person: the warning tone while it is new, a quiet one once it was read. */
 .wk-hub-wait { display: inline-flex; align-items: center; gap: 1px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); color: var(--md-sys-color-on-surface-variant); }
 .wk-hub-wait.new { border-color: transparent; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }

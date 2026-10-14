@@ -1524,6 +1524,15 @@ fn waking_the_hub_is_a_post_to_its_own_route() {
 }
 
 #[test]
+fn reading_the_hub_s_title_is_a_post_that_a_hub_s_own_board_answers() {
+    let route = parsed("POST", "/api/hub/title");
+    assert!(matches!(route, Ok(Some(Route::ReadHubTitle))));
+    assert!(matches!(parsed("GET", "/api/hub/title"), Ok(None)));
+    // Like waking it: a board served alone is where it lives, not only the resident.
+    assert!(!Route::<String>::ReadHubTitle.resident_only());
+}
+
+#[test]
 fn the_state_asks_for_the_last_lines_of_all_sessions_or_of_the_hubs_only() {
     let lines_of = |query: Option<&str>| {
         let mut req = request("GET", "/api/state", &[]);

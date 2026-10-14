@@ -150,9 +150,11 @@ fn opening_a_later_gate_closes_the_earlier_one_as_answered_in_the_terminal() {
 
 // ── the parent task's title on a parent-task hub ──
 
-/// A `gh` that answers every issue with the title in `gh-title`, fails once `gh-fail` exists, and
-/// writes down the URL of each issue it is asked about. Returns the `PATH` to run the server
-/// with and that log.
+/// A `gh` that answers every issue with the title "The parent task" and four sub-issues, one of
+/// them done, fails once `gh-fail` exists, and writes down the URL of each issue it is asked
+/// about. The title is read through GraphQL (`gh api graphql`, the variables `o0`, `r0`, `p0`
+/// naming the issue); `gh issue view` is answered too, for a URL the GraphQL read will not take.
+/// Returns the `PATH` to run the server with and that log.
 fn stub_gh_for_titles(fixture: &Fixture) -> (String, PathBuf) {
     let stubs = fixture.repo.join("stub-bin");
     let asked = fixture.repo.join("gh-asked");
@@ -162,10 +164,15 @@ fn stub_gh_for_titles(fixture: &Fixture) -> (String, PathBuf) {
         "gh",
         &format!(
             "#!/bin/sh\n\
-             for a; do u=$a; done\n\
+             for a; do u=$a; case $a in o0=*) o=${{a#o0=}};; r0=*) r=${{a#r0=}};; p0=*) p=${{a#p0=}};; esac; done\n\
+             [ \"$1\" = api ] && u=\"https://github.com/$o/$r/issues/$p\"\n\
              echo \"$u\" >> {asked}\n\
              [ -e {fail} ] && {{ echo 'Could not resolve to an issue' >&2; exit 1; }}\n\
-             printf '{{\"title\":\"The parent task\",\"body\":\"B\"}}'\n",
+             if [ \"$1\" = api ]; then\n\
+             printf '{{\"data\":{{\"i0\":{{\"issue\":{{\"url\":\"%s\",\"number\":%s,\"title\":\"The parent task\",\"state\":\"OPEN\",\"subIssuesSummary\":{{\"total\":4,\"completed\":1}}}}}}}}}}' \"$u\" \"$p\"\n\
+             else\n\
+             printf '{{\"title\":\"The parent task\",\"body\":\"B\"}}'\n\
+             fi\n",
             asked = shell_quoted(&asked.to_string_lossy()),
             fail = shell_quoted(&fail.to_string_lossy()),
         ),
@@ -289,6 +296,77 @@ fn an_issue_that_could_not_be_read_is_not_asked_for_again_on_the_next_poll() {
     poll_feature_title(&resident, 10);
     assert!(feature_title(&resident).is_null());
     assert_eq!(gh_asked(&asked).len(), 1, "{:?}", gh_asked(&asked));
+}
+
+/// The `titleState` of the hub `hub-wid-957` in the state.
+fn feature_title_state(resident: &Resident) -> serde_json::Value {
+    state_of(resident)["hubs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "hub-wid-957")
+        .unwrap_or_else(|| panic!("no hub-wid-957"))["titleState"]
+        .clone()
+}
+
+#[test]
+fn a_parent_hub_says_where_its_title_stands_and_reads_its_issue_when_asked() {
+    let fixture = Fixture::new(QUIET);
+    listed_parent_hub(&fixture);
+    let (path, asked) = stub_gh_for_titles(&fixture);
+    std::fs::write(fixture.repo.join("gh-fail"), "").unwrap();
+    let resident = Resident::start_with(&fixture, &[("PATH", &path)]);
+    let failed = wait_until("the read to have failed", || {
+        let st = feature_title_state(&resident);
+        (st["status"] == "failed", st)
+    });
+    assert_eq!(failed["parentKey"], "acme/widget#957", "{failed}");
+    assert!(
+        failed["why"]
+            .as_str()
+            .unwrap()
+            .contains("Could not resolve"),
+        "{failed}"
+    );
+    assert!(failed["retryAt"].as_i64().unwrap() > 0, "{failed}");
+    // Asked once, and the retry is not for another 30 seconds.
+    assert_eq!(gh_asked(&asked).len(), 1, "{:?}", gh_asked(&asked));
+
+    // The person asks for it to be read now, once GitHub can answer.
+    std::fs::remove_file(fixture.repo.join("gh-fail")).unwrap();
+    let (status, body) = resident.post(&format!("/b/{FEATURE_SLUG}/api/hub/title"), "");
+    assert_eq!(status, 200, "{body}");
+    let said: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(said["title"], "The parent task", "{said}");
+    assert_eq!(
+        (said["total"].as_u64(), said["completed"].as_u64()),
+        (Some(4), Some(1))
+    );
+    assert!(
+        said["readAt"].as_str().is_some_and(|t| t.ends_with('Z')),
+        "{said}"
+    );
+    let read = wait_until("the state to show the read", || {
+        let st = feature_title_state(&resident);
+        (st["status"] == "read", st)
+    });
+    assert_eq!(
+        (read["total"].as_u64(), read["completed"].as_u64()),
+        (Some(4), Some(1))
+    );
+    assert_eq!(feature_title(&resident), "The parent task");
+    // Kept with its progress, in the file the next start reads.
+    let kept = std::fs::read_to_string(
+        fixture
+            .state
+            .join("hub-titles")
+            .join(format!("{FEATURE_SLUG}.json")),
+    )
+    .unwrap();
+    assert!(
+        kept.contains("\"total\"") && kept.contains("\"readAt\""),
+        "{kept}"
+    );
 }
 
 // ── the pull requests the resident keeps up to date ──

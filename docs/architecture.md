@@ -366,7 +366,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `gates/<slug>/`, `records/` and `answered/` under it, each gate with an `<id>.lock` | open gates, gates kept as a record (`wait: false`), answered gates | gate (`store.rs`) |
 | `cleanup-<pid>-<time>-<n>/` | files set aside only when the first `git worktree remove` refuses; removed once the worktree is gone or the files are put back, and left only if they could not be | board (`session/clean_up.rs`) |
 | `dashboard-token`, `server.lock`, `server.log` | the resident's token, lock and log | board (`token.rs`, `daemon.rs`) |
-| `hub-titles/<slug>.json` | cached parent-task titles | board (`jobs/hub_titles.rs`) |
+| `hub-titles/<slug>.json` | cached parent-task titles, with sub-issue progress and when they were read | board (`jobs/hub_titles.rs`) |
 | `wait-notified/<row id>-<since>`, `gate-notified/<slug>-<gate id>` | empty markers: whichever process makes one rings the configured `notification` for that wait or gate; ones older than a day are swept when the server starts | board (`jobs/wait_watch.rs`, `jobs/wait_watch/gates.rs`) |
 | `<worktree>/.claude/adjutant-worker.json`, `adjutant-worker-starting.json`, `adjutant-session.json` | worker record, starting marker, saved worker session | registry (`store.rs`) |
 | `<worktree>/.claude/adjutant-outbox.md` | messages to the worker | mail (`store.rs`) |

@@ -61,6 +61,16 @@ fn run(
     linked: &[Worktree],
     tracker: &dyn Fn(&str) -> Option<TrackerParent>,
 ) -> Vec<ParentGroup> {
+    run_with_hubs(tasks, hub_tasks, linked, tracker, &[])
+}
+
+fn run_with_hubs(
+    tasks: &mut [TaskCard],
+    hub_tasks: &mut [TaskCard],
+    linked: &[Worktree],
+    tracker: &dyn Fn(&str) -> Option<TrackerParent>,
+    hub_parents: &[HubParent],
+) -> Vec<ParentGroup> {
     attach(
         tasks,
         hub_tasks,
@@ -69,6 +79,7 @@ fn run(
             issue_keys: &keys(),
             linked,
             parent_hubs: &["acme-widget-9".to_string()],
+            hub_parents,
             tracker,
         },
     )
@@ -596,4 +607,77 @@ fn the_parent_is_run_by_a_parent_task_hub_among_its_children_else_the_repository
         human_col: None,
     });
     assert_eq!(run(&mut tasks, &mut hub_tasks, &[], &never)[0].hub, SLUG);
+}
+
+fn hub_parent(key: &str, title: Option<&str>, total: Option<u32>) -> HubParent {
+    HubParent {
+        key: key.to_string(),
+        slug: "acme-widget-ALPHA-549".to_string(),
+        title: title.map(str::to_string),
+        total,
+    }
+}
+
+#[test]
+fn a_group_the_tracker_never_described_takes_the_title_and_count_of_the_hub_for_it() {
+    let mut a = task_of("a", 1);
+    a.parent = Some("https://github.com/acme/widget/issues/549".to_string());
+    let mut tasks = cards(vec![a]);
+    let hubs = [hub_parent("acme/widget#549", Some("From the hub"), Some(7))];
+    let groups = run_with_hubs(&mut tasks, &mut [], &[], &never, &hubs);
+    assert_eq!(groups[0].title.as_deref(), Some("From the hub"));
+    assert_eq!(groups[0].total, 7);
+    assert_eq!(
+        groups[0].title_hub.as_deref(),
+        Some("acme-widget-ALPHA-549")
+    );
+    // Never fewer than the children listed, as for the tracker's count.
+    let mut kids: Vec<_> = (0..3)
+        .map(|i| {
+            with_parent(
+                &format!("k{i}"),
+                i,
+                "https://github.com/acme/widget/issues/549",
+            )
+        })
+        .collect();
+    let mut tasks = cards(std::mem::take(&mut kids));
+    let hubs = [hub_parent("acme/widget#549", None, Some(2))];
+    let groups = run_with_hubs(&mut tasks, &mut [], &[], &never, &hubs);
+    assert_eq!(groups[0].total, 3);
+    assert_eq!(groups[0].title, None);
+}
+
+#[test]
+fn the_tracker_s_title_and_count_win_over_the_hub_s() {
+    let mut a = task_of("a", 1);
+    a.issue_url = Some("https://github.com/acme/widget/issues/20".to_string());
+    let mut tasks = cards(vec![a]);
+    let hubs = [hub_parent("acme/widget#549", Some("From the hub"), Some(7))];
+    let groups = run_with_hubs(
+        &mut tasks,
+        &mut [],
+        &[],
+        &|url| url.ends_with("/issues/20").then(|| tracker_parent(549, 4)),
+        &hubs,
+    );
+    assert_eq!(groups[0].title.as_deref(), Some("From the tracker"));
+    assert_eq!(groups[0].total, 4);
+    // The hub is still the one the page puts the title's state beside.
+    assert_eq!(
+        groups[0].title_hub.as_deref(),
+        Some("acme-widget-ALPHA-549")
+    );
+}
+
+#[test]
+fn a_group_names_a_title_hub_only_when_the_issue_keys_match() {
+    let mut a = task_of("a", 1);
+    a.parent = Some("https://github.com/acme/widget/issues/549".to_string());
+    let mut tasks = cards(vec![a]);
+    let hubs = [hub_parent("acme/widget#550", Some("Another"), Some(7))];
+    let groups = run_with_hubs(&mut tasks, &mut [], &[], &never, &hubs);
+    assert_eq!(groups[0].title_hub, None);
+    assert_eq!(groups[0].title, None);
+    assert_eq!(groups[0].total, 1);
 }

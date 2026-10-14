@@ -391,6 +391,9 @@ function renderHubStrip() {
     <span class="m3-pill sess-row-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>
     <span class="hub-strip-name">hub · ${esc(label.text)}</span>
     <span class="hub-strip-last">${esc(last)}</span></button>`;
+  // Where the parent issue's title stands, and the button that reads it now: beside the entry's button, never inside it.
+  const titled = h.titleState
+    ? `<span class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, BASE, 'data-action="hub-title-read"')}${hubTitleWhyHtml(h)}</span>` : '';
   let inbox = '';
   if (unseen + seen > 0) {
     const oldest = unseen && h.oldestUnseenAt ? stampSecs(h.oldestUnseenAt) : null;
@@ -401,7 +404,7 @@ function renderHubStrip() {
       <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub" data-wake-slug="${esc(h.slug)}"${blocked ? ' disabled' : ''} title="${esc(blocked || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
   }
   say(inbox ? wakeWhy : '');
-  put(main, inbox);
+  put(main + titled, inbox);
 }
 
 let boardHeld = false;

@@ -752,6 +752,117 @@ async function wakeHub(h = pageHub(), base = BASE) {
   if (epoch === navEpoch) await refresh();
 }
 
+/* The title of a parent-task hub's issue: where it stands (the hub's `titleState`, which the server sends as codes and this
+   words) and the button that reads that one issue now. They are drawn wherever the page draws a parent-task hub: the board's
+   hub entry, the hub panel and 「いまの仕事」. `busy` (by the hub's slug, as `hubWake`'s) keeps a second press from sending
+   another while one is on its way; `why` is what the last press that read nothing was told, kept until the next press or until
+   the issue has been read since. */
+const hubTitleRead = { busy: {}, why: {} };
+const HUB_TITLE_READ_LABEL = '親 Issue をいま読み込む';
+
+const hubTitleClock = secs => { const d = new Date(secs * 1000); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+
+/* What `h.titleState` says, as { icon, tip, read }: `icon` is the mark's glyph, `tip` its words, `read` whether the title is known
+   (the mark is then the sub-issue progress, and `tip` says it). null when there is nothing to say: not a parent-task hub, or a title
+   that was read without a count. */
+function hubTitleWords(h) {
+  const st = h?.titleState;
+  if (!st) return null;
+  const key = st.parentKey || h.key || '';
+  switch (st.status) {
+    case 'pending': return { icon: 'hourglass_empty', tip: st.reading ? 'タイトルを読み込み中' : 'タイトルはまだ読み込んでいません', read: false };
+    case 'failed': return { icon: 'error', tip: `タイトルを読めませんでした: ${st.why || '理由不明'}${st.retryAt != null ? `。${hubTitleClock(st.retryAt)} にもう一度読みます` : ''}`, read: false };
+    case 'missing': return { icon: 'link_off', read: false, tip: st.missing === 'noKey' ? 'この hub のキーが分かりません'
+      : st.missing === 'notFound' ? `親 Issue ${key} が GitHub に見つかりません` : `キー ${key} に当たる親 Issue がありません` };
+    case 'read': {
+      if (st.total == null) return null;
+      const progress = `サブ Issue 完了 ${st.completed ?? 0} / ${st.total}`;
+      return { icon: '', text: progress, tip: st.readAt ? `${progress}（${when(st.readAt)} に読み込み）` : progress, read: true };
+    }
+  }
+  return null;
+}
+
+/* The small mark beside a hub's title. Where `progress` is false (a heading, which already has its own counter) a read title has none. */
+function hubTitleMarkHtml(h, progress = true) {
+  const w = hubTitleWords(h);
+  if (!w || (w.read && !progress)) return '';
+  const body = w.read ? esc(w.text) : `<span class="material-symbols-outlined" aria-hidden="true">${w.icon}</span>`;
+  return `<span class="hub-title-mark${w.read ? ' read' : ''}" role="img" aria-label="${esc(w.tip)}" title="${esc(w.tip)}">${body}</span>`;
+}
+
+/* Why this hub's issue cannot be read from here, or '' when it can. `base` is where the hub's own board answers: null when this
+   server does not have it ('' is a board served on its own). */
+function hubTitleReadBlocked(h, base) {
+  if (base == null) return 'この hub のボードはこのサーバーにありません';
+  if (hubTitleRead.busy[h.slug] || h.titleState?.reading) return '読み込んでいます';
+  const missing = h.titleState?.missing;
+  if (missing === 'noKey' || missing === 'noIssue') return '読む親 Issue がありません';
+  return '';
+}
+
+/* The button, a sibling of whatever else is on the line and never inside another button. `attr` is for the caller's own hook. */
+function hubTitleReadButtonHtml(h, base, attr = '') {
+  if (!h?.titleState) return '';
+  const off = hubTitleReadBlocked(h, base);
+  const w = hubTitleWords(h);
+  const tip = off || (w?.read ? `${HUB_TITLE_READ_LABEL}\n${w.tip}` : HUB_TITLE_READ_LABEL);
+  return `<button type="button" class="hub-title-read" data-hub-title-read="${esc(h.slug)}"${attr ? ` ${attr}` : ''}${off ? ' disabled' : ''} aria-label="${esc(HUB_TITLE_READ_LABEL)}" title="${esc(tip)}"><span class="material-symbols-outlined" aria-hidden="true">refresh</span></button>`;
+}
+
+/* What the last press that read nothing was told; gone once the issue has been read since. */
+function hubTitleReadWhy(h) {
+  const said = hubTitleRead.why[h.slug];
+  if (!said) return '';
+  if ((h.titleState?.readAt || null) !== said.readAt) { delete hubTitleRead.why[h.slug]; return ''; }
+  return said.text;
+}
+
+/* The live region for that, which stays in the markup so that its text is announced. */
+function hubTitleWhyHtml(h, extra = '') {
+  return h?.titleState ? `<span class="hub-wake-why hub-title-why${extra ? ` ${extra}` : ''}" role="status">${esc(hubTitleReadWhy(h))}</span>` : '';
+}
+
+async function readHubTitle(h, base) {
+  // The button's disabled state is the rule; this repeats it for a click that reaches here anyway.
+  if (!h || hubTitleReadBlocked(h, base)) return;
+  const slug = h.slug;
+  const epoch = navEpoch;
+  const line = '親 Issue を読み込む（POST /api/hub/title）';
+  const at = document.activeElement;
+  const mine = `[data-hub-title-read="${CSS.escape(slug)}"]`;
+  const refocus = at?.dataset?.hubTitleRead === slug ? mine : null;
+  // The work list can draw a hub twice: the copy in the same cell is the one to come back to.
+  const cell = at?.closest?.('[data-wk-cell]')?.dataset.wkCell;
+  const readAt = h.titleState?.readAt || null;
+  const say = text => { hubTitleRead.why[slug] = { text, readAt }; note(line, true, text); };
+  hubTitleRead.busy[slug] = true;
+  delete hubTitleRead.why[slug];
+  redrawHubWake();
+  try {
+    const data = await boardApi(base, '/api/hub/title', { method: 'POST' });
+    // Another read of it is out: not a failure, and the refresh below shows it when it is done.
+    if (data.busy) note(line, false, 'すでに読み込んでいます');
+    else if (data.missing === 'notFound') say(`親 Issue ${h.titleState?.parentKey || h.key || ''} が GitHub に見つかりません`);
+    else if (data.missing) say('読む親 Issue がありません');
+    else note(line, false, '親 Issue を読み込みました');
+  } catch (e) {
+    say(`読み込めませんでした: ${e.message}`);
+  } finally {
+    delete hubTitleRead.busy[slug];
+    redrawHubWake();
+    // Only where the button was: a person who has moved on is left where they are.
+    const now = document.activeElement;
+    if (refocus && (now === document.body || now?.dataset?.action === 'hub-strip-open')) {
+      const usable = b => !b.disabled;
+      const scope = cell ? [...document.querySelectorAll('[data-wk-cell]')].find(el => el.dataset.wkCell === cell) : null;
+      (scope && [...scope.querySelectorAll(refocus)].find(usable) || [...document.querySelectorAll(refocus)].find(usable))?.focus();
+    }
+  }
+  // The board moved on while this was on its way: its answer is not this one's to refresh.
+  if (epoch === navEpoch) await refresh(true);
+}
+
 /* Read a task's issue again. On a click only: the board never asks the tracker on its own. */
 async function fetchIssue(id, e) {
   const line = `adj task fetch-issue --id ${id}`;

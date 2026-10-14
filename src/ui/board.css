@@ -814,6 +814,22 @@
 .hub-wake-why { min-width: 0; font-size: 11px; color: var(--md-sys-color-error); overflow-wrap: anywhere; }
 /* Empty, the live region takes no room: it is kept in the page so that its text is announced. */
 .hub-wake-why:empty { margin: 0; padding: 0; }
+/* Where a parent-task hub's title stands, and the button that reads its issue now: one line, wherever the hub is drawn. */
+.hub-title-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.hub-title-mark {
+  display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; margin: 0 4px;
+  font-size: 11px; font-weight: 600; color: var(--md-sys-color-on-surface-variant);
+}
+.hub-title-mark .material-symbols-outlined { font-size: 14px; }
+.hub-title-read {
+  display: inline-flex; align-items: center; padding: 1px 4px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface); font: inherit; line-height: 1.5;
+}
+.hub-title-read .material-symbols-outlined { font-size: 14px; }
+.hub-title-read:hover:not(:disabled) { background: var(--md-sys-color-surface-container-high); }
+.hub-title-read:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.hub-title-read:disabled { opacity: .5; cursor: default; }
 /* The wake button at the end of the hub panel's 受信箱 card, and the reason it did not wake. */
 .tp-hub-wake { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; }
 .tp-hub-wake button:disabled { opacity: .5; cursor: default; }
