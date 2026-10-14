@@ -1,7 +1,7 @@
 /* ── いまの仕事: what happened while the person was away (#556) ─────────────────────────────────
    Pure, like my-work-seen.js: these read an entry of the work document (`workEntries`) and the read mark of its
    row, and return data, touching neither the page nor local storage, so `src/ui/tests/my-work-away.test.js`
-   runs them under `node --test`. Loaded after sessions.js (`passedGates`) and my-work-seen.js (`workActedAt`), and before my-work.js, which draws.
+   runs them under `node --test`. Loaded after sessions.js (`sessionPassedGates`) and my-work-seen.js (`workActedAt`), and before my-work.js, which draws.
 
    "Away" starts at the later of the time the person left the row (`mark.left`) and the time they last acted on it
    (reading a row writes `left` too, so 既読 also starts a new away span). What counts is what the work document itself shows, so the
@@ -156,8 +156,7 @@ function workNowOf(e, now) {
   if (park) return { kind: 'parked', text: `置いている — ${parkText(park)}${from(awaySecs(park.since))}` };
   const gate = e.gates[0];
   const gateNow = g => g.gate === 'question' ? '質問があなたの答え待ち' : `${kindOf(g.gate)[0]}があなたの判定待ち`;
-  // The row's own rule too (several gates on the session keep its gate first), so this line and the row's glyph agree.
-  const passed = passedGates(s, e.gates.map(g => g.since), { now }) && !(s?.waiting && gateFirst(s, { now }));
+  const passed = sessionPassedGates(s, e.gates.map(g => g.since), { now });
   if (gate && !passed) return { kind: 'gate', text: gateNow(gate) };
   // A worker that went on past the gate is said by its own state first; the gate stays open, so it is said second.
   const also = passed ? `${gateNow(gate)}（答えないまま進行中）` : '';

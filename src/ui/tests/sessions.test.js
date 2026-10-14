@@ -178,6 +178,11 @@ test('a worker went on past its gate only by a status that began after the gate 
   assert.strictEqual(past(gated({ status: 'waiting', request: 'Bash: make', updatedAt: G + 60 })), true);
   assert.strictEqual(past(gated({ status: 'waiting', request: 'AskUserQuestion: どちら？', updatedAt: G + 60 })), false);
   assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 31 })), true);
+  // A prompt typed after the gate opened counts inside the slack; one typed before it, or a worker at rest, does not.
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 5, lastPromptAt: G + 5 })), true);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 5 })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 5, lastPromptAt: G - 10 })), false);
+  assert.strictEqual(past(gated({ status: 'done', updatedAt: G + 60, lastPromptAt: G + 60 })), false);
   // A `running` row whose pane went quiet is read as idle, so the worker has not gone on.
   assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60 }, quiet)), false);
   assert.strictEqual(past(gated({ status: 'running' })), false);
@@ -230,4 +235,11 @@ test('a task is past its gates only by the ones that wait on a person', () => {
   assert.strictEqual(run([plan, { task: 't1', wait: false, openedAt: stampAt(G + 300) }]), true);
   assert.strictEqual(run([{ ...plan, answeredByHub: true }]), false);
   assert.strictEqual(run([]), false);
+});
+
+test('a task is not past its gates where the session row keeps its gate first', () => {
+  const worker = gated({ status: 'running', updatedAt: G + 60 }, { task: 't1', waiting: { id: 'g1', kind: 'plan', openedAt: stampAt(G), count: 2 } });
+  ctx.state = { gates: [{ task: 't1', openedAt: stampAt(G) }, { task: 't1', openedAt: stampAt(G + 5) }], sessions: [worker], now: NOW };
+  ctx.sessionOfTask = t => ctx.state.sessions.find(x => x.task === t.id);
+  assert.strictEqual(table('taskPassedGate')({ id: 't1' }, ctx.state), false);
 });

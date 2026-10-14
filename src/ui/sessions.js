@@ -26,7 +26,7 @@ const isQuestion = s => {
 const GATE_PASSED_SLACK_SECS = 30;
 /* Whether a worker went on past the gate opened at `openedSecs` without an answer: the page reads it as working, waiting
    on a permission, or failed (so a `running` row whose pane went quiet is not), and that status began after the gate
-   opened. False whenever anything is missing or unreadable, so the gate comes first; false for a question asked in the
+   opened, or the person typed a prompt after it. False whenever anything is missing or unreadable, so the gate comes first; false for a question asked in the
    terminal (the gate's own question, asked there too); false for a hub, whose gates are its questions for the person. */
 function passedGate(s, openedSecs, data = state) {
   if (!s || s.kind === 'hub' || !s.present) return false;
@@ -35,17 +35,25 @@ function passedGate(s, openedSecs, data = state) {
   const st = ledgerState(s, data);
   if (!['working', 'permission', 'failed'].includes(st)) return false;
   if (st === 'permission' && isQuestion(s)) return false;
-  return Number.isFinite(a.updatedAt) && Number.isFinite(openedSecs) && a.updatedAt > openedSecs + GATE_PASSED_SLACK_SECS;
+  if (!Number.isFinite(openedSecs)) return false;
+  // The slack guards against the PostToolUse of `adj gate open` itself; a prompt the person typed after the gate opened
+  // is past it however soon (the status then never moves again during that turn). Only a typed prompt sets `lastPromptAt`.
+  return (Number.isFinite(a.updatedAt) && a.updatedAt > openedSecs + GATE_PASSED_SLACK_SECS)
+    || (Number.isFinite(a.lastPromptAt) && a.lastPromptAt > openedSecs);
 }
 /* The one rule for several gates: the worker has to be past the newest, and one without a readable time (or no gate at
    all) leaves the gate first. */
 const passedGates = (s, openedSecsList, data = state) =>
   openedSecsList.length > 0 && openedSecsList.every(Number.isFinite) && passedGate(s, Math.max(...openedSecsList), data);
+/* `passedGates` as the row reads it: several gates on the session keep its gate first, so the lines that say what the
+   worker does (the now line, the card, the panel) agree with the row. */
+const sessionPassedGates = (s, openedSecsList, data = state) =>
+  passedGates(s, openedSecsList, data) && !(s?.waiting && gateFirst(s, data));
 /* Whether the session's gate is what it waits on first. With more than one gate only the oldest time is known,
    so the gate stays first. */
 const gateFirst = (s, data = state) => !!s?.waiting && !(s.waiting.count <= 1 && passedGates(s, [stampSecs(s.waiting.openedAt)], data));
-/* Whether the task's worker went on past all the task's open gates that wait on a person (not a record, not one the hub answers) (see `passedGates`); false with no open gate. */
-const taskPassedGate = (task, data = state) => !!task && passedGates(sessionOfTask(task),
+/* Whether the task's worker went on past all the task's open gates that wait on a person (not a record, not one the hub answers) (see `sessionPassedGates`); false with no open gate. */
+const taskPassedGate = (task, data = state) => !!task && sessionPassedGates(sessionOfTask(task),
   (data.gates || []).filter(g => g.wait !== false && !g.answeredByHub && g.task === task.id && (!task._slug || g._slug === task._slug)).map(g => stampSecs(g.openedAt)), data);
 /* What the agent asks, in a sentence: a question, or the permission for a tool. Plain text. */
 const requestText = s => {
