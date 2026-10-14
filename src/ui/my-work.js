@@ -478,6 +478,12 @@ const WORK_HUB_WORD = { working: '作業中', restarting: '作業中', done: '�
   failed: 'エラー', unknown: '状態不明', stopped: '動いていない', ended: '動いていない', none: '動いていない' };
 const workHubWord = st => WORK_HUB_WORD[st] || '状態不明';
 
+/* The hub of the work document with this slug, as its repository lists it. */
+const workHubOfSlug = slug => workRepos().flatMap(r => r.hubs || []).find(h => h.slug === slug) || null;
+
+/* Where a hub's own board answers: its route, or null when this server does not have that board. */
+const workHubBase = slug => boards.some(b => b.slug === slug) ? `/b/${slug}` : null;
+
 /* The hubs of a repository: its own first, then the parent-task hubs by key. Each has the shape of a row, and is the one object
    that stands for the hub in the list (as a row, and as the chip on a folded heading), so pressing it selects the hub as pressing
    its row did, and it says how many things wait on the person. A hub with no session in the document has no chip; an ended parent-task hub has none unless it waits. */
@@ -501,7 +507,7 @@ function workRepoHubChips(repo, now, judged) {
     if (h.parent && st === 'ended' && !live.length) continue;
     const board = workBoardOf(repo, r.board);
     // The wake goes to the hub's own board, so only a hub whose board this server has can be woken from here.
-    const wakeBase = boards.some(b => b.slug === h.slug) ? `/b/${h.slug}` : null;
+    const wakeBase = workHubBase(h.slug);
     chips.push({ id, key: `${board}/${ref}`, board, ref, repo, nwo: repo.nwo, hub: h, s, st, data, task: null, isHub: true, turn: false,
       entry: j?.entry || null, away: j?.away || 0, live, cls: j?.cls || null, waits: live.length, word: workHubWord(st), wakeBase });
   }
@@ -710,7 +716,7 @@ function workRowHtml(r, cell = '', band = false, named = false) {
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
     ${workGlyphHtml(st)}<span class="wk-main">
       ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
-      <span class="wk-title">${r.isHub ? `<span class="wk-tag">${esc(named && r.hub?.parent && r.hub.key ? `hub ${r.hub.key}` : 'hub')}</span>` : ''}${esc(title)}</span>
+      <span class="wk-title">${r.isHub ? `<span class="wk-tag">${esc(named && r.hub?.parent && r.hub.key ? `hub ${r.hub.key}` : 'hub')}</span>${hubTitleMarkHtml(r.hub)}` : ''}${esc(title)}</span>
       ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${said}${doing}${tree}${gate}${parked}
     </span></button>`;
 }
@@ -771,9 +777,9 @@ function workItemHtml(r, place, named = false) {
   const hub = r.isHub && !r.turn;
   if (!band && !hub) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
-  const acts = (band ? act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) : '');
+  const acts = (band ? act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
   const row = r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', band, named);
-  return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${hub ? workHubWhyHtml(r) : ''}</div>`;
+  return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${hub ? workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
 }
 
 /* How many rows are in each state, for a header that is folded. */
@@ -845,6 +851,15 @@ function workReadAllButtonHtml(attr) {
   return `<button type="button" class="wk-act" ${attr} title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>`;
 }
 
+/* Where the title of a parent heading stands, and the button that reads that issue now: the hub that gave the heading its title
+   (`titleHub`), found by its slug and never by position, since a heading can be run by several hubs. Beside the heading's main button,
+   not inside it. The heading has its own counter, so the sub-issue progress is in the button's tooltip only. */
+function workTitleToolsHtml(p) {
+  const h = p.titleHub ? (p.repo?.hubs || []).find(x => x.slug === p.titleHub) : null;
+  if (!h?.titleState) return '';
+  return `<span class="hub-title-tools">${hubTitleMarkHtml(h, false)}${hubTitleReadButtonHtml(h, workHubBase(h.slug))}${hubTitleWhyHtml(h)}</span>`;
+}
+
 /* A node's header. A folded one says how many rows are in each state, and shows the hubs it runs as chips (opened, they are rows below). */
 function workHeadHtml(node, folded) {
   const sum = folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : '';
@@ -864,7 +879,7 @@ function workHeadHtml(node, folded) {
     return `${fold(node.key, name)}<${open} class="wk-head-main"${attrs} title="${esc(`${name}\nこの親 Issue を動かしている hub のターミナルを開く`)}">
       <span class="wk-head-name">${p.number ? `<span class="key">#${p.number}</span>` : `<span class="key">${esc(p.key)}</span>`}${esc(p.title || '')}</span>
       <span class="wk-head-sub"><span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>
-      <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}>${chips(name)}${count}`;
+      <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}>${chips(name)}${workTitleToolsHtml(p)}${count}`;
   }
   const hubName = node.kind === 'hub' ? workHubGroupName(node) : null;
   const name = node.kind === 'repo' ? node.nwo : hubName ? hubName.text : node.label;
@@ -904,6 +919,7 @@ const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.d
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
   : el?.dataset?.wkWake != null ? `[data-wk-wake="${CSS.escape(el.dataset.wkWake)}"]`
+  : el?.dataset?.hubTitleRead != null ? `[data-hub-title-read="${CSS.escape(el.dataset.hubTitleRead)}"]`
   : el?.dataset?.wkHub != null ? `[data-wk-hub="${CSS.escape(el.dataset.wkHub)}"]`
     : el?.dataset?.wkParent != null ? `[data-wk-parent="${CSS.escape(el.dataset.wkParent)}"]` : null;
 
@@ -1309,6 +1325,10 @@ wk('wk-list').addEventListener('click', e => {
   if ((b = e.target.closest('[data-wk-wake]'))) {
     const c = work.hubsByKey.get(b.dataset.wkWake);
     return c && !b.disabled && wakeHub(c.hub, c.wakeBase);
+  }
+  if ((b = e.target.closest('[data-hub-title-read]'))) {
+    const h = workHubOfSlug(b.dataset.hubTitleRead);
+    return h && !b.disabled && readHubTitle(h, workHubBase(h.slug));
   }
   if ((b = e.target.closest('[data-wk-hub]'))) {
     const c = work.hubsByKey.get(b.dataset.wkHub);

@@ -104,6 +104,7 @@ fn parent_hub_with_a_record(
         key: ctx.repo.hub.clone(),
         name: ctx.repo.hub_name.clone(),
         title: None,
+        title_state: None,
         slug: ctx.repo.slug.clone(),
         state: crate::mail::RepoHubState {
             present: false,

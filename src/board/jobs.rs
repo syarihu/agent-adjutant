@@ -13,7 +13,7 @@ pub mod review_queue;
 pub mod sweep_gates;
 mod wait_watch;
 
-pub use hub_titles::{HubTitles, cached_title};
+pub use hub_titles::{HubTitles, ReadNow, cached_title};
 pub use jules_watch::{JulesSeen, Watch};
 pub use pr_poll::{HOST, PollBoards, PollHealth, PrPoll};
 pub use wait_watch::{OpenGuard, WaitWatch, target_key};

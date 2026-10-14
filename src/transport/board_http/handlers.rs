@@ -10,12 +10,14 @@ use super::resident::{read_mode_of, refusal_status};
 use super::routes::HubAction;
 use super::sessions::{input_of, text};
 use crate::board::hub::{Reopened, close, find, reset, restart, start, start_for_key, stop};
+use crate::board::jobs::ReadNow;
 use crate::board::review::HandRefused;
 use crate::board::{Server, settings_now};
 use crate::infra::http;
 use crate::jules::{findings as jules_findings, relay as jules_relay};
 use crate::lifecycle::hub::{HubStart, TabOutcome};
 use crate::lifecycle::review::TaskAskError;
+use crate::mail::MissingWhy;
 use crate::others::Requested;
 
 // ── the two things the board can change ──────────────────────────────
@@ -275,6 +277,35 @@ pub(super) fn focus_hub(server: &Server) -> Result<Value, String> {
         "present": raised.is_some(),
         "ran": raised.as_ref().is_some_and(|r| r.done.ran),
     }))
+}
+
+/// Read this board's parent issue now: the button beside a parent-task hub's title. It reads only
+/// that one issue, keeps its title and sub-issue counts, and answers with them. Another read of
+/// it being out (`busy`) and an issue that is not there (`missing`) are answers; a read that
+/// failed is the error, whose text is what GitHub or `gh` said.
+pub(super) fn read_hub_title(server: &Server) -> Result<Value, String> {
+    let ctx = &server.ctx;
+    let Some(key) = ctx.repo.hub.as_deref() else {
+        return Err("this board's hub is not a parent-task hub".to_string());
+    };
+    Ok(
+        match server.hub_titles.read_now(ctx, &ctx.repo.slug, key)? {
+            ReadNow::Read {
+                title,
+                total,
+                completed,
+                read_at,
+            } => json!({
+                "title": title,
+                "total": total,
+                "completed": completed,
+                "readAt": read_at,
+            }),
+            ReadNow::Busy => json!({ "busy": true }),
+            ReadNow::NotFound => json!({ "missing": MissingWhy::NotFound }),
+            ReadNow::Missing(why) => json!({ "missing": why }),
+        },
+    )
 }
 
 /// Start, stop, close, reset or restart one of the repository's hubs from the board. `id` is the

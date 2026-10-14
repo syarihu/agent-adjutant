@@ -704,6 +704,7 @@ function hubPanelHeadHtml(h, s) {
         <span class="m3-pill ${pillCls}">${esc(pillText)}</span>
       </div>
       <h2 class="tp-title">${esc(title)}</h2>
+      ${h.titleState ? `<div class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, hubPanelWakeBase(h))}${hubTitleWhyHtml(h)}</div>` : ''}
     </div>
     ${panelBtnsHtml(jump)}`;
 }
@@ -1070,6 +1071,7 @@ function hubPanelClick(e, h) {
   const waiting = hubSessionOf(h).waiting;
   if (hit('[data-tp-sess-gate]') && waiting) return goToGate(waiting.id, waiting.slug);
   if (judgeClick(e)) return;
+  if ((b = hit('[data-hub-title-read]'))) return !b.disabled && readHubTitle(h, hubPanelWakeBase(h));
   if ((b = hit('[data-tp-hub]'))) {
     if (b.disabled) return;
     switch (b.dataset.tpHub) {

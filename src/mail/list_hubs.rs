@@ -178,6 +178,7 @@ pub fn all_repo_hubs_among_with(
                 key,
                 name: hub_name,
                 title: None,
+                title_state: None,
                 slug,
                 state: RepoHubState {
                     present: status.present,

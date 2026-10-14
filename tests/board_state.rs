@@ -390,6 +390,11 @@ fn expected_hubs() -> Value {
           "startedAt": "20260922T030000Z"
         },
         "title": "Ship the feature",
+        "titleState": {
+          "parentKey": "acme/widget#957",
+          "reading": false,
+          "status": "read"
+        },
         "unseen": 0
       }
     ])
@@ -665,6 +670,8 @@ fn expected_parents() -> Value {
         "merged": 0,
         "number": 957,
         "stacked": true,
+        "title": "Ship the feature",
+        "titleHub": FEATURE_SLUG,
         "total": 3,
         "url": "https://github.com/acme/widget/issues/957"
       }

@@ -1059,6 +1059,22 @@ heading) only while that hub has unseen messages. It follows the same rules and 
 reason beside it in the same way; it is also off, with the reason, when this server does
 not have the hub's board (the wake goes to that board).
 
+A parent-task hub's `hubs[]` entry also has `titleState`, which says where the parent issue's title
+stands: `{status, reading, why?, missing?, retryAt?, total?, completed?, readAt?, parentKey?}`.
+`status` is `pending` (not read yet, or being read: `reading`), `failed` (`why` is what `gh` or
+GitHub said, `retryAt` is when it is tried again, in epoch seconds), `missing` (`missing` is
+`noKey`, `noIssue` or `notFound`: the hub's key cannot be told, names no issue, or GitHub has no
+such issue) or `read` (`total` and `completed` are the issue's sub-issues, `readAt` a UTC stamp;
+a title kept before they were read has neither). A failed background read is tried again after
+30 seconds, then 2 minutes, then every 10 minutes. The page words these codes and draws them beside
+the hub's title, on the board's hub entry, in the hub's panel and on the parent's heading in
+「いまの仕事」, with a button that reads that one issue now. `POST /api/hub/title` (the hub's own
+board only, like the wake) reads the board's parent issue through `gh` at once, keeps its title
+and counts under `hub-titles/<slug>.json`, and answers `{title, total, completed, readAt}`,
+`{busy: true}` when a read of it is already out, or `{missing}`; a failed read is a 400 with the
+reason as `error`. A `parents[]` entry whose key is a parent-task hub's issue says that hub in `titleHub`, and takes
+its title and its count from the hub when the tracker's read of a child gave none.
+
 `GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
 `branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
 `deletions` against HEAD, and `binary`, the tracked files whose lines git does not count; `untracked` counts entries, so a wholly new directory counts once, and

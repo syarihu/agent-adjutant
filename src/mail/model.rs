@@ -163,6 +163,10 @@ pub struct RepoHub {
     /// the title is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Where that title stands, for a parent-task hub: not read yet, could not be read, there is
+    /// no issue to read, or read. Codes only; the page words them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_state: Option<HubTitleState>,
     pub slug: String,
     pub state: RepoHubState,
     pub inbox_count: usize,
@@ -183,6 +187,59 @@ pub struct RepoHub {
     /// How many checkouts have a worker that reports to this hub, running or ended.
     #[serde(default)]
     pub children: usize,
+}
+
+/// How far the title of a parent-task hub's issue has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HubTitleStatus {
+    /// Not read yet, or being read now (`reading` says which).
+    Pending,
+    /// The last read failed; `why` says how and `retry_at` when it is tried again.
+    Failed,
+    /// There is no issue to read: `missing` says why.
+    Missing,
+    Read,
+}
+
+/// Why a parent-task hub has no issue to read the title of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MissingWhy {
+    /// The hub's key cannot be told.
+    NoKey,
+    /// The key names no issue: no task under the hub has one, and `issueKeys` does not resolve it.
+    NoIssue,
+    /// GitHub has no such issue.
+    NotFound,
+}
+
+/// A parent-task hub's title, with how it stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubTitleState {
+    pub status: HubTitleStatus,
+    /// Whether a read is out now.
+    pub reading: bool,
+    /// Why the last read failed, as GitHub or `gh` said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing: Option<MissingWhy>,
+    /// When a failed read is tried again by itself, in epoch seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<i64>,
+    /// How many sub-issues the parent issue has and how many are done, as of `read_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed: Option<u32>,
+    /// When the issue was last read, as a UTC stamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<String>,
+    /// The issue's key (`owner/repo#N`), whenever the hub has an issue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_key: Option<String>,
 }
 
 /// The status / state of a hub.

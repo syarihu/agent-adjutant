@@ -332,7 +332,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
         crate::mail::all_repo_hubs_among_with(&server.ctx.state, &processes, repo, &linked_paths);
     let slugs: Vec<String> = hubs.iter().map(|h| h.slug.clone()).collect();
     for h in &mut hubs {
-        h.title = server.hub_titles.look(&server.ctx, h, &slugs);
+        (h.title, h.title_state) = server.hub_titles.look(&server.ctx, h, &slugs);
     }
     // A failed listing leaves out the hubs found only through linked worktrees, not gone.
     if listed_ok {
@@ -414,6 +414,20 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
         .filter(|h| h.parent)
         .map(|h| h.slug.clone())
         .collect();
+    // What a hub's own read of its parent issue says, for a parent group the tracker has not
+    // described (no child of it has been read): its title and how many sub-issues it has.
+    let hub_parents: Vec<parents::HubParent> = hubs
+        .iter()
+        .filter_map(|h| {
+            let st = h.title_state.as_ref()?;
+            Some(parents::HubParent {
+                key: st.parent_key.clone()?,
+                slug: h.slug.clone(),
+                title: h.title.clone(),
+                total: st.total,
+            })
+        })
+        .collect();
     let parents = parents::attach(
         &mut tasks,
         &mut hub_tasks,
@@ -422,6 +436,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
             issue_keys: &settings.issue_keys,
             linked: &linked,
             parent_hubs: &parent_hubs,
+            hub_parents: &hub_parents,
             // Not resident: nothing asked the tracker, so the record is all there is.
             tracker: &|url| {
                 server

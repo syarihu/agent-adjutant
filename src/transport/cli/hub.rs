@@ -189,6 +189,7 @@ pub fn hub_close(args: &HubCloseArgs) -> Result<(), String> {
             key: info.hub.clone(),
             name: info.hub_name.clone(),
             title: None,
+            title_state: None,
             slug: info.slug.clone(),
             state: crate::mail::RepoHubState {
                 present: false,

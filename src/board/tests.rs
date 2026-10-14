@@ -1361,6 +1361,7 @@ fn a_repo_hub(slug: &str, key: Option<&str>) -> crate::mail::RepoHub {
         key: key.map(str::to_string),
         name: format!("adjutant-{slug}"),
         title: None,
+        title_state: None,
         slug: slug.to_string(),
         state: crate::mail::RepoHubState {
             present: false,
