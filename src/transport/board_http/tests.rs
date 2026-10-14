@@ -1676,6 +1676,7 @@ mod others_drafts {
             pr_poll: Default::default(),
             waits: Default::default(),
             work_cache: Default::default(),
+            aide: Default::default(),
         }
     }
 
@@ -1713,6 +1714,41 @@ mod others_drafts {
         let status = text.split(' ').nth(1).unwrap().parse().unwrap();
         let body = text.split_once("\r\n\r\n").unwrap().1;
         (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    }
+
+    /// The status and JSON body of a request to `path`.
+    fn call(resident: &Resident, method: &str, path: &str) -> (u16, Value) {
+        let mut out = Vec::new();
+        route_resident(resident, &request(method, path, &[]), &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let status = text.split(' ').nth(1).unwrap().parse().unwrap();
+        let body = text.split_once("\r\n\r\n").unwrap().1;
+        (status, serde_json::from_str(body).unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn the_aide_is_none_until_it_is_opened_and_a_get_never_starts_one() {
+        let sandbox = crate::testing::Sandbox::new("{}");
+        let r = resident(&sandbox.state());
+        let (status, body) = call(&r, "GET", "/api/aide");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["state"], "none");
+        assert_eq!(body["sessionId"], Value::Null);
+        assert_eq!(body["startable"], false);
+        assert!(!sandbox.state().join("aide.json").exists());
+    }
+
+    #[test]
+    fn opening_or_resetting_the_aide_without_tmux_is_refused_before_anything_happens() {
+        let sandbox =
+            crate::testing::Sandbox::new(r#"{"defaults":{"terminal":{"preset":"iterm2"}}}"#);
+        let r = resident(&sandbox.state());
+        for path in ["/api/aide/open", "/api/aide/reset"] {
+            let (status, body) = call(&r, "POST", path);
+            assert_eq!(status, 409, "{path}: {body}");
+            assert_eq!(body["why"], "not-startable", "{path}");
+        }
+        assert!(!sandbox.state().join("aide.json").exists());
     }
 
     #[test]

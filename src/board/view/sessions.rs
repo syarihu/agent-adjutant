@@ -339,7 +339,7 @@ impl Poll<'_> {
 /// A ledger row as the board carries it: the first line of the activity and the request, cut
 /// short, the model and context use as the status line showed them, the last message of the
 /// turn whole, and the sub-agents that run.
-fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentState {
+pub(crate) fn agent_state_of(row: &crate::registry::AgentSession) -> board::SessionAgentState {
     let first_line = |text: &Option<String>| {
         let line = text.as_deref()?.lines().next()?.trim();
         (!line.is_empty()).then(|| super::waiting::cut_chars(line, AGENT_TEXT_CHARS))

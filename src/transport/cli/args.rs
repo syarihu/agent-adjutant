@@ -33,7 +33,7 @@ pub(crate) enum Commands {
     Worker(WorkerArgs),
     /// Leave a message for the worker in a worktree (body from --body or stdin)
     Tell(TellArgs),
-    /// Print one of the procedures: adj-hub | adj-worker | adj-report | adj-review-hub | adj-reviewer
+    /// Print one of the procedures: adj-hub | adj-worker | adj-report | adj-review-hub | adj-reviewer | adj-aide
     Skill(SkillArgs),
     /// What the hub has left for the worker in this worktree
     Outbox(OutboxArgs),
@@ -100,6 +100,12 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: ReviewAction,
     },
+    /// What the aide's window runs: record this process, then become the aide's agent
+    #[command(hide = true)]
+    Aide {
+        #[command(subcommand)]
+        action: AideAction,
+    },
     /// Remove the MCP server registration
     UninstallMcp(UninstallMcpArgs),
     /// Tmux backend helpers: pane inspection, window spawning, wake, close, and focus
@@ -107,6 +113,18 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: TmuxAction,
     },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum AideAction {
+    /// Record this process and its window, then become the aide's agent
+    Run(AideRunArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct AideRunArgs {
+    #[arg(long)]
+    pub(crate) session: String,
 }
 
 #[derive(Subcommand)]

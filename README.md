@@ -118,10 +118,10 @@ input=$(cat); printf '%s' "$input" | /absolute/path/to/adj hook claude --status-
 
 and draw from `"$input"` as before. `adj hook claude --status-line` prints nothing and, once it runs, always exits 0 (the `|| true` covers a missing binary). It records `model`, `contextPercent` and `rateLimits` only on a session that already has a row (see `adj agent-sessions --json`), and writes when they change, and otherwise at most once a minute. Name `adj` by its absolute path (`command -v adj`), since the status line's `PATH` may not include it. A script in another language passes the same text to the command's stdin.
 
-Agent-side (`adjutant mcp`), the same machinery as ten tools and three prompts:
+Agent-side (`adjutant mcp`), the same machinery as ten tools and six prompts:
 
 - **prompts** — `adj-hub` (run the hub), `adj-worker` (take a task from brief to handover),
-  `adj-report` (hand a bug you found to the hub). Claude Code exposes these as
+  `adj-report` (hand a bug you found to the hub), and `adj-review-hub`, `adj-reviewer` and `adj-aide` (the code-review hub, a PR's reader and the aide). Claude Code exposes these as
   `/mcp__adjutant__adj-hub` and so on.
 
 - **tools** — `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`,
@@ -603,6 +603,8 @@ cannot push, comment or review. That is enforced for Claude by the default `revi
 procedure's rule, so set a `reviewerRunner` that restricts it. A reader stays running after it hands in, until the board's 「下読みを閉じる」 closes it (`POST /api/others/reader/close` with `{"id": "owner/repo#N"}`; 409 `no-reader` when none is open), a sync or the PR poll finds its PR merged or closed, or the task it is read for is finished (done, cancelled or deleted, unless the PR is also requested of you; closing only the worker's session does not close it); closing keeps the read-through and the drafts, and a read that was running is failed and can be asked for again. `GET /api/others/read?id=<owner/repo#N>` answers the stored read-through, and `GET /api/others/diff?id=<owner/repo#N>` the diff the reader read (`{id, sha, bytes, diff}`): it is kept with the read-through at its head and removed with it, an empty diff is `""`, and one over 8 MiB is `null` with its size. When the PR gets a new head, the read-through is kept and shown as made at the old one
 (「下読みし直す」), and nothing is read again by itself. The schema and the queue rules are in
 [docs/architecture.md](docs/architecture.md#the-read-through).
+
+**The aide.** The aide (shown as 副官) is the one session of the machine that belongs to no repository, a window to ask about what is going on rather than a hub. The board opens it the first time you open it (`POST /api/aide/open`; `terminal.preset: "tmux"` only, otherwise 409 `not-startable`), reads its state with `GET /api/aide`, and 「リセット」 (`POST /api/aide/reset`) replaces it with a fresh one, even in the middle of a turn: it holds nothing it cannot fetch again. It runs read-only, in `<state>/aide`, with none of your own Claude settings or MCP servers (your `defaults` from adj's config, or a `repos["@aide"]` entry, still apply: `terminal`, `agentEnv`). Claude Code asks once whether to trust that directory; you answer it in the pane the first time. Details are in [docs/architecture.md](docs/architecture.md#the-aide).
 
 **新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
 opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a

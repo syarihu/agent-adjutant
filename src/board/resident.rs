@@ -27,6 +27,11 @@ pub struct Resident {
     /// The serialized `/api/work` document and when it was built, reused for 1500 ms so that
     /// several open pages polling every couple of seconds read the boards once between them.
     pub work_cache: Mutex<Option<(std::time::Instant, String)>>,
+    /// Held while the aide is opened or reset, so two requests do not start two. Only the resident
+    /// starts or replaces the aide (`server.lock` makes it the only one), so a lock in this
+    /// process is enough; a file lock held across the launch would block the launched process
+    /// when it writes down where it runs.
+    pub aide: Mutex<()>,
 }
 
 impl Resident {

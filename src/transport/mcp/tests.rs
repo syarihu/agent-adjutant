@@ -68,7 +68,8 @@ fn every_procedure_is_listed_and_fetchable() {
             "adj-worker",
             "adj-report",
             "adj-review-hub",
-            "adj-reviewer"
+            "adj-reviewer",
+            "adj-aide"
         ]
     );
 
@@ -507,7 +508,7 @@ fn an_unknown_procedure_is_worded_per_entry_point() {
     );
     assert_eq!(
         call_tool("adjutant_skill", &json!({"name": "nope"})).unwrap_err(),
-        "no such procedure: nope (adj-hub / adj-worker / adj-report / adj-review-hub / adj-reviewer)"
+        "no such procedure: nope (adj-hub / adj-worker / adj-report / adj-review-hub / adj-reviewer / adj-aide)"
     );
 }
 
@@ -517,5 +518,40 @@ fn every_tool_definition_names_the_entry_it_is_listed_under() {
     for tool in tools::TOOLS {
         assert_eq!((tool.definition)()["name"], tool.name);
         assert!(seen.insert(tool.name), "{} is listed twice", tool.name);
+    }
+}
+
+#[test]
+fn every_mcp_tool_the_aide_may_use_exists() {
+    let prefix = format!("mcp__{}__", crate::kernel::runner::MCP_SERVER_NAME);
+    for entry in crate::kernel::runner::AIDE_TOOLS {
+        if let Some(name) = entry.strip_prefix(&prefix) {
+            assert!(
+                tools::TOOLS.iter().any(|tool| tool.name == name),
+                "{entry} names no tool"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_aide_may_use_no_tool_that_writes() {
+    // A tool that sends to a hub is added to the aide on purpose, by its own change, which
+    // relaxes this test with it.
+    for off in [
+        "adjutant_send",
+        "adjutant_tell",
+        "adjutant_gate_open",
+        "adjutant_gate_close",
+        "adjutant_refresh",
+        "adjutant_pending",
+        "adjutant_outbox",
+    ] {
+        assert!(
+            !crate::kernel::runner::AIDE_TOOLS
+                .iter()
+                .any(|t| t.ends_with(off)),
+            "{off} is on the aide's list"
+        );
     }
 }
