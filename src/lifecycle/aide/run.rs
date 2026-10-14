@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 
@@ -16,7 +15,8 @@ use crate::registry::{self, clear_aide_if, note_aide, valid_session_id};
 use super::{aide_home, write_aide_settings};
 
 /// Become the aide that runs as `session`: write down this process and its window, then replace
-/// this process with the agent. Returns only when it cannot, with what to tell the person.
+/// this process with the agent. Returns only when it cannot, with what to tell the person. The
+/// settings file (hooks and status line) is written first, and without it nothing is started.
 ///
 /// Refused when the record no longer names this session (the aide was reset before it got here),
 /// so a superseded launch starts no agent. A launch that fails after that takes its own claim
@@ -55,21 +55,15 @@ pub fn run_aide(root: &Path, session: &str) -> String {
         Ok(exe) => exe,
         Err(e) => return fail(e),
     };
-    // Without the file the agent still starts, only with no hooks and no context figure: a
-    // missing file must not stop a session that would otherwise run.
+    // Without the file the aide would run with no session row and no context figure, which is a
+    // session nobody can see: it is not started, and the window shows why.
     let hooks = match write_aide_settings(root, &exe) {
-        Ok(path) => Some(path),
-        Err(why) => {
-            let _ = writeln!(
-                std::io::stderr(),
-                "starting the aide without hooks or a context figure: {why}"
-            );
-            None
-        }
+        Ok(path) => path,
+        Err(why) => return fail(format!("cannot write the aide's settings: {why}")),
     };
-    let hooks = hooks.as_ref().map(|path| path.to_string_lossy());
+    let hooks = hooks.to_string_lossy();
     let env = aide_env(settings.agent_env.clone(), root);
-    let command = aide_command(&env, session, &aide_mcp_config(&exe), hooks.as_deref());
+    let command = aide_command(&env, session, &aide_mcp_config(&exe), Some(&hooks));
     let error = agent_command(&command).exec();
     fail(format!("cannot start the aide: {error}"))
 }

@@ -227,7 +227,7 @@ pub fn aide_mcp_config(exe: &str) -> String {
 }
 
 /// The command line that starts the aide session `session`. `settings` is the file of hooks
-/// and status line, when one could be written.
+/// and status line; the launch always passes one (no file, no start), and `None` is for tests.
 pub fn aide_command(
     env: &[(String, String)],
     session: &str,
