@@ -555,7 +555,7 @@ child (merged, done, PR, working, not started), "N / M マージ" and "stack" fo
 folded header says how many rows are in each state. A row carries the state icon, the agent with its model
 and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
 what a permission prompt asks, the tool that is running, and a line such as "設計レビュー · あなたの判定待ち" while
-a gate waits on you. The rate limits are under the list. The middle column is the terminal of the selected
+a gate waits on you. When the worker has gone on since the gate opened (running, asking for a permission, or stopped on an error, e.g. because you answered in its terminal), the row says that first and the gate line reads "設計レビュー · あなたの判定待ち（答えないまま進行中）"; the gate stays open and can be answered. The rate limits are under the list. The middle column is the terminal of the selected
 session (selecting a parent shows the terminal of the hub that runs it), never behind a tab; the right column
 is the task panel on the selected row's board, without its ターミナル tab (「ターミナルで話す」 moves the keyboard to
 the middle terminal), or, for a parent, its overview: how far it is, the stack from the base branch up,

@@ -1,7 +1,7 @@
 /* ── いまの仕事: what happened while the person was away (#556) ─────────────────────────────────
    Pure, like my-work-seen.js: these read an entry of the work document (`workEntries`) and the read mark of its
    row, and return data, touching neither the page nor local storage, so `src/ui/tests/my-work-away.test.js`
-   runs them under `node --test`. Loaded after my-work-seen.js (`workActedAt`) and before my-work.js, which draws.
+   runs them under `node --test`. Loaded after sessions.js (`sessionPassedGates`) and my-work-seen.js (`workActedAt`), and before my-work.js, which draws.
 
    "Away" starts at the later of the time the person left the row (`mark.left`) and the time they last acted on it
    (reading a row writes `left` too, so 既読 also starts a new away span). What counts is what the work document itself shows, so the
@@ -155,20 +155,26 @@ function workNowOf(e, now) {
   const park = parkOf(t);
   if (park) return { kind: 'parked', text: `置いている — ${parkText(park)}${from(awaySecs(park.since))}` };
   const gate = e.gates[0];
-  if (gate) return { kind: 'gate', text: gate.gate === 'question' ? '質問があなたの答え待ち' : `${kindOf(gate.gate)[0]}があなたの判定待ち` };
-  if (live?.status === 'waiting') return { kind: 'permission', text: `worker が許可を待っている${live.request ? ` — ${live.request}` : ''}` };
-  if (live?.status === 'failed') return { kind: 'failed', text: 'worker がエラーで止まっている' };
-  if (t?.waitsOnPerson && WORK_PR_NOW[t.prTurn]) return { kind: 'pr', text: WORK_PR_NOW[t.prTurn] };
-  if (live?.status === 'done') return { kind: 'done', text: 'worker は次の指示待ち' };
-  if (live && s.phase && !unknown) return { kind: 'running', text: `worker が${phaseWord(s.phase)}${from(awaySecs(s.phaseAt))}` };
-  if (t?.prTurn === 'checks') return { kind: 'checks', text: 'PR は bot・CI 待ち' };
-  if (t?.prTurn === 'other-reviewer') return { kind: 'checks', text: 'PR は他の人のレビュー待ち' };
-  if (!s?.present) return { kind: 'none', text: 'worker はいません' };
-  if (unknown) return { kind: 'unknown', text: 'worker の状態は不明' };
-  return { kind: 'running', text: 'worker が動いている' };
+  const gateNow = g => g.gate === 'question' ? '質問があなたの答え待ち' : `${kindOf(g.gate)[0]}があなたの判定待ち`;
+  const passed = sessionPassedGates(s, e.gates.map(g => g.since), { now });
+  if (gate && !passed) return { kind: 'gate', text: gateNow(gate) };
+  // A worker that went on past the gate is said by its own state first; the gate stays open, so it is said second.
+  const also = passed ? `${gateNow(gate)}（答えないまま進行中）` : '';
+  const say = r => also ? { ...r, also } : r;
+  if (live?.status === 'waiting') return say({ kind: 'permission', text: `worker が許可を待っている${live.request ? ` — ${live.request}` : ''}` });
+  if (live?.status === 'failed') return say({ kind: 'failed', text: 'worker がエラーで止まっている' });
+  if (t?.waitsOnPerson && WORK_PR_NOW[t.prTurn]) return say({ kind: 'pr', text: WORK_PR_NOW[t.prTurn] });
+  if (live?.status === 'done') return say({ kind: 'done', text: 'worker は次の指示待ち' });
+  if (live && s.phase && !unknown) return say({ kind: 'running', text: `worker が${phaseWord(s.phase)}${from(awaySecs(s.phaseAt))}` });
+  if (t?.prTurn === 'checks') return say({ kind: 'checks', text: 'PR は bot・CI 待ち' });
+  if (t?.prTurn === 'other-reviewer') return say({ kind: 'checks', text: 'PR は他の人のレビュー待ち' });
+  if (!s?.present) return say({ kind: 'none', text: 'worker はいません' });
+  if (unknown) return say({ kind: 'unknown', text: 'worker の状態は不明' });
+  return say({ kind: 'running', text: 'worker が動いている' });
 }
 function workNowText(e, now) {
-  return workNowOf(e, now).text;
+  const r = workNowOf(e, now);
+  return [r.text, r.also].filter(Boolean).join(' · ');
 }
 
 /* Everything the panel's block draws for a task, or null when there is nothing the person could have missed (never left

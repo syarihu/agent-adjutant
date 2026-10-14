@@ -10,8 +10,9 @@ const ctx = vm.createContext({ state: {}, BASE: '' });
 for (const file of ['util.js', 'sessions.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
-const { ledgerState, sessionState, sessionTip, unknownWhy } = ctx;
+const { ledgerState, sessionState, sessionTip, unknownWhy, passedGate, sessionLastText } = ctx;
 const table = name => vm.runInContext(name, ctx);
+const gateFirst = s => table('gateFirst')(s);
 const plain = x => JSON.parse(JSON.stringify(x));
 
 const NOW = 10_000;
@@ -159,4 +160,86 @@ test('a session that owns a task opens that task\'s panel', () => {
   const c = openWith({ taskOfSession: () => ({ id: 'T-1' }) });
   assert.deepStrictEqual(c.panel, [['T-1', 'term']]);
   assert.strictEqual(c.go.length, 0);
+});
+
+// A gate opened at G; `secsStamp` is not loaded here, so the stamps are written out.
+const G = Date.UTC(2026, 9, 1) / 1000;
+const stampAt = secs => new Date(secs * 1000).toISOString().replace(/[-:]|\.\d{3}/g, '');
+const gated = (agentSession, extra = {}) => session({ ...fresh, waiting: { id: 'g1', kind: 'plan', openedAt: stampAt(G), count: 1 }, agentSession, ...extra });
+
+test('a worker went on past its gate only by a status that began after the gate opened', () => {
+  const past = (s, secs = G) => passedGate(s, secs, data);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60 })), true);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 25 })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G - 100 })), false);
+  assert.strictEqual(past(gated({ status: 'done', updatedAt: G + 60 })), false);
+  assert.strictEqual(past(gated({ status: 'idle', updatedAt: G + 60 })), false);
+  assert.strictEqual(past(gated({ status: 'failed', updatedAt: G + 60 })), true);
+  assert.strictEqual(past(gated({ status: 'waiting', request: 'Bash: make', updatedAt: G + 60 })), true);
+  assert.strictEqual(past(gated({ status: 'waiting', request: 'AskUserQuestion: どちら？', updatedAt: G + 60 })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 31 })), true);
+  // A prompt typed after the gate opened counts inside the slack; one typed before it, or a worker at rest, does not.
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 5, lastPromptAt: G + 5 })), true);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 5 })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 5, lastPromptAt: G - 10 })), false);
+  assert.strictEqual(past(gated({ status: 'done', updatedAt: G + 60, lastPromptAt: G + 60 })), false);
+  // A `running` row whose pane went quiet is read as idle, so the worker has not gone on.
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60 }, quiet)), false);
+  assert.strictEqual(past(gated({ status: 'running' })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60, error: 'boom' })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60 }, { present: false })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60 }, { kind: 'hub' })), false);
+  assert.strictEqual(past(gated({ status: 'running', updatedAt: G + 60 }), null), false);
+  assert.strictEqual(past(null), false);
+});
+
+test('a session is read by its gate first unless it went on past it', () => {
+  const run = { status: 'running', updatedAt: G + 60 };
+  assert.strictEqual(gateFirst(gated(run)), false);
+  assert.strictEqual(gateFirst(gated({ status: 'done', updatedAt: G + 60 })), true);
+  assert.strictEqual(gateFirst(gated(run, { waiting: { id: 'g1', kind: 'plan', openedAt: 'garbage', count: 1 } })), true);
+  assert.strictEqual(gateFirst(gated(run, { waiting: { id: 'g1', kind: 'plan', openedAt: stampAt(G), count: 2 } })), true);
+  assert.strictEqual(gateFirst(session()), false);
+});
+
+test('a session with a gate it went on past reads by its own state', () => {
+  assert.strictEqual(sessionState(gated({ status: 'running', updatedAt: G + 60 }), data), 'working');
+  assert.strictEqual(sessionState(gated({ status: 'running', updatedAt: G + 60 }, quiet), data), 'waiting');
+  assert.strictEqual(sessionState(gated({ status: 'waiting', request: 'Bash: make', updatedAt: G + 60 }), data), 'permission');
+  assert.strictEqual(sessionState(gated({ status: 'done', updatedAt: G + 60 }), data), 'waiting');
+  const asks = status => sessionLastText(gated({ status, request: 'Bash: make', updatedAt: G + 60 }), data);
+  assert.match(asks('waiting'), /Bash: make/);
+  assert.doesNotMatch(asks('done'), /Bash: make/);
+});
+
+test('one rule for several gates: past the newest, and every time readable', () => {
+  const s = gated({ status: 'running', updatedAt: G + 60 });
+  const past = list => table('passedGates')(s, list, data);
+  assert.strictEqual(past([G, G + 10]), true);
+  assert.strictEqual(past([G, G + 50]), false);
+  assert.strictEqual(past([G, null]), false);
+  assert.strictEqual(past([]), false);
+});
+
+test('a task is past its gates only by the ones that wait on a person', () => {
+  const task = { id: 't1' };
+  const worker = session({ ...fresh, task: 't1', agentSession: { status: 'running', updatedAt: G + 60 } });
+  const run = gates => {
+    ctx.state = { gates, sessions: [worker], now: NOW };
+    // The page's own lookup is in terminal.js; the task's worker is the only session here.
+    ctx.sessionOfTask = t => ctx.state.sessions.find(x => x.task === t.id);
+    return table('taskPassedGate')(task, ctx.state);
+  };
+  const plan = { task: 't1', openedAt: stampAt(G) };
+  assert.strictEqual(run([plan]), true);
+  assert.strictEqual(run([plan, { task: 't1', wait: false, openedAt: stampAt(G + 300) }]), true);
+  assert.strictEqual(run([{ ...plan, answeredByHub: true }]), false);
+  assert.strictEqual(run([]), false);
+});
+
+test('a task is not past its gates where the session row keeps its gate first', () => {
+  const worker = gated({ status: 'running', updatedAt: G + 60 }, { task: 't1', waiting: { id: 'g1', kind: 'plan', openedAt: stampAt(G), count: 2 } });
+  ctx.state = { gates: [{ task: 't1', openedAt: stampAt(G) }, { task: 't1', openedAt: stampAt(G + 5) }], sessions: [worker], now: NOW };
+  ctx.sessionOfTask = t => ctx.state.sessions.find(x => x.task === t.id);
+  assert.strictEqual(table('taskPassedGate')({ id: 't1' }, ctx.state), false);
 });

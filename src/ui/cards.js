@@ -201,7 +201,13 @@ function humanCard(task, col) {
   }
 
   const w = workerOf(task);
+  // A worker that went on past this gate (answered in its terminal) is not stopped: the gate is still open and answerable.
+  const went = taskPassedGate(task);
+  const wentState = went ? ledgerState(sessionOfTask(task), state) : '';
+  const phaseLabel = w?.phase ? PHASE_LABEL[w.phase] || w.phase : task.status;
+  const wentWord = wentState === 'permission' ? `${phaseLabel}で許可待ち` : wentState === 'failed' ? `${phaseLabel}でエラー` : `${phaseLabel}中`;
   const phaseStr = task.status === 'queued' ? '着手前'
+    : went ? `${wentWord}（答えないまま進行中）`
     : (w?.phase ? `${PHASE_LABEL[w.phase] || w.phase}で停止中` : `${task.status}で停止中`);
 
   el.innerHTML = `
@@ -300,6 +306,10 @@ function agentCard(task) {
 
   const live = ['dispatched', 'pr'].includes(task.status);
   const worker = live ? workerOf(task) : null;
+  // A gate is open and the worker went on past it: the card shows what the worker does now, and the gate as a second mark.
+  const went = !!hcol && !owner && taskPassedGate(task);
+  const wentSession = went ? sessionOfTask(task) : null;
+  const wentStatus = went ? ledgerState(wentSession, state) : '';
 
   let h = '';
 
@@ -336,13 +346,18 @@ function agentCard(task) {
     const alarm = stopped && !hcol && task.status !== 'pr';
     h += `
       <div class="card-worker-status">
-        ${hcol ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-warning);">pause_circle</span>'
+        ${went ? (wentStatus === 'working' ? '<span class="pulse-dot"></span>'
+                 : `<span class="material-symbols-outlined" aria-hidden="true" style="font-size:14px;color:var(--md-sys-color-${wentStatus === 'failed' ? 'error' : 'warning'});">${wentStatus === 'failed' ? 'error' : 'front_hand'}</span>`)
+               : hcol ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-warning);">pause_circle</span>'
                : asks ? '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:14px;color:var(--md-sys-color-warning);">front_hand</span>'
                : alarm ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">pause</span>'
                : stopped ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">pause</span>'
                : '<span class="pulse-dot"></span>'}
         <span style="font-weight:700;${alarm ? 'color:var(--md-sys-color-error);' : ''}">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${alarm ? ' (停止)' : ''}</span>
         ${asks ? `<span style="font-weight:700;color:var(--md-sys-color-warning);">${permissionLabel(asking)}</span>` : ''}
+        ${went && wentStatus === 'permission' ? `<span style="font-weight:700;color:var(--md-sys-color-warning);">${permissionLabel(wentSession)}</span>` : ''}
+        ${went && wentStatus === 'failed' ? '<span style="font-weight:700;color:var(--md-sys-color-error);">エラー</span>' : ''}
+        ${went ? '<span style="font-weight:700;color:var(--md-sys-color-warning);">判定待ち（答えないまま進行中）</span>' : ''}
         ${mins != null ? `<span class="ago" style="margin-left:auto;color:var(--md-sys-color-outline);font-size:11px;">${minutesLabel(mins)}</span>` : ''}
       </div>
       ${asks && asking.agentSession.request ? `<div style="font-size:11px;color:var(--md-sys-color-outline);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(isQuestion(asking) ? requestText(asking) : asking.agentSession.request)}">${esc(isQuestion(asking) ? requestText(asking) : asking.agentSession.request)}</div>` : ''}
