@@ -303,6 +303,13 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .ov-hub:hover { background: transparent; }
 .ov-hub.dim .wk-title { color: var(--md-sys-color-on-surface-variant); }
 .ov-unreg { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 800; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.ov-chip-count { margin-left: 4px; font-weight: 800; }
+.ov-stage { padding: 0 6px; border: 1px solid transparent; border-radius: 8px; font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.ov-stage-done { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.ov-stage-reading { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.ov-stage-none { border-color: var(--md-sys-color-outline-variant); color: var(--md-sys-color-on-surface-variant); }
+/* The selected row is secondary-container too, so the mark keeps its outline there. */
+.wk-row[aria-current="true"] .ov-stage { border-color: currentColor; }
 .ov-row.dim .wk-title, .ov-row.dim .wk-meta { color: var(--md-sys-color-on-surface-variant); }
 .ov-line.dim { color: var(--md-sys-color-outline); font-family: inherit; }
 .ov-line { font-family: inherit; }

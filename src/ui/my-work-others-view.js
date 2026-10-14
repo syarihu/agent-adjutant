@@ -272,7 +272,10 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
   const line = othersStateLine(rec, records, nowEst);
   const when_ = othersRequestedLabel(rec, nowEst);
   const author = rec.author ? `@${esc(rec.author)}` : '（削除されたアカウント）';
+  const ai = othersAiView(rec, records, nowEst);
+  const stage = othersStageOfKind(ai.kind);
   const meta = [
+    `<span class="ov-stage ov-stage-${stage}">${OTHERS_STAGE_MARK[stage]}</span>`,
     `#${esc(rec.number)}`,
     author,
     `<span class="add">+${Number(rec.additions) || 0}</span> <span class="del">-${Number(rec.deletions) || 0}</span>`,
@@ -282,7 +285,6 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
   // A PR too large to read is offered 「分割案」 where it would be offered 「AI 下読み」, and 「AI 下読み」 is not offered on its row.
   const oor = OTHERS_LIVE.includes(rec.state) ? othersOutOfReview(rec) : null;
-  const ai = othersAiView(rec, records, nowEst);
   const asking = others.asking.has(rec.id);
   // Disabled for good while a read cannot be asked for (the hub is down, or no reader can be opened), with why as the title; while a request is out it only ignores the click.
   const askAttrs = `${hubView.canRead ? '' : ` disabled title="${esc(hubView.why || OTHERS_SYNC_WHY)}"`}${asking ? ' aria-disabled="true"' : ''}`;
@@ -359,6 +361,7 @@ function othersListHtml() {
   const lastSync = doc.lastSync;
   const stale = othersStale(lastSync, nowEst);
   const repo = othersEffectiveRepo(records, prefs.othersRepo);
+  const stage = othersEffectiveStage(prefs.othersStage);
   const marks = othersMarks();
   const hubView = othersHubView(doc.hub, records);
   const never = !lastSync?.at;
@@ -366,6 +369,9 @@ function othersListHtml() {
   const chips = records.length ? [{ key: '', label: 'すべて' }, ...othersRepoChips(records)] : [];
   const chipsHtml = chips.length
     ? `<div class="ov-chips" role="group" aria-label="リポジトリで絞り込む">${chips.map(c => `<button type="button" class="ov-chip" data-ov-repo="${esc(c.key)}" aria-pressed="${c.key === repo}">${esc(c.label)}</button>`).join('')}</div>` : '';
+  const stageChips = records.length ? othersStageChips(records, repo, nowEst) : [];
+  const stageChipsHtml = stageChips.length
+    ? `<div class="ov-chips" role="group" aria-label="AI 下読みで絞り込む">${stageChips.map(c => `<button type="button" class="ov-chip" data-ov-stage="${esc(c.key)}" aria-pressed="${c.key === stage}">${esc(c.label)} <span class="ov-chip-count">${c.count}</span></button>`).join('')}</div>` : '';
   const alerts = [
     ...(others.error ? [{ alert: true, text: '最新の状態を読めませんでした（表示は前回のものです）' }] : []),
     ...othersNotes(lastSync),
@@ -377,14 +383,15 @@ function othersListHtml() {
   } else if (!records.length) {
     body = '<div class="wk-empty">あなたにレビューを頼んでいる PR はありません</div>';
   } else {
-    body = othersGroups(records, repo).map(g => `<section class="wk-group" aria-label="${esc(g.label)}">
+    const groups = othersGroups(records, repo, stage, nowEst);
+    body = !groups.length ? `<div class="wk-empty">「${esc(stageChips.find(c => c.key === stage).label)}」の PR はありません</div>` : groups.map(g => `<section class="wk-group" aria-label="${esc(g.label)}">
       <div class="wk-head repo"><span class="wk-head-main"><span class="wk-head-name">${esc(g.label)}${g.unregistered ? ' <span class="ov-unreg" title="adj に登録していないリポジトリです（同じオーナーなので依頼だけ出ます）">未登録</span>' : ''}</span></span><span class="wk-count">${g.rows.length}</span></div>
       <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, records)).join('')}</div>
     </section>`).join('');
   }
-  // Every new row counts, the ones the chip filter hides too (as 「タスク」 marks every new entry whatever is folded).
+  // Every new row counts, the ones the repository and AI 下読み chips hide too (as 「タスク」 marks every new entry whatever is folded).
   const readAllHtml = othersNewIds(records, marks).length ? workReadAllButtonHtml('data-ov-read-all') : '';
-  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${readAllHtml}</div>${alerts}${othersHubHtml(hubView)}${body}`;
+  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${stageChipsHtml}${readAllHtml}</div>${alerts}${othersHubHtml(hubView)}${body}`;
 }
 
 /* How to find again what has the keyboard focus after a redraw: the control by its own data, else (a button that has gone, as
@@ -400,6 +407,7 @@ function othersHeldSel(el) {
   if (d.ovHubStop != null) return ['[data-ov-hub-stop]', '[data-ov-hub-start]', '[data-ov-hub]'];
   if (d.ovSplit != null) return [q('ov-split', d.ovSplit), rowOf(d.ovSplit)];
   if (d.ovRepo != null) return [q('ov-repo', d.ovRepo)];
+  if (d.ovStage != null) return [q('ov-stage', d.ovStage)];
   if (d.ovReadAll != null) return ['[data-ov-read-all]', '.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   if (d.ovSync != null) return ['.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   return [];
@@ -408,7 +416,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || prefs.workTab !== 'others') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');
@@ -428,6 +436,11 @@ wk('ov-groups').addEventListener('click', e => {
   if ((b = e.target.closest('[data-ov-sync]'))) return syncOthers();
   if ((b = e.target.closest('[data-ov-repo]'))) {
     prefs.othersRepo = b.dataset.ovRepo;
+    savePrefs();
+    return renderOthersList();
+  }
+  if ((b = e.target.closest('[data-ov-stage]'))) {
+    prefs.othersStage = othersEffectiveStage(b.dataset.ovStage);
     savePrefs();
     return renderOthersList();
   }
