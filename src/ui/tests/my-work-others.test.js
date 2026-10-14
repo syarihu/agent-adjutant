@@ -13,7 +13,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 const plain = x => JSON.parse(JSON.stringify(x));
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersSyncWords, othersHubStopText, othersGroups, othersRepoChips,
   othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
-  othersOutOfReviewLine, othersReadMode, othersReadAllPatches } = ctx;
+  othersOutOfReviewLine, othersReadMode, othersReadAllPatches, othersAiStage, othersEffectiveStage, othersStageChips } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -427,10 +427,10 @@ test('read-all marks only the new records, hidden or not, with the document\'s n
 });
 
 /* The list is drawn by my-work-others-view.js too: its function is cut out, with the row and the hub drawn as stubs. */
-function listOf(doc, { repo = '', marks = {} } = {}) {
+function listOf(doc, { repo = '', stage = '', marks = {} } = {}) {
   const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const cut = (src, re) => { const m = src.match(re); assert.ok(m); return m[0]; };
-  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
+  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
     othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => '', othersNotes: () => [], othersRowHtml: () => '<row>' });
   vm.runInContext(cut(read('my-work.js'), /^function workReadAllButtonHtml[\s\S]*?^}/m), ctx);
   vm.runInContext(cut(read('my-work-others-view.js'), /^function othersListHtml[\s\S]*?^}/m), ctx);
@@ -456,4 +456,75 @@ test('it shows when the new row is in a repository the filter hides', () => {
   const hidden = rec(2, { repo: 'Other/Repo', id: 'other/repo#2' });
   const html = listOf(listDoc([read, hidden]), { repo: 'acme/widget', marks: { 'acme/widget#1': { read: T0 } } });
   assert.ok(html.includes('data-ov-read-all'));
+});
+
+const ready = { status: 'ready', stale: false, sha: 'abcdef0123' };
+const NOW = T0 + 60;
+const stageOf = (extra, records) => { const r = rec(1, extra); return othersAiStage(r, records || [r], NOW); };
+
+test('where an AI 下読み stands, for every kind it can be in', () => {
+  const split = { ...ready, mode: 'split' };
+  const big = [{ path: 'src/big.rs', additions: 2000, deletions: 0 }];
+  assert.strictEqual(stageOf({ state: 'ai-ready', ai: ready }), 'done');
+  assert.strictEqual(stageOf({ state: 'ai-ready', ai: { ...ready, stale: true } }), 'done');
+  assert.strictEqual(stageOf({ state: 'ai-ready', ai: split }), 'done');
+  assert.strictEqual(stageOf({ state: 'ai-ready', files: big, ai: split }), 'done');
+  assert.strictEqual(stageOf({ state: 'ai-ready', files: big, ai: { ...split, stale: true } }), 'done');
+  assert.strictEqual(stageOf({ ai: { status: 'queued', startedAt: stamp(T0) } }), 'reading');
+  assert.strictEqual(stageOf({ state: 'ai-reading', ai: { status: 'running', launchedAt: stamp(T0) } }), 'reading');
+  assert.strictEqual(stageOf({ state: 'ai-reading', ai: { status: 'running', launchedAt: stamp(NOW - 1801) } }), 'none');
+  assert.strictEqual(stageOf({ ai: { status: 'failed', error: 'x' } }), 'none');
+  assert.strictEqual(stageOf({ ai: { status: 'failed', readerClosedAt: stamp(T0) } }), 'none');
+  assert.strictEqual(stageOf({}), 'none');
+  assert.strictEqual(stageOf({ ai: { status: 'mystery' } }), 'none');
+});
+
+test('an AI 下読み filter that is not one of the stages is すべて', () => {
+  assert.strictEqual(othersEffectiveStage('done'), 'done');
+  for (const s of [undefined, null, 'bogus', '', 'DONE']) assert.strictEqual(othersEffectiveStage(s), '');
+});
+
+const stageRows = () => [rec(1, { state: 'ai-ready', ai: ready }), rec(2),
+  rec(3, { repo: 'Zeta/App', id: 'zeta/app#3' }), rec(4, { repo: 'Zeta/App', id: 'zeta/app#4', state: 'ai-reading', ai: { status: 'running', launchedAt: stamp(T0) } })];
+
+test('the AI 下読み filter ANDs with the repository, and drops the groups it empties', () => {
+  const rows = stageRows();
+  assert.deepStrictEqual(plain(othersGroups(rows, '', 'done', NOW).map(g => [g.key, g.rows.map(r => r.number)])), [['acme/widget', [1]]]);
+  assert.deepStrictEqual(plain(othersGroups(rows, '', 'none', NOW).map(g => [g.key, g.rows.map(r => r.number)])), [['acme/widget', [2]], ['zeta/app', [3]]]);
+  assert.deepStrictEqual(plain(othersGroups(rows, 'zeta/app', 'none', NOW).map(g => [g.key, g.rows.map(r => r.number)])), [['zeta/app', [3]]]);
+  // The repository that applies is judged over all the records, so a stage it has no row in shows nothing, not another repository's rows.
+  assert.deepStrictEqual(plain(othersGroups(rows, 'zeta/app', 'done', NOW)), []);
+});
+
+test('the AI 下読み chips count the repository that applies', () => {
+  const rows = stageRows();
+  const counts = repo => plain(othersStageChips(rows, repo, NOW).map(c => [c.key, c.count]));
+  assert.deepStrictEqual(counts(''), [['', 4], ['done', 1], ['reading', 1], ['none', 2]]);
+  assert.deepStrictEqual(counts('zeta/app'), [['', 2], ['done', 0], ['reading', 1], ['none', 1]]);
+  assert.deepStrictEqual(counts('gone/repo'), counts(''));
+  assert.deepStrictEqual(plain(othersStageChips(rows, '', NOW).map(c => c.label)), ['すべて', '下読み済み', '下読み中', '未']);
+});
+
+test('a stage with no row says so, keeps its chip pressed, and leaves the rest of the list', () => {
+  const html = listOf(listDoc([rec(1), rec(2)]), { stage: 'reading' });
+  assert.ok(html.includes('「下読み中」の PR はありません'));
+  assert.ok(/data-ov-stage="reading" aria-pressed="true">下読み中 <span class="ov-chip-count">0<\/span>/.test(html));
+  assert.ok(html.includes('<sync>') && html.includes('data-ov-read-all') && !html.includes('<row>'));
+  const some = listOf(listDoc([rec(1), rec(2)]), { stage: 'none' });
+  assert.ok(some.includes('<row>') && !some.includes('の PR はありません'));
+  assert.ok(some.includes('aria-label="AI 下読みで絞り込む"') && some.includes('data-ov-stage="done"'));
+  assert.ok(!listOf(listDoc([]), { stage: 'done' }).includes('data-ov-stage'));
+});
+
+test('read-all still shows when the only new row is hidden by the AI 下読み filter', () => {
+  const read = rec(1, { state: 'ai-ready', ai: ready });
+  const hidden = rec(2);
+  const html = listOf(listDoc([read, hidden]), { stage: 'done', marks: { 'acme/widget#1': { read: T0 + 100 } } });
+  assert.ok(html.includes('data-ov-read-all'));
+});
+
+test('a row marks where its AI 下読み stands', () => {
+  assert.ok(rowOf(rec(1, { state: 'ai-ready', ai: ready })).includes('ov-stage ov-stage-done">下読み済み'));
+  assert.ok(rowOf(rec(1)).includes('ov-stage ov-stage-none">未下読み'));
+  assert.ok(rowOf(rec(1, { state: 'ai-reading', ai: { status: 'running', launchedAt: stamp(T0) } })).includes('ov-stage ov-stage-reading">下読み中'));
 });

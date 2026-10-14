@@ -120,6 +120,21 @@ function othersEffectiveRepo(records, filter) {
   return filter && (records || []).some(r => othersRepoKey(r) === filter) ? filter : '';
 }
 
+/* Where an AI 下読み stands, for the chips and the row's mark: 'done', 'reading' or 'none' (a read that failed, or hung, is none). */
+const OTHERS_STAGES = [['done', '下読み済み'], ['reading', '下読み中'], ['none', '未']];
+/* The words of a row's mark of it. */
+const OTHERS_STAGE_MARK = { done: '下読み済み', reading: '下読み中', none: '未下読み' };
+function othersStageOfKind(kind) {
+  return kind === 'done' || kind === 'stale' ? 'done' : kind === 'queued' || kind === 'running' ? 'reading' : 'none';
+}
+function othersAiStage(rec, records, nowSecs) {
+  return othersStageOfKind(othersAiView(rec, records, nowSecs).kind);
+}
+/* The AI 下読み filter that applies: `stage` when it is one of the stages, else '' (すべて). */
+function othersEffectiveStage(stage) {
+  return OTHERS_STAGES.some(([k]) => k === stage) ? stage : '';
+}
+
 /* A row's place in its group: what is done last, then the oldest request first (none last), then by number. */
 function othersRowOrder(a, b) {
   const done = x => x.state === 'done' ? 1 : 0;
@@ -131,13 +146,15 @@ function othersRowOrder(a, b) {
 
 /* The records as groups, one per repository in name order with case ignored: `{key, label, unregistered, rows}`. The label is
    the repository as GitHub spells it, and `unregistered` is set when adj has no board for it. `repoFilter` narrows to
-   one repository (lower case), falling back to all of them when it names none that is here. */
-function othersGroups(records, repoFilter = '') {
+   one repository (lower case), falling back to all of them when it names none that is here, and `stage` to the records whose AI 下読み
+   stands there (see `othersAiStage`; '' is all). A group left with no row is not made. `records` is all of them, for the queue places. */
+function othersGroups(records, repoFilter = '', stage = '', nowSecs) {
   const only = othersEffectiveRepo(records, repoFilter);
   const byKey = new Map();
   for (const r of records || []) {
     const key = othersRepoKey(r);
     if (only && key !== only) continue;
+    if (stage && othersAiStage(r, records, nowSecs) !== stage) continue;
     if (!byKey.has(key)) byKey.set(key, { key, label: r.repo, unregistered: false, rows: [] });
     const g = byKey.get(key);
     if (r.registered === false) g.unregistered = true;
@@ -151,6 +168,14 @@ function othersGroups(records, repoFilter = '') {
 /* The chips that narrow the list: one per repository, in name order, with how many records it has. */
 function othersRepoChips(records) {
   return othersGroups(records, '').map(g => ({ key: g.key, label: g.label, count: g.rows.length }));
+}
+
+/* The chips of the AI 下読み: すべて, then one per stage, with how many records of the repository that applies each has. */
+function othersStageChips(records, repoFilter, nowSecs) {
+  const only = othersEffectiveRepo(records, repoFilter);
+  const here = (records || []).filter(r => !only || othersRepoKey(r) === only);
+  const count = key => here.filter(r => othersAiStage(r, records, nowSecs) === key).length;
+  return [{ key: '', label: 'すべて', count: here.length }, ...OTHERS_STAGES.map(([key, label]) => ({ key, label, count: count(key) }))];
 }
 
 const OTHERS_DONE_WORD = { approved: '承認しました', merged: 'マージされました', closed: '閉じられました', withdrawn: '依頼が取り下げられました' };

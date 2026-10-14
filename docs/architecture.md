@@ -477,7 +477,7 @@ first. A diff over 2000 rows is drawn file by file as each comes near the screen
 - **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
   time the person acted on it (`ai.startedAt`). A record in `waiting-on-author` or `done` is never new. The marks are
   `{ "<record id>": { read } }`, in server seconds, in the browser's local storage under `adj.seenOthers`. The sidebar's badge and the page
-  title count the new rows of both lists, whatever the repository chips narrow the list to.
+  title count the new rows of both lists, whatever the repository and AI 下読み chips narrow the list to.
 - **Notification.** The tab whose sync answered 200 with a non-empty `arrived` rings 「レビュー依頼」 once, with the tag `adj-review-<lastSync.at>`:
   the PR's title for one, 「レビュー依頼 N 件」 for several. A push alone is not in `arrived`, so it does not ring. It is a choice in the page's
   notification dialog, on by default.
