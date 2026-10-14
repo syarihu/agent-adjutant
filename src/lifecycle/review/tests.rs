@@ -1,5 +1,7 @@
+use super::close_ended_pr_readers::close_ended_pr_readers_with;
 use super::close_reader::close_reader_with;
 use super::close_readers::{close_finished_readers_with, frees_a_place, has_finished_reader};
+use super::close_task_readers::{close_task_readers_with, has_task_reader};
 use super::dispatch::dispatch_with;
 use super::launch_reader::launch_reader_with;
 use super::request::request_with;
@@ -933,11 +935,16 @@ fn task_hub() -> (Sandbox, Context) {
 
 /// Task `id` of the hub `acme-widget`, with `pr` when given.
 fn put_task(root: &Path, id: &str, pr: Option<&str>) {
+    put_task_status(root, id, pr, "backlog");
+}
+
+/// `put_task`, in `status`.
+fn put_task_status(root: &Path, id: &str, pr: Option<&str>, status: &str) {
     let dir = root.join("tasks/acme-widget");
     std::fs::create_dir_all(&dir).unwrap();
     let mut task = json!({
         "id": id, "kind": "investigate", "title": "t", "doneWhen": "report-only",
-        "status": "backlog", "autoStart": true, "createdAt": "20261001T000000Z", "updatedAt": "20261001T000000Z"
+        "status": status, "autoStart": true, "createdAt": "20261001T000000Z", "updatedAt": "20261001T000000Z"
     });
     if let Some(pr) = pr {
         task["pr"] = json!(pr);
@@ -1172,4 +1179,263 @@ fn a_task_given_another_pr_while_github_is_read_is_not_queued() {
         &dropping,
     );
     assert_eq!(result, Err(TaskAskError::NoPr));
+}
+
+/// PR `number`, read for task `task_id` of the hub `acme-widget` and requested of nobody.
+fn link(root: &Path, number: u64, task_id: &str) {
+    let path = root.join(format!("others/acme~widget~{number}.json"));
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["requested"] = json!(false);
+    v["task"] = json!({"board": "acme-widget", "id": task_id});
+    std::fs::write(&path, v.to_string()).unwrap();
+}
+
+fn sweep_tasks(
+    root: &Path,
+    alive: Liveness,
+    stop: impl Fn(&others::HungReader) -> Result<(), String>,
+) -> Vec<(String, String)> {
+    close_task_readers_with(root, NOW, &|_, _| alive, &stop)
+}
+
+#[test]
+fn a_reader_of_a_done_or_cancelled_task_is_closed_and_its_read_kept() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    put_task_status(&root, "t1", None, "done");
+    put_task_status(&root, "t2", None, "cancelled");
+    open_reader(&root, 1, "ready", "open");
+    open_reader(&root, 2, "running", "open");
+    link(&root, 1, "t1");
+    link(&root, 2, "t2");
+    let failures = sweep_tasks(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_some() && closed_at(&root, 2).is_some());
+    assert_eq!(status_of(&root, 1), "ready");
+    assert_eq!(status_of(&root, 2), "failed");
+    assert_eq!(error_of(&root, 2).as_deref(), Some("the task is finished"));
+    assert!(kept(&root, 1) && kept(&root, 2));
+}
+
+#[test]
+fn a_reader_of_a_task_whose_record_is_gone_is_closed() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    link(&root, 1, "deleted");
+    let failures = sweep_tasks(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_some());
+    assert!(kept(&root, 1));
+}
+
+#[test]
+fn a_reader_of_a_task_still_in_play_is_kept() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    for (number, status) in [(1, "backlog"), (2, "queued"), (3, "dispatched"), (4, "pr")] {
+        let id = format!("t{number}");
+        put_task_status(&root, &id, None, status);
+        open_reader(&root, number, "running", "open");
+        link(&root, number, &id);
+    }
+    let failures = sweep_tasks(&root, Liveness::Alive, |_| {
+        panic!("a reader in play was stopped")
+    });
+    assert!(failures.is_empty());
+    for number in 1..=4 {
+        assert!(closed_at(&root, number).is_none());
+        assert_eq!(status_of(&root, number), "running");
+    }
+}
+
+#[test]
+fn a_task_record_that_cannot_be_read_keeps_its_reader() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = root.join("tasks/acme-widget");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t1.json"), "{").unwrap();
+    open_reader(&root, 1, "ready", "open");
+    link(&root, 1, "t1");
+    let failures = sweep_tasks(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+}
+
+#[test]
+fn a_reader_not_read_for_a_task_or_also_requested_follows_the_request_rule() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    // 1: no task link at all. 2: read for a finished task, and also requested of you.
+    put_task_status(&root, "t2", None, "done");
+    open_reader(&root, 1, "ready", "open");
+    open_reader(&root, 2, "ready", "open");
+    link(&root, 2, "t2");
+    let path = root.join("others/acme~widget~2.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["requested"] = json!(true);
+    std::fs::write(&path, v.to_string()).unwrap();
+    assert!(!has_task_reader(&root));
+    let failures = sweep_tasks(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none() && closed_at(&root, 2).is_none());
+}
+
+#[test]
+fn closing_a_finished_task_s_reader_again_writes_nothing() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    put_task_status(&root, "t1", None, "done");
+    open_reader(&root, 1, "ready", "open");
+    link(&root, 1, "t1");
+    sweep_tasks(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    let first = record_text(&root, 1);
+    assert!(closed_at(&root, 1).is_some());
+    let failures = sweep_tasks(&root, Liveness::Gone, |_| panic!("nothing to stop"));
+    assert!(failures.is_empty());
+    assert_eq!(record_text(&root, 1), first);
+}
+
+#[test]
+fn a_task_reader_that_cannot_be_told_alive_is_left_and_reported() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    put_task_status(&root, "t1", None, "done");
+    for number in [1, 2] {
+        open_reader(&root, number, "ready", "open");
+        link(&root, number, "t1");
+    }
+    let before = record_text(&root, 1);
+    let alive = |pid: u32, _: Option<&str>| {
+        if pid == 4242 {
+            Liveness::CannotTell
+        } else {
+            Liveness::Gone
+        }
+    };
+    // Both readers carry pid 4242: make the second one's different, so only the first fails.
+    let path = root.join("others/acme~widget~2.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["ai"]["pid"] = json!(4243);
+    std::fs::write(&path, v.to_string()).unwrap();
+    let failures = close_task_readers_with(&root, NOW, &alive, &|_| panic!("nothing to stop"));
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].0, "acme/widget#1");
+    assert!(failures[0].1.contains("cannot tell"));
+    assert_eq!(record_text(&root, 1), before);
+    assert!(closed_at(&root, 2).is_some());
+}
+
+#[test]
+fn has_task_reader_needs_a_linked_open_reader() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    assert!(!has_task_reader(&root));
+    // An open reader that is read for no task.
+    open_reader(&root, 1, "ready", "open");
+    assert!(!has_task_reader(&root));
+    // A task's PR with no read.
+    put(&root, 2, None, "20261001T000000Z");
+    link(&root, 2, "t1");
+    assert!(!has_task_reader(&root));
+    // A linked reader, then closed.
+    open_reader(&root, 3, "ready", "open");
+    link(&root, 3, "t1");
+    assert!(has_task_reader(&root));
+    let (closed, _) = close(&root, 3, Liveness::Gone, Ok(()));
+    closed.unwrap();
+    assert!(!has_task_reader(&root));
+}
+
+#[test]
+fn the_poll_closes_the_readers_of_ended_prs_it_names() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "running", "open");
+    open_reader(&root, 2, "ready", "open");
+    open_reader(&root, 3, "ready", "open");
+    let named: Vec<_> = [1, 3, 4]
+        .iter()
+        .map(|n| others::pr_of(&format!("acme/widget#{n}")).unwrap())
+        .collect();
+    // 3 is closed already: nothing to say. 4 has no record.
+    close(&root, 3, Liveness::Gone, Ok(())).0.unwrap();
+    let failures = close_ended_pr_readers_with(&root, &named, NOW, &|_, _| Liveness::Gone, &|_| {
+        panic!("nothing to stop")
+    });
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_some());
+    assert_eq!(status_of(&root, 1), "failed");
+    assert_eq!(
+        error_of(&root, 1).as_deref(),
+        Some("the PR is no longer open")
+    );
+    assert!(kept(&root, 1));
+    // Not named: untouched.
+    assert!(closed_at(&root, 2).is_none());
+}
+
+#[test]
+fn a_finished_task_s_live_reader_is_stopped_once_and_closed() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    put_task_status(&root, "t1", None, "done");
+    open_reader(&root, 1, "ready", "open");
+    link(&root, 1, "t1");
+    // Alive until it is stopped, as a pane is.
+    let stopped = std::cell::Cell::new(0usize);
+    let alive = |_: u32, _: Option<&str>| {
+        if stopped.get() == 0 {
+            Liveness::Alive
+        } else {
+            Liveness::Gone
+        }
+    };
+    let failures = close_task_readers_with(&root, NOW, &alive, &|_| {
+        stopped.set(stopped.get() + 1);
+        Ok(())
+    });
+    assert!(failures.is_empty());
+    assert_eq!(stopped.get(), 1);
+    assert!(closed_at(&root, 1).is_some());
+}
+
+#[test]
+fn a_finished_task_s_reader_that_cannot_be_stopped_is_left_and_reported() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    put_task_status(&root, "t1", None, "done");
+    open_reader(&root, 1, "ready", "open");
+    link(&root, 1, "t1");
+    let before = record_text(&root, 1);
+    let failures = sweep_tasks(&root, Liveness::Alive, |_| Err("tmux refused".to_string()));
+    assert_eq!(
+        failures,
+        [("acme/widget#1".to_string(), "tmux refused".to_string())]
+    );
+    assert_eq!(record_text(&root, 1), before);
+}
+
+#[test]
+fn the_poll_stops_a_live_reader_of_an_ended_pr_once_and_closes_it() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let named = [others::pr_of("acme/widget#1").unwrap()];
+    let stopped = std::cell::Cell::new(0usize);
+    let alive = |_: u32, _: Option<&str>| {
+        if stopped.get() == 0 {
+            Liveness::Alive
+        } else {
+            Liveness::Gone
+        }
+    };
+    let failures = close_ended_pr_readers_with(&root, &named, NOW, &alive, &|_| {
+        stopped.set(stopped.get() + 1);
+        Ok(())
+    });
+    assert!(failures.is_empty());
+    assert_eq!(stopped.get(), 1);
+    assert!(closed_at(&root, 1).is_some());
 }

@@ -1,7 +1,8 @@
 //! What the board does by itself, beside answering requests: the poll of GitHub's
 //! notifications and of the pull requests the cards hold, the parent-task titles of the hubs,
 //! and what Jules says about the sessions the cards follow, the sweep that closes the gates
-//! whose worker has moved on, and the watch that announces a session waiting on a person.
+//! whose worker has moved on, the queue of the code-review readers (which also closes the readers
+//! of finished tasks), and the watch that announces a session waiting on a person.
 
 mod branch_prs;
 mod hub_titles;

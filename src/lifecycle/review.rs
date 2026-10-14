@@ -2,8 +2,10 @@
 //! running one, and taking its hand-in. One file per operation; the records and the queue
 //! rules are `others`'s, and this module is the part that starts processes.
 
+mod close_ended_pr_readers;
 mod close_reader;
 mod close_readers;
+mod close_task_readers;
 mod dispatch;
 mod fail;
 mod launch_reader;
@@ -16,8 +18,10 @@ mod submit;
 #[cfg(test)]
 mod tests;
 
+pub use close_ended_pr_readers::*;
 pub use close_reader::*;
 pub use close_readers::*;
+pub use close_task_readers::*;
 pub use dispatch::*;
 pub use fail::*;
 pub use launch_reader::*;

@@ -7,7 +7,7 @@ use crate::registry::{self, Liveness};
 use crate::task::pr_ref;
 
 /// Why a read is failed when the PR left review for good; the words `claim_reads` uses.
-const NO_LONGER_OPEN: &str = "the PR is no longer open";
+pub(super) const NO_LONGER_OPEN: &str = "the PR is no longer open";
 
 /// Close the readers of the PRs that are merged or closed, after a sync found them so: a reader
 /// of a PR nobody reads any more only takes a place. A PR that left review for another reason
