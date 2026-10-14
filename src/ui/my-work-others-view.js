@@ -382,7 +382,9 @@ function othersListHtml() {
       <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, records)).join('')}</div>
     </section>`).join('');
   }
-  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}</div>${alerts}${othersHubHtml(hubView)}${body}`;
+  // Every new row counts, the ones the chip filter hides too (as 「タスク」 marks every new entry whatever is folded).
+  const readAllHtml = othersNewIds(records, marks).length ? workReadAllButtonHtml('data-ov-read-all') : '';
+  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${readAllHtml}</div>${alerts}${othersHubHtml(hubView)}${body}`;
 }
 
 /* How to find again what has the keyboard focus after a redraw: the control by its own data, else (a button that has gone, as
@@ -398,6 +400,7 @@ function othersHeldSel(el) {
   if (d.ovHubStop != null) return ['[data-ov-hub-stop]', '[data-ov-hub-start]', '[data-ov-hub]'];
   if (d.ovSplit != null) return [q('ov-split', d.ovSplit), rowOf(d.ovSplit)];
   if (d.ovRepo != null) return [q('ov-repo', d.ovRepo)];
+  if (d.ovReadAll != null) return ['[data-ov-read-all]', '.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   if (d.ovSync != null) return ['.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   return [];
 }
@@ -427,6 +430,12 @@ wk('ov-groups').addEventListener('click', e => {
     prefs.othersRepo = b.dataset.ovRepo;
     savePrefs();
     return renderOthersList();
+  }
+  if (e.target.closest('[data-ov-read-all]')) {
+    if (!others.doc) return;
+    const patches = othersReadAllPatches(othersRecords(), othersMarks(), others.doc.now);
+    if (patches.length) othersWriteMarks(patches);
+    return;
   }
   if ((b = e.target.closest('[data-ov-read]'))) {
     if (others.doc) othersWriteMarks([[b.dataset.ovRead, { read: others.doc.now }]]);

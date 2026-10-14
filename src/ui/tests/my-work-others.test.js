@@ -13,7 +13,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 const plain = x => JSON.parse(JSON.stringify(x));
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersSyncWords, othersHubStopText, othersGroups, othersRepoChips,
   othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
-  othersOutOfReviewLine, othersReadMode } = ctx;
+  othersOutOfReviewLine, othersReadMode, othersReadAllPatches } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -417,4 +417,43 @@ test('a current proposal of a PR that is not out of review now offers the usual 
   assert.ok(!big.includes('data-ov-ai') && !big.includes('data-ov-split'));
   // Waiting on its author: nothing is offered.
   assert.strictEqual(othersAiView(rec(1, { state: 'waiting-on-author', files: [], ai })).action, null);
+});
+
+test('read-all marks only the new records, hidden or not, with the document\'s now', () => {
+  const rows = [rec(1), rec(2, { events: { requested: stamp(T0), rerequested: null, aiReady: null, pushed: null } }), rec(3, { state: 'waiting-on-author' }), rec(4, { repo: 'Other/Repo', id: 'other/repo#4' })];
+  const marks = { 'acme/widget#2': { read: T0 } };
+  assert.deepStrictEqual(plain(othersReadAllPatches(rows, marks, T0 + 99)), [['acme/widget#1', { read: T0 + 99 }], ['other/repo#4', { read: T0 + 99 }]]);
+  assert.deepStrictEqual(plain(othersReadAllPatches(rows, { 'acme/widget#1': { read: T0 }, 'acme/widget#2': { read: T0 }, 'other/repo#4': { read: T0 } }, T0 + 99)), []);
+});
+
+/* The list is drawn by my-work-others-view.js too: its function is cut out, with the row and the hub drawn as stubs. */
+function listOf(doc, { repo = '', marks = {} } = {}) {
+  const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const cut = (src, re) => { const m = src.match(re); assert.ok(m); return m[0]; };
+  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
+    othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => '', othersNotes: () => [], othersRowHtml: () => '<row>' });
+  vm.runInContext(cut(read('my-work.js'), /^function workReadAllButtonHtml[\s\S]*?^}/m), ctx);
+  vm.runInContext(cut(read('my-work-others-view.js'), /^function othersListHtml[\s\S]*?^}/m), ctx);
+  return ctx.othersListHtml();
+}
+const listDoc = records => ({ now: T0 + 60, lastSync: { at: stamp(T0) }, records });
+
+test('the 「AI 下読み」 list offers 新着をすべて既読にする only while a row is new, and not while it loads', () => {
+  const withNew = listOf(listDoc([rec(1)]));
+  assert.ok(withNew.includes('data-ov-read-all') && !withNew.includes('data-wk-read-all'));
+  assert.ok(!listOf(listDoc([rec(1)]), { marks: { 'acme/widget#1': { read: T0 } } }).includes('data-ov-read-all'));
+  assert.ok(!listOf(null).includes('data-ov-read-all'));
+});
+
+test('the read-all button is the 「タスク」 list\'s button', () => {
+  const html = listOf(listDoc([rec(1)]));
+  assert.ok(html.includes(ctx.workReadAllButtonHtml('data-ov-read-all')));
+  for (const s of ['class="wk-act"', 'done_all', 'aria-label="新着をすべて既読にする"']) assert.ok(html.includes(s), s);
+});
+
+test('it shows when the new row is in a repository the filter hides', () => {
+  const read = rec(1);
+  const hidden = rec(2, { repo: 'Other/Repo', id: 'other/repo#2' });
+  const html = listOf(listDoc([read, hidden]), { repo: 'acme/widget', marks: { 'acme/widget#1': { read: T0 } } });
+  assert.ok(html.includes('data-ov-read-all'));
 });

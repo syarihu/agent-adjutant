@@ -62,6 +62,7 @@ vm.runInContext([
   cut(/^function workListedRepos[\s\S]*?^}/m),
   cut(/^function workListedView[\s\S]*?^}/m),
   cut(/^function workTreeByParent[\s\S]*?^}/m),
+  cut(/^function workReadAllButtonHtml[\s\S]*?^}/m),
   cut(/^function workHeadHtml[\s\S]*?^}/m),
   cut(/^function workSummaryHtml[\s\S]*?^}/m),
   cut(/^function workHubWakeHtml[\s\S]*?^}/m),
@@ -457,6 +458,11 @@ test('the group of the rows with no parent is named for its hub and what it is d
   assert.ok(head({ hub: own('動いていない', 0) }).includes('hub ・ 動いていない'));
   const none = head({ hub: null });
   assert.ok(none.includes('>hub<') && !none.includes('親なし') && !none.includes('・'));
+});
+
+test('the 新着 header keeps its button that marks every new row read', () => {
+  const head = run('workHeadHtml(node, false)', { node: { key: 'new', kind: 'new', label: '新着', readAll: true, rows: [], items: [{}], hubs: [] } });
+  assert.ok(head.includes('data-wk-read-all') && head.includes('done_all') && head.includes('aria-label="新着をすべて既読にする"'));
 });
 
 test('the group name escapes what it draws', () => {
