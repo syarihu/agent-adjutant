@@ -73,6 +73,11 @@ function othersNewIds(records, marks) {
   return (records || []).filter(r => othersSeenClass(r, marks?.[r.id] || {}) === 'new').map(r => r.id);
 }
 
+/* The patches that mark every new record among `records` read as of `now`, for one `othersWriteMarks`. Not narrowed by any filter. */
+function othersReadAllPatches(records, marks, now) {
+  return othersNewIds(records, marks).map(id => [id, { read: now }]);
+}
+
 /* S, M or L, by additions plus deletions. */
 function othersSize(rec) {
   const n = (Number(rec?.additions) || 0) + (Number(rec?.deletions) || 0);

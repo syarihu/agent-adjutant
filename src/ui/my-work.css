@@ -278,6 +278,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-away-who { font-weight: 800; margin-right: 6px; }
 
 /* 「AI 下読み」: the PRs others asked you to review (my-work-others-view.js). */
+.ov-sync-row > [data-ov-read-all] { margin-left: auto; }
 .ov-sync-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 2px 2px; }
 .ov-sync-btn {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 6px; border-radius: var(--md-shape-corner-full); cursor: pointer;

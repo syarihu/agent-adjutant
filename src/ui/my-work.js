@@ -840,6 +840,11 @@ function workHubGroupName(node) {
   return { text, html: esc(text) + (unseen > 0 ? ` <span class="wk-head-inbox" role="img" aria-label="${esc(label)}" title="${esc(label)}">受信箱 未確認 ${unseen}</span>` : '') };
 }
 
+/* The button that marks every new row read, for the list whose click handler is named by `attr` (a data attribute). */
+function workReadAllButtonHtml(attr) {
+  return `<button type="button" class="wk-act" ${attr} title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>`;
+}
+
 /* A node's header. A folded one says how many rows are in each state, and shows the hubs it runs as chips (opened, they are rows below). */
 function workHeadHtml(node, folded) {
   const sum = folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : '';
@@ -865,7 +870,7 @@ function workHeadHtml(node, folded) {
   const name = node.kind === 'repo' ? node.nwo : hubName ? hubName.text : node.label;
   // 「処理したら次へ」: after a gate is answered or closed, the next row of 新着 opens (the same setting for every header that has it).
   const readAll = node.readAll && node.items.length
-    ? `<label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label><button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>` : '';
+    ? `<label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label>${workReadAllButtonHtml('data-wk-read-all')}` : '';
   return `${fold(node.key, name)}<span class="wk-head-main"><span class="wk-head-name">${hubName ? hubName.html : esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span>${chips(name, node.kind === 'repo' || node.kind === 'brepo')}${count}${readAll}`;
 }
 
