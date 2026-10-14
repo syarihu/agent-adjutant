@@ -9,7 +9,8 @@ use crate::task::{self, Status, pr_ref};
 /// Why a running read is failed when the task it is read for is finished.
 const TASK_FINISHED: &str = "the task is finished";
 
-/// Close the readers of the tasks that are finished (done or cancelled), or whose record is gone:
+/// Close the readers of the tasks that are finished (done or cancelled), or whose record is gone,
+/// unless the PR is also requested of you:
 /// a reader of a task nobody works on any more only takes a place. A PR that is also requested
 /// from you follows the review-request rule instead, and a reader whose task is still in play is
 /// left alone, whatever its worker session does. The read-through, the drafts and the record stay.

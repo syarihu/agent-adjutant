@@ -341,8 +341,8 @@ pub(super) fn apply(
 fn remove_done(root: &Path, now: i64) -> Vec<String> {
     let cutoff = utc_stamp(now - DONE_KEPT_SECS);
     // A reader still open on it is kept: it is removed once the reader is closed. A sync or the PR
-    // poll closes it when the PR is merged or closed, the resident when the task is finished, and
-    // the person can do it before. A record read for a task stays while the task does: only a
+    // poll closes it when the PR is merged or closed, the resident when the task is finished (unless
+    // the PR is also requested of you), and the person can do it before. A record read for a task stays while the task does: only a
     // task that is definitely gone lets it go, and one that cannot be looked at keeps it.
     let expired = |r: &Record| {
         let task_kept = r

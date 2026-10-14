@@ -260,7 +260,7 @@ pub struct AiRead {
     pub mode: Option<String>,
     /// When the reader was closed, while the read-through, the drafts and the record stay: by the
     /// person, by a sync or the PR poll that found the PR merged or closed, or by the resident
-    /// once the task it is read for is finished. Cleared by the next request for a read.
+    /// once the task it is read for is finished (not when the PR is also requested of you). Cleared by the next request for a read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reader_closed_at: Option<String>,
     /// Derived: the read-through was made at another head than the PR has now. Read from disk
