@@ -29,7 +29,7 @@ mod tools;
 use tools::resolve_repo;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const SERVER_NAME: &str = "adjutant";
+pub const SERVER_NAME: &str = crate::kernel::runner::MCP_SERVER_NAME;
 
 // ── JSON-RPC 2.0 ─────────────────────────────────────────────────────
 

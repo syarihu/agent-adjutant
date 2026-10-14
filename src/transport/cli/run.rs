@@ -3,7 +3,8 @@
 use clap::Parser;
 
 use super::args::{
-    Cli, Commands, GateAction, JulesAction, ReviewAction, ServerAction, TaskAction, TmuxAction,
+    AideAction, Cli, Commands, GateAction, JulesAction, ReviewAction, ServerAction, TaskAction,
+    TmuxAction,
 };
 use super::outbox;
 use crate::transport::cli;
@@ -31,6 +32,9 @@ pub fn run() -> ! {
         Commands::Gate { action } => run_gate(action).map(|_| 0),
         Commands::Task { action } => run_task(action).map(|_| 0),
         Commands::Jules { action } => run_jules(action).map(|_| 0),
+        Commands::Aide { action } => match action {
+            AideAction::Run(args) => super::aide_run(args).map(|_| 0),
+        },
         Commands::Review { action } => run_review(action).map(|_| 0),
         Commands::Skill(args) => super::skill(args).map(|_| 0),
         Commands::Outbox(args) => outbox(args).map(|_| 0),

@@ -56,7 +56,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
     assert_eq!(replies.len(), 5, "{replies:#?}");
 
     assert_eq!(replies[0]["result"]["serverInfo"]["name"], "adjutant");
-    assert_eq!(replies[1]["result"]["prompts"].as_array().unwrap().len(), 5);
+    assert_eq!(replies[1]["result"]["prompts"].as_array().unwrap().len(), 6);
     let procedure = replies[2]["result"]["messages"][0]["content"]["text"]
         .as_str()
         .unwrap();

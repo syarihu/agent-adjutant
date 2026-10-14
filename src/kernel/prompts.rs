@@ -18,7 +18,7 @@ pub struct PromptDef {
     pub raw_content: &'static str,
 }
 
-pub const PROMPTS: [PromptDef; 5] = [
+pub const PROMPTS: [PromptDef; 6] = [
     PromptDef {
         name: "adj-hub",
         raw_content: include_str!("../../commands/adj-hub.md"),
@@ -38,6 +38,10 @@ pub const PROMPTS: [PromptDef; 5] = [
     PromptDef {
         name: "adj-reviewer",
         raw_content: include_str!("../../commands/adj-reviewer.md"),
+    },
+    PromptDef {
+        name: "adj-aide",
+        raw_content: include_str!("../../commands/adj-aide.md"),
     },
 ];
 

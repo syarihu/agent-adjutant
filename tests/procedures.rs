@@ -48,6 +48,7 @@ fn every_command_and_tool_the_procedures_name_actually_exists() {
         "adj-report",
         "adj-review-hub",
         "adj-reviewer",
+        "adj-aide",
     ] {
         let text =
             std::fs::read_to_string(format!("{}/commands/{name}.md", env!("CARGO_MANIFEST_DIR")))

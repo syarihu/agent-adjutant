@@ -104,7 +104,7 @@ const FULLSCREEN_ENV: &str = "CLAUDE_CODE_NO_FLICKER";
 /// that asks for no mouse, so the board's terminal turns the wheel into arrow keys that scroll
 /// the input history and not the conversation. A second `--settings` would replace the hooks
 /// file, hence the variable.
-fn reader_env(mut env: Vec<(String, String)>, agent: Agent) -> Vec<(String, String)> {
+pub(crate) fn reader_env(mut env: Vec<(String, String)>, agent: Agent) -> Vec<(String, String)> {
     if agent == Agent::Claude && !env.iter().any(|(k, _)| k == FULLSCREEN_ENV) {
         env.push((FULLSCREEN_ENV.to_string(), "1".to_string()));
     }

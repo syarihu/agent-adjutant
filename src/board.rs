@@ -16,6 +16,7 @@
 //! arrived. `/api/state` neither asks GitHub nor writes, since the page polls it every couple
 //! of seconds.
 
+pub mod aide;
 pub mod hub;
 pub mod jobs;
 pub mod review;

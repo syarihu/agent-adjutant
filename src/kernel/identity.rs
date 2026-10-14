@@ -30,6 +30,11 @@ pub const REVIEW_HUB_ID: &str = "@review";
 /// `-<16 hex>`, so this one cannot be the slug of any repository or parent-task hub.
 pub const REVIEW_SLUG: &str = "review";
 
+/// The key the aide's configuration is looked up under (`config::resolve_config`). It is a
+/// lookup key only, never a hub address: the aide has no hub. It gives the `defaults`, and
+/// whatever the person writes under `repos["@aide"]`.
+pub const AIDE_CONFIG_KEY: &str = "@aide";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoInfo {
     /// Absolute path of the main checkout (never a linked worktree).
