@@ -410,16 +410,15 @@ test('the stacked index entry wraps its badge above the title at full width, and
   assert.match(rules('.cd-badge'), /font-size:\s*10\.5px/);
 });
 
-test('the dialog of a task fills the width: a grid of cards two to a row, an index that goes at 720px', () => {
+test('the dialog of a task fills the width: a grid of cards one to a row, an index that goes at 720px', () => {
   const raw = read('card-dialog.css');
   const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = sel => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(x => x[1].trim() === sel).map(x => x[2]).join(' ');
   assert.doesNotMatch(css, /max-width:\s*1080px/);
   const grid = rules('.cd-grid');
-  assert.match(grid, /grid-template-columns:[^;]*minmax\(/);
-  assert.match(grid, /440px/);
-  assert.match(grid, /calc\(\(100% - 16px\) \/ 2\)/);
-  assert.match(rules('.cd-wide'), /grid-column:\s*1\s*\/\s*-1/);
+  assert.match(grid, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;/);
+  assert.doesNotMatch(grid, /auto-fill|440px/);
+  assert.equal(rules('.cd-wide'), '');
   // An answered gate is one block: a bar and a tinted heading, its parts in a grid of their own, wider apart than the panels.
   const parts = rules('.cd-gate-parts');
   assert.match(parts, /440px/);
