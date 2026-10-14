@@ -18,8 +18,9 @@ use serde::Serialize;
 use super::branch_prs::BranchPrs;
 use super::issue_parents::IssueParents;
 use super::notifications::{self as gh, Notified};
+use crate::lifecycle::review::close_ended_pr_readers;
 use crate::registry::Context;
-use crate::task::{self, PrRef, PrTurn, Task};
+use crate::task::{self, PrRef, PrState, PrTurn, Task};
 
 /// The only host polled. Notifications of another host would need its own `Last-Modified`
 /// and its own login, and a refresh already reads those.
@@ -182,6 +183,9 @@ pub struct PrPoll {
     branches: BranchPrs,
     /// The parent GitHub says each task's issue has, asked in the same round.
     parents: IssueParents,
+    /// What was last said about readers that could not be closed, so the same failure is said
+    /// once and not every round.
+    said_close: Mutex<Option<String>>,
 }
 
 /// The boards a round looks after: those with a card on a PR for the cards, and one board of each
@@ -250,6 +254,37 @@ impl PrPoll {
         }
         *state = next;
         wait(&state)
+    }
+
+    /// Say on stderr which readers could not be closed, once for each different set: the next
+    /// sync tries them again, and the same failure every round would bury the rest. A failure here
+    /// is not the poll failing.
+    fn say_close(&self, failures: &[(String, String)]) {
+        let text = (!failures.is_empty()).then(|| {
+            failures
+                .iter()
+                .map(|(id, why)| format!("{id}: {why}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        let mut said = self.said_close.lock().unwrap_or_else(|e| e.into_inner());
+        if *said != text {
+            for (id, why) in failures {
+                // As in `set`: a closed stderr must not end the poll.
+                let _ = if id.is_empty() {
+                    writeln!(
+                        std::io::stderr(),
+                        "adj server: the readers could not be closed: {why}"
+                    )
+                } else {
+                    writeln!(
+                        std::io::stderr(),
+                        "adj server: the reader of {id} could not be closed: {why}"
+                    )
+                };
+            }
+            *said = text;
+        }
     }
 
     /// The pull request last found for `branch` of the repository `nwo`, for a session that has
@@ -367,20 +402,31 @@ impl PrPoll {
             // be found is that card's business, and is reported on it, not on the column.
             unread = read_now.failed;
             let answers = read_now.answers;
-            let mut per_board: Vec<(Vec<Task>, Vec<_>)> =
-                boards.iter().map(|_| (Vec::new(), Vec::new())).collect();
+            let mut per_board: Vec<(Vec<Task>, Vec<_>, Vec<PrRef>)> = boards
+                .iter()
+                .map(|_| (Vec::new(), Vec::new(), Vec::new()))
+                .collect();
             let mut cards: Vec<Option<Card>> = cards.into_iter().map(Some).collect();
             for (&i, answer) in read.iter().zip(answers) {
                 if let Some(card) = cards[i].take() {
+                    // A PR that is merged or closed has nobody left to read it for.
+                    if matches!(answer.0, PrState::Closed | PrState::Merged) {
+                        per_board[card.board].2.push(card.pr);
+                    }
                     per_board[card.board].0.push(card.task);
                     per_board[card.board].1.push(answer);
                 }
             }
-            for (ctx, (tasks, answers)) in boards.iter().zip(per_board) {
+            let mut closing = Vec::new();
+            for (ctx, (tasks, answers, ended)) in boards.iter().zip(per_board) {
                 if !tasks.is_empty() {
                     task::apply(ctx, tasks, answers);
                 }
+                if !ended.is_empty() {
+                    closing.extend(close_ended_pr_readers(&ctx.state, &ended));
+                }
             }
+            self.say_close(&closing);
         }
         // Only once the pending cards were read: a failed read must be tried again soon.
         if reread_due && unread.is_none() {
