@@ -128,12 +128,13 @@ pub const AIDE_TOOLS: &[&str] = &[
 pub const AIDE_STARTUP_PROMPT: &str = "Fetch the adj-aide procedure with adjutant_skill name=adj-aide (or `adj skill adj-aide` if that is not available), and act as the aide it describes.";
 
 /// The aide: the one session of the machine that belongs to no repository. It is fixed, with
-/// no config key; an isolated start can come back as an `@aide` setting once it is wanted.
+/// no config key.
 ///
 /// The aide is a window the person talks to all day, so it starts as any session they open: their
 /// settings files, instructions, MCP servers, permission mode and rules load, and a prompt is
 /// answered in its pane. The reader is held to reading because it reads hostile PRs unattended;
-/// the aide acts on what the person types in front of it. On top of that it gets `--mcp-config`
+/// the aide is meant to act only on what the person types in front of it, under their own
+/// permission rules. On top of that it gets `--mcp-config`
 /// with adjutant's server, only when the person's config does not already name it (`{mcpConfig}`),
 /// `AIDE_TOOLS` allowed without asking, and the settings file (`{settings}`) with the hooks and a
 /// status line. Both `--mcp-config` and `--allowedTools` take any number of values, so each is
