@@ -1092,3 +1092,16 @@ fn a_gate_opened_with_no_options_takes_only_its_choices_and_closing() {
         Ok(Decided::Answered { .. })
     ));
 }
+
+#[test]
+fn a_record_is_not_closed_from_the_aide_only_sent_back() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041500Z-diff";
+    let mut g = gate_with_a_draft(&ctx, id, Kind::Diff, false);
+    // Even when its options name `close`.
+    g.options.push("close".to_string());
+    save(&ctx, Shelf::Record, &g).unwrap();
+    let err = decide(&ctx, id, "close", None, None, Offered::Only).unwrap_err();
+    assert!(matches!(err, DecideError::Refused(_)), "{err:?}");
+    assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Record, id));
+}

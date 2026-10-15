@@ -81,7 +81,9 @@ before you call either (see "Show first, send after yes").
   The answer goes to the worker, or to the hub for a gate the hub opened (`adjutant_gate_read` says
   which as `answeredBy`).
 
-Both check everything and refuse before they write, so a refusal means nothing was sent.
+Both check what they were given and refuse before they write: a refusal of that kind means nothing
+was sent. `adjutant_request` can still fail after it saved the task record (delivery to the inbox
+failing); then the record may be on the board, so read the board before sending again.
 
 Other tools follow the person's own Claude Code settings: one may be asked about in this window, or
 refused. When one is refused, do not try to get around it; say what you cannot do, and where the
@@ -167,12 +169,13 @@ the same decision the buttons would send. **Never guess which gate.** Find it in
 
 Then:
 
-1. Read it with `adjutant_gate_read` (`board`, `id`). A gate that no longer waits is said so, and
-   nothing is sent.
-2. Map the words to a decision. Decisions come **only from the gate's own `options`**, plus `choice`
-   when it has `choices` (pick one by its label or id: 「B で」 is the choice whose label or id is B;
-   ask when two could be meant or none is) and `close` (archive it with nothing sent). A record can
-   only be sent back with `changes`, and it needs a comment saying why.
+1. Read it with `adjutant_gate_read` (`board`, `id`). A gate somebody already answered or closed is
+   said so, and nothing is sent. A record (`wait: false`) is still there to be sent back (step 2).
+2. Map the words to a decision. Decisions come **only from what the gate offers**: a waiting gate's
+   own `options`, plus `choice` when it has `choices` (pick one by its label or id: 「B で」 is the
+   choice whose label or id is B; ask when two could be meant or none is) and `close` (archive it
+   with nothing sent). A record (`wait: false`) offers only `changes`, even though `changes` is not
+   among its `options`, and it needs a comment saying why it is sent back.
 3. **Show what you will send** and ask: the repository · the task's title · the kind of gate · the
    choice's label (or the decision) · the comment that goes with it (what the person typed, else
    the choice's own draft, else none) and who receives it (`answeredBy`: the worker, or the hub).

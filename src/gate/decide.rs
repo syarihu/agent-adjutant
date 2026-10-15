@@ -16,9 +16,9 @@ use crate::registry::Context;
 /// How a decision is held to what the gate offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Offered {
-    /// Only what the gate's own buttons are: its options, a choice when it has choices, closing,
-    /// and `changes` for a record, with every refusal made before anything is written. For a
-    /// caller that picks a decision from words.
+    /// Only what the gate's own buttons are: its options, a choice when it has choices, closing a
+    /// waiting gate, and `changes` for a record, with every refusal made before anything is
+    /// written. For a caller that picks a decision from words.
     Only,
     /// Nothing is refused here that the plain `answer` and `close` accepted: the comment is worked
     /// out and the rest is left to them. The board's route, whose cards pick a decision by column
@@ -67,12 +67,14 @@ pub fn closes(decision: &str) -> bool {
 /// them: opening a gate fills in the kind's defaults when none were given, so an empty list is a
 /// gate with no option buttons (only its choices, or only closing).
 pub fn offered(gate: &Gate) -> Vec<String> {
+    // A record is no longer open: the page offers only the send-back form, whatever its options
+    // say, and there is nothing to close.
+    if !gate.wait {
+        return vec!["changes".to_string()];
+    }
     let mut out = gate.options.clone();
     if !gate.choices.is_empty() {
         out.push("choice".to_string());
-    }
-    if !gate.wait {
-        out.push("changes".to_string());
     }
     out.push("close".to_string());
     out

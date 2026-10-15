@@ -965,6 +965,9 @@ test('the request part says what was sent, to which hub, how far it got, and esc
   assert.ok(html.includes('data-aide-row="acme-widget-abc/hub:h1"') && html.includes('hub のターミナル'));
   assert.ok(html.includes('data-aide-row="acme-widget-abc/t1"') && html.includes('worker のターミナル'));
   assert.ok(html.includes('data-aide-expand'));
+  // Each step says its state in words, since the icon beside it is hidden from a screen reader.
+  assert.ok(html.includes('<span class="aide-step-state">完了: </span><span class="aide-step-text">送信済み</span>'));
+  assert.ok(html.includes('<span class="aide-step-state">現在: </span>'));
   // A running hub is not said to be stopped, and a part with no gate or session has none of the buttons.
   const quiet = aidePartHtml({ id: 'p1', kind: 'request', ref }, true, { request: () => ({ ...got, hubPresent: true, hubRowKey: null, rowKey: null, waitKey: null, gates: [] }) });
   assert.ok(!quiet.includes('hub は止まっています') && !quiet.includes('data-aide-open-gate') && !quiet.includes('data-aide-row'));

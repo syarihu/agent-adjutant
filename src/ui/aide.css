@@ -177,3 +177,6 @@
 .aide-step.done { border-left-color: var(--md-sys-color-success); color: var(--md-sys-color-on-surface); }
 .aide-step.now { border-left-color: var(--md-sys-color-primary); color: var(--md-sys-color-on-surface); font-weight: 700; }
 .aide-step.failed { border-left-color: var(--md-sys-color-error); color: var(--md-sys-color-error); font-weight: 700; }
+
+/* A step's state in words, for a screen reader only. */
+.aide-step-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

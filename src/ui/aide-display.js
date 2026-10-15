@@ -673,8 +673,12 @@ function aideRequestSteps(task, gates = []) {
   return steps;
 }
 
+/* Said in words for a screen reader: the mark beside a step is an icon it does not read. */
+const AIDE_STEP_STATE = { done: '完了: ', now: '現在: ', todo: '未着手: ', failed: '失敗: ' };
+
 const aideStepsHtml = steps => `<ol class="aide-steps">${steps.map(s => `<li class="aide-step ${esc(s.state)}" data-state="${esc(s.state)}">`
   + `<span class="aide-step-mark" aria-hidden="true">${aideIcon(s.state === 'done' ? 'check_circle' : s.state === 'now' ? 'pending' : s.state === 'failed' ? 'error' : 'radio_button_unchecked')}</span>`
+  + `<span class="aide-step-state">${esc(AIDE_STEP_STATE[s.state] || '')}</span>`
   + `<span class="aide-step-text">${esc(s.text)}</span></li>`).join('')}</ol>`;
 
 /* `ctx.request(board, id)` is `{ task, gates, nwo, hubLabel, hubPresent, hubRowKey, rowKey, waitKey, refreshError, error, gone }` or null while the
