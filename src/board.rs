@@ -23,6 +23,7 @@ pub mod review;
 pub mod session;
 pub mod view;
 
+mod ask_resident;
 mod daemon;
 mod dedicated;
 mod last_lines;
@@ -35,6 +36,7 @@ mod token;
 mod url;
 mod worktree_diffs;
 
+pub use ask_resident::*;
 pub use daemon::*;
 pub use dedicated::*;
 pub use last_lines::*;

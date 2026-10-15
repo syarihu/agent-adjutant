@@ -7,7 +7,9 @@
 //!
 //! A leaf: standard library and its own input.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::time::Duration;
 
 /// A body larger than this is refused unread. Nothing this serves takes a large upload, and
 /// a `Content-Length` header is a number a caller chose — allocating it before reading a
@@ -200,6 +202,81 @@ pub fn html(out: &mut impl Write, body: &str) -> io::Result<()> {
     respond(out, 200, "text/html; charset=utf-8", body.as_bytes())
 }
 
+/// An answer larger than this is refused: `get` reads to the end of the connection, and the one
+/// it is written for answers with a document a page draws, not a download.
+const MAX_RESPONSE: usize = 32 << 20;
+
+/// One `GET` of `path` from the server on `port` of this machine, with the dashboard token in
+/// `X-Adjutant-Token`: the status and the body as text.
+///
+/// This binary's own server is the only one it is written for, and `respond` is how that server
+/// answers: it always sends `Content-Length` and `Connection: close`, and never
+/// `Transfer-Encoding: chunked`. So the body is what follows the header, checked against the
+/// length; a chunked answer is refused rather than parsed, since reading one as if it were plain
+/// would hand back a document with the chunk sizes in it. `timeout` bounds the connect and each
+/// read and write.
+pub fn get(port: u16, path: &str, token: &str, timeout: Duration) -> Result<(u16, String), String> {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .map_err(|e| format!("cannot connect to 127.0.0.1:{port}: {e}"))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .map_err(|e| format!("cannot set a timeout on the connection: {e}"))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Adjutant-Token: {token}\r\nConnection: close\r\n\r\n"
+    )
+    .and_then(|()| stream.flush())
+    .map_err(|e| format!("cannot send the request: {e}"))?;
+    let mut raw = Vec::new();
+    stream
+        .take(MAX_RESPONSE as u64 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("cannot read the answer: {e}"))?;
+    if raw.len() > MAX_RESPONSE {
+        return Err(format!(
+            "the answer is larger than {} MiB",
+            MAX_RESPONSE >> 20
+        ));
+    }
+    parse_response(&raw)
+}
+
+/// The status and body of an answer `respond` wrote.
+fn parse_response(raw: &[u8]) -> Result<(u16, String), String> {
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or("the answer has no header")?;
+    let head = String::from_utf8_lossy(&raw[..split]);
+    let body = &raw[split + 4..];
+    let mut lines = head.split("\r\n");
+    let status = lines
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or("the answer has no status")?;
+    let header = |name: &str| {
+        lines.clone().find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+        })
+    };
+    if header("transfer-encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked")) {
+        return Err("the answer is chunked, which this client does not read".to_string());
+    }
+    if let Some(length) = header("content-length").and_then(|v| v.parse::<usize>().ok())
+        && body.len() != length
+    {
+        return Err(format!(
+            "the answer is cut short: {} of {length} bytes",
+            body.len()
+        ));
+    }
+    Ok((status, String::from_utf8_lossy(body).into_owned()))
+}
+
 /// Compare two secrets without letting the time taken say how much of the guess was right.
 pub fn secret_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
@@ -296,5 +373,60 @@ mod tests {
         assert!(text.contains("Content-Length: 11"), "{text}");
         assert!(text.contains("X-Content-Type-Options: nosniff"), "{text}");
         assert!(text.ends_with("{\"ok\":true}"), "{text}");
+    }
+
+    /// The server answers through `respond`; so does this test, which is what keeps `get` honest
+    /// about the framing the real one writes.
+    fn serve_once(status: u16, body: &'static str) -> (u16, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = io::BufReader::new(stream.try_clone().unwrap());
+            let request = read_request(&mut reader).unwrap().unwrap();
+            let mut stream = stream;
+            json(&mut stream, status, body).unwrap();
+            format!(
+                "{} {} {:?}",
+                request.method,
+                request.path,
+                request.header("x-adjutant-token")
+            )
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn a_get_sends_the_token_and_reads_what_respond_wrote() {
+        let (port, server) = serve_once(200, "{\"ok\":true}");
+        let got = get(port, "/api/work", "tok", Duration::from_secs(5)).unwrap();
+        assert_eq!(got, (200, "{\"ok\":true}".to_string()));
+        assert_eq!(server.join().unwrap(), "GET /api/work Some(\"tok\")");
+    }
+
+    #[test]
+    fn a_get_gives_the_status_of_a_refusal_with_its_body() {
+        let (port, _server) = serve_once(403, "{\"error\":\"no\"}");
+        let got = get(port, "/api/work", "x", Duration::from_secs(5)).unwrap();
+        assert_eq!(got, (403, "{\"error\":\"no\"}".to_string()));
+    }
+
+    #[test]
+    fn a_get_with_nothing_listening_says_it_cannot_connect() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let err = get(port, "/", "x", Duration::from_secs(2)).unwrap_err();
+        assert!(err.starts_with("cannot connect"), "{err}");
+    }
+
+    #[test]
+    fn an_answer_cut_short_or_chunked_is_not_read_as_a_document() {
+        let short = b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n{\"a\"";
+        assert!(parse_response(short).unwrap_err().contains("cut short"));
+        let chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n";
+        assert!(parse_response(chunked).unwrap_err().contains("chunked"));
+        assert!(parse_response(b"nonsense").is_err());
     }
 }

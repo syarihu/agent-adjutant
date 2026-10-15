@@ -106,10 +106,12 @@ pub const AIDE_NAME: &str = "adjutant-aide";
 /// The tools the aide may use without being asked: the one list the later tools extend. It is a
 /// minimum on top of the person's own permissions, not everything the aide can do.
 ///
-/// Everything on this list only reads. Reading is not scoped to a directory the way the
-/// reader's is, because the aide serves the whole machine and has to read any checkout. A write
-/// or send tool added here would run with no prompt in a session that reads arbitrary files, so
-/// it needs its own change, which revisits the unscoped `Read` as well.
+/// Everything on this list reads, except `adjutant_show`, which writes only the aide's own display
+/// state (`aide-display.json`) and never a record another session acts on. Reading is not scoped
+/// to a directory the way the reader's is, because the aide serves the whole machine and has to
+/// read any checkout. A tool that writes anything else, or sends, would run with no prompt in a
+/// session that reads arbitrary files, so it needs its own change, which revisits the unscoped
+/// `Read` as well.
 ///
 /// `adjutant_pending` stays off the list because reading marks a message as looked at and
 /// acknowledging archives it; `adjutant_refresh`, `send`, `tell`, `gate_open`, `gate_close` and
@@ -118,6 +120,9 @@ pub const AIDE_TOOLS: &[&str] = &[
     "mcp__adjutant__adjutant_skill",
     "mcp__adjutant__adjutant_config",
     "mcp__adjutant__adjutant_hub_status",
+    "mcp__adjutant__adjutant_work",
+    "mcp__adjutant__adjutant_gate_read",
+    "mcp__adjutant__adjutant_show",
     "Read",
     "Grep",
     "Glob",

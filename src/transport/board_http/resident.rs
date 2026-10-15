@@ -153,6 +153,16 @@ pub(super) fn route_resident(
             &serde_json::to_string(&crate::board::aide::find(&resident.root, resident.tmux))
                 .unwrap_or_default(),
         ),
+        // What the aide has put in its display area. Read only: the aide's `adjutant_show` writes
+        // the file itself, so there is no request that changes it for a page to be tricked into.
+        ("GET", "/api/aide/display") => match crate::board::aide::display(&resident.root) {
+            Ok(display) => http::json(
+                out,
+                200,
+                &serde_json::to_string(&display).unwrap_or_default(),
+            ),
+            Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+        },
         ("POST", "/api/aide/open") => open_aide(resident, out),
         ("POST", "/api/aide/reset") => reset_aide(resident, out),
         ("GET", "/api/others") => http::json(

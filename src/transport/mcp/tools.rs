@@ -6,19 +6,27 @@ use std::path::PathBuf;
 pub(super) mod config;
 pub(super) mod gate_close;
 pub(super) mod gate_open;
+pub(super) mod gate_read;
 pub(super) mod hub_status;
 pub(super) mod outbox;
 pub(super) mod pending;
 pub(super) mod refresh;
 pub(super) mod send;
+pub(super) mod show;
 pub(super) mod skill;
 pub(super) mod tell;
+pub(super) mod work;
 
 pub(super) fn cwd_param(args: &Value) -> Option<PathBuf> {
     args["cwd"]
         .as_str()
         .filter(|s| !s.is_empty())
         .map(crate::infra::paths::expand_home)
+}
+
+/// A string argument, with blank the same as absent.
+pub(super) fn text_param<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+    args[key].as_str().map(str::trim).filter(|s| !s.is_empty())
 }
 
 pub(super) fn resolve_repo(args: &Value) -> Result<identity::RepoInfo, String> {
@@ -93,6 +101,21 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_skill",
         definition: skill::definition,
         call: skill::call,
+    },
+    Tool {
+        name: "adjutant_work",
+        definition: work::definition,
+        call: work::call,
+    },
+    Tool {
+        name: "adjutant_gate_read",
+        definition: gate_read::definition,
+        call: gate_read::call,
+    },
+    Tool {
+        name: "adjutant_show",
+        definition: show::definition,
+        call: show::call,
     },
 ];
 

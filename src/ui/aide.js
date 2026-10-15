@@ -36,9 +36,9 @@ function setAidePart(name, el, html) {
   el.innerHTML = html;
 }
 
-/* What the display area shows. The aide's own display state is not read yet: this is the one place that changes when it is. */
+/* What the display area shows: the state the aide's adjutant_show tool left, which the resident reads from its file. */
 async function loadAideDisplay() {
-  return aideEmptyDisplay();
+  return boardApi('', '/api/aide/display');
 }
 
 /* ── what the work document says ── */
@@ -79,7 +79,11 @@ async function refreshAide(force = false) {
     aide.view = await boardApi('', '/api/aide');
     aide.readOk = n;
     aide.error = null;
-    aide.display = aideDisplayOf(await loadAideDisplay());
+    try {
+      aide.display = aideDisplayOf(await loadAideDisplay());
+    } catch {
+      // The area keeps what it last showed. A display that cannot be read says nothing about the aide, so it is not the pane's error.
+    }
   } catch (e) {
     // The last read stays on screen, with the reason it is old.
     aide.error = e.message;
@@ -219,7 +223,7 @@ function renderAide() {
     setAidePart('ph', ph, aidePlaceholderHtml());
     ph.hidden = !aideDrawn.ph;
     setAidePart('scope', wk('aide-scope'), aideScopeHtml());
-    setAidePart('display', wk('aide-display'), aideDisplayHtml(aide.display, { news: aideNews(), ctx: { doc: work.doc } }));
+    setAidePart('display', wk('aide-display'), aideDisplayHtml(aideDisplayWithWaits(aide.display, aideCurrentWaits()), { news: aideNews(), ctx: { doc: work.doc } }));
     // What the person has now seen: a wait that comes after this is what the count says grew.
     if (work.doc) aide.seen = new Set(aideCurrentWaits().map(w => w.key));
   }
