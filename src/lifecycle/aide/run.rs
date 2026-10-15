@@ -1,15 +1,14 @@
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::infra::agent::Agent;
-use crate::infra::env::{HUB_ENV, STATE_DIR_ENV};
-use crate::infra::paths::exe_path_absolute;
+use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, HUB_ENV, STATE_DIR_ENV};
+use crate::infra::fs::read_json;
+use crate::infra::paths::{exe_path_absolute, home_dir};
 use crate::infra::terminal;
 use crate::kernel::config::resolve_config;
 use crate::kernel::identity::AIDE_CONFIG_KEY;
-use crate::kernel::runner::{aide_command, aide_mcp_config};
+use crate::kernel::runner::{aide_command, aide_mcp_config, names_adjutant_server};
 use crate::lifecycle::agent_command;
-use crate::lifecycle::review::reader_env;
 use crate::registry::{self, clear_aide_if, note_aide, valid_session_id};
 
 use super::{aide_home, write_aide_settings};
@@ -63,15 +62,52 @@ pub fn run_aide(root: &Path, session: &str) -> String {
     };
     let hooks = hooks.to_string_lossy();
     let env = aide_env(settings.agent_env.clone(), root);
-    let command = aide_command(&env, session, &aide_mcp_config(&exe), Some(&hooks));
+    // The person's own entry is used when there is one: a second entry under the same name with
+    // another command would show a conflict in `/mcp`. A config that cannot be read names nothing.
+    let claude_json = claude_json_path(
+        &env,
+        std::env::var(CLAUDE_CONFIG_DIR_ENV).ok().as_deref(),
+        &home_dir(),
+    );
+    let named = read_json(&claude_json).is_some_and(|config| {
+        let dir = home.to_string_lossy();
+        // Claude Code keys local scope by the real path, which differs from `home` where a
+        // parent directory is a link (macOS `/var`).
+        let real = std::fs::canonicalize(&home).unwrap_or_else(|_| home.clone());
+        names_adjutant_server(&config, &dir)
+            || names_adjutant_server(&config, &real.to_string_lossy())
+    });
+    let mcp = (!named).then(|| aide_mcp_config(&exe));
+    let command = aide_command(&env, session, mcp.as_deref(), Some(&hooks));
     let error = agent_command(&command).exec();
     fail(format!("cannot start the aide: {error}"))
 }
 
+/// Where Claude Code keeps the person's config (`.claude.json`): in `CLAUDE_CONFIG_DIR` when the
+/// aide's environment sets it (`agentEnv`), else when this process has it, else in the home
+/// directory. `process_dir` and `home` are passed in so no test reads the real ones.
+pub(crate) fn claude_json_path(
+    env: &[(String, String)],
+    process_dir: Option<&str>,
+    home: &Path,
+) -> PathBuf {
+    let given = env
+        .iter()
+        .rev()
+        .find(|(key, _)| key == CLAUDE_CONFIG_DIR_ENV)
+        .map(|(_, dir)| dir.as_str())
+        .or(process_dir)
+        .filter(|dir| !dir.is_empty());
+    match given {
+        Some(dir) => Path::new(dir).join(".claude.json"),
+        None => home.join(".claude.json"),
+    }
+}
+
 /// The environment the aide's agent gets: the person's `agentEnv`, without a hub (the aide has
 /// none, and every tool would then default to it) and with the state directory set to `state`,
-/// absolute, because the aide's directory is no checkout to find it from. Claude Code gets its
-/// fullscreen UI for the reason the reader does.
+/// absolute, because the aide's directory is no checkout to find it from. Nothing else is forced:
+/// the person's own settings load, so their own `tui` setting applies.
 pub(crate) fn aide_env(agent_env: Vec<(String, String)>, state: &Path) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = agent_env
         .into_iter()
@@ -82,7 +118,7 @@ pub(crate) fn aide_env(agent_env: Vec<(String, String)>, state: &Path) -> Vec<(S
         STATE_DIR_ENV.to_string(),
         state.to_string_lossy().to_string(),
     ));
-    reader_env(env, Agent::Claude)
+    env
 }
 
 #[cfg(test)]
@@ -113,7 +149,25 @@ mod tests {
             env.iter()
                 .filter(|(k, _)| k == "CLAUDE_CODE_NO_FLICKER")
                 .count(),
-            1
+            0
+        );
+    }
+
+    #[test]
+    fn the_claude_config_is_read_from_the_agent_env_first() {
+        let home = Path::new("/home/me");
+        let env = vec![pair("CLAUDE_CONFIG_DIR", "/cfg")];
+        assert_eq!(
+            claude_json_path(&env, Some("/p"), home),
+            Path::new("/cfg/.claude.json")
+        );
+        assert_eq!(
+            claude_json_path(&[], Some("/p"), home),
+            Path::new("/p/.claude.json")
+        );
+        assert_eq!(
+            claude_json_path(&[], None, home),
+            Path::new("/home/me/.claude.json")
         );
     }
 

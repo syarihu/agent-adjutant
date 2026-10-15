@@ -134,8 +134,8 @@ pub fn claude_settings(command: &str) -> Value {
 }
 
 /// `claude_settings` with a status line that runs `status_line`. The aide is the one session
-/// given its own: `--setting-sources ''` drops the person's, and context use is recorded from
-/// nothing else.
+/// given its own: its context figure is shown on the board and recorded only from a status line,
+/// so it gets adj's even though this replaces the person's own in that one window.
 pub fn aide_settings(hook: &str, status_line: &str) -> Value {
     let mut settings = claude_settings(hook);
     settings["statusLine"] = json!({ "type": "command", "command": status_line });
