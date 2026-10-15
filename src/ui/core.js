@@ -686,6 +686,8 @@ async function refresh(force = false) {
   if (view === 'work') {
     refreshWork(force);
     refreshOthers(force);
+    // The aide is read only while its pane is on screen: each read runs a process check.
+    if (!nav.task) refreshAide(force);
     // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).
     taskReadRefresh(force);
     if (nav.board === 'all' || !nav.board) return;
