@@ -35,7 +35,7 @@ function setView(v) {
   if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
   document.body.classList.toggle('view-work', v === 'work');
   // The middle terminal is not kept behind another view, and the row that was open is left.
-  if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
+  if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); disposeTermSlot(aideTerm); }
 
   // Navigation rail active states
   // The sidebar's switch follows the view: 「いまの仕事」 is its own tab, every other view is ボード's.

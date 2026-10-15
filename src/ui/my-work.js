@@ -780,7 +780,7 @@ function workItemHtml(r, place, named = false) {
   const hub = r.isHub && !r.turn;
   if (!band && !hub) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
-  const acts = (band ? act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
+  const acts = (band ? act('data-wk-aide', 'support_agent', '副官に聞く') + act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
   const row = r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', band, named);
   return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${hub ? workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
 }
@@ -888,7 +888,7 @@ function workHeadHtml(node, folded) {
   const name = node.kind === 'repo' ? node.nwo : hubName ? hubName.text : node.label;
   // 「処理したら次へ」: after a gate is answered or closed, the next row of 新着 opens (the same setting for every header that has it).
   const readAll = node.readAll && node.items.length
-    ? `<label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label>${workReadAllButtonHtml('data-wk-read-all')}` : '';
+    ? `<button type="button" class="wk-act aide-ask" data-wk-aide-all title="副官に聞く（新着を上から順に）" aria-label="副官に聞く（新着を上から順に）"><span class="material-symbols-outlined" aria-hidden="true">support_agent</span></button><label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label>${workReadAllButtonHtml('data-wk-read-all')}` : '';
   return `${fold(node.key, name)}<span class="wk-head-main"><span class="wk-head-name">${hubName ? hubName.html : esc(name)}</span>${sum ? `<span class="wk-head-sub">${sum}</span>` : ''}</span>${chips(name, node.kind === 'repo' || node.kind === 'brepo')}${count}${readAll}`;
 }
 
@@ -919,6 +919,8 @@ function workShape(items, folded) {
 const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.dataset.wk)}"]`
   : el?.dataset?.wkRead != null ? `[data-wk-read="${CSS.escape(el.dataset.wkRead)}"]`
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
+  : el?.dataset?.wkAide != null ? `[data-wk-aide="${CSS.escape(el.dataset.wkAide)}"]`
+  : el?.dataset?.wkAideAll != null ? '[data-wk-aide-all]'
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
   : el?.dataset?.wkWake != null ? `[data-wk-wake="${CSS.escape(el.dataset.wkWake)}"]`
@@ -964,6 +966,7 @@ function workNewOrder(items) {
 
 function renderWorkList() {
   drawWorkList();
+  renderAidePin();
   // Whatever redrew the list (a fold, the other grouping) must not lose the mark.
   markWorkSelection();
   // The box is set apart from the markup, so a toggle does not redraw the header.
@@ -1110,6 +1113,8 @@ function workTermHeadHtml(sel, free = null) {
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
   if (view !== 'work') return;
+  // With nothing selected the middle is the aide's (aide.js); it also draws the way back over a row and hides itself under a PR.
+  renderAide();
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
   // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
   if (isPrRef(nav.task)) return renderPrRead(othersById(prIdOfRef(nav.task)));
@@ -1133,7 +1138,7 @@ function renderWorkTerm() {
   ph.hidden = !!workTerm.term;
   const loaded = state.now != null;
   const text = workTerm.term ? ''
-    : !nav.task || nav.board === 'all' ? '<div class="tp-muted">左の一覧から選ぶと、ここにそのセッションのターミナルが開きます</div>'
+    : !nav.task || nav.board === 'all' ? ''
       : !work.doc ? '<div class="tp-muted">読み込み中…</div>'
       : free ? termPlaceholderHtml(free)
       : !sel ? '<div class="tp-muted">選んだ仕事は、いまの一覧にありません</div>'
@@ -1165,7 +1170,10 @@ wk('wk-term-bar').addEventListener('click', e => {
 
 /* The one place the middle terminal is asked to take the keyboard: 「ターミナルで話す」. */
 function focusWorkTerm() {
-  if (workTerm.term) workTerm.term.focus();
+  if (!nav.task) {
+    if (aideTerm.term) aideTerm.term.focus();
+    else note('副官のターミナルは開いていません', true, '「副官を起動」を押すと開きます');
+  } else if (workTerm.term) workTerm.term.focus();
   else note('ターミナルは開いていません', true, '左の一覧から、セッションのある仕事を選んでください');
 }
 
@@ -1318,6 +1326,14 @@ document.addEventListener('pointerdown', e => {
 wk('wk-list').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
+  if (e.target.closest('[data-wk-aide-all]')) return aideAsk(AIDE_ASK_ALL);
+  if ((b = e.target.closest('[data-wk-aide]'))) {
+    const { rows, turns } = workListRows();
+    const r = [...rows, ...turns].find(x => x.id === b.dataset.wkAide);
+    if (!r) return;
+    const gate = (r.live || []).find(i => i.kind === 'gate');
+    return aideAsk(aideAskRowText({ nwo: r.nwo, title: aideRowTitle(r), taskId: r.task?.id, kindLabel: gate ? kindOf(gate.gate)[0] : '' }));
+  }
   if ((b = e.target.closest('[data-wk-read]'))) return workMarkRow(b.dataset.wkRead, { read: workServerNow(), left: workServerNow() });
   if ((b = e.target.closest('[data-wk-fold]'))) {
     const at = prefs.workFolded.indexOf(b.dataset.wkFold);

@@ -8,7 +8,8 @@
      /b/<slug>/?task=gate:<slug>/<id>                      one board, a gate in the panel (`gate:<id>` on a board
                                                            served alone)
      /                                                     すべて, every board
-     /?view=work                                           いまの仕事, every board; nothing selected
+     /?view=work                                           いまの仕事, every board; nothing selected, so the
+                                                           middle is the aide (副官, aide.js)
      /b/<slug>/?view=work&task=<ref>&pane=detail           いまの仕事 with a row selected: the board of
                                                            the row's task, hub or parent (<ref> may also
                                                            be parent:<key>)
