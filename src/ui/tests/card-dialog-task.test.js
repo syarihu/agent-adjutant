@@ -1374,7 +1374,7 @@ test("in a scoped dialog 開く and ターミナル act on the scoped board, and
 
 test("a board the aide reads has every list the cards match by `_slug` tagged with its board", async () => {
   const state = { tasks: [{ id: 't' }], gates: [{ id: 'g' }], waits: [{ id: 'w' }], parents: [{ key: 'p' }], workers: [{ worktree: 'x' }], hubs: [{ id: 'h' }], now: 1 };
-  const c = vm.createContext({ aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWantedBoards: () => new Set(['b']), boardApi: async () => state, cardDialog: { scope: null }, renderAide() {} });
+  const c = vm.createContext({ aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWanted: () => ({ boards: new Set(['b']) }), loadAideRecords: async () => {}, boardApi: async () => state, cardDialog: { scope: null }, renderAide() {} });
   vm.runInContext(cut(aideSrc, /^const aideTagged = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'loadAideBoards'), c);
   await vm.runInContext('loadAideBoards(true)', c);
   const data = JSON.parse(JSON.stringify(c.aide.boards.b.data));
@@ -1383,6 +1383,209 @@ test("a board the aide reads has every list the cards match by `_slug` tagged wi
     assert.strictEqual(data[k][0]._base, '/b/b', k);
   }
   assert.strictEqual(data.now, 1);
+});
+
+test('each part says what of the records it needs, and only a read or a diff of a PR asks for its read-through and its diff', () => {
+  const parts = [
+    { kind: 'gate', ref: { board: 'g', id: 'g1' } }, { kind: 'task', ref: { board: 't', id: '1' } }, { kind: 'pr', ref: { board: 'p', id: '2', pr: undefined } },
+    { kind: 'pr', ref: { board: '', id: '', pr: 'o/r#3' } }, { kind: 'read', ref: { pr: 'o/r#4' } }, { kind: 'diff', ref: { pr: 'o/r#5', path: 'a', from: 1, to: 2 } },
+    { kind: 'diff', ref: { board: 'd', id: 'g9', path: 'a', from: 1, to: 2 } }, { kind: 'session', ref: { board: 's', id: 'x' } }, { kind: 'waits', ref: null },
+  ];
+  const c = vm.createContext({
+    aideShown: () => ({ parts }), cardDialog: { scope: null }, cardDialogEl: () => ({ open: false }), aideCurrentWaits: () => [{ board: 'w' }],
+    aide: { prs: new Map([['o/r#3', { rec: { task: { board: 'lb', id: '9' } } }]]), taskAis: new Map([['g/t7', { pr: 'o/r#6', record: { ai: { sha: 'abc' } } }]]), boards: { g: { data: { gates: [{ id: 'g1', task: 't7' }] } } } },
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aideWanted'), c);
+  const got = vm.runInContext('aideWanted()', c);
+  assert.deepStrictEqual([...got.boards].sort(), ['d', 'g', 'lb', 'p', 's', 't', 'w'], "a PR part by id reads the board of the task its record names");
+  assert.deepStrictEqual([...got.taskAis.keys()].sort(), ['g/t7', 'p/2']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([...got.prs])), [['o/r#6', { read: true }], ['o/r#3', {}], ['o/r#4', { read: true, diff: true }], ['o/r#5', { read: true, diff: true }]]);
+});
+
+test('a PR is read as its record, then its read-through, then its diff parsed once, and 404 is none rather than an error', async () => {
+  const calls = [];
+  const answers = { record: { id: 'o/r#1', ai: { sha: 's1' } }, read: { sha: 's1', annotations: [{}] }, diff: { sha: 's1', diff: 'D' } };
+  const c = vm.createContext({
+    aide: { prs: new Map(), prSeq: {}, prApplied: {} }, Date, renderAide() {}, prReadKey: rec => rec.ai.sha,
+    prParseDiff: t => { calls.push(['parse', t]); return [{ path: 'a' }]; }, prDiffResolve: () => 'resolved',
+    boardApi: async (base, path) => {
+      calls.push(path);
+      const kind = path.split('?')[0].split('/').pop();
+      if (answers[kind] === null) throw Object.assign(new Error('no'), { status: 404 });
+      if (answers[kind] === 'boom') throw new Error('boom');
+      return answers[kind];
+    },
+  });
+  vm.runInContext(fnSrc(aideSrc, 'loadAidePr'), c);
+  const load = (id, what) => { c.args = [id, what]; return vm.runInContext('loadAidePr(...args)', c); };
+  await load('o/r#1', {});
+  assert.deepStrictEqual(calls, ['/api/others/record?id=o%2Fr%231'], 'a PR part with nothing wanted reads the record only');
+  calls.length = 0;
+  await load('o/r#1', { read: true, diff: true });
+  assert.deepStrictEqual(calls, ['/api/others/record?id=o%2Fr%231', '/api/others/read?id=o%2Fr%231', '/api/others/diff?id=o%2Fr%231', ['parse', 'D']].map(x => x));
+  const e = c.aide.prs.get('o/r#1');
+  assert.strictEqual(e.diff.state, 'ok');
+  assert.strictEqual(e.resolved, 'resolved');
+  // Nothing changed: the read-through and the diff are not fetched or parsed again.
+  calls.length = 0;
+  await load('o/r#1', { read: true, diff: true });
+  assert.deepStrictEqual(calls, ['/api/others/record?id=o%2Fr%231']);
+  // A diff of another head than the read-through is not its diff.
+  answers.record = { id: 'o/r#1', ai: { sha: 's2' } };
+  answers.read = { sha: 's2' };
+  await load('o/r#1', { read: true, diff: true });
+  assert.strictEqual(c.aide.prs.get('o/r#1').diff.state, 'gone');
+  // No record and no read-through is none, not an error.
+  answers.record = null;
+  answers.read = null;
+  await load('o/r#2', { read: true, diff: true });
+  const none = c.aide.prs.get('o/r#2');
+  assert.deepStrictEqual([none.settled, none.error, none.rec, none.read, none.diff.state], [true, null, null, null, 'gone']);
+  // A failure keeps what was read and says why.
+  answers.record = 'boom';
+  await load('o/r#1', { read: true });
+  assert.strictEqual(c.aide.prs.get('o/r#1').error, 'boom');
+  assert.ok(c.aide.prs.get('o/r#1').rec);
+});
+
+test('a PR read for a part that wanted less is read again for one that wants more, whatever its age, and a failed re-read is said', () => {
+  const c = vm.createContext({ aide: { prs: new Map() }, prReadKey: rec => rec.sha });
+  vm.runInContext(cut(aideSrc, /^const aideHasWanted = [\s\S]*?\n\};/m) + '\n' + fnSrc(aideSrc, 'aidePrView'), c);
+  const has = (e, what) => { c.e = e; c.what = what; return vm.runInContext('aideHasWanted(e, what)', c); };
+  const record = { settled: true, rec: { sha: 'B' }, read: undefined, diff: { state: 'loading', files: [] }, readKey: 'B', diffKey: 'B' };
+  assert.strictEqual(has(record, {}), true);
+  assert.strictEqual(has(record, { read: true, diff: true }), false, 'a record-only entry has no read-through');
+  assert.strictEqual(has({ ...record, read: null }, { read: true, diff: true }), true, 'a PR with no read-through has no diff to fetch either');
+  assert.strictEqual(has({ ...record, read: {} }, { read: true, diff: true }), false, 'a read-through without its diff');
+  assert.strictEqual(has({ ...record, read: {}, diff: { state: 'ok', files: [] } }, { read: true, diff: true }), true);
+  // The record was read again at another head: what is held is of the old one.
+  assert.strictEqual(has({ ...record, read: {}, readKey: 'A', diff: { state: 'ok', files: [] } }, { read: true }), false);
+  assert.strictEqual(has({ ...record, read: {}, diff: { state: 'ok', files: [] }, diffKey: 'A' }, { read: true, diff: true }), false);
+  assert.strictEqual(has({ ...record, read: {}, readKey: 'A' }, {}), true, 'a part that wants neither does not care');
+  assert.strictEqual(has(undefined, {}), false);
+  // A failed re-read keeps the content and says why; with no content it is an error, not "none".
+  c.aide.prs.set('a', { settled: true, rec: { id: 'a' }, read: { sha: 's' }, diff: { state: 'ok', files: [] }, resolved: null, error: 'boom' });
+  c.aide.prs.set('b', { settled: true, rec: { id: 'b' }, read: undefined, diff: { state: 'loading', files: [] }, error: 'boom' });
+  const view = id => JSON.parse(JSON.stringify((c.id = id, vm.runInContext('aidePrView(id)', c))));
+  assert.deepStrictEqual([view('a').state, view('a').refreshError], ['ok', 'boom']);
+  assert.deepStrictEqual([view('b').state, view('b').error], ['error', 'boom']);
+});
+
+test('a task document that comes back after a newer one is dropped, and a failed read keeps the last one with its error', async () => {
+  const pending = [];
+  const c = vm.createContext({ aide: { taskAis: new Map(), taskSeq: {}, taskApplied: {} }, Date, renderAide() {}, boardApi: () => new Promise((res, rej) => pending.push([res, rej])) });
+  vm.runInContext(fnSrc(aideSrc, 'loadAideTaskAi'), c);
+  const load = () => vm.runInContext("loadAideTaskAi({ board: 'b', task: 't' })", c);
+  const first = load();
+  const second = load();
+  pending[1][0]({ pr: 'new', record: null });
+  await second;
+  pending[0][0]({ pr: 'old', record: null });
+  await first;
+  assert.strictEqual(c.aide.taskAis.get('b/t').pr, 'new');
+  const third = load();
+  pending[2][1](new Error('boom'));
+  await third;
+  const kept = c.aide.taskAis.get('b/t');
+  assert.deepStrictEqual([kept.pr, kept.error], ['new', 'boom']);
+});
+
+test("the annotations of a gate's 根拠 are the read-through of the head the task's record is at, and none while it is of another", () => {
+  const read = { sha: 'A' };
+  const c = vm.createContext({ prReadKey: rec => rec.ai.sha, aide: { taskAis: new Map(), prs: new Map([['o/r#1', { read, readKey: 'A' }]]) } });
+  vm.runInContext(fnSrc(aideSrc, 'aideTaskRead'), c);
+  const ask = ai => { c.aide.taskAis.set('b/t', ai); return vm.runInContext("aideTaskRead('b', 't')", c); };
+  assert.strictEqual(ask({ pr: 'o/r#1', record: { ai: { sha: 'A' } } }), read);
+  assert.strictEqual(ask({ pr: 'o/r#1', record: { ai: { sha: 'B' } } }), null, 'the record moved to B: A is not drawn');
+  assert.strictEqual(ask({ pr: 'o/r#1', record: { ai: {} } }), null);
+  assert.strictEqual(ask({ pr: null, record: null }), null);
+});
+
+test("a diff part finds a file by its new path, or by the old one of a renamed file, as the server accepts either", () => {
+  const c = vm.createContext({});
+  vm.runInContext(fnSrc(aideSrc, 'aideDiffFile'), c);
+  c.files = [{ path: 'new.rs', oldPath: 'old.rs' }, { path: 'same.rs', oldPath: 'same.rs' }];
+  const find = p => { c.p = p; return JSON.parse(JSON.stringify(vm.runInContext('aideDiffFile(files, p)', c))); };
+  assert.strictEqual(find('new.rs').path, 'new.rs');
+  assert.strictEqual(find('old.rs').path, 'new.rs');
+  assert.strictEqual(find('same.rs').path, 'same.rs');
+  assert.strictEqual(find('none.rs'), null);
+});
+
+test('what no part on show names is let go: its task documents, PRs and gate diffs', () => {
+  const c = vm.createContext({
+    aide: { taskAis: new Map([['b/keep', {}], ['b/drop', {}]]), prs: new Map([['o/r#1', {}], ['o/r#2', {}]]), gateDiffs: new Map([['b/g1', {}], ['b/g2', {}]]) },
+    aideWanted: () => ({ taskAis: new Map([['b/keep', {}]]), prs: new Map([['o/r#1', {}]]) }),
+    aideShown: () => ({ parts: [{ kind: 'diff', ref: { board: 'b', id: 'g1' } }, { kind: 'diff', ref: { pr: 'o/r#1' } }, { kind: 'pr', ref: { board: 'b', id: 'x' } }] }),
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aidePrune'), c);
+  vm.runInContext('aidePrune()', c);
+  assert.deepStrictEqual([...c.aide.taskAis.keys()], ['b/keep']);
+  assert.deepStrictEqual([...c.aide.prs.keys()], ['o/r#1']);
+  assert.deepStrictEqual([...c.aide.gateDiffs.keys()], ['b/g1']);
+});
+
+test("a task's PR is the one a part names only when the task's current PR is that one, however it is written", () => {
+  const c = vm.createContext({});
+  vm.runInContext(fnSrc(aideSrc, 'aideSamePr'), c);
+  const same = (t, id, nwo) => { c.a = [t, id, nwo]; return vm.runInContext('aideSamePr(...a)', c); };
+  assert.strictEqual(same('https://github.com/Acme/Widget/pull/7', 'acme/widget#7'), true);
+  assert.strictEqual(same('https://github.com/acme/widget/pull/8/files', 'acme/widget#7'), false);
+  assert.strictEqual(same('acme/widget#7', 'acme/widget#7'), true);
+  assert.strictEqual(same('#7', 'acme/widget#7', 'Acme/Widget'), true);
+  assert.strictEqual(same('7', 'acme/widget#7', 'acme/widget'), true);
+  assert.strictEqual(same('#7', 'acme/widget#7', ''), false, 'a bare number with no repository names nothing');
+  assert.strictEqual(same('#8', 'acme/widget#7', 'acme/widget'), false);
+  assert.strictEqual(same('', 'acme/widget#7', 'acme/widget'), false);
+  assert.strictEqual(same(null, 'acme/widget#7', 'acme/widget'), false);
+});
+
+test('a review request with a read-through opens it in the area, and one without opens the PR in 「AI 下読み」', () => {
+  const log = [];
+  const recs = { 'a/x#1': { id: 'a/x#1', repo: 'A/X', number: 1, ai: { sha: 's' } }, 'a/x#2': { id: 'a/x#2', repo: 'A/X', number: 2 } };
+  const c = vm.createContext({
+    othersById: id => recs[id] || null, aideReadPart: pr => ({ id: `page-read:${pr}` }), aideSetLocal: (p, t) => log.push(['local', p.id, t.label]),
+    refreshAide: f => log.push(['refresh', f]), aideOpenRead: d => log.push(['open', d.aidePr, d.aideBoard]),
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aideOpenReview'), c);
+  const open = id => { c.id = id; vm.runInContext('aideOpenReview(id)', c); };
+  open('a/x#1');
+  open('a/x#2');
+  open('c/z#3');
+  assert.deepStrictEqual(log, [['local', 'page-read:a/x#1', 'A/X · PR #1'], ['refresh', true], ['open', 'a/x#2', ''], ['open', 'c/z#3', '']]);
+});
+
+test("the review requests part reads the page's own list with how it was synced, and says loading or the failure while there is none", () => {
+  const c = vm.createContext({
+    others: { doc: null, error: null }, othersRecords: () => c.others.doc.records, othersMarks: () => ({ m: 1 }), othersNowEst: () => 42,
+    stampSecs: x => (x ? 1 : null), othersSyncWords: (s, now) => `words ${now}`, othersStale: () => true, othersNotes: s => [{ text: `notes ${s?.at}` }],
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aideReviewsView'), c);
+  const view = () => JSON.parse(JSON.stringify(vm.runInContext('aideReviewsView()', c)));
+  assert.deepStrictEqual(view(), { state: 'loading' });
+  c.others.error = 'boom';
+  assert.deepStrictEqual(view(), { state: 'error', error: 'boom' });
+  c.others.doc = { records: [{ id: 'a/x#1' }], lastSync: { at: 'S' } };
+  assert.deepStrictEqual(view(), { state: 'ok', records: [{ id: 'a/x#1' }], marks: { m: 1 }, nowSecs: 42, refreshError: 'boom',
+    sync: { words: 'words 42', never: false, stale: true, notes: [{ text: 'notes S' }] } });
+  c.others.doc.lastSync = null;
+  assert.strictEqual(view().sync.never, true);
+});
+
+test('a shown review requests part reads the list again and draws the aide when the read is done', async () => {
+  const log = [];
+  let done;
+  const c = vm.createContext({
+    others: { doc: null, fetchedMs: 0 }, aideShown: () => ({ parts: [{ kind: 'reviews' }] }), aideWanted: () => ({ taskAis: new Map(), prs: new Map() }),
+    aideIsFresh: () => false, aideHasWanted: () => true, loadAideTaskAi() {}, loadAidePr() {}, aide: { taskAis: new Map(), prs: new Map() }, aidePrune() {}, renderAide: () => log.push('render'),
+    refreshOthers: () => new Promise(res => { done = res; log.push('read'); }),
+  });
+  vm.runInContext(fnSrc(aideSrc, 'loadAideRecords'), c);
+  await vm.runInContext('loadAideRecords(false)', c);
+  assert.deepStrictEqual(log, ['read']);
+  done();
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepStrictEqual(log, ['read', 'render']);
 });
 
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
@@ -1408,7 +1611,7 @@ test('a read of a board that comes back after a newer one, or after an answer, i
   const pending = [];
   const state = n => ({ gates: n === 1 ? [{ id: 'old' }] : [{ id: 'new' }] });
   const c = vm.createContext({
-    aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWantedBoards: () => new Set(['b']), cardDialog: { scope: null }, renderAide() {},
+    aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWanted: () => ({ boards: new Set(['b']) }), loadAideRecords: async () => {}, cardDialog: { scope: null }, renderAide() {},
     boardApi: () => new Promise(res => pending.push(res)),
   });
   vm.runInContext(cut(aideSrc, /^const aideTagged = [^\n]*;/m) + '\n' + cut(aideSrc, /^const aideBoardWrote = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'loadAideBoards'), c);

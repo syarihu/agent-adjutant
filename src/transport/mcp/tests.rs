@@ -124,7 +124,9 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
         let properties = &tool["inputSchema"]["properties"];
         // `adjutant_work`'s `repo` only narrows a machine-wide document to one repository; it
         // addresses no hub.
-        if properties.get("repo").is_none() || tool["name"] == "adjutant_work" {
+        if properties.get("repo").is_none()
+            || ["adjutant_work", "adjutant_reviews"].contains(&tool["name"].as_str().unwrap_or(""))
+        {
             continue;
         }
         assert!(
@@ -573,6 +575,7 @@ fn the_aide_is_allowed_without_asking_no_tool_that_writes_but_the_display() {
             "adjutant_config",
             "adjutant_gate_read",
             "adjutant_hub_status",
+            "adjutant_reviews",
             "adjutant_show",
             "adjutant_skill",
             "adjutant_work",
@@ -684,9 +687,9 @@ fn show_refuses_what_it_cannot_show_before_writing_anything() {
     let (_main, slug) = a_board_with_a_gate(&sandbox);
     let before = snapshot(&sandbox.state());
     for (args, why) in [
-        (json!({"kind": "pr"}), "kind must be gate or waits"),
-        (json!({}), "kind must be gate or waits"),
-        (json!({"kind": ""}), "kind must be gate or waits"),
+        (json!({"kind": "pull"}), "kind must be gate"),
+        (json!({}), "kind must be gate"),
+        (json!({"kind": ""}), "kind must be gate"),
         (json!({"kind": "gate"}), "needs `board`"),
         (json!({"kind": "gate", "board": slug}), "needs `id`"),
         (
@@ -694,11 +697,157 @@ fn show_refuses_what_it_cannot_show_before_writing_anything() {
             "missing",
         ),
         (json!({"kind": "waits", "id": "g1"}), "takes no"),
+        (
+            json!({"kind": "gate", "board": slug, "id": "g1", "pr": "a/b#1"}),
+            "takes no `pr`",
+        ),
+        (json!({"kind": "read"}), "kind=read needs `pr`"),
+        (
+            json!({"kind": "read", "pr": "a/b#1", "point": 1, "level": "info"}),
+            "not both",
+        ),
+        (
+            json!({"kind": "read", "pr": "a/b#1", "point": 0}),
+            "whole number from 1",
+        ),
+        (
+            json!({"kind": "read", "pr": "a/b#1", "point": 1.5}),
+            "whole number from 1",
+        ),
+        (
+            json!({"kind": "read", "pr": "a/b#1", "board": slug}),
+            "takes no `board`",
+        ),
+        (json!({"kind": "read", "pr": "a/b#1"}), "no read-through"),
+        (json!({"kind": "task", "board": slug}), "needs `id`"),
+        (
+            json!({"kind": "task", "board": slug, "id": "t1", "parent": "x"}),
+            "not both",
+        ),
+        (json!({"kind": "task", "id": "t1"}), "needs `board`"),
+        (
+            json!({"kind": "task", "board": slug, "id": "t1", "path": "p"}),
+            "takes no `path`",
+        ),
+        (json!({"kind": "pr"}), "kind=pr needs"),
+        (json!({"kind": "pr", "board": slug}), "kind=pr needs"),
+        (
+            json!({"kind": "pr", "pr": "a/b#1", "board": slug, "id": "t1"}),
+            "kind=pr needs",
+        ),
+        (json!({"kind": "pr", "pr": "a/b#1"}), "no record of a/b#1"),
+        (
+            json!({"kind": "pr", "board": slug, "id": "t1"}),
+            "has no PR",
+        ),
+        (json!({"kind": "session", "board": slug}), "needs `id`"),
+        (
+            json!({"kind": "diff", "pr": "a/b#1", "from": 1, "to": 2}),
+            "needs `path`",
+        ),
+        (
+            json!({"kind": "diff", "pr": "a/b#1", "path": "p", "to": 2}),
+            "needs `from`",
+        ),
+        (
+            json!({"kind": "diff", "pr": "a/b#1", "path": "p", "from": 1}),
+            "needs `to`",
+        ),
+        (
+            json!({"kind": "diff", "path": "p", "from": 1, "to": 2}),
+            "kind=diff needs",
+        ),
+        (
+            json!({"kind": "diff", "pr": "a/b#1", "path": "p", "from": 1, "to": 2, "parent": "x"}),
+            "takes no `parent`",
+        ),
+        (
+            json!({"kind": "diff", "pr": "a/b#1", "path": "p", "from": 1, "to": 2}),
+            "no diff stored",
+        ),
     ] {
         let err = call_tool("adjutant_show", &args).unwrap_err();
         assert!(err.contains(why), "{args}: {err}");
     }
     assert_eq!(snapshot(&sandbox.state()), before);
+}
+
+#[test]
+fn showing_a_read_through_and_a_pr_by_reference_writes_nothing_but_the_display_state() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let others = sandbox.state().join("others");
+    std::fs::create_dir_all(others.join("reads")).unwrap();
+    let sha = "0123456789012345678901234567890123456789";
+    let record = json!({
+        "id": "acme/widget#7", "repo": "Acme/Widget", "number": 7,
+        "url": "https://github.com/acme/widget/pull/7", "registered": true, "title": "Add a timer",
+        "base": "main", "head": "f", "headSha": sha, "prState": "open",
+        "additions": 1, "deletions": 1, "changedFiles": 1,
+        "firstSeenAt": "20261001T000000Z", "readAt": "20261001T000000Z",
+    });
+    std::fs::write(others.join("acme~widget~7.json"), record.to_string()).unwrap();
+    let read = json!({"id": "acme/widget#7", "madeAt": "20261001T000000Z", "sha": sha,
+        "points": [{"level": "attention", "path": "a.rs", "line": 3, "title": "T", "why": "w"}]});
+    std::fs::write(others.join("reads/acme~widget~7.json"), read.to_string()).unwrap();
+    let before = snapshot(&sandbox.state());
+
+    let shown = call_tool(
+        "adjutant_show",
+        &json!({"kind": "read", "pr": "acme/widget#7", "level": "attention"}),
+    )
+    .unwrap();
+    assert_eq!(
+        shown["parts"][0]["ref"],
+        json!({"board": "", "id": "", "pr": "acme/widget#7", "level": "attention"})
+    );
+    assert_eq!(shown["readThrough"]["mode"], "read");
+    assert_eq!(
+        shown["readThrough"]["points"][0],
+        json!({"n": 1, "level": "attention", "title": "T", "path": "a.rs", "line": 3})
+    );
+    let shown = call_tool(
+        "adjutant_show",
+        &json!({"kind": "pr", "pr": "https://github.com/Acme/Widget/pull/7"}),
+    )
+    .unwrap();
+    assert_eq!(shown["parts"][0]["ref"]["pr"], "acme/widget#7");
+    assert_eq!(shown["topic"]["key"], "acme/widget#pr:7");
+    assert!(shown.get("readThrough").is_none());
+    let after = snapshot(&sandbox.state());
+    let mut changed: Vec<&String> = after
+        .iter()
+        .filter(|(path, bytes)| before.get(*path) != Some(*bytes))
+        .map(|(path, _)| path)
+        .collect();
+    changed.sort();
+    assert_eq!(changed, ["aide-display.json", "aide-display.lock"]);
+}
+
+#[test]
+fn the_review_requests_are_shown_with_no_reference_and_the_tool_is_one_the_aide_may_run() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let _sandbox = crate::testing::Sandbox::empty();
+    let shown = call_tool("adjutant_show", &json!({"kind": "reviews"})).unwrap();
+    assert_eq!(
+        shown["topic"],
+        json!({"key": "reviews", "label": "レビュー依頼"})
+    );
+    assert_eq!(shown["parts"][0]["kind"], "reviews");
+    assert_eq!(shown["parts"][0]["ref"], Value::Null);
+    let listed = call("tools/list", json!({}));
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(names.contains(&"adjutant_reviews"));
+    assert!(
+        crate::kernel::runner::AIDE_TOOLS
+            .iter()
+            .any(|t| t.ends_with("adjutant_reviews"))
+    );
 }
 
 #[test]

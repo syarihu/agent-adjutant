@@ -27,6 +27,13 @@ const aide = {
   seen: null,        // the keys of the waits the pane last showed, for 「待ちが N 件増えました」; null before it was shown
   boards: {},        // board slug -> { data, at, error }: the state of each board a gate part or a wait names, tagged as mergeStates does
   local: null,       // { part, serverTop, topic }: the part this page put on top of the aide's (aideDisplayFollowed); page memory only
+  prs: new Map(),    // PR id -> { rec, read, diff, resolved, settled, error, at, recKey, readKey, diffKey }: what the parts that name a PR read of it (records only)
+  taskAis: new Map(), // `board/task` -> { pr, record, at, error }: a task's PR and the record of it, as `GET /api/tasks/<id>/ai` says
+  taskSeq: {},       // `board/task` -> reads of its document sent so far; and the newest applied
+  taskApplied: {},
+  prSeq: {},         // PR id -> reads of it sent so far; and, as boardSeq is, the newest applied
+  prApplied: {},
+  gateDiffs: new Map(), // gate ref -> { diff, files }: a gate's diff parsed once, not at every redraw
   drafts: new Map(), // gate ref -> a comment typed in a part, kept across redraws (like cardDialogDrafts)
   held: false,       // a redraw of the display area is waiting for the comment box that has the focus to lose it
 };
@@ -106,24 +113,68 @@ const aideTagged = (list, slug) => (list || []).map(x => ({ ...x, _slug: slug, _
    nothing at all. */
 const aideShown = () => aideDisplayWithWaits(aideDisplayFollowed(aide.display, aide.local), aideCurrentWaits());
 
-/* The boards whose content the parts on show need: a gate part's own, and every board that has a wait when the list of waits is on. */
-function aideWantedBoards() {
+/* What the parts on show need read: `boards` (a gate part's own, a task's, a session's, and every board that has a wait when the list of
+   waits is on), `taskAis` (the task a gate, or a PR shown by its task, is of: `{ board, task }` each) and `prs` (PR id -> `{ read, diff }`,
+   what of the PR is wanted: its record always, its read-through for a read, a diff of the PR and the annotations of a gate's 「根拠」, its
+   stored diff for a read and a diff). Nothing here reaches GitHub: they are the resident's records. */
+function aideWanted() {
   const shown = aideShown();
-  const slugs = new Set();
+  const boards = new Set();
+  const taskAis = new Map();
+  const prs = new Map();
+  const wantTask = (board, task) => { if (board && task) taskAis.set(`${board}/${task}`, { board, task }); };
+  const wantPr = (id, what = {}) => { if (id) prs.set(id, { ...(prs.get(id) || {}), ...what }); };
   for (const p of shown.parts) {
-    if (p.kind === 'gate' && p.ref?.board) slugs.add(String(p.ref.board));
-    if (p.kind === 'waits') for (const w of aideCurrentWaits()) if (w.board) slugs.add(w.board);
+    const ref = p.ref || {};
+    if (p.kind === 'gate' && ref.board) {
+      boards.add(String(ref.board));
+      const g = (aide.boards[ref.board]?.data?.gates || []).find(x => x.id === ref.id);
+      if (g?.task) {
+        wantTask(ref.board, g.task);
+        // The annotations of 「根拠」 are the read-through of the task's PR, when it has one.
+        const ai = aide.taskAis.get(`${ref.board}/${g.task}`);
+        if (ai?.pr && ai.record?.ai?.sha) wantPr(ai.pr, { read: true });
+      }
+    }
+    if (['task', 'session'].includes(p.kind) && ref.board) boards.add(String(ref.board));
+    if (p.kind === 'pr') {
+      if (ref.pr) {
+        wantPr(ref.pr);
+        // The task the record is read for has its own status of the PR on its board's card: that board is read once the record is in.
+        const link = aide.prs.get(ref.pr)?.rec?.task;
+        if (link?.board) boards.add(String(link.board));
+      }
+      else if (ref.board) { boards.add(String(ref.board)); wantTask(ref.board, ref.id); }
+    }
+    if (p.kind === 'read') wantPr(ref.pr, { read: true, diff: true });
+    if (p.kind === 'diff') {
+      if (ref.pr) wantPr(ref.pr, { read: true, diff: true });
+      else if (ref.board) boards.add(String(ref.board));
+    }
+    if (p.kind === 'waits') for (const w of aideCurrentWaits()) if (w.board) boards.add(w.board);
   }
   // The board of a dialog the aide opened stays read as long as the dialog is open.
-  if (cardDialog.scope && cardDialogEl().open) slugs.add(cardDialog.scope.board);
-  return slugs;
+  if (cardDialog.scope && cardDialogEl().open) boards.add(cardDialog.scope.board);
+  return { boards, taskAis, prs };
 }
 
+/* Whether the entry of a PR holds what `what` asks for: the read-through when wanted (`undefined` is never fetched), the diff when wanted. */
+const aideHasWanted = (e, what) => {
+  if (!e || !e.settled) return false;
+  // What it holds must be of the record's current head: a record read again at another head makes an old read-through or diff stale.
+  const key = e.rec ? prReadKey(e.rec) : 'no-record';
+  return (!what.read || (e.read !== undefined && e.readKey === key)) && (!what.diff || !e.read || (e.diff.state !== 'loading' && e.diffKey === key));
+};
+
+/* Whether something read at `at` is recent enough not to be read again. */
+const aideIsFresh = (at, force) => !force && at != null && Date.now() - at < AIDE_BOARD_FRESH_MS;
+
 /* Read the state of each wanted board (without its sessions, as 「すべて」 does), unless it was read a moment ago and `force`
-   does not say otherwise. A board that cannot be read keeps what was read of it, with the reason; one never read has only the reason. */
+   does not say otherwise. A board that cannot be read keeps what was read of it, with the reason; one never read has only the reason.
+   Then what the parts name of the records (`loadAideRecords`), which may depend on a board. */
 async function loadAideBoards(force = false) {
   const at = Date.now();
-  const stale = [...aideWantedBoards()].filter(slug => force || !aide.boards[slug] || at - aide.boards[slug].at >= AIDE_BOARD_FRESH_MS);
+  const stale = [...aideWanted().boards].filter(slug => force || !aide.boards[slug] || at - aide.boards[slug].at >= AIDE_BOARD_FRESH_MS);
   await Promise.all(stale.map(async slug => {
     const n = aide.boardSeq[slug] = (aide.boardSeq[slug] || 0) + 1;
     // A read sent before a newer one was applied (or before an answer took a gate off) must not put it back.
@@ -145,14 +196,114 @@ async function loadAideBoards(force = false) {
       renderAide();
     }
   }));
+  await loadAideRecords(force);
   // A dialog the aide opened follows what was read.
   if (cardDialog.scope) cardDialogFollow();
+}
+
+/* The task documents first (they say which PR a task is of), then the PRs the parts and those documents name. */
+async function loadAideRecords(force = false) {
+  // The list of 「AI 下読み」 is the page's own (`others`), read on its own round; a reviews part asks for it when it is not at hand.
+  if (aideShown().parts.some(p => p.kind === 'reviews') && (force || !others.doc || !aideIsFresh(others.fetchedMs, false))) {
+    // The aide is drawn again when the read is done, or the part sits on what it had: nothing else draws it for `others`.
+    Promise.resolve(refreshOthers()).then(() => renderAide());
+  }
+  const tasks = [...aideWanted().taskAis.values()].filter(t => !aideIsFresh(aide.taskAis.get(`${t.board}/${t.task}`)?.at, force));
+  await Promise.all(tasks.map(loadAideTaskAi));
+  // Fresh is not enough when the PR was read for a part that wanted less (a `pr` part reads the record only): what this one needs is read.
+  const prs = [...aideWanted().prs].filter(([id, what]) => !aideIsFresh(aide.prs.get(id)?.at, force) || !aideHasWanted(aide.prs.get(id), what));
+  await Promise.all(prs.map(([id, what]) => loadAidePr(id, what)));
+  aidePrune();
+}
+
+/* What no part on show names any more is let go, so that the diffs and documents of the topics before do not pile up. The task documents go
+   first, since the PRs a gate's annotations need are found through them. A read still on its way puts its entry back, and the next round
+   lets it go again; the sequence numbers are kept, so an old answer is still told from a new one. */
+function aidePrune() {
+  const wanted = aideWanted();
+  for (const k of [...aide.taskAis.keys()]) if (!wanted.taskAis.has(k)) aide.taskAis.delete(k);
+  const prs = aideWanted().prs;
+  for (const id of [...aide.prs.keys()]) if (!prs.has(id)) aide.prs.delete(id);
+  const gates = new Set(aideShown().parts.filter(p => p.kind === 'diff' && p.ref?.board).map(p => `${p.ref.board}/${p.ref.id}`));
+  for (const k of [...aide.gateDiffs.keys()]) if (!gates.has(k)) aide.gateDiffs.delete(k);
+}
+
+async function loadAideTaskAi({ board, task }) {
+  const key = `${board}/${task}`;
+  const n = aide.taskSeq[key] = (aide.taskSeq[key] || 0) + 1;
+  // As the boards' and PRs' reads are: one sent before a newer one was applied must not replace it.
+  const current = () => {
+    if (n < (aide.taskApplied[key] || 0)) return false;
+    aide.taskApplied[key] = n;
+    return true;
+  };
+  try {
+    const doc = await boardApi(`/b/${board}`, `/api/tasks/${encodeURIComponent(task)}/ai`);
+    if (!current()) return;
+    aide.taskAis.set(key, { pr: doc.pr || null, record: doc.record || null, at: Date.now(), error: null });
+  } catch (e) {
+    if (!current()) return;
+    // What was read stays: a failed read is not an answer that there is no PR.
+    aide.taskAis.set(key, { ...(aide.taskAis.get(key) || { pr: null, record: null }), at: Date.now(), error: e.message });
+  }
+  renderAide();
+}
+
+/* One PR's record, then its read-through when it is wanted and there is one (again only when the record says it changed), then
+   its stored diff when that is wanted (again only when the read changed: it can be 8 MB, and it is parsed once). A 404 is "there
+   is none", which is not an error. */
+async function loadAidePr(id, what) {
+  const n = aide.prSeq[id] = (aide.prSeq[id] || 0) + 1;
+  const current = () => {
+    if (n < (aide.prApplied[id] || 0)) return false;
+    aide.prApplied[id] = n;
+    return true;
+  };
+  const e = aide.prs.get(id) || { rec: null, read: undefined, diff: { state: 'loading', files: [] }, resolved: null, settled: false, error: null, at: null, readKey: null, diffKey: null };
+  const enc = encodeURIComponent(id);
+  const get = async path => {
+    try { return await boardApi('', path); } catch (err) { if (err.status === 404) return null; throw err; }
+  };
+  try {
+    const rec = await get(`/api/others/record?id=${enc}`);
+    const key = rec ? prReadKey(rec) : 'no-record';
+    let { read, diff, readKey, diffKey } = e;
+    // A PR with a record that has no read-through has none to ask for.
+    if (what.read && (readKey !== key || read === undefined)) {
+      read = !rec || rec.ai?.sha ? await get(`/api/others/read?id=${enc}`) : null;
+      readKey = key;
+    }
+    if (what.diff && read && (diffKey !== key || diff.state === 'loading')) {
+      const res = await get(`/api/others/diff?id=${enc}`);
+      // A diff is what the read-through was made from, or it is not what its points mean.
+      diff = res && res.diff != null && res.sha === read.sha ? { state: 'ok', files: prParseDiff(res.diff) } : { state: 'gone', files: [] };
+      diffKey = key;
+    } else if (what.diff && !read) diff = { state: 'gone', files: [] };
+    if (!current()) return;
+    Object.assign(e, { rec, read, diff, readKey, diffKey, settled: true, error: null, at: Date.now(),
+      resolved: diff.state === 'ok' && read?.annotations?.length ? prDiffResolve(diff.files, read) : null });
+  } catch (err) {
+    if (!current()) return;
+    Object.assign(e, { settled: true, error: err.message, at: Date.now() });
+  }
+  aide.prs.set(id, e);
+  renderAide();
 }
 
 /* What was read of a board before now is older than what this page just did to it (an answer): the answers still on their way are dropped. */
 const aideBoardWrote = slug => { aide.boardApplied[slug] = (aide.boardSeq[slug] || 0) + 1; };
 
 const aideParentTitle = (nwo, key) => workRepos().find(r => r.nwo === nwo)?.parents?.find(p => p.key === key)?.title || '';
+
+/* The read-through of the PR a task is of, when it has one that has been read: what annotates the lines of a gate's 「根拠」. */
+function aideTaskRead(board, taskId) {
+  const ai = taskId ? aide.taskAis.get(`${board}/${taskId}`) : null;
+  if (!ai?.pr || !ai.record?.ai?.sha) return null;
+  const e = aide.prs.get(ai.pr);
+  // Annotations are anchored in the head they were read at: with the task's record already at another head, they are not drawn
+  // until the read-through of that head has come.
+  return e?.read && e.readKey === prReadKey(ai.record) ? e.read : null;
+}
 
 /* What `ctx.gate(ref)` says of a gate (see the gate renderer in aide-display.js): null while its board has not been read. */
 function aideGateView(ref, rowKeyOf) {
@@ -170,8 +321,166 @@ function aideGateView(ref, rowKeyOf) {
   if (g.title) aide.gateTitles.set(ref, g.title);
   const task = (b.data.tasks || []).find(t => t.id === g.task) || null;
   const m = entry && !entry.isHub && work.doc ? workAwayModel(entry, workMarks(entry.nwo)[entry.id], [], workServerNow()) : null;
-  return { ...known, g, task, away: m ? workAwayHtml(m, workServerNow(), false) : '',
+  const ai = g.task ? aide.taskAis.get(`${board}/${g.task}`) : null;
+  const prEntry = ai?.pr && ai.record?.ai?.sha ? aide.prs.get(ai.pr) : null;
+  return { ...known, g, task, refreshError: b.error || ai?.error || prEntry?.error || null, read: aideTaskRead(board, g.task), away: m ? workAwayHtml(m, workServerNow(), false) : '',
     parentTitle: entry?.task?.parent ? aideParentTitle(entry.nwo, entry.task.parent) || entry.task.parent : '' };
+}
+
+/* The plan of a task in a line's worth of facts: the plan it works to (approved last), else the one waiting on the person, else
+   the newest the task has. */
+function aidePlanOf(task, data) {
+  const open = (data.gates || []).find(g => g.task === task.id && g.kind === 'plan' && g.wait !== false);
+  const newest = [...(task.records || [])].filter(g => g.kind === 'plan').sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || '')).pop();
+  const plan = open ? { g: open, state: 'waiting' } : task.approvedPlan ? { g: task.approvedPlan, state: 'decided' } : newest ? { g: newest, state: 'decided' } : null;
+  return plan && { title: plan.g.title, state: plan.state, at: plan.g.answeredAt || plan.g.openedAt, text: plan.g.goal || plan.g.focus || '' };
+}
+
+/* Why the last read of a board failed while what was read before is still held, else null. */
+const aideBoardError = board => aide.boards[board]?.error || null;
+
+const aideNwoOf = board => boards.find(b => b.slug === board)?.nwo || '';
+
+/* What `ctx.task(board, id)` says: the task of a board the part names, its plan and gates and what comes next. */
+function aideTaskView(board, id, rowKeyOf) {
+  const b = aide.boards[board];
+  if (!b || (!b.data && !b.error)) return null;
+  if (!b.data) return { error: b.error, nwo: aideNwoOf(board) };
+  const task = (b.data.tasks || []).find(t => t.id === id);
+  if (!task) return { gone: true, nwo: aideNwoOf(board) };
+  const gates = (b.data.gates || []).filter(g => g.task === id && !answeredGates.has(`${board}/${g.id}`));
+  const nwo = aideNwoOf(board);
+  const raw = `${nwo}/${board}`;
+  const row = work.doc ? workListRows().rows.find(r => r.raw === raw && r.task?.id === id) : null;
+  return { task, plan: aidePlanOf(task, b.data), gates, nwo, next: aideTaskNext(task, gates), rowKey: row ? row.key : rowKeyOf(`${board}/${id}`), refreshError: b.error };
+}
+
+/* A parent with the progress of its children: what the work document lists of it, joined to the open waits and the tasks it knows. */
+function aideParentView(board, key) {
+  if (!work.doc) return null;
+  const nwo = aideNwoOf(board);
+  const repo = workRepos().find(r => r.nwo === nwo && (r.parents || []).some(p => p.key === key)) || workRepos().find(r => (r.parents || []).some(p => p.key === key && p.hub === board));
+  const p = repo?.parents?.find(x => x.key === key);
+  if (!p) return { gone: true, nwo };
+  const waits = aideCurrentWaits().filter(w => w.nwo === repo.nwo && w.parent === key);
+  const tasks = new Map();
+  for (const r of repo.rows || []) if (r.task) tasks.set(`${r.board}/${r.task.id}`, r.task);
+  for (const t of repo.turns || []) if (t.task) tasks.set(`${t.board}/${t.task.id}`, t.task);
+  const waitsBy = new Map();
+  for (const c of p.children || []) waitsBy.set(aideChildKey(c), waits.filter(w => w.board === c.hub && w.taskId === c.id));
+  const listed = workListRows().rows;
+  const rowsBy = new Map();
+  for (const c of p.children || []) { const r = listed.find(x => x.raw === `${repo.nwo}/${c.hub}` && x.task?.id === c.id); if (r) rowsBy.set(aideChildKey(c), r.key); }
+  const { items, counts, total } = aideParentBuckets(p.children || [], waitsBy, tasks, rowsBy, p.total);
+  return { p, children: items, counts, total, next: aideParentNext(items, waits, total), nwo: repo.nwo, refreshError: work.error };
+}
+
+/* What `ctx.session(board, id)` says: the row of the list the session is, or one made of what the document lists when the list leaves it out. */
+function aideSessionView(board, id) {
+  if (!work.doc) return null;
+  const repo = workRepos().find(r => (r.rows || []).some(x => x.board === board && x.session.id === id) || (r.hubSessions || []).some(x => x.board === board && x.session.id === id));
+  if (!repo) return { gone: true };
+  const data = { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] };
+  let r = workListRows().rows.find(x => x.raw === `${repo.nwo}/${board}` && x.s.id === id);
+  if (!r) {
+    const x = (repo.rows || []).find(y => y.board === board && y.session.id === id) || (repo.hubSessions || []).find(y => y.board === board && y.session.id === id);
+    r = { s: x.session, st: sessionState(x.session, data), data, task: x.task || null, key: null, nwo: repo.nwo };
+  }
+  const fns = {
+    glyph: st => workGlyphHtml(st),
+    label: st => WORK_GLYPH[st]?.[1] || st,
+    why: x => unknownWhy(x.s) || agentText(x.s, x.data) || '',
+    request: requestText,
+    said: m => mdPlain(String(m)).split('\n').map(l => l.trim()).find(Boolean) || '',
+    phaseMinutes: x => (x.s.phaseAt != null && x.data.now != null ? minutesSince(x.s.phaseAt, x.data.now) : null),
+    title: x => sessionLabel(x.s, false, x.data).text,
+  };
+  return { r, fns, nwo: repo.nwo, stuckAfter: Number(aide.boards[board]?.data?.stuckAfterMinutes) || 0, refreshError: work.error || aideBoardError(board) };
+}
+
+/* `ctx.pr(id)`: the record, read-through and parsed diff of a PR the parts name. */
+function aidePrView(id) {
+  const e = aide.prs.get(id);
+  if (!e || !e.settled) return { state: 'loading' };
+  // A read that failed is no answer that there is none; one that failed after an earlier success keeps that content, said to be old.
+  if (e.error && !e.read) return { state: 'error', error: e.error };
+  if (!e.read) return { state: 'none', rec: e.rec };
+  return { state: 'ok', rec: e.rec, read: e.read, diff: { ...e.diff, resolved: e.resolved }, refreshError: e.error };
+}
+
+/* `ctx.prFacts(ref)`: what the PR part needs, of a task's PR (by the task) or of a PR by its id. The task card is the board's own read of the
+   PR (its last refresh), the record the resident's: neither asks GitHub now. */
+/* Whether a task's `pr` (a URL, `owner/repo#N`, or a bare `#N` of the board's repository `nwo`) is the PR `id` (`owner/repo#N`), ignoring case. */
+function aideSamePr(taskPr, id, nwo) {
+  const text = String(taskPr || '').trim();
+  const url = text.match(/^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/i);
+  const key = url ? `${url[1]}/${url[2]}#${url[3]}` : /^[^/#\s]+\/[^#\s]+#\d+$/.test(text) ? text : /^#?\d+$/.test(text) && nwo ? `${nwo}#${text.replace('#', '')}` : '';
+  return !!key && key.toLowerCase() === String(id || '').toLowerCase();
+}
+
+function aidePrFacts(ref) {
+  const nowSecs = workServerNow();
+  const cardOf = (board, id) => (aide.boards[board]?.data?.tasks || []).find(t => t.id === id) || null;
+  const phaseOf = (board, id) => (workRepos().flatMap(r => r.rows || []).find(r => r.board === board && r.task?.id === id)?.session || {}).phase || null;
+  if (ref.pr) {
+    const e = aide.prs.get(ref.pr);
+    if (!e || !e.settled) return { loading: true };
+    if (e.error && !e.rec) return { error: e.error };
+    const link = e.rec?.task;
+    const card = link ? cardOf(link.board, link.id) : null;
+    // The task's own status is of the task's current PR: when it has moved on to another, that is not this PR's.
+    const same = !!card && aideSamePr(card.pr, ref.pr, aideNwoOf(link.board));
+    return { rec: e.rec, task: same ? card : null, prId: ref.pr, prStatus: same ? card.prStatus || null : null, prTurn: same ? card.prTurn || null : null, phase: same ? phaseOf(link.board, link.id) : null, nowSecs,
+      refreshError: e.error || (link ? aideBoardError(link.board) : null) };
+  }
+  const b = aide.boards[ref.board];
+  if (!b || (!b.data && !b.error)) return { loading: true };
+  if (!b.data) return { error: b.error };
+  const card = cardOf(ref.board, ref.id);
+  if (!card) return { error: 'このタスクは、いまのボードにありません' };
+  const ai = aide.taskAis.get(`${ref.board}/${ref.id}`);
+  if (!ai) return { loading: true };
+  const e = ai.pr ? aide.prs.get(ai.pr) : null;
+  return { rec: ai.record || e?.rec || null, task: card, prId: ai.pr, prStatus: card.prStatus || null, prTurn: card.prTurn || null, phase: phaseOf(ref.board, ref.id), nowSecs,
+    refreshError: ai.error || e?.error || b.error || work.error || null };
+}
+
+/* The file a diff part names: by its new path, else by the old one of a renamed file (the server accepts either side's name). */
+function aideDiffFile(files, path) {
+  return files.find(f => f.path === path) || files.find(f => f.oldPath === path) || null;
+}
+
+/* `ctx.diffOf(ref)`: the lines' file in the source the part names. A PR's diff is the one stored with its read-through, with the reader's
+   annotations anchored in it; a gate's is its own, open only while the gate waits. */
+function aideDiffView(ref) {
+  if (ref.pr) {
+    const e = aide.prs.get(ref.pr);
+    if (!e || !e.settled) return { state: 'loading' };
+    if (e.error && !e.read) return { state: 'error', error: e.error };
+    if (!e.read || e.diff.state === 'gone') return { state: 'gone' };
+    if (e.diff.state !== 'ok') return { state: 'loading' };
+    const file = aideDiffFile(e.diff.files, ref.path);
+    return { state: 'ok', file, res: file && e.resolved ? e.resolved.files.get(file.path) : null, read: e.read, board: e.rec?.task?.board || '', taskId: e.rec?.task?.id || '', refreshError: e.error };
+  }
+  const gateRef = `${ref.board}/${ref.id}`;
+  const b = aide.boards[ref.board];
+  if (!b || (!b.data && !b.error)) return { state: 'loading' };
+  if (!b.data) return { state: 'error', error: b.error };
+  const g = (b.data.gates || []).find(x => x.id === ref.id);
+  if (!g || g.wait === false || answeredGates.has(gateRef) || !g.diff) return { state: 'gone' };
+  let parsed = aide.gateDiffs.get(gateRef);
+  if (!parsed || parsed.diff !== g.diff) aide.gateDiffs.set(gateRef, parsed = { diff: g.diff, files: prParseDiff(g.diff) });
+  return { state: 'ok', file: aideDiffFile(parsed.files, ref.path), res: null, read: null, board: ref.board, taskId: g.task || '', gateRef, refreshError: b.error };
+}
+
+/* `ctx.reviews()`: the list of 「AI 下読み」 the page already reads (`others`), as the review requests part draws it. */
+function aideReviewsView() {
+  if (!others.doc) return others.error ? { state: 'error', error: others.error } : { state: 'loading' };
+  const sync = others.doc.lastSync;
+  const nowSecs = othersNowEst();
+  // As the list says it: when the last sync was, or that there was none, and what it could not do. A list never synced is no list of nothing.
+  const sync1 = { words: othersSyncWords(sync, nowSecs, false), never: stampSecs(sync?.at) == null, stale: othersStale(sync, nowSecs), notes: othersNotes(sync) };
+  return { state: 'ok', records: othersRecords(), marks: othersMarks(), nowSecs, refreshError: others.error, sync: sync1 };
 }
 
 function aideCtx() {
@@ -184,6 +493,13 @@ function aideCtx() {
     waits,
     finished: aideFinished(listed.judged, id => { const r = [...listed.rows, ...listed.turns].find(x => x.id === id); return r ? aideRowTitle(r) : ''; }),
     gate: ref => aideGateView(ref, rowKeyOf),
+    task: (board, id) => aideTaskView(board, id, rowKeyOf),
+    parent: aideParentView,
+    pr: aidePrView,
+    prFacts: aidePrFacts,
+    session: aideSessionView,
+    diffOf: aideDiffView,
+    reviews: aideReviewsView,
     rowKey: rowKeyOf,
     draft: ref => aide.drafts.get(ref) || '',
     parentTitle: aideParentTitle,
@@ -504,6 +820,11 @@ function aideSetLocal(part, topic) {
   renderAide();
 }
 
+function aideBackToReviews() {
+  aideSetLocal(aideReviewsPart(), AIDE_REVIEWS_TOPIC);
+  refreshAide(true);
+}
+
 function aideBackToWaits() {
   aideSetLocal(aideWaitsPart(), AIDE_WAITS_TOPIC);
   refreshAide(true);
@@ -565,10 +886,38 @@ function aidePark(board, taskId) {
   else note('置く', true, 'このタスクは、いま読めません');
 }
 
+/* The read-through of a PR, in the view that has it: a task's PR in its 「AI 下読み」 tab, a review request in its own panel. The way back
+   is the aide's, as for a row. 「読み手に聞く」 goes to the same place, where the reader's terminal is, and types nothing. */
+function aideOpenRead(d) {
+  const id = d.aidePr;
+  if (!id) return;
+  const rec = othersById(id);
+  if (d.aideBoard && d.aideTask) {
+    aide.from = { board: d.aideBoard, ref: d.aideTask, title: rec ? `AI 下読み — ${prSubText(rec)}` : `AI 下読み — ${id}` };
+    return go({ board: d.aideBoard, view: 'work', task: d.aideTask, pane: 'ai' });
+  }
+  aide.from = { board: 'all', ref: PR_REF + id, title: rec ? `AI 下読み — ${prSubText(rec)}` : `AI 下読み — ${id}` };
+  if (rec) return prOpen(rec);
+  go({ board: 'all', view: 'work', task: PR_REF + id, pane: 'detail' });
+}
+
+/* A row of the review requests: its read-through in the area when it has one (as a wait opens its gate), else the PR in 「AI 下読み」. */
+function aideOpenReview(id) {
+  const rec = othersById(id);
+  if (rec?.ai?.sha) {
+    aideSetLocal(aideReadPart(id), { key: 'page', label: `${rec.repo} · PR #${rec.number}` });
+    return refreshAide(true);
+  }
+  aideOpenRead({ aidePr: id, aideBoard: '', aideTask: '' });
+}
+
 wk('aide-display').addEventListener('click', e => {
   let b;
+  if ((b = e.target.closest('[data-aide-open-review]'))) return aideOpenReview(b.dataset.aideOpenReview);
+  if ((b = e.target.closest('[data-aide-open-read], [data-aide-ask-reader]:not([disabled])'))) return aideOpenRead(b.dataset);
   if ((b = e.target.closest('[data-aide-open-gate]'))) return aideOpenGate(b.dataset.aideOpenGate);
   if (e.target.closest('[data-aide-waits]')) return aideBackToWaits();
+  if (e.target.closest('[data-aide-reviews]')) return aideBackToReviews();
   if ((b = e.target.closest('[data-aide-park]'))) return aidePark(b.dataset.aideBoard, b.dataset.aideTask);
   if ((b = e.target.closest('[data-aide-expand]'))) {
     // Part of the task's 「拡大」 dialog (card-dialog.js); until it is there the button says so.

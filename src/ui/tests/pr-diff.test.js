@@ -346,3 +346,58 @@ test('the annotation 「聞く」 is disabled when no reader runs, and 「下書
   assert.match(off, /data-prd-ask="0"[^>]* disabled title="worker が動いていません">聞く/);
   assert.ok(!/data-prd-todraft="0"[^>]*disabled/.test(off));
 });
+
+test('an excerpt is the lines of a range on one side, with what lies between, and nothing for a range the file does not have', () => {
+  const [a] = prParseDiff(SAMPLE);
+  const excerpt = r => ctx.prDiffExcerpt(a, r);
+  // Right side 2..3 is the two added lines; the removed line before them is not between them.
+  assert.deepEqual(plain(excerpt({ from: 2, to: 3 }).ks.map(k => a.all[k].text)), ['    // why', '    new();']);
+  // From the context line to the added one, the removed line between is taken.
+  assert.deepEqual(plain(excerpt({ from: 1, to: 2 }).ks.map(k => a.all[k].kind)), ['ctx', 'del', 'add']);
+  // Left side: context and removed lines by their old numbers.
+  assert.deepEqual(plain(excerpt({ from: 1, to: 2, side: 'left' }).ks.map(k => a.all[k].kind)), ['ctx', 'del']);
+  // Across two hunks: both are named.
+  assert.equal(excerpt({ from: 2, to: 11 }).hunks.size, 2);
+  assert.equal(excerpt({ from: 500, to: 600 }), null);
+  assert.equal(ctx.prDiffExcerpt(null, { from: 1, to: 2 }), null);
+});
+
+test('an excerpt is drawn as the diff draws its rows, without the buttons, with a header per hunk and the annotations under their lines', () => {
+  const files = prParseDiff(SAMPLE);
+  const read = { annotations: [{ path: 'src/a.rs', kind: 'ex', anchor: 'new();', text: 'Why <new>' }, { path: 'src/a.rs', kind: 'tr', anchor: '// why', text: 'because' }] };
+  const res = prDiffResolve(files, read).files.get('src/a.rs');
+  const ks = ctx.prDiffExcerpt(files[0], { from: 1, to: 11 }).ks;
+  const html = ctx.prDiffExcerptHtml(files[0], ks, res, read);
+  assert.equal(html.split('class="prd-h"').length - 1, 2);
+  assert.ok(html.includes('prd-a') && html.includes('prd-d') && html.includes('prd-tint'));
+  assert.ok(html.includes('Why &lt;new&gt;') && html.includes('because'));
+  assert.ok(!html.includes('prd-plus') && !html.includes('data-prd-todraft') && !html.includes('data-prd-ask'));
+  // Without a resolution there is only the code.
+  assert.ok(!ctx.prDiffExcerptHtml(files[0], ks, null, null).includes('prd-ann'));
+  // The diff's own annotation keeps its buttons.
+  assert.ok(ctx.prdAnnHtml(0, { kind: 'ex', text: 't' }, 'right:1').includes('data-prd-todraft'));
+  assert.ok(!ctx.prdAnnHtml(0, { kind: 'ex', text: 't' }, 'right:1', true, { plain: true }).includes('prd-ann-acts'));
+});
+
+test('an excerpt with a huge removal between two added lines keeps the lines asked for, is cut to a fixed number of rows and says how many were left out', () => {
+  const del = Array.from({ length: 5000 }, (_, i) => `-gone ${i}`);
+  const text = ['diff --git a/x b/x', '--- a/x', '+++ b/x', '@@ -1,5001 +1,2 @@', '+first', ...del, '+last'].join('\n');
+  const [f] = prParseDiff(text);
+  const got = ctx.prDiffExcerpt(f, { from: 1, to: 2 });
+  assert.equal(got.ks.length, 80);
+  assert.ok(got.ks.includes(0) && got.ks.includes(f.all.length - 1), 'both lines asked for are there');
+  const html = ctx.prDiffExcerptHtml(f, got.ks, null, null);
+  assert.equal(html.split('class="prd-l ').length - 1, 80 + 1);
+  assert.ok(html.includes('… 4922 行省略'));
+  // A range with no gap is not marked.
+  assert.ok(!ctx.prDiffExcerptHtml(f, [0, 1, 2], null, null).includes('行省略'));
+});
+
+test('an excerpt over a span of hundreds of thousands of lines is built from the picks and the start of each gap, not from the span', () => {
+  const all = [{ kind: 'add', new: 1, old: null, text: 'a', h: 0, k: 0 }];
+  for (let i = 1; i <= 300000; i++) all.push({ kind: 'del', new: null, old: i, text: 'd', h: 0, k: i });
+  all.push({ kind: 'add', new: 2, old: null, text: 'b', h: 0, k: 300001 });
+  const got = ctx.prDiffExcerpt({ all, hunks: [{ header: '@@' }] }, { from: 1, to: 2 });
+  assert.equal(got.ks.length, 80);
+  assert.deepEqual([got.ks[0], got.ks[1], got.ks[78], got.ks[79]], [0, 1, 78, 300001]);
+});

@@ -35,16 +35,46 @@ These are allowed without asking:
   tasks and states, and the open gates that wait on the person (`turns`), each with the `slug` of its
   board. Pass `repo` (`owner/name`) to narrow it to one; never pass `cwd`. It needs the resident
   server; if it says the server is not running, tell the person to start it.
+- `adjutant_reviews` lists the code reviews the person is asked to do: the pull requests of other
+  people that wait on their review (what 「AI 下読み」 lists), each with its repository, title,
+  author, whether it was asked again, and where its AI 下読み stands. `repo` narrows it. Read only;
+  it needs the resident server like `adjutant_work`. Its `lastSync` is the last sync with GitHub,
+  which runs only when the person asks: when it never ran (`lastSync` null, or its `at` empty), did not finish (`complete`
+  false), was cut short (`truncated`) or failed (`error`), the list may be missing requests. Say so;
+  never answer "no reviews" from such a list. Also say how long ago the last sync was (from `now` and
+  `lastSync.at`).
 - `adjutant_gate_read` reads one gate in full. `board` is the gate's `slug` from `adjutant_work`,
   and `id` is its id. It marks nothing as looked at.
-- `adjutant_show` puts something in the display area beside your terminal: `kind` `gate` (with
-  `board` and `id`) or `waits` (the list of what waits on the person). Showing something of another
-  topic clears the area and keeps the old topic by name, so show the gates of one subject together.
-  It writes nothing but the display area.
+- `adjutant_show` puts something in the display area beside your terminal. You pass a kind and a
+  reference only, never content: the page reads the content from the records and draws it. `board`
+  is always the `slug` from `adjutant_work`. `gate` is one gate (`board`, `id`); `waits` is the list
+  of what waits on the person; `read` is the AI 下読み (read-through) of a PR (`pr` as
+  `owner/repo#N`), its points that need attention by default, or one by `point` (counted from 1) or
+  every one of a `level` (`attention`, `check`, `info`); `task` is a task (`board`, `id`) or a parent
+  with the progress of its sub-issues (`board`, `parent` = `repos[].parents[].key`); `pr` is where a
+  PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `reviews` is the list of
+  review requests (no reference); `session` is a worker
+  session (`board`, `id` = `rows[].session.id`); `diff` is some lines of a diff (`path`, `from`, `to`
+  of at most 60 lines, `side` `right` or `left`) of the diff stored with a PR's read-through (`pr`)
+  or of an open gate (`board`, `id`); a file is named by its new path or, for a renamed file, its
+  old one. A value of the wrong JSON type (a number where a string is wanted, or the reverse) is
+  refused, not ignored. For `read` the answer lists the read-through as
+  `readThrough.points` (`n`, `level`, `title`, `path`, `line`) and its `mode`: when the person asks
+  about one of them, show it again by its `point` number, or its `diff` by `path` and the lines.
+  Showing something of another topic clears the area and keeps the old topic by name, so show the
+  things of one subject together. It writes nothing but the display area.
 
 Other tools follow the person's own Claude Code settings: one may be asked about in this window, or
 refused. When one is refused, do not try to get around it; say what you cannot do, and where the
 person can do it.
+
+## What "review" means
+
+A bare 「レビュー」 or 「コードレビュー」 means the PRs the person is **asked to review**: call
+`adjutant_reviews`, and show them with `adjutant_show` kind `reviews` (a PR's read-through with kind
+`read`). The review handling of the person's **own** task PRs (reviewers' changes, bots, CI, the
+merge) is 「PR の対応」, and comes from `adjutant_work` (`pr` rows and `turns`). When it is unclear
+which the person means, answer both, kept apart under their own headings.
 
 ## Fetch before you answer
 
@@ -54,8 +84,9 @@ more often than not. If you cannot read it, say so rather than guessing.
 
 ## Show parts, don't paste
 
-When the person asks about a gate or about what waits on them, show it with `adjutant_show` and say
-in a line what is there, instead of pasting it.
+When the person asks about a gate, a task or a parent, a PR, its read-through, a session or some lines
+of a diff, or about what waits on them, show it with `adjutant_show` and say in a line what is there,
+instead of pasting it.
 
 Otherwise point to the place: a path and a line range, a task, a PR. Quote only the few lines that
 matter. Do not dump a whole file or a whole JSON document into the conversation; the person asked where to

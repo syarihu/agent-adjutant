@@ -2,7 +2,8 @@
    What the pane holds when nothing is selected in 「いまの仕事」: the aide's terminal on the left and, on the right, the display
    area. These functions read what the server and the work document say and return markup or text, touching neither the page
    nor the network, so `src/ui/tests/aide-display.test.js` runs them under `node --test`. Loaded after util.js (`esc`, `kindOf`),
-   decide.js (the choices and buttons of a gate) and pr-diff.js (`prParseDiff`), and before my-work.js. What a renderer needs
+   decide.js (the choices and buttons of a gate), my-work-others.js, my-work-away.js, pr-read.js and pr-diff.js (the words and
+   markup of a PR and its diff), and before my-work.js. What a renderer needs
    from the page (a gate's content, its away block, a draft being typed) comes in as `ctx`, never from a global that holds state.
 
    The display area draws one state, whoever produced it. The aide fills it with its adjutant_show tool and the resident serves it
@@ -10,8 +11,11 @@
      { topic: { key, label } | null,
        parts: [{ id, kind, ref, topic, shownAt }],   // every part of `topic`, newest first; the server adds `by`
        earlier: [{ key, label }] }                   // the topics before it, newest first
-   `ref` is `{ board, id }` for a gate and null for the list of waits; `topic` is the key of the topic and `shownAt` epoch
-   seconds, which a part this page makes itself has no use for (null).
+   `ref` says what a part is about, by reference only (the page reads the content from the records): `{ board, id }` for a
+   gate, a task (or `{ board, parent }` for a parent) and a session; `{ pr }` (or `{ board, id }` of a task) for a PR; `{ pr, point | level }`
+   for a read-through; `{ pr | board + id, path, from, to, side }` for lines of a diff; null for the list of waits. `board` and `id` are
+   always there (empty when a kind has none). `topic` is the key of the topic and `shownAt` epoch seconds, which a part this page
+   makes itself has no use for (null).
    A part is drawn by the renderer its `kind` was registered with (`registerAidePart`); a kind with none is said not to be
    drawable yet, so a part a newer server sends never breaks the pane. */
 
@@ -70,6 +74,10 @@ function aideDisplayFollowed(display, local) {
 
 /* The parts the page makes itself. */
 const aideGatePart = (board, id) => ({ id: `page-gate:${board}/${id}`, kind: 'gate', ref: { board, id }, topic: 'page', shownAt: null, by: 'board' });
+/* A read-through opened from a row of the review requests, as a wait row opens its gate. */
+const aideReadPart = pr => ({ id: `page-read:${pr}`, kind: 'read', ref: { board: '', id: '', pr }, topic: 'page', shownAt: null, by: 'board' });
+const aideReviewsPart = () => ({ id: 'page-reviews', kind: 'reviews', ref: null, topic: 'page', shownAt: null, by: 'board' });
+const AIDE_REVIEWS_TOPIC = { key: 'reviews', label: 'レビュー依頼' };
 const aideWaitsPart = () => ({ id: 'page-waits', kind: 'waits', ref: null, topic: 'page', shownAt: null, by: 'board' });
 const AIDE_WAITS_TOPIC = { key: 'waits', label: '判断待ちの一覧' };
 
@@ -164,19 +172,49 @@ function aideFinished(judged, titleOf = () => '') {
 }
 
 /* A few lines of a gate's diff as evidence for what it asks: the first hunk of each file a finding names (`location` is
-   `path:line`), else the first hunk of the diff. At most `max` lines, headers included, drawn as the panel draws a diff. */
-function aideEvidence(diff, findings, max = 12) {
-  const files = prParseDiff(diff).filter(f => f.hunks.length);
-  if (!files.length) return '';
+   `path:line`), else the first hunk of the diff. At most `max` lines in all, drawn as the diff view draws them (without its
+   buttons). With the PR's read-through `read` the reader's annotations are under their lines, anchored in this diff.
+   `{ html, annotated }`: whether an annotation was drawn is what the part says in its heading. */
+/* A gate's diff parsed once, and its annotations anchored once for a read-through, not at every redraw. */
+/* The gate diffs parsed recently, by their text: a few, so that two parts with different diffs do not parse both at every redraw. */
+const AIDE_PARSED_KEPT = 4;
+const aideParsed = new Map();
+function aideParsedGateDiff(diff) {
+  let files = aideParsed.get(diff);
+  if (!files) files = prParseDiff(diff).filter(f => f.hunks.length);
+  // Taken out and put back last: the one used longest ago is the one let go.
+  aideParsed.delete(diff);
+  aideParsed.set(diff, files);
+  if (aideParsed.size > AIDE_PARSED_KEPT) aideParsed.delete(aideParsed.keys().next().value);
+  return files;
+}
+const AIDE_RESOLVED = new WeakMap();
+function aideResolved(files, read) {
+  let byRead = AIDE_RESOLVED.get(files);
+  if (!byRead) AIDE_RESOLVED.set(files, byRead = new WeakMap());
+  if (!byRead.has(read)) byRead.set(read, prDiffResolve(files, read));
+  return byRead.get(read);
+}
+function aideEvidenceParts(diff, findings, read = null, max = 12) {
+  const files = aideParsedGateDiff(diff);
+  if (!files.length) return { html: '', annotated: false };
   const named = (findings || []).map(f => String(f?.location ?? '').replace(/:\d+(?:-\d+)?$/, '')).filter(Boolean);
   const picked = files.filter(f => named.some(n => n === f.path || n.endsWith(`/${f.path}`) || f.path.endsWith(`/${n}`)));
-  const lines = [];
+  const res = read?.annotations?.length ? aideResolved(files, read) : null;
+  let left = max;
+  let annotated = false;
+  const html = [];
   for (const f of picked.length ? picked : files.slice(0, 1)) {
-    const h = f.hunks[0];
-    lines.push(`+++ ${f.path}`, h.header, ...h.lines.map(l => (l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : l.kind === 'ctx' ? ' ' : '') + l.text));
+    if (left <= 0) break;
+    const ks = f.hunks[0].lines.map(l => l.k).slice(0, left);
+    left -= ks.length;
+    const r = res?.files.get(f.path) || null;
+    if (r && ks.some(k => r.byLine.has(k))) annotated = true;
+    html.push(`<div class="aide-ev-file"><code class="pr-loc">${esc(f.path)}</code></div>${prDiffExcerptHtml(f, ks, r, read)}`);
   }
-  return renderDiff(lines.slice(0, max).join('\n'));
+  return { html: html.join(''), annotated };
 }
+const aideEvidence = (diff, findings, read = null, max = 12) => aideEvidenceParts(diff, findings, read, max).html;
 
 const aidePinSub = waits => (waits.length ? `判断待ち ${waits.length} · 次: ${kindOf(waits[0].kind)[0]} ${waits[0].title}` : '待ちはありません');
 
@@ -262,6 +300,7 @@ function aideGateBodyHtml(got, ref, ctx) {
   const waiting = g.wait !== false;
   const parts = [];
   if (got.parentTitle) parts.push(`<div class="aide-gate-parent">${aideIcon('account_tree')}<span>${esc(got.parentTitle)}</span></div>`);
+  if (got.refreshError) parts.push(aideStaleNote(got.refreshError));
   parts.push(aideSection('このタスク', `<p class="aide-gate-task">${esc(aideTaskLine(g, task))}</p>`));
   if (got.away) parts.push(aideSection('前回見てから', got.away));
   const ask = g.focus ? `<div class="aide-gate-focus">${md(g.focus)}</div>` : '<div class="tp-muted">確認してほしい点は書かれていません</div>';
@@ -270,8 +309,11 @@ function aideGateBodyHtml(got, ref, ctx) {
     + `<textarea class="gate-comment" aria-label="コメント" placeholder="修正指示や質問があれば入力してください（選んだ案に下書きがあるときは、空欄ならそれを送ります）...">${esc(draft)}</textarea>`
     + `<div class="decide aide-gate-decide">${buttons}</div>`));
   if (g.unsure) parts.push(aideSection('迷っていること', `<div class="aide-gate-unsure">${md(g.unsure)}</div>`));
-  const evidence = aideEvidence(g.diff, g.findings);
-  if (evidence) parts.push(aideSection('根拠', `<div class="diff aide-gate-diff">${evidence}</div>`));
+  const evidence = aideEvidenceParts(g.diff, g.findings, got.read || null);
+  if (evidence.html) {
+    const note = evidence.annotated ? `<div class="tp-muted">AI 下読みの注釈（${esc(prSha7(got.read.sha))} 時点）</div>` : '';
+    parts.push(aideSection('根拠', `${note}<div class="aide-excerpt aide-gate-diff">${evidence.html}</div>`));
+  }
   const target = g.kind === 'plan' ? 'request' : 'gate';
   const tid = task?.id || g.task || '';
   const here = `data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(tid)}"`;
@@ -285,7 +327,8 @@ function aideGateBodyHtml(got, ref, ctx) {
   return `<div class="aide-gate" data-aide-gate="${esc(ref)}">${parts.join('')}</div>`;
 }
 
-/* `ctx.gate(ref)` is `{ g, task, entry, rowKey, away, parentTitle, board, nwo, error, gone }`, or null while the board's content is
+/* `ctx.gate(ref)` is `{ g, task, entry, rowKey, away, parentTitle, board, nwo, read, error, gone }` (`read`: the read-through of the task's PR
+   when it has one, for the annotations of 「根拠」), or null while the board's content is
    being read. `away` is the timeline of 「離れていた間に」 as markup, `rowKey` the key of the session's row in the list. */
 registerAidePart('gate', (part, ctx) => {
   const ref = part.ref ? `${part.ref.board}/${part.ref.id}` : '';
@@ -352,4 +395,419 @@ registerAidePart('waits', (part, ctx) => {
     }).join('')}</ul></div>`
     : '';
   return { icon: 'pending_actions', label: '判断待ち', where: waits.length ? `${waits.length} 件` : '', title: '判断待ちの一覧', cls: 'wait', body: `${list}${done}` };
+});
+
+/* ── the parts: read, task, pr, session and diff ──
+   Each is drawn from what `ctx` says of the thing the part names, read from the records and never from GitHub. A part whose thing
+   is not there yet says so (`読み込み中…`), one that failed says why, and one that is gone says it is gone: never an empty body. */
+
+/* The last read of something failed while an earlier one is still on show: said, so what is drawn is not taken for current. */
+const aideStaleNote = err => (err ? `<div class="tp-muted aide-stale">${esc(`最新の読み込みに失敗しました: ${err}（前回読んだ内容を出しています）`)}</div>` : '');
+const aideNote = text => `<div class="tp-muted">${esc(text)}</div>`;
+const aideLinkBtn = (attrs, icon, text, off = '') => `<button type="button" class="aide-link" ${attrs}${off ? ` disabled title="${esc(off)}"` : ''}>${aideIcon(icon)}<span>${esc(text)}</span></button>`;
+
+/* ── read ── */
+
+/* Which points of a read-through a part opens, by index: the one `ref.point` names (counted from 1), every one of `ref.level`,
+   else every one that needs attention, else the first. The rest are folded under the part. */
+function aideReadPick(read, ref) {
+  const points = read?.points || [];
+  const all = points.map((_, i) => i);
+  let shown;
+  if (ref?.point) shown = points[ref.point - 1] ? [ref.point - 1] : [];
+  else if (ref?.level) shown = all.filter(i => points[i].level === ref.level);
+  else {
+    shown = all.filter(i => points[i].level === 'attention');
+    if (!shown.length && points.length) shown = [0];
+  }
+  return { shown, rest: all.filter(i => !shown.includes(i)) };
+}
+
+/* A point's line with three lines of the diff either side of it, within its hunk, and the reader's annotations under them. */
+const AIDE_POINT_CONTEXT = 3;
+/* Where each point's line is in the parsed diff, found once for a (diff, read-through) and kept with them: a redraw every two seconds
+   must not scan a diff of megabytes again for each point. `{ file, k }` per point index, `null` for a point with no line in the diff. */
+const AIDE_POINT_PLACES = new WeakMap();
+function aidePointPlaces(files, read) {
+  let byRead = AIDE_POINT_PLACES.get(files);
+  if (!byRead) AIDE_POINT_PLACES.set(files, byRead = new WeakMap());
+  let places = byRead.get(read);
+  if (!places) {
+    const byPath = new Map(files.map(f => [f.path, f]));
+    places = (read.points || []).map(p => {
+      const file = byPath.get(p.path);
+      const k = file && p.line ? prDiffFindLine(file, p.line) : null;
+      return k == null ? null : { file, k };
+    });
+    byRead.set(read, places);
+  }
+  return places;
+}
+
+function aidePointExcerptHtml(p, i, diff, resolved, read) {
+  if (!diff || diff.state !== 'ok') return diff?.state === 'loading' ? aideNote('差分を読み込み中…') : '';
+  const place = aidePointPlaces(diff.files, read)[i];
+  if (!place) return '';
+  const { file, k } = place;
+  const h = file.all[k].h;
+  const ks = [];
+  for (let i = Math.max(0, k - AIDE_POINT_CONTEXT); i <= Math.min(file.all.length - 1, k + AIDE_POINT_CONTEXT); i++) if (file.all[i].h === h) ks.push(i);
+  return `<div class="aide-excerpt">${prDiffExcerptHtml(file, ks, resolved?.files.get(file.path) || null, read)}</div>`;
+}
+
+function aidePointHtml(p, i, diff, resolved, read) {
+  const lv = PR_LEVEL[p.level] ? p.level : 'info';
+  return `<li class="pr-point pr-lv-${lv} aide-point"><div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[p.level] || p.level)}</span>${prLoc(p.path, p.line)}</div>`
+    + `<div class="pr-point-title">${esc(p.title)}</div><div class="pr-point-why">${esc(p.why)}</div>${aidePointExcerptHtml(p, i, diff, resolved, read)}</li>`;
+}
+
+/* `ctx.pr(prId)` is `{ state: 'loading' | 'error' | 'none' | 'ok', error?, rec, read, diff: { state, files } }`: the record (or null),
+   the stored read-through and the parsed stored diff. The buttons carry the PR and, for a task's PR, its board and task. */
+registerAidePart('read', (part, ctx) => {
+  const shown = aideReadBody(part, ctx);
+  // Opened from a row of the review requests: the way back to the list, as a gate has to the list of waits.
+  const back = String(part.id).startsWith('page-read:') ? `<div class="aide-gate-actions">${aideLinkBtn('data-aide-reviews', 'list', '一覧へ戻る')}</div>` : '';
+  return back ? { ...shown, body: shown.body + back } : shown;
+});
+
+function aideReadBody(part, ctx) {
+  const id = part.ref?.pr || '';
+  const got = ctx.pr && id ? ctx.pr(id) : null;
+  const rec = got?.rec || null;
+  // The pick is in the heading, so folded parts of one PR are told apart.
+  const pick = part.ref?.point ? ` · 見るポイント ${part.ref.point}` : part.ref?.level ? ` · ${PR_LEVEL[part.ref.level] || part.ref.level}のポイント` : '';
+  const base = { icon: 'menu_book', label: `AI 下読み${pick}`, where: rec ? prSubText(rec) : id, title: rec?.title || id, cls: '' };
+  if (!got || got.state === 'loading') return { ...base, body: aideNote('読み込み中…') };
+  if (got.state === 'error') return { ...base, body: aideNote(`この下読みを読めませんでした: ${got.error}`) };
+  if (got.state === 'none' || !got.read) return { ...base, body: aideNote('この PR の AI 下読みは、まだありません') };
+  const { read, diff } = got;
+  const link = rec?.task || null;
+  const attrs = `data-aide-pr="${esc(id)}" data-aide-board="${esc(link?.board || '')}" data-aide-task="${esc(link?.id || '')}"`;
+  const stale = rec?.headSha && read.sha && rec.headSha !== read.sha ? `<div class="tp-muted">${esc(prStaleText(read, rec))}</div>` : '';
+  const parts = [aideStaleNote(got.refreshError), stale];
+  const three = prThree(read);
+  if (three) parts.push(aideSection('この PR がすること', three.html));
+  const split = prSplitProposal(read);
+  if (split) parts.push(aideSection('分割案', split.html));
+  if (!split) {
+    const { shown, rest } = aideReadPick(read, part.ref);
+    const resolved = diff?.state === 'ok' ? diff.resolved || (read.annotations?.length ? prDiffResolve(diff.files, read) : null) : null;
+    const points = read.points || [];
+    if (shown.length) parts.push(aideSection('見るポイント', `<ul class="pr-points aide-points">${shown.map(i => aidePointHtml(points[i], i, diff, resolved, read)).join('')}</ul>`));
+    else parts.push(aideSection('見るポイント', aideNote(points.length ? 'この指定に当たるポイントはありません' : 'この下読みには、見るポイントがありません')));
+    if (rest.length) {
+      const items = rest.map(i => `<li class="pr-point pr-lv-${PR_LEVEL[points[i].level] ? points[i].level : 'info'}"><div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[points[i].level] || points[i].level)}</span>${prLoc(points[i].path, points[i].line)}</div><div class="pr-point-title">${esc(points[i].title)}</div></li>`);
+      parts.push(`<details class="aide-more"><summary>ほかの見るポイント ${rest.length}</summary><ul class="pr-points aide-points">${items.join('')}</ul></details>`);
+    }
+  }
+  parts.push(`<div class="aide-gate-actions">${aideLinkBtn(`data-aide-open-read ${attrs}`, 'open_in_full', 'AI 下読みを開く')}`
+    + `${aideLinkBtn(`data-aide-ask-reader ${attrs}`, 'chat', '読み手に聞く', prReaderOpen(rec) ? '' : PR_ASK_OFF_WHY)}</div>`);
+  return { ...base, body: `<div class="aide-read">${parts.join('')}</div>` };
+}
+
+/* ── task and parent ── */
+
+/* What happens next to a task, in a line: the person's turn first, then the PR's, then the worker's. */
+const AIDE_PR_WAIT = { draft: 'PR は下書きです（worker が仕上げています）', unrequested: 'PR のレビュー待ちです', 'other-reviewer': '他のレビュアーの返事待ちです',
+  checks: 'bot・CI の結果待ちです' };
+function aideTaskNext(task, gates) {
+  if (!task) return '';
+  if (parkOf(task)) return `置いています — ${parkText(parkOf(task))}`;
+  const open = (gates || []).find(g => g.wait !== false);
+  if (open) return `あなたの判断待ち: ${kindOf(open.kind)[0]}`;
+  if (task.status === 'done' || task.status === 'cancelled') return 'このタスクは終わっています';
+  if (WORK_PR_NOW[task.prTurn]) return `あなたの番: ${WORK_PR_NOW[task.prTurn]}`;
+  if (AIDE_PR_WAIT[task.prTurn]) return AIDE_PR_WAIT[task.prTurn];
+  // By the status the record says: nothing is on it before a worker is, and once its PR is out it waits on the PR.
+  const by = { backlog: 'まだ hub に渡していません（着手されていません）', queued: 'hub が着手するのを待っています', dispatched: 'worker が作業中です', pr: 'PR の結果待ちです' };
+  return by[task.status] || '';
+}
+
+/* The plan of a task in a line: `plan` is `{ title, state: 'decided' | 'waiting', at, text }` (`at` a stamp). */
+function aidePlanLine(plan, finished = false) {
+  // The server leaves a finished task's plan off its card: that is not the same as there being none.
+  if (!plan) return finished ? '終わったタスクの計画はここでは読めません' : '計画はまだありません';
+  const when = plan.at && stampSecs(plan.at) != null ? ` · ${ago(plan.at)}` : '';
+  const said = aidePlainLine(plan.text, 1, 100);
+  return `${plan.title || '計画'} — ${plan.state === 'decided' ? '決定済み' : 'あなたの判断待ち'}${when}${said ? `: ${said}` : ''}`;
+}
+
+/* The bucket of a child of a parent, the numbers of the bar, and what each child waits on. `children` are the parent's (`{ id, hub,
+   title, progress }`), `waitsByChild` the open waits (`aideWaits`) and `tasksByChild` the work document's task of each child
+   (`{ prTurn, waitsOnPerson, ... }`), both by `hub/id`. A child the tracker counts and the board does not list is not started. */
+const AIDE_BUCKET_WORD = { merged: 'マージ済み', done: '完了', waiting: 'あなた待ち', working: '進行中', 'not-started': '未着手' };
+const AIDE_PERSON_TURNS = ['changes', 'merge', 'ci-failed', 'closed'];
+const aideChildKey = c => `${c.hub}/${c.id}`;
+function aideChildBucket(child, waits, task) {
+  // `done` is a task that finished with no merged PR: counted apart from `merged`, as the server keeps them apart.
+  if (child.progress === 'merged') return 'merged';
+  if (child.progress === 'done') return 'done';
+  if ((waits || []).length || task?.waitsOnPerson || AIDE_PERSON_TURNS.includes(task?.prTurn)) return 'waiting';
+  if (child.progress === 'pr' || child.progress === 'working') return 'working';
+  return 'not-started';
+}
+/* Whose turn a child is, in words. */
+function aideChildTurn(child, waits, task, hasRow) {
+  const first = (waits || [])[0];
+  if (first) return `あなた（${kindOf(first.kind)[0]}）`;
+  if (task?.waitsOnPerson || AIDE_PERSON_TURNS.includes(task?.prTurn)) return `あなた（${WORK_PR_NOW[task?.prTurn] || 'PR'}）`;
+  if (child.progress === 'merged' || child.progress === 'done') return '';
+  if (task?.prTurn === 'unrequested' || task?.prTurn === 'other-reviewer') return 'レビュアー';
+  if (task?.prTurn === 'checks') return 'bot・CI';
+  // A task not handed over, or handed to the hub and not picked up, has no worker yet.
+  if (['backlog', 'queued'].includes(task?.status) && child.progress !== 'working' && child.progress !== 'pr') return 'hub（着手待ち）';
+  if (child.progress === 'working' || child.progress === 'pr' || hasRow || task) return 'worker';
+  return 'hub（着手待ち）';
+}
+function aideParentBuckets(children, waitsByChild, tasksByChild, rowsByChild, total = 0) {
+  const counts = { merged: 0, done: 0, waiting: 0, working: 0, notStarted: 0 };
+  const items = (children || []).map(c => {
+    const waits = waitsByChild?.get(aideChildKey(c)) || [];
+    const task = tasksByChild?.get(aideChildKey(c)) || null;
+    const bucket = aideChildBucket(c, waits, task);
+    counts[bucket === 'not-started' ? 'notStarted' : bucket]++;
+    return { id: c.id, hub: c.hub, title: c.title || `#${c.id}`, bucket, turn: aideChildTurn(c, waits, task, !!rowsByChild?.get(aideChildKey(c))),
+      waitKey: waits[0]?.key || null, rowKey: rowsByChild?.get(aideChildKey(c)) || null };
+  });
+  const all = Math.max(total || 0, items.length);
+  counts.notStarted += all - items.length;
+  return { items, counts, total: all };
+}
+
+/* 「次に起きること」 of a parent: its oldest wait, else the first child not started in stack order, else that it is done. */
+function aideParentNext(items, waits, total = 0) {
+  const wait = (waits || [])[0];
+  if (wait) return `あなたの判断待ち: ${wait.title}`;
+  const next = (items || []).find(i => i.bucket === 'not-started');
+  if (next) return `次に着手: ${next.title}`;
+  // The ones the tracker counts and the board has no record of are not started, as the bar draws them.
+  const unrecorded = Math.max((total || 0) - (items || []).length, 0);
+  if (unrecorded) return `次に着手: まだ記録のない子 ${unrecorded} 件`;
+  if ((items || []).length && items.every(i => i.bucket === 'merged')) return 'すべてマージ済み';
+  if ((items || []).length && items.every(i => i.bucket === 'merged' || i.bucket === 'done')) return 'すべて終わっています（マージされていないものがあります）';
+  return 'worker が進めています';
+}
+
+const aideBarHtml = (items, total) => {
+  const segs = items.map(i => `<i class="${i.bucket === 'waiting' ? 'waiting' : i.bucket}" title="${esc(`${i.title} — ${AIDE_BUCKET_WORD[i.bucket]}`)}"></i>`);
+  for (let n = items.length; n < Math.min(total, 60); n++) segs.push('<i class="not-started" title="未着手"></i>');
+  return `<span class="wk-bar aide-bar" role="img" aria-label="${esc(`${items.length} 件 / 全 ${total} 件`)}">${segs.join('')}</span>`;
+};
+
+/* `ctx.task(board, id)` is `{ task, plan, gates, nwo, next, rowKey, error, gone }` or null while the board is being read;
+   `ctx.parent(board, key)` is `{ p, children, counts, total, next, error, gone }` or null. */
+registerAidePart('task', (part, ctx) => {
+  const ref = part.ref || {};
+  const isParent = !!ref.parent;
+  const got = ctx[isParent ? 'parent' : 'task']?.(ref.board, isParent ? ref.parent : ref.id) ?? null;
+  const base = { icon: isParent ? 'account_tree' : 'task_alt', label: isParent ? '親 Issue' : 'タスク', where: got?.nwo || '', title: got?.title || (isParent ? ref.parent : ref.id) || '', cls: '' };
+  if (!got) return { ...base, body: aideNote('読み込み中…') };
+  if (got.error) return { ...base, body: aideNote(`読めませんでした: ${got.error}`) };
+  if (got.gone) return { ...base, body: aideNote(isParent ? 'この親 Issue は、もうボードにありません' : 'このタスクは、もうボードにありません') };
+  if (isParent) {
+    const { p, children, counts, total } = got;
+    const list = children.map(c => {
+      const open = c.waitKey ? aideLinkBtn(`data-aide-open-gate="${esc(c.waitKey)}"`, 'pending_actions', '判断を見る')
+        : c.rowKey ? aideTermButtonHtml(c.rowKey) : '';
+      return `<li class="aide-child ${esc(c.bucket)}"><span class="aide-child-title">${esc(c.title)}</span><span class="aide-child-bucket">${esc(AIDE_BUCKET_WORD[c.bucket])}</span>`
+        + `${c.turn ? `<span class="aide-child-turn">${esc(c.turn)}</span>` : ''}${open}</li>`;
+    }).join('');
+    const body = aideSection('進み具合', `<div class="aide-bar-row">${aideBarHtml(children, total)}<span>${esc(`マージ ${counts.merged} / ${counts.done ? `完了 ${counts.done} / ` : ''}あなた待ち ${counts.waiting} / 進行中 ${counts.working} / 未着手 ${counts.notStarted}（全 ${total}）`)}</span></div>`)
+      + (children.length ? aideSection('子タスク', `<ul class="aide-children">${list}</ul>`) : '')
+      + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next || '')}</p>`)
+      + (httpUrl(p?.url) ? `<div class="aide-gate-actions"><a class="aide-link" href="${esc(httpUrl(p.url))}" target="_blank" rel="noopener noreferrer">${aideIcon('open_in_new')}<span>GitHub で開く</span></a></div>` : '');
+    return { ...base, where: got.nwo || '', title: `${p?.number ? `#${p.number} ` : ''}${p?.title || ref.parent}`, body: `<div class="aide-task">${aideStaleNote(got.refreshError)}${body}</div>` };
+  }
+  const { task, plan, gates } = got;
+  const here = `data-aide-board="${esc(ref.board)}" data-aide-task="${esc(task.id)}"`;
+  const pr = task.pr ? ` · PR ${esc(task.pr)}` : '';
+  const body = aideSection('このタスク', `<p class="aide-gate-task">${esc(aidePlainLine(task.body) || task.title || task.id)}</p><div class="tp-muted">${esc(`#${task.id} · ${task.status || ''}`)}${pr}</div>`)
+    + aideSection('計画', `<p class="aide-gate-task">${esc(aidePlanLine(plan, ['done', 'cancelled'].includes(task.status)))}</p>`)
+    + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next ?? aideTaskNext(task, gates))}</p>`)
+    + `<div class="aide-gate-actions">${aideLinkBtn(`data-aide-expand ${here} data-aide-target="request"`, 'open_in_full', '拡大')}${got.rowKey ? aideTermButtonHtml(got.rowKey) : ''}</div>`;
+  return { ...base, title: task.title || task.id, body: `<div class="aide-task">${aideStaleNote(got.refreshError)}${body}</div>` };
+});
+
+/* ── pr ── */
+
+/* A login that is a review bot: GitHub writes an app's login with `[bot]` in a webhook but leaves it off in the GraphQL answer the
+   records come from (`copilot-pull-request-reviewer`), so the names of the usual ones are matched as well. */
+const aideIsBot = login => /\[bot\]$|(^|[-_])bot$|^(copilot|coderabbit|github-actions|dependabot|renovate|gemini-code-assist|codex|sonar|codecov)/i.test(String(login || ''));
+
+/* Whose turn a record alone says the PR is, as `PrTurn` would, when no task says. */
+function aideTurnOfRecord(rec) {
+  if (!rec) return null;
+  if (rec.prState === 'merged') return 'merged';
+  if (rec.prState === 'closed') return 'closed';
+  const rs = rec.reviewers || [];
+  const ci = rec.ci || {};
+  if (rec.draft) return 'draft';
+  if (rs.some(r => r.state === 'changes-requested')) return 'changes';
+  if (Number(ci.fail) > 0) return 'ci-failed';
+  if (Number(ci.pending) > 0) return 'checks';
+  return rs.some(r => r.state === 'approved') ? 'merge' : 'unrequested';
+}
+
+/* What stands between the PR and a merge, by the records: `{ ok, blockers }`. A conflict is not in them. */
+/* Whose turn a task's PR is from what the task's last refresh read of it (`prStatus`), when no live card says: a finished task has no `prTurn`. */
+function aideTurnOfStatus(ps) {
+  if (!ps) return null;
+  // As `task::pr_turn` reads it: the state first, then changes, a failed check, a running one, approval, a review still owed.
+  if (ps.state === 'merged' || ps.state === 'closed') return ps.state;
+  if (ps.state === 'draft') return 'draft';
+  if (ps.state !== 'open') return null;
+  if (ps.review === 'changes') return 'changes';
+  if (Number(ps.ci?.fail) > 0) return 'ci-failed';
+  if (Number(ps.ci?.pending) > 0) return 'checks';
+  if (ps.review === 'approved') return 'merge';
+  return ps.review === 'required' ? 'other-reviewer' : 'unrequested';
+}
+
+function aideMergeBlockers(turn, ci) {
+  if (turn === 'merged') return { ok: false, merged: true, blockers: [] };
+  const blockers = [];
+  if (turn === 'closed') blockers.push('マージされずに閉じられています');
+  if (turn === 'draft') blockers.push('下書きです');
+  if (turn === 'changes') blockers.push('修正の依頼があります');
+  if (turn === 'ci-failed' || Number(ci?.fail) > 0) blockers.push('CI が落ちています');
+  if (turn === 'checks' || Number(ci?.pending) > 0) blockers.push('CI が実行中です');
+  if (turn === 'unrequested' || turn === 'other-reviewer') blockers.push('レビュー待ちです');
+  return { ok: turn === 'merge' && !blockers.length, blockers };
+}
+
+const AIDE_OTHERS_STATE = { requested: 'あなたの番（レビューを頼まれています）', 'ai-reading': 'AI 下読み中', 'ai-ready': 'あなたの番（下読み済み）', pushed: 'あなたの番（push があったので見直し）',
+  'waiting-on-author': '作者の番（あなたのレビュー済み）', done: '終わっています' };
+const AIDE_TURN_WORD = { ...AIDE_PR_WAIT, merged: 'マージ済みです', closed: 'マージされずに閉じられました', changes: '修正の依頼が来ています（worker の番）', merge: '承認済みです（あなたがマージする番）', 'ci-failed': 'CI が落ちています' };
+
+/* `ctx.prFacts(ref)` is `{ rec, task, prId, prStatus, prTurn, phase, nowSecs, error, loading }`: the record of the PR (null when it has
+   none), the task it is of, what the task's last refresh read of it, the turn derived from that, and the worker's phase. */
+registerAidePart('pr', (part, ctx) => {
+  const ref = part.ref || {};
+  const got = ctx.prFacts ? ctx.prFacts(ref) : null;
+  const base = { icon: 'merge_type', label: 'PR', where: got?.rec ? prSubText(got.rec) : got?.prId || '', title: got?.prStatus?.title || got?.rec?.title || got?.task?.title || ref.pr || '', cls: '' };
+  if (!got || got.loading) return { ...base, body: aideNote('読み込み中…') };
+  if (got.error) return { ...base, body: aideNote(`この PR を読めませんでした: ${got.error}`) };
+  const { rec, task, prStatus, phase } = got;
+  if (!rec && !prStatus) return { ...base, body: aideNote('この PR は読めません（記録がありません）') };
+  // The task's own read of its PR is newer than the record's, which only a sync or a read-through rewrites: it comes first, and says
+  // merged or closed whatever the record still holds.
+  const done = prStatus && ['merged', 'closed'].includes(prStatus.state) ? prStatus.state : null;
+  const turn = done || got.prTurn || (prStatus ? aideTurnOfStatus(prStatus) : aideTurnOfRecord(rec));
+  const ci = prStatus?.ci || rec?.ci || {};
+  const rows = [];
+  rows.push(prKv('レビュー（誰の番）', esc(task || !rec ? AIDE_TURN_WORD[turn] || '記録がありません' : AIDE_OTHERS_STATE[rec.state] || AIDE_TURN_WORD[turn] || '')));
+  const bots = (rec?.reviewers || []).filter(r => aideIsBot(r.login));
+  const botText = bots.map(r => `${esc(r.login)} ${esc(PR_REVIEW_STATE[r.state] || r.state || '')}`.trim());
+  if (phase === 'pr-bots') botText.push('worker が bot の指摘待ち');
+  rows.push(prKv('レビュー bot', botText.length ? botText.join('<br>') : rec ? 'なし' : '記録がありません'));
+  const ciKnown = [ci.pass, ci.fail, ci.pending].some(n => Number(n) > 0);
+  rows.push(prKv('CI', esc(ciKnown ? `成功 ${Number(ci.pass) || 0} / 失敗 ${Number(ci.fail) || 0} / 実行中 ${Number(ci.pending) || 0}` : 'なし')));
+  const m = aideMergeBlockers(turn, ci);
+  // The records say nothing of a conflict or of a branch rule, so "can merge" is never said: only what they do show.
+  const merge = m.merged ? 'マージ済みです' : m.ok ? '承認済み・CI 成功' : `まだです — ${m.blockers.join('、') || '承認がまだです'}`;
+  rows.push(prKv('マージ', `${esc(merge)}${m.merged ? '' : '<div class="tp-muted">コンフリクトは記録にありません（GitHub で確認）</div>'}`));
+  rows.push(prKv('差分の大きさ', rec ? `<span class="add">+${Number(rec.additions) || 0}</span> <span class="del">−${Number(rec.deletions) || 0}</span> · ${Number(rec.changedFiles) || 0} files · ${esc(othersSize(rec))}` : '記録がありません'));
+  const ai = rec ? othersAiView(rec, [], got.nowSecs) : null;
+  const sha = rec?.ai?.sha ? prSha7(rec.ai.sha) : '';
+  const mine = rec?.myReview ? `<div class="tp-muted">あなたのレビュー: ${esc(PR_REVIEW_STATE[rec.myReview.state] || rec.myReview.state)} · ${esc(ago(rec.myReview.submittedAt))}</div>` : '';
+  const readText = !rec ? '記録がありません' : ai.kind === 'none' ? 'まだ読んでいません' : `${ai.text}${ai.kind === 'done' && sha ? `（${sha} 時点）` : ''}`;
+  rows.push(prKv('読んだか', `${esc(readText)}${mine}`));
+  const url = httpUrl(rec?.url || task?.pr);
+  const attrs = rec ? `data-aide-pr="${esc(rec.id)}" data-aide-board="${esc(rec.task?.board || '')}" data-aide-task="${esc(rec.task?.id || '')}"` : '';
+  const acts = (url ? `<a class="aide-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${aideIcon('open_in_new')}<span>GitHub で開く</span></a>` : '')
+    + (rec?.ai ? aideLinkBtn(`data-aide-open-read ${attrs}`, 'menu_book', 'AI 下読みを開く') : '');
+  return { ...base, body: `<div class="aide-pr">${aideStaleNote(got.refreshError)}<div class="tp-kvs">${rows.join('')}</div>${acts ? `<div class="aide-gate-actions">${acts}</div>` : ''}</div>` };
+});
+
+/* ── session ── */
+
+const AIDE_STOPPED = ['stopped', 'failed', 'ended', 'unknown', 'none'];
+/* 「止まっていないか」: `{ stuck, text }`. `why` is what is known of a session that is not running. */
+function aideStuckLine({ st, label, why, phaseMinutes, stuckAfter }) {
+  if (AIDE_STOPPED.includes(st)) return { stuck: true, text: `${label}${why ? ` — ${why}` : ''}` };
+  if (st === 'permission') return { stuck: false, text: '入力待ち（許可や答えを待っています）' };
+  if (st === 'working' && stuckAfter > 0 && phaseMinutes != null && phaseMinutes >= stuckAfter) return { stuck: true, text: `${minutesLabel(phaseMinutes)} 同じ工程` };
+  return { stuck: false, text: '止まっていません' };
+}
+
+/* `ctx.session(board, id)` is `{ r, fns, stuckAfter }`, `{ gone: true }` or null while the work document is not read. `r` is a row of the
+   list (`workListRows`); `fns` has what draws its state: `glyph(st)`, `label(st)`, `why(r)`, `request(s)`, `said(text)`, `phaseMinutes(r)`. */
+registerAidePart('session', (part, ctx) => {
+  const ref = part.ref || {};
+  const got = ctx.session ? ctx.session(ref.board, ref.id) : null;
+  const base = { icon: 'terminal', label: 'セッション', where: got?.nwo || '', title: ref.id || '', cls: '' };
+  if (!got) return { ...base, body: aideNote('読み込み中…') };
+  if (got.gone) return { ...base, body: aideNote('このセッションは、いまの一覧にありません（終わったか、消えました）') };
+  const { r, fns } = got;
+  const { s, st, task } = r;
+  const a = s.present ? s.agentSession || {} : {};
+  const agent = [s.agent, a.model, a.contextPercent != null ? `コンテキスト ${Math.round(Number(a.contextPercent) || 0)}%` : ''].filter(Boolean).join(' · ');
+  const label = fns.label(st);
+  const stuck = aideStuckLine({ st, label, why: fns.why(r), phaseMinutes: fns.phaseMinutes(r), stuckAfter: got.stuckAfter });
+  const rows = [
+    prKv('いま', `${fns.glyph(st)} ${esc(label)}${a.activity && st === 'working' ? ` · ${esc(a.activity)}` : ''}`),
+    prKv('エージェント', esc(agent || '分かりません')),
+    prKv('ブランチ・PR', esc([s.branch, task?.pr ? `PR ${task.pr}` : s.branchPr?.number ? `PR #${s.branchPr.number}` : ''].filter(Boolean).join(' · ') || 'なし')),
+    prKv('止まっていないか', `<span class="${stuck.stuck ? 'aide-stuck' : ''}">${esc(stuck.text)}</span>`),
+  ];
+  if (a.request && st === 'permission') rows.push(prKv('求めていること', esc(fns.request(s))));
+  if (s.waiting) rows.push(prKv('判断待ち', esc(`${kindOf(s.waiting.kind)[0]}（あなたの判定待ち）`)));
+  const said = a.lastMessage
+    ? `<details class="aide-more"><summary>最後のメッセージ${fns.said(a.lastMessage) ? ` — ${esc(fns.said(a.lastMessage))}` : ''}</summary><div class="aide-said">${md(a.lastMessage)}</div></details>` : '';
+  return { ...base, where: got.nwo || '', title: task?.title || fns.title?.(r) || ref.id, body: `<div class="aide-session">${aideStaleNote(got.refreshError)}<div class="tp-kvs">${rows.join('')}</div>${said}`
+    + `<div class="aide-gate-actions">${r.key ? aideTermButtonHtml(r.key) : ''}</div></div>` };
+});
+
+/* ── diff ── */
+
+/* `ctx.diffOf(ref)` is `{ state: 'loading' | 'error' | 'gone' | 'ok', error?, file, res, read, board, taskId, gateRef }`: the file of the parsed
+   source, the reader's annotations anchored in it (for a PR's diff) and the read-through. */
+registerAidePart('diff', (part, ctx) => {
+  const ref = part.ref || {};
+  const got = ctx.diffOf ? ctx.diffOf(ref) : null;
+  const range = `${ref.path || ''}:${ref.from}${ref.to !== ref.from ? `-${ref.to}` : ''}${ref.side === 'left' ? '（削除された側）' : ''}`;
+  const base = { icon: 'difference', label: '差分', where: '', title: range, cls: '' };
+  if (!got || got.state === 'loading') return { ...base, body: aideNote('読み込み中…') };
+  if (got.state === 'error') return { ...base, body: aideNote(`差分を読めませんでした: ${got.error}`) };
+  if (got.state === 'gone') return { ...base, body: aideNote(ref.pr ? 'この PR の差分は、もう読めません' : 'この判断待ちの差分はもう読めません') };
+  const ex = got.file ? prDiffExcerpt(got.file, { from: ref.from, to: ref.to, side: ref.side || 'right' }) : null;
+  const body = ex ? `<div class="aide-excerpt">${prDiffExcerptHtml(got.file, ex.ks, got.res || null, got.read || null)}</div>` : aideNote('この範囲は差分にありません');
+  const act = ref.pr
+    ? aideLinkBtn(`data-aide-open-read data-aide-pr="${esc(ref.pr)}" data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(got.taskId || '')}"`, 'menu_book', 'AI 下読みを開く')
+    : got.taskId ? aideLinkBtn(`data-aide-expand data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(got.taskId)}" data-aide-target="gate" data-aide-gate-ref="${esc(got.gateRef || '')}"`, 'open_in_full', '拡大で開く') : '';
+  return { ...base, body: `<div class="aide-diff">${aideStaleNote(got.refreshError)}${body}${act ? `<div class="aide-gate-actions">${act}</div>` : ''}</div>` };
+});
+
+/* ── reviews: the code reviews the person is asked to do ── */
+
+/* `ctx.reviews()` is `{ state: 'loading' | 'error' | 'ok', error?, records, marks, nowSecs, refreshError }`: the records of 「AI 下読み」 that wait on
+   the person (the page's own list, read from the resident's records), the read marks of this browser and the server's clock. A row is a
+   button: with a read-through it opens it in the area, else the PR in 「AI 下読み」. */
+registerAidePart('reviews', (part, ctx) => {
+  const got = ctx.reviews ? ctx.reviews() : null;
+  const base = { icon: 'rate_review', label: 'レビュー依頼', where: '', title: 'AI 下読みの一覧', cls: 'wait' };
+  if (!got || got.state === 'loading') return { ...base, body: aideNote('読み込み中…') };
+  if (got.state === 'error') return { ...base, body: aideNote(`レビュー依頼を読めませんでした: ${got.error}`) };
+  const waiting = (got.records || []).filter(r => OTHERS_LIVE.includes(r.state));
+  // When the list was last synced with GitHub (the person asks for a sync), and what it could not do: without it a list that was never
+  // synced, or only in part, would read as no review requests.
+  const sy = got.sync;
+  const syncHtml = !sy ? '' : `<div class="tp-muted aide-sync${sy.stale || sy.never ? ' warn' : ''}">${esc(sy.never ? 'まだ同期していません（同期するまで、レビュー依頼は出ません）' : sy.words)}</div>`
+    + (sy.notes || []).map(n => `<div class="tp-muted aide-sync${n.alert ? ' warn' : ''}">${esc(n.text)}</div>`).join('');
+  const stale = aideStaleNote(got.refreshError) + syncHtml;
+  // Only a clean, fresh sync may say there are none: a sync that never ran, failed, was partial or is old may have missed some.
+  const doubtful = !!sy && (sy.never || sy.stale || (sy.notes || []).length > 0);
+  const none = sy?.never ? '同期するまで、レビュー依頼があるかは分かりません' : doubtful ? '同期に問題があるので、レビュー依頼が漏れているかもしれません' : 'レビュー依頼はありません';
+  if (!waiting.length) return { ...base, body: `${stale}${aideNote(none)}` };
+  const row = r => {
+    const flags = [othersSeenClass(r, got.marks?.[r.id] || {}) === 'new' ? '新着' : '', r.rerequest ? '頼み直し' : ''].filter(Boolean).join('・') || '依頼';
+    const ai = othersAiView(r, got.records, got.nowSecs);
+    const read = ai.kind === 'none' ? 'AI 下読みはまだです' : ai.text;
+    return `<li><button type="button" class="aide-wait" data-aide-open-review="${esc(r.id)}"><span class="aide-wait-kind">${esc(flags)}</span>`
+      + `<span class="aide-wait-title">${esc(`#${r.number} ${r.title}`)}</span><span class="aide-wait-when">${esc(r.author ? `@${r.author}` : '')}</span>`
+      + `<span class="aide-wait-focus">${esc(read)}</span></button></li>`;
+  };
+  const groups = othersGroups(waiting, '', '', got.nowSecs);
+  const body = groups.map(g => `<div class="aide-waits-repo"><div class="aide-waits-repo-name">${esc(g.label)}</div><ul class="aide-waits-list">${g.rows.map(row).join('')}</ul></div>`).join('');
+  return { ...base, where: `${waiting.length} 件`, body: `${stale}${body}` };
 });

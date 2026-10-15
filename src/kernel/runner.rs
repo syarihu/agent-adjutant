@@ -123,6 +123,7 @@ pub const AIDE_TOOLS: &[&str] = &[
     "mcp__adjutant__adjutant_work",
     "mcp__adjutant__adjutant_gate_read",
     "mcp__adjutant__adjutant_show",
+    "mcp__adjutant__adjutant_reviews",
     "Read",
     "Grep",
     "Glob",
