@@ -12,6 +12,9 @@ const aide = {
   error: null,
   busy: false,
   again: false,      // a forced round asked for while one was out
+  reads: 0,          // reads of /api/aide sent so far
+  readOk: 0,         // which of them was the last that worked; a queued request is typed only from one sent after it
+  askAfter: 0,       // how many reads had been sent when the queued request was made
   display: aideEmptyDisplay(),
   opening: false,
   resetting: false,
@@ -72,7 +75,9 @@ async function refreshAide(force = false) {
   }
   aide.busy = true;
   try {
+    const n = ++aide.reads;
     aide.view = await boardApi('', '/api/aide');
+    aide.readOk = n;
     aide.error = null;
     aide.display = aideDisplayOf(await loadAideDisplay());
   } catch (e) {
@@ -270,8 +275,9 @@ function aideAsk(text) {
   const v = aide.view;
   if (v && !v.startable && v.state !== 'running' && v.state !== 'starting') return note('副官に聞く', true, AIDE_NOT_STARTABLE);
   aide.pendingAsk = aideCleanText(text);
+  aide.askAfter = aide.reads;
+  // Not typed from the last poll's state: the aide may have stopped on a question since. aideShow reads it again.
   aideShow({ start: true });
-  aideFlushAsk();
 }
 
 /* Only once the agent has been heard from: its hooks run after the folder-trust question, so an Enter queued before that
@@ -279,13 +285,23 @@ function aideAsk(text) {
 function aideFlushAsk() {
   const v = aide.view;
   const handle = aideTerm.term;
-  if (!aide.pendingAsk || v?.state !== 'running' || !v.agentSession || v.agentSession.status === 'waiting' || !handle || aideTerm.ended != null) return;
+  if (!aide.pendingAsk || aide.readOk <= aide.askAfter || v?.state !== 'running' || !v.agentSession || v.agentSession.status === 'waiting' || !handle || aideTerm.ended != null) return;
   if (!handle.type(aide.pendingAsk)) return;
   aide.pendingAsk = null;
   // Enter in a chunk of its own: the prompt takes text that arrives with a line break as a paste and keeps the break in it.
   setTimeout(() => { if (aideTerm.term === handle) handle.type('\r'); }, 80);
   handle.focus();
   renderAide();
+}
+
+/* A chip pressed just after the terminal mounted finds its socket still connecting: the text waits for it (a few seconds at
+   most) rather than being dropped. */
+function aideTypeScope(text, tries = 15) {
+  const handle = aideTerm.term;
+  if (!handle || aideTerm.ended != null) return note('対象', true, '副官のターミナルが開いていません');
+  if (handle.type(text)) return handle.focus();
+  if (tries <= 0) return note('対象', true, '副官のターミナルにつながりませんでした');
+  setTimeout(() => { if (aideTerm.term === handle) aideTypeScope(text, tries - 1); }, 200);
 }
 
 /* A row of the list, opened from the aide, with the way back. The one entry for what shows a session (「ターミナルを見る」). */
@@ -316,9 +332,7 @@ wk('wk-term').addEventListener('click', e => {
   }
   if ((b = e.target.closest('[data-aide-scope]'))) {
     const scope = b.dataset.aideScope;
-    if (aideTerm.term?.type(scope === '#' ? '#' : aideScopeText(scope))) aideTerm.term.focus();
-    else note('対象', true, '副官のターミナルが開いていません');
-    return;
+    return aideTypeScope(scope === '#' ? '#' : aideScopeText(scope));
   }
   if ((b = e.target.closest('[data-aide-row]'))) return aideOpenRow(b.dataset.aideRow);
   if (e.target.closest('[data-aide-ask-new]')) {
