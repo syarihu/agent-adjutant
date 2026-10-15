@@ -37,10 +37,21 @@ These are allowed without asking:
   server; if it says the server is not running, tell the person to start it.
 - `adjutant_gate_read` reads one gate in full. `board` is the gate's `slug` from `adjutant_work`,
   and `id` is its id. It marks nothing as looked at.
-- `adjutant_show` puts something in the display area beside your terminal: `kind` `gate` (with
-  `board` and `id`) or `waits` (the list of what waits on the person). Showing something of another
-  topic clears the area and keeps the old topic by name, so show the gates of one subject together.
-  It writes nothing but the display area.
+- `adjutant_show` puts something in the display area beside your terminal. You pass a kind and a
+  reference only, never content: the page reads the content from the records and draws it. `board`
+  is always the `slug` from `adjutant_work`. `gate` is one gate (`board`, `id`); `waits` is the list
+  of what waits on the person; `read` is the AI 下読み (read-through) of a PR (`pr` as
+  `owner/repo#N`), its points that need attention by default, or one by `point` (counted from 1) or
+  every one of a `level` (`attention`, `check`, `info`); `task` is a task (`board`, `id`) or a parent
+  with the progress of its sub-issues (`board`, `parent` = `repos[].parents[].key`); `pr` is where a
+  PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `session` is a worker
+  session (`board`, `id` = `rows[].session.id`); `diff` is some lines of a diff (`path`, `from`, `to`
+  of at most 60 lines, `side` `right` or `left`) of the diff stored with a PR's read-through (`pr`)
+  or of an open gate (`board`, `id`). For `read` the answer lists the read-through as
+  `readThrough.points` (`n`, `level`, `title`, `path`, `line`) and its `mode`: when the person asks
+  about one of them, show it again by its `point` number, or its `diff` by `path` and the lines.
+  Showing something of another topic clears the area and keeps the old topic by name, so show the
+  things of one subject together. It writes nothing but the display area.
 
 Other tools follow the person's own Claude Code settings: one may be asked about in this window, or
 refused. When one is refused, do not try to get around it; say what you cannot do, and where the
@@ -54,8 +65,9 @@ more often than not. If you cannot read it, say so rather than guessing.
 
 ## Show parts, don't paste
 
-When the person asks about a gate or about what waits on them, show it with `adjutant_show` and say
-in a line what is there, instead of pasting it.
+When the person asks about a gate, a task or a parent, a PR, its read-through, a session or some lines
+of a diff, or about what waits on them, show it with `adjutant_show` and say in a line what is there,
+instead of pasting it.
 
 Otherwise point to the place: a path and a line range, a task, a PR. Quote only the few lines that
 matter. Do not dump a whole file or a whole JSON document into the conversation; the person asked where to

@@ -1981,6 +1981,37 @@ mod others_drafts {
         assert_eq!(body, json!({"stopped": true, "wasRunning": false}));
     }
 
+    #[test]
+    fn one_record_is_served_by_its_id_and_no_record_is_not_a_record_that_cannot_be_read() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        let ask = |id: &str| {
+            let mut req = request("GET", "/api/others/record", &[]);
+            req.query = vec![("id".to_string(), id.to_string())];
+            let mut out = Vec::new();
+            route_resident(&r, &req, &mut out).unwrap();
+            let text = String::from_utf8(out).unwrap();
+            let status: u16 = text.split(' ').nth(1).unwrap().parse().unwrap();
+            let body = text.split_once("\r\n\r\n").unwrap().1;
+            (
+                status,
+                serde_json::from_str::<Value>(body).unwrap_or(Value::Null),
+            )
+        };
+        assert_eq!(call(&r, "GET", "/api/others/record").0, 400);
+        assert_eq!(ask("nope").0, 400);
+        assert_eq!(ask("acme/widget#7").0, 404);
+
+        put_record(root.path());
+        let (status, body) = ask("acme/widget#7");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["id"], "acme/widget#7");
+        assert_eq!(body["title"], "t");
+
+        std::fs::write(root.path().join("others/acme~widget~7.json"), "{ broken").unwrap();
+        assert_eq!(ask("acme/widget#7").0, 500);
+    }
+
     /// `POST /api/others/reader/close` with `body`.
     fn close(resident: &Resident, body: &Value) -> (u16, Value) {
         let mut req = request("POST", "/api/others/reader/close", &[]);

@@ -138,3 +138,29 @@
 .aide-waits-done { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--md-sys-color-outline-variant); }
 .aide-finished { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
 .aide-finished .aide-link { margin-left: auto; }
+
+/* ── read, task, pr, session and diff parts ── */
+/* A few lines of a diff, drawn with the diff view's own rows (.prd-*), without its file frame. */
+.aide-excerpt { font: 12px/1.65 var(--font-mono); overflow-x: auto; max-height: 260px; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); }
+.aide-ev-file { padding: 2px 8px; font: 11.5px/1.6 var(--font-mono); background: var(--md-sys-color-surface-container); }
+.aide-read, .aide-task, .aide-pr, .aide-session, .aide-diff { display: flex; flex-direction: column; gap: 12px; }
+.aide-points { gap: 12px; }
+.aide-point .aide-excerpt { margin-top: 4px; }
+.aide-more > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
+.aide-more > .pr-points { margin-top: 8px; }
+.aide-said { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--md-sys-color-outline-variant); overflow-wrap: anywhere; }
+.aide-stuck { color: var(--md-sys-color-error); font-weight: 700; }
+
+.aide-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.aide-bar { max-width: 260px; }
+.aide-bar i.waiting { background: var(--md-sys-color-warning); }
+.aide-children { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.aide-child { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 6px 10px; border-radius: 10px; background: var(--md-sys-color-surface-container-low);
+  border-left: 3px solid var(--md-sys-color-outline-variant); }
+.aide-child.merged { border-left-color: var(--md-sys-color-success); }
+.aide-child.waiting { border-left-color: var(--md-sys-color-warning); }
+.aide-child.working { border-left-color: var(--md-sys-color-primary); }
+.aide-child-title { flex: 1 1 12em; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.aide-child-bucket, .aide-child-turn { font-size: 11px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
+.aide-child .aide-link { margin-left: auto; }

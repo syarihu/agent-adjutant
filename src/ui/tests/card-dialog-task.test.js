@@ -1374,7 +1374,7 @@ test("in a scoped dialog 開く and ターミナル act on the scoped board, and
 
 test("a board the aide reads has every list the cards match by `_slug` tagged with its board", async () => {
   const state = { tasks: [{ id: 't' }], gates: [{ id: 'g' }], waits: [{ id: 'w' }], parents: [{ key: 'p' }], workers: [{ worktree: 'x' }], hubs: [{ id: 'h' }], now: 1 };
-  const c = vm.createContext({ aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWantedBoards: () => new Set(['b']), boardApi: async () => state, cardDialog: { scope: null }, renderAide() {} });
+  const c = vm.createContext({ aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWanted: () => ({ boards: new Set(['b']) }), loadAideRecords: async () => {}, boardApi: async () => state, cardDialog: { scope: null }, renderAide() {} });
   vm.runInContext(cut(aideSrc, /^const aideTagged = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'loadAideBoards'), c);
   await vm.runInContext('loadAideBoards(true)', c);
   const data = JSON.parse(JSON.stringify(c.aide.boards.b.data));
@@ -1383,6 +1383,69 @@ test("a board the aide reads has every list the cards match by `_slug` tagged wi
     assert.strictEqual(data[k][0]._base, '/b/b', k);
   }
   assert.strictEqual(data.now, 1);
+});
+
+test('each part says what of the records it needs, and only a read or a diff of a PR asks for its read-through and its diff', () => {
+  const parts = [
+    { kind: 'gate', ref: { board: 'g', id: 'g1' } }, { kind: 'task', ref: { board: 't', id: '1' } }, { kind: 'pr', ref: { board: 'p', id: '2', pr: undefined } },
+    { kind: 'pr', ref: { board: '', id: '', pr: 'o/r#3' } }, { kind: 'read', ref: { pr: 'o/r#4' } }, { kind: 'diff', ref: { pr: 'o/r#5', path: 'a', from: 1, to: 2 } },
+    { kind: 'diff', ref: { board: 'd', id: 'g9', path: 'a', from: 1, to: 2 } }, { kind: 'session', ref: { board: 's', id: 'x' } }, { kind: 'waits', ref: null },
+  ];
+  const c = vm.createContext({
+    aideShown: () => ({ parts }), cardDialog: { scope: null }, cardDialogEl: () => ({ open: false }), aideCurrentWaits: () => [{ board: 'w' }],
+    aide: { taskAis: new Map([['g/t7', { pr: 'o/r#6', record: { ai: { sha: 'abc' } } }]]), boards: { g: { data: { gates: [{ id: 'g1', task: 't7' }] } } } },
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aideWanted'), c);
+  const got = vm.runInContext('aideWanted()', c);
+  assert.deepStrictEqual([...got.boards].sort(), ['d', 'g', 'p', 's', 't', 'w']);
+  assert.deepStrictEqual([...got.taskAis.keys()].sort(), ['g/t7', 'p/2']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([...got.prs])), [['o/r#6', { read: true }], ['o/r#3', {}], ['o/r#4', { read: true, diff: true }], ['o/r#5', { read: true, diff: true }]]);
+});
+
+test('a PR is read as its record, then its read-through, then its diff parsed once, and 404 is none rather than an error', async () => {
+  const calls = [];
+  const answers = { record: { id: 'o/r#1', ai: { sha: 's1' } }, read: { sha: 's1', annotations: [{}] }, diff: { sha: 's1', diff: 'D' } };
+  const c = vm.createContext({
+    aide: { prs: new Map(), prSeq: {}, prApplied: {} }, Date, renderAide() {}, prReadKey: rec => rec.ai.sha,
+    prParseDiff: t => { calls.push(['parse', t]); return [{ path: 'a' }]; }, prDiffResolve: () => 'resolved',
+    boardApi: async (base, path) => {
+      calls.push(path);
+      const kind = path.split('?')[0].split('/').pop();
+      if (answers[kind] === null) throw Object.assign(new Error('no'), { status: 404 });
+      if (answers[kind] === 'boom') throw new Error('boom');
+      return answers[kind];
+    },
+  });
+  vm.runInContext(fnSrc(aideSrc, 'loadAidePr'), c);
+  const load = (id, what) => { c.args = [id, what]; return vm.runInContext('loadAidePr(...args)', c); };
+  await load('o/r#1', {});
+  assert.deepStrictEqual(calls, ['/api/others/record?id=o%2Fr%231'], 'a PR part with nothing wanted reads the record only');
+  calls.length = 0;
+  await load('o/r#1', { read: true, diff: true });
+  assert.deepStrictEqual(calls, ['/api/others/record?id=o%2Fr%231', '/api/others/read?id=o%2Fr%231', '/api/others/diff?id=o%2Fr%231', ['parse', 'D']].map(x => x));
+  const e = c.aide.prs.get('o/r#1');
+  assert.strictEqual(e.diff.state, 'ok');
+  assert.strictEqual(e.resolved, 'resolved');
+  // Nothing changed: the read-through and the diff are not fetched or parsed again.
+  calls.length = 0;
+  await load('o/r#1', { read: true, diff: true });
+  assert.deepStrictEqual(calls, ['/api/others/record?id=o%2Fr%231']);
+  // A diff of another head than the read-through is not its diff.
+  answers.record = { id: 'o/r#1', ai: { sha: 's2' } };
+  answers.read = { sha: 's2' };
+  await load('o/r#1', { read: true, diff: true });
+  assert.strictEqual(c.aide.prs.get('o/r#1').diff.state, 'gone');
+  // No record and no read-through is none, not an error.
+  answers.record = null;
+  answers.read = null;
+  await load('o/r#2', { read: true, diff: true });
+  const none = c.aide.prs.get('o/r#2');
+  assert.deepStrictEqual([none.settled, none.error, none.rec, none.read, none.diff.state], [true, null, null, null, 'gone']);
+  // A failure keeps what was read and says why.
+  answers.record = 'boom';
+  await load('o/r#1', { read: true });
+  assert.strictEqual(c.aide.prs.get('o/r#1').error, 'boom');
+  assert.ok(c.aide.prs.get('o/r#1').rec);
 });
 
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
@@ -1408,7 +1471,7 @@ test('a read of a board that comes back after a newer one, or after an answer, i
   const pending = [];
   const state = n => ({ gates: n === 1 ? [{ id: 'old' }] : [{ id: 'new' }] });
   const c = vm.createContext({
-    aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWantedBoards: () => new Set(['b']), cardDialog: { scope: null }, renderAide() {},
+    aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWanted: () => ({ boards: new Set(['b']) }), loadAideRecords: async () => {}, cardDialog: { scope: null }, renderAide() {},
     boardApi: () => new Promise(res => pending.push(res)),
   });
   vm.runInContext(cut(aideSrc, /^const aideTagged = [^\n]*;/m) + '\n' + cut(aideSrc, /^const aideBoardWrote = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'loadAideBoards'), c);

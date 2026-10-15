@@ -195,6 +195,7 @@ pub(super) fn route_resident(
         ("POST", "/api/others/reader/close") => close_reader(resident, req, out),
         ("POST", "/api/others/hub/start") => start_review_hub(resident, req, out),
         ("POST", "/api/others/hub/stop") => stop_review_hub(resident, out),
+        ("GET", "/api/others/record") => stored_record(resident, req, out),
         ("GET", "/api/others/read") => stored_read(resident, req, out),
         ("GET", "/api/others/diff") => stored_diff(resident, req, out),
         ("GET", "/api/others/drafts") => stored_drafts(resident, req, out),
@@ -425,6 +426,26 @@ fn stop_review_hub(resident: &Resident, out: &mut impl Write) -> std::io::Result
             200,
             &json!({ "stopped": true, "wasRunning": was_running }).to_string(),
         ),
+        Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
+    }
+}
+
+/// `GET /api/others/record?id=`: the record of a PR, as the list has it, for a page that asks for
+/// one PR and must tell no record from one that cannot be read. Read only.
+fn stored_record(resident: &Resident, req: &Request, out: &mut impl Write) -> std::io::Result<()> {
+    let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
+        return http::json(
+            out,
+            400,
+            &json!({ "error": "a pull request id is required" }).to_string(),
+        );
+    };
+    match crate::others::record(&resident.root, &pr) {
+        Ok(Some(record)) => match serde_json::to_string(&record) {
+            Ok(text) => http::json(out, 200, &text),
+            Err(e) => http::json(out, 500, &json!({ "error": e.to_string() }).to_string()),
+        },
+        Ok(None) => http::json(out, 404, &json!({ "error": "no record" }).to_string()),
         Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
     }
 }

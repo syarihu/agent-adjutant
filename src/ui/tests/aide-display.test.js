@@ -218,7 +218,7 @@ test('a state as the server sends it goes through the page untouched and is draw
 
 function world() {
   const c = vm.createContext({ document: { addEventListener() {} }, TextEncoder, TextDecoder });
-  for (const file of ['util.js', 'pr-diff.js', 'decide.js', 'aide-display.js']) {
+  for (const file of ['util.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js', 'my-work-away.js', 'decide.js', 'aide-display.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), c, { filename: file });
   }
   // The attributes the panel's cards carry (card-dialog.js): the aide asks for none.
@@ -294,18 +294,37 @@ const DIFF = [
 
 test('the evidence is the hunk of the file a finding names, else the first hunk, capped, and escaped', () => {
   const named = run('aideEvidence')(DIFF, [{ location: 'src/b.rs:6', text: 't' }]);
-  assert.ok(named.includes('src/b.rs') && named.includes('+here'));
+  assert.ok(named.includes('src/b.rs') && named.includes('here'));
   assert.ok(!named.includes('src/a.rs'));
   const fallback = run('aideEvidence')(DIFF, [{ location: 'elsewhere.rs:1' }]);
-  assert.ok(fallback.includes('+++ src/a.rs') && !fallback.includes('src/b.rs'));
+  assert.ok(fallback.includes('src/a.rs') && !fallback.includes('src/b.rs'));
   assert.equal(run('aideEvidence')(DIFF, undefined), fallback);
   // Escaped: the diff's own markup is text.
-  assert.ok(fallback.includes('-old &lt;b&gt;') && !fallback.includes('<b>'));
+  assert.ok(fallback.includes('old &lt;b&gt;') && !fallback.includes('<b>'));
   const lines = ['diff --git a/big b/big', '--- a/big', '+++ b/big', '@@ -1,30 +1,30 @@', ...Array.from({ length: 30 }, (_, i) => ` line ${i}`)].join('\n');
-  assert.equal(run('aideEvidence')(lines, []).split('<div').length - 1, 12);
-  assert.equal(run('aideEvidence')(lines, [], 5).split('<div').length - 1, 5);
+  assert.equal(run('aideEvidence')(lines, []).split('class="prd-l ').length - 1, 12);
+  assert.equal(run('aideEvidence')(lines, [], null, 5).split('class="prd-l ').length - 1, 5);
   assert.equal(run('aideEvidence')('', []), '');
   assert.equal(run('aideEvidence')(null, null), '');
+  assert.ok(!fallback.includes('data-prd-plus'), 'no ＋ button of the diff view');
+});
+
+const READ = { sha: 'abcdef0123456789', three: { purpose: 'p <b>', approach: 'a', impact: 'i', essence: 'e' },
+  points: [{ level: 'attention', path: 'src/a.rs', line: 2, title: 'Point <one>', why: 'because <x>' }, { level: 'check', path: 'src/b.rs', line: 6, title: 'Point two', why: 'w2' }, { level: 'info', path: 'src/a.rs', title: 'Point three', why: 'w3' }],
+  annotations: [{ path: 'src/b.rs', kind: 'ex', anchor: '+here', text: 'Explains <here>' }, { path: 'src/b.rs', kind: 'ex', anchor: 'nowhere at all', text: 'Lost one' }, { path: 'src/zzz.rs', kind: 'ex', anchor: 'x', text: 'Orphan' }] };
+
+test('the evidence of a gate has the reader annotations under their lines when the PR has a read-through, and drops what has no line', () => {
+  const plainHtml = run('aideEvidenceParts')(DIFF, [{ location: 'src/b.rs:6' }]);
+  assert.equal(plainHtml.annotated, false);
+  const got = run('aideEvidenceParts')(DIFF, [{ location: 'src/b.rs:6' }], READ);
+  assert.equal(got.annotated, true);
+  assert.ok(got.html.includes('Explains &lt;here&gt;') && !got.html.includes('Explains <here>'));
+  assert.ok(!got.html.includes('Lost one') && !got.html.includes('Orphan'));
+  assert.ok(!got.html.includes('data-prd-todraft') && !got.html.includes('data-prd-ask') && !got.html.includes('prd-plus'));
+  assert.ok(got.html.indexOf('+') >= 0 && got.html.indexOf('here') < got.html.indexOf('Explains'));
+  const html = gatePart({ gate: () => ({ g: GATE, task: TASK, nwo: 'acme/widget', board: 's', read: READ }) });
+  assert.ok(html.includes('AI 下読みの注釈（abcdef0 時点）') && html.includes('Explains &lt;here&gt;'));
+  assert.ok(!gatePart({ gate: () => ({ g: GATE, task: TASK, nwo: 'acme/widget', board: 's' }) }).includes('AI 下読みの注釈'));
 });
 
 test('finished work is what ended, newest first, with hubs left out', () => {
@@ -343,7 +362,7 @@ test('a gate part has its sections, escapes what it shows and marks the recommen
   assert.ok(html.includes('data-aide-park') && html.includes('data-aide-expand'));
   assert.ok(html.includes('一覧へ戻る') && html.includes('data-aide-waits'), 'a way back to the list from a live gate');
   assert.ok(html.includes('拡大 → 依頼と計画'));
-  assert.ok(html.includes('+here'));
+  assert.ok(html.includes('>here<'));
 });
 
 test('a gate that is not a plan says 拡大で開く, and one with no request falls back to its problem, then its title', () => {
@@ -475,4 +494,210 @@ test('a part of a gate that is gone still names its gate in the folded head', ()
   assert.equal(head({ gone: true, title: 'Design <review>' }), 'Design &lt;review&gt;');
   assert.equal(head({ gone: true }), 'g1');
   assert.equal(head({ error: 'x' }), 'g1');
+});
+
+/* ── read, task, pr, session and diff ── */
+
+const partOf = (kind, ref) => ({ id: `p-${kind}`, kind, ref });
+const html = (kind, ref, ctx) => run('aidePartHtml')(partOf(kind, ref), true, ctx);
+const DIFF_FILES = () => run('prParseDiff')(DIFF);
+
+test('a read-through opens the point it names, or the ones of a level, else what needs attention, else the first', () => {
+  const pick = ref => plain(run('aideReadPick')(READ, ref));
+  assert.deepEqual(pick({ pr: 'a/b#1' }), { shown: [0], rest: [1, 2] });
+  assert.deepEqual(pick({ pr: 'a/b#1', point: 2 }), { shown: [1], rest: [0, 2] });
+  assert.deepEqual(pick({ pr: 'a/b#1', level: 'info' }), { shown: [2], rest: [0, 1] });
+  assert.deepEqual(pick({ pr: 'a/b#1', point: 9 }), { shown: [], rest: [0, 1, 2] });
+  const calm = { points: [{ level: 'check' }, { level: 'info' }] };
+  assert.deepEqual(plain(run('aideReadPick')(calm, {})), { shown: [0], rest: [1] });
+  assert.deepEqual(plain(run('aideReadPick')({ points: [] }, {})), { shown: [], rest: [] });
+});
+
+const REC = { id: 'acme/widget#7', repo: 'Acme/Widget', number: 7, title: 'Add <timer>', headSha: 'abcdef0123456789', task: { board: 's', id: '41' }, ai: { status: 'ready', sha: 'abcdef0123456789' } };
+
+test('the read part draws the three lines, the picked point with its code, the rest folded, and escapes the reader', () => {
+  const diff = { state: 'ok', files: DIFF_FILES() };
+  const ctx = { pr: () => ({ state: 'ok', rec: REC, read: READ, diff }) };
+  const out = html('read', { board: '', id: '', pr: 'acme/widget#7' }, ctx);
+  assert.ok(out.includes('この PR がすること') && out.includes('p &lt;b&gt;') && !out.includes('p <b>'));
+  assert.ok(out.includes('Point &lt;one&gt;') && out.includes('because &lt;x&gt;') && out.includes('要注意'));
+  assert.ok(out.includes('ほかの見るポイント 2') && out.includes('<details class="aide-more">'));
+  // The point has no code in this diff (src/a.rs line 2 is a context line there); the annotated one is on point two.
+  const two = html('read', { pr: 'acme/widget#7', point: 2 }, ctx);
+  assert.ok(two.includes('Point two') && two.includes('Explains &lt;here&gt;') && two.includes('class="prd-l prd-a'));
+  assert.ok(!two.includes('prd-plus') && !two.includes('data-prd-todraft'));
+  assert.ok(two.includes('data-aide-open-read') && two.includes('data-aide-pr="acme/widget#7"') && two.includes('data-aide-board="s"') && two.includes('data-aide-task="41"'));
+  assert.ok(two.includes('data-aide-ask-reader') && /data-aide-ask-reader[^>]*disabled/.test(two) && two.includes('worker が動いていません'));
+  const open = { ...REC, ai: { ...REC.ai, terminal: { backend: 'tmux', window: 'w' } } };
+  assert.ok(!/data-aide-ask-reader[^>]*disabled/.test(html('read', { pr: 'x' }, { pr: () => ({ state: 'ok', rec: open, read: READ, diff }) })));
+  const stale = html('read', { pr: 'x' }, { pr: () => ({ state: 'ok', rec: { ...REC, headSha: '1111111222' }, read: READ, diff }) });
+  assert.ok(stale.includes('abcdef0') && stale.includes('1111111'));
+  assert.ok(html('read', { pr: 'x' }, { pr: () => ({ state: 'ok', rec: REC, read: READ, diff: { state: 'loading', files: [] } }) }).includes('差分を読み込み中…'));
+});
+
+test('the read part says loading, failed, none, and a split proposal has no points to pick', () => {
+  const say = got => html('read', { pr: 'acme/widget#7' }, { pr: () => got });
+  assert.ok(say({ state: 'loading' }).includes('読み込み中…'));
+  assert.ok(say({ state: 'error', error: 'boom <x>' }).includes('boom &lt;x&gt;'));
+  assert.ok(say({ state: 'none', rec: REC }).includes('まだありません'));
+  assert.ok(html('read', { pr: 'x' }, {}).includes('読み込み中…'));
+  const split = say({ state: 'ok', rec: REC, read: { ...READ, mode: 'split', points: [], overall: { body: 'Split <it>' } }, diff: { state: 'gone', files: [] } });
+  assert.ok(split.includes('分割案') && split.includes('Split &lt;it&gt;') && !split.includes('見るポイント'));
+});
+
+const TCARD = { id: '41', title: 'Timer <task>', body: 'Do the <b>timer</b>\nsecond', status: 'pr', pr: 'https://github.com/acme/widget/pull/7', prTurn: 'changes' };
+
+test('the task part names the task, its plan and what happens next, with the buttons to open it', () => {
+  const plan = { title: 'Plan <A>', state: 'decided', at: '20260922T041233Z', text: 'Goal **is** <x>\nmore' };
+  const out = html('task', { board: 's', id: '41' }, { task: () => ({ task: TCARD, plan, gates: [], nwo: 'acme/widget', rowKey: 's/41' }) });
+  for (const t of ['このタスク', '計画', '次に起きること']) assert.ok(out.includes(t), t);
+  assert.ok(out.includes('Timer &lt;task&gt;') && out.includes('Plan &lt;A&gt;') && out.includes('決定済み') && out.includes('Goal is &lt;x&gt;'));
+  assert.ok(out.includes('修正の依頼が来ています'));
+  assert.ok(out.includes('data-aide-expand') && out.includes('data-aide-target="request"') && out.includes('data-aide-row="s/41"'));
+  assert.ok(!out.includes('<b>timer'));
+  const waits = html('task', { board: 's', id: '41' }, { task: () => ({ task: TCARD, plan: null, gates: [{ kind: 'diff', wait: true }], nwo: 'a/b' }) });
+  assert.ok(waits.includes('計画はまだありません') && waits.includes('あなたの判断待ち'));
+  assert.ok(html('task', { board: 's', id: '41' }, { task: () => null }).includes('読み込み中…'));
+  assert.ok(html('task', { board: 's', id: '41' }, { task: () => ({ gone: true }) }).includes('もうボードにありません'));
+  assert.ok(html('task', { board: 's', id: '41' }, { task: () => ({ error: 'x <e>' }) }).includes('x &lt;e&gt;'));
+});
+
+const CHILDREN = [{ id: '1', hub: 'h', title: 'Done one', progress: 'merged' }, { id: '2', hub: 'h', title: 'Gate <two>', progress: 'pr' },
+  { id: '3', hub: 'h', title: 'PR three', progress: 'pr' }, { id: '4', hub: 'h', title: 'Working four', progress: 'working' }, { id: '5', hub: 'h', title: 'Not five', progress: 'not-started' }];
+
+test('a parent sorts its children into merged, waiting on you, in progress and not started, and says whose turn each is', () => {
+  const waitsBy = new Map([['h/2', [{ key: 'h/g2', kind: 'diff', title: 'Gate <two>' }]]]);
+  const tasks = new Map([['h/3', { prTurn: 'changes', waitsOnPerson: true }], ['h/4', { prTurn: 'checks' }]]);
+  const rows = new Map([['h/4', 's/h/4']]);
+  const got = plain(run('aideParentBuckets')(CHILDREN, waitsBy, tasks, rows, 7));
+  assert.deepEqual(got.items.map(i => i.bucket), ['merged', 'waiting', 'waiting', 'working', 'not-started']);
+  assert.deepEqual(got.counts, { merged: 1, waiting: 2, working: 1, notStarted: 3 });
+  assert.equal(got.total, 7);
+  assert.deepEqual(got.items.map(i => i.turn), ['', `あなた（${run('kindOf')('diff')[0]}）`, 'あなた（修正の依頼が来ています）', 'bot・CI', 'hub（着手待ち）']);
+  assert.equal(got.items[1].waitKey, 'h/g2');
+  assert.equal(got.items[3].rowKey, 's/h/4');
+  const turn = (c, w, t, r) => run('aideChildTurn')(c, w, t, r);
+  assert.equal(turn({ progress: 'pr' }, [], { prTurn: 'unrequested' }, false), 'レビュアー');
+  assert.equal(turn({ progress: 'not-started' }, [], null, true), 'worker');
+  assert.equal(turn({ progress: 'working' }, [], null, false), 'worker');
+  assert.equal(turn({ progress: 'merged' }, [], null, false), '');
+});
+
+test('the next thing of a parent is its oldest wait, else the first not started in stack order, else that it is done', () => {
+  const items = [{ bucket: 'merged', title: 'A' }, { bucket: 'not-started', title: 'B <b>' }, { bucket: 'not-started', title: 'C' }];
+  assert.equal(run('aideParentNext')(items, [{ title: 'Wait' }]), 'あなたの判断待ち: Wait');
+  assert.equal(run('aideParentNext')(items, []), '次に着手: B <b>');
+  assert.equal(run('aideParentNext')([{ bucket: 'merged' }], []), 'すべてマージ済み');
+  assert.equal(run('aideParentNext')([{ bucket: 'working' }], []), 'worker が進めています');
+});
+
+test('the parent part draws a bar with the four counts, a row per child with its button, and escapes titles', () => {
+  const waitsBy = new Map([['h/2', [{ key: 'h/g2', kind: 'diff', title: 't' }]]]);
+  const built = run('aideParentBuckets')(CHILDREN, waitsBy, new Map(), new Map([['h/4', 's/h/4']]), 5);
+  const out = html('task', { board: 's', parent: 'acme/widget#40' }, { parent: () => ({ p: { title: 'Parent <p>', number: 40, url: 'https://github.com/acme/widget/issues/40' }, children: built.items, counts: built.counts, total: built.total, next: '次に着手: Not five', nwo: 'acme/widget' }) });
+  assert.ok(out.includes('wk-bar aide-bar') && out.includes('<i class="merged"') && out.includes('<i class="waiting"') && out.includes('<i class="working"') && out.includes('<i class="not-started"'));
+  assert.ok(out.includes('マージ 1 / あなた待ち 1 / 進行中 2 / 未着手 1（全 5）'));
+  assert.ok(out.includes('Gate &lt;two&gt;') && !out.includes('<two>') && out.includes('Parent &lt;p&gt;'));
+  assert.ok(out.includes('data-aide-open-gate="h/g2"') && out.includes('data-aide-row="s/h/4"'));
+  assert.ok(out.includes('次に着手: Not five') && out.includes('GitHub で開く'));
+  assert.ok(html('task', { board: 's', parent: 'k' }, { parent: () => ({ gone: true }) }).includes('もうボードにありません'));
+});
+
+const RECORD = { id: 'acme/widget#7', repo: 'Acme/Widget', number: 7, url: 'https://github.com/acme/widget/pull/7', title: 'T <t>', draft: false, prState: 'open', state: 'requested',
+  additions: 10, deletions: 2, changedFiles: 3, ci: { pass: 4, fail: 0, pending: 1 },
+  reviewers: [{ login: 'alice', state: 'approved' }, { login: 'copilot-pull-request-reviewer', state: 'commented' }, { login: 'ci[bot]', state: 'commented' }],
+  ai: { status: 'ready', sha: 'abcdef0123456789', counts: { attention: 1, check: 2 } }, myReview: { state: 'commented', submittedAt: '20260922T041233Z' } };
+
+test('the PR part says whose turn it is, the bots, the CI, whether it can merge and what stands in the way, the size and whether it was read', () => {
+  const facts = got => html('pr', { board: '', id: '', pr: 'acme/widget#7' }, { prFacts: () => ({ nowSecs: 1e10, ...got }) });
+  const out = facts({ rec: RECORD });
+  for (const t of ['レビュー（誰の番）', 'レビュー bot', 'CI', 'マージ', '差分の大きさ', '読んだか']) assert.ok(out.includes(t), t);
+  assert.ok(out.includes('あなたの番（レビューを頼まれています）'));
+  assert.ok(out.includes('copilot-pull-request-reviewer') && out.includes('ci[bot]') && !/レビュー bot<\/span><strong>[^<]*alice/.test(out));
+  assert.ok(out.includes('成功 4 / 失敗 0 / 実行中 1') && out.includes('+10') && out.includes('3 files'));
+  assert.ok(out.includes('CI が実行中です') && out.includes('コンフリクトは記録にありません（GitHub で確認）'));
+  assert.ok(out.includes('下読み済み') && out.includes('abcdef0') && out.includes('あなたのレビュー'));
+  assert.ok(out.includes('GitHub で開く') && out.includes('data-aide-open-read'));
+  assert.ok(out.includes('T &lt;t&gt;') && !out.includes('<t>'));
+  const merge = facts({ rec: { ...RECORD, ci: { pass: 5, fail: 0, pending: 0 } }, task: TCARD, prTurn: 'merge', phase: 'pr-bots' });
+  assert.ok(merge.includes('できます') && merge.includes('worker が bot の指摘待ち') && merge.includes('承認済みです'));
+  const bad = facts({ rec: { ...RECORD, draft: true, ci: { pass: 0, fail: 2, pending: 0 } }, task: TCARD, prTurn: 'draft' });
+  assert.ok(bad.includes('下書きです') && bad.includes('CI が落ちています'));
+  // A task's PR with no record: only what the task card read of it.
+  const norec = facts({ rec: null, task: TCARD, prStatus: { state: 'open', title: 'S <s>', ci: { pass: 1, fail: 0, pending: 0 } }, prTurn: 'changes', prId: 'acme/widget#7' });
+  assert.ok(norec.includes('記録がありません') && norec.includes('修正の依頼が来ています') && norec.includes('S &lt;s&gt;'));
+  assert.ok(!norec.includes('data-aide-open-read'));
+  assert.ok(facts({ rec: null }).includes('この PR は読めません'));
+  assert.ok(facts({ loading: true }).includes('読み込み中…') && facts({ error: 'x <e>' }).includes('x &lt;e&gt;'));
+});
+
+test('a review bot is told by its login with or without [bot], and a person is not one', () => {
+  const bot = run('aideIsBot');
+  for (const l of ['dependabot[bot]', 'copilot-pull-request-reviewer', 'coderabbitai', 'github-actions', 'my-bot']) assert.equal(bot(l), true, l);
+  for (const l of ['alice', 'bob-smith', 'abbott', '', null]) assert.equal(bot(l), false, String(l));
+});
+
+const SROW = (extra = {}, s = {}) => ({ key: 's/41', st: 'working', task: { id: '41', title: 'Timer <task>', pr: '#7' }, data: { now: 1000 },
+  s: { agent: 'claude', branch: 'feat/x', present: true, agentSession: { model: 'opus', contextPercent: 42, activity: 'Editing <f>', lastMessage: '**Done** the <thing>\nmore', request: 'Bash' }, ...s }, ...extra });
+const FNS = { glyph: st => `<i class="g ${st}"></i>`, label: st => ({ working: '作業中', stopped: '停止', failed: 'エラー', permission: '入力待ち' }[st] || st), why: () => 'why <w>',
+  request: s => `許可: ${s.agentSession.request}`, said: m => String(m).split('\n')[0].replace(/\*/g, ''), phaseMinutes: () => 90, title: r => r.task?.title };
+
+test('the session part says the state, the agent and the last message, and whether it is stuck: stopped, waiting for you, one phase too long or not', () => {
+  const sess = (r, stuckAfter = 60) => html('session', { board: 's', id: 'a' }, { session: () => ({ r, fns: FNS, nwo: 'acme/widget', stuckAfter }) });
+  const out = sess(SROW());
+  assert.ok(out.includes('作業中') && out.includes('claude · opus · コンテキスト 42%') && out.includes('Editing &lt;f&gt;'));
+  assert.ok(out.includes('feat/x') && out.includes('Timer &lt;task&gt;') && !out.includes('<task>'));
+  assert.ok(out.includes('最後のメッセージ — Done the &lt;thing&gt;') && out.includes('<details class="aide-more">'));
+  assert.ok(out.includes('ターミナルを見る') && out.includes('data-aide-row="s/41"'));
+  assert.ok(out.includes('1時間 同じ工程') && out.includes('aide-stuck'), 'a phase kept longer than the board allows');
+  assert.ok(sess(SROW(), 0).includes('止まっていません'));
+  assert.ok(sess(SROW({ st: 'stopped' })).includes('停止 — why &lt;w&gt;'));
+  assert.ok(sess(SROW({ st: 'permission' })).includes('入力待ち（許可や答えを待っています）') && sess(SROW({ st: 'permission' })).includes('許可: Bash'));
+  assert.ok(!sess(SROW({ key: null })).includes('ターミナルを見る'));
+  assert.ok(html('session', { board: 's', id: 'a' }, { session: () => ({ gone: true }) }).includes('いまの一覧にありません'));
+  assert.ok(html('session', { board: 's', id: 'a' }, { session: () => null }).includes('読み込み中…'));
+});
+
+test('the diff excerpt is the lines of a side, with the removed lines between and a header again across hunks', () => {
+  const [a, b] = DIFF_FILES();
+  const ex = (file, r) => plain(run('prDiffExcerpt')(file, r));
+  assert.deepEqual(ex(a, { from: 2, to: 2 }).ks, [2]);
+  assert.deepEqual([...run('prDiffExcerpt')(a, { from: 2, to: 2 }).hunks], [0]);
+  // The right side 1..2 takes the context line and the added one, and the removed line between them.
+  assert.deepEqual(ex(a, { from: 1, to: 2 }).ks, [0, 1, 2]);
+  // The left side: the context line and the removed one, not the added.
+  assert.deepEqual(ex(a, { from: 1, to: 2, side: 'left' }).ks, [0, 1]);
+  assert.equal(ex(a, { from: 50, to: 60 }), null);
+  const two = ['diff --git a/x b/x', '--- a/x', '+++ b/x', '@@ -1,2 +1,2 @@', ' one', '-two', '+TWO', '@@ -10,2 +10,2 @@', ' ten', '-eleven', '+ELEVEN'].join('\n');
+  const [x] = run('prParseDiff')(two);
+  const got = run('prDiffExcerpt')(x, { from: 2, to: 10 });
+  const out = run('prDiffExcerptHtml')(x, got.ks, null, null);
+  assert.equal(out.split('class="prd-h"').length - 1, 2, 'the second hunk header is drawn where the range crosses into it');
+  assert.ok(out.indexOf('@@ -1,2') < out.indexOf('@@ -10,2'));
+  void b;
+});
+
+test('the diff part draws the range of a PR diff with its annotations, or says the range is not in the diff, or the source is gone', () => {
+  const [, b] = DIFF_FILES();
+  const res = run('prDiffResolve')(DIFF_FILES(), READ).files.get('src/b.rs');
+  const part = { pr: 'acme/widget#7', path: 'src/b.rs', from: 5, to: 6, side: 'right' };
+  const out = html('diff', part, { diffOf: () => ({ state: 'ok', file: DIFF_FILES()[1], res, read: READ, board: 's', taskId: '41' }) });
+  assert.ok(out.includes('src/b.rs:5-6') && out.includes('ctx b') && out.includes('here') && out.includes('Explains &lt;here&gt;'));
+  assert.ok(out.includes('data-aide-open-read') && out.includes('data-aide-pr="acme/widget#7"'));
+  assert.ok(html('diff', { ...part, from: 80, to: 90 }, { diffOf: () => ({ state: 'ok', file: b, res: null }) }).includes('この範囲は差分にありません'));
+  assert.ok(html('diff', { ...part, side: 'left' }, { diffOf: () => ({ state: 'ok', file: b }) }).includes('（削除された側）'));
+  const gate = { board: 's', id: 'g1', path: 'src/b.rs', from: 5, to: 6 };
+  const g = html('diff', gate, { diffOf: () => ({ state: 'ok', file: b, board: 's', taskId: '41', gateRef: 's/g1' }) });
+  assert.ok(g.includes('拡大で開く') && g.includes('data-aide-gate-ref="s/g1"') && !g.includes('data-aide-open-read'));
+  assert.ok(html('diff', gate, { diffOf: () => ({ state: 'gone' }) }).includes('この判断待ちの差分はもう読めません'));
+  assert.ok(html('diff', part, { diffOf: () => ({ state: 'gone' }) }).includes('この PR の差分は、もう読めません'));
+  assert.ok(html('diff', part, { diffOf: () => ({ state: 'error', error: 'x <e>' }) }).includes('x &lt;e&gt;'));
+  assert.ok(html('diff', part, {}).includes('読み込み中…'));
+});
+
+test('a part of a kind a newer server sends, and one whose renderer throws, is a short line and the area stays', () => {
+  const area = run('aideDisplayHtml')({ topic: { key: 'k', label: 'L' }, parts: [{ id: 'p2', kind: 'hologram', ref: { board: '', id: '' } }, { id: 'p1', kind: 'pr', ref: { board: '', id: '', pr: 'a/b#1' } }], earlier: [] },
+    { ctx: { prFacts: () => { throw new Error('boom'); } } });
+  assert.ok(area.includes('この部品はまだ表示できません') && area.includes('hologram'));
+  assert.equal((area.match(/data-aide-part=/g) || []).length, 2);
 });

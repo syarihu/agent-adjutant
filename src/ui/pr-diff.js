@@ -399,9 +399,10 @@ function prDiffShellHtml(e, res) {
 }
 
 const PRD_ANN_LABEL = { tr: '訳', ex: '解説' };
-function prdAnnHtml(idx, ann, at, readerOpen = true) {
+/* `opts.plain` leaves out the buttons, for a place that only reads (the aide's display area); the default is the diff's own. */
+function prdAnnHtml(idx, ann, at, readerOpen = true, opts = {}) {
   const kind = ann.kind === 'tr' ? 'tr' : 'ex';
-  const acts = kind === 'ex'
+  const acts = kind === 'ex' && !opts.plain
     ? `<div class="prd-ann-acts"><button type="button" class="btn-m3-text pr-act" data-prd-todraft="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}>下書きに</button><button type="button" class="btn-m3-text pr-act" data-prd-ask="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}${readerOpen ? '' : ` disabled title="${esc(PR_ASK_OFF_WHY)}"`}>聞く</button></div>` : '';
   return `<div class="prd-ann prd-ann-${kind}" data-prd-ann="${idx}"><span class="prd-ann-k">${PRD_ANN_LABEL[kind]}</span><div class="prd-ann-text">${esc(ann.text)}</div>${acts}</div>`;
 }
@@ -442,4 +443,38 @@ function prDiffLabels(paths) {
     while (n < s.length && count.get(`${n}\0${suffix(n)}`) > 1) n++;
     return [p, { label: suffix(n) || p, title: p }];
   }));
+}
+
+/* ── a few lines of a file ── */
+
+/* The lines numbered `from` to `to` on `side` (right: the added and context lines by their new number, left: the removed and
+   context lines by their old one), and every line between the first and the last of them, removed ones among them:
+   `{ ks, hunks }` (`ks` are the lines' places, `hunks` the hunks they are in), or null when no line of the file is in the range. */
+function prDiffExcerpt(file, { from, to, side = 'right' }) {
+  const left = side === 'left';
+  const no = l => (left ? (l.kind === 'del' || l.kind === 'ctx' ? l.old : null) : (l.kind === 'add' || l.kind === 'ctx' ? l.new : null));
+  const picked = (file?.all || []).filter(l => l.kind !== 'meta' && no(l) != null && no(l) >= from && no(l) <= to);
+  if (!picked.length) return null;
+  const ks = [];
+  for (let k = picked[0].k; k <= picked[picked.length - 1].k; k++) ks.push(k);
+  return { ks, hunks: new Set(ks.map(k => file.all[k].h)) };
+}
+
+/* The lines `ks` of `file` as the diff draws them, without the buttons: a hunk's header again wherever the lines pass into another
+   hunk, the annotations of `res` (the file's part of `prDiffResolve`, with `read`) under their lines. */
+function prDiffExcerptHtml(file, ks, res, read) {
+  const anns = read?.annotations || [];
+  const cls = { add: 'prd-a', del: 'prd-d', ctx: 'prd-c' };
+  let hunk = null;
+  return ks.map(k => {
+    const l = file.all[k];
+    if (!l) return '';
+    const head = l.h !== hunk ? `<div class="prd-h">${esc(file.hunks[l.h]?.header || '')}</div>` : '';
+    hunk = l.h;
+    if (l.kind === 'meta') return `${head}<div class="prd-l prd-m"><span class="prd-no"></span><span class="prd-sign"></span><span class="prd-code">${esc(l.text)}</span></div>`;
+    const line = `<div class="prd-l ${cls[l.kind]}${res?.tint.has(l.k) ? ' prd-tint' : ''}" data-prd-i="${l.k}"><span class="prd-no">${prDiffShownNo(l)}</span>`
+      + `<span class="prd-sign">${l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span><span class="prd-code">${esc(l.text)}</span></div>`;
+    const under = (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx), false, { plain: true })).join('');
+    return head + line + under;
+  }).join('');
 }
