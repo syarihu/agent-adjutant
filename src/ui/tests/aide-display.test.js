@@ -460,3 +460,19 @@ test('answerGate sends nothing for a record sent back with no reason, and says f
   assert.equal(await vm.runInContext(`answerGate(g, 'approve', undefined, '')`, w.c), false);
   assert.equal(await vm.runInContext(`closeGateOf(g, '')`, w.c), false);
 });
+
+test('a finished entry with no task is named by the list, not by its raw ref', () => {
+  const judged = new Map([['s/session:worker-x', { entry: { nwo: 'a/b', ref: 'session:worker-x', task: null, isHub: false }, live: [{ kind: 'done', since: 1 }] }],
+    ['s/7', { entry: { nwo: 'a/b', ref: '7', task: { id: '7', title: 'Task seven' }, isHub: false }, live: [{ kind: 'failed', since: 2 }] }]]);
+  const got = run('aideFinished')(judged, id => (id === 's/session:worker-x' ? 'worker x (feature)' : ''));
+  assert.deepEqual(got.map(f => f.title), ['Task seven', 'worker x (feature)']);
+  // Without a namer the ref is all there is.
+  assert.equal(run('aideFinished')(judged).find(f => f.entryId === 's/session:worker-x').title, 'session:worker-x');
+});
+
+test('a part of a gate that is gone still names its gate in the folded head', () => {
+  const head = got => run('aidePartHtml')(part('s', 'g1'), false, { gate: () => got }).match(/aide-part-title">([^<]*)</)[1];
+  assert.equal(head({ gone: true, title: 'Design <review>' }), 'Design &lt;review&gt;');
+  assert.equal(head({ gone: true }), 'g1');
+  assert.equal(head({ error: 'x' }), 'g1');
+});

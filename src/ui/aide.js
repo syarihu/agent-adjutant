@@ -16,6 +16,7 @@ const aide = {
   readOk: 0,         // which of them was the last that worked; a queued request is typed only from one sent after it
   askAfter: 0,       // how many reads had been sent when the queued request was made
   display: aideEmptyDisplay(),
+  gateTitles: new Map(), // gate ref -> its title as last read, so a part of a gate that is gone still says which it was
   boardSeq: {},      // board slug -> reads of its state sent so far
   boardApplied: {},  // board slug -> the newest of them that was applied; an older answer arriving later is dropped
   opening: false,
@@ -159,12 +160,14 @@ function aideGateView(ref, rowKeyOf) {
   const board = ref.slice(0, cut);
   const gateId = ref.slice(cut + 1);
   const entry = [...(work.entries?.values() || [])].find(e => (e.gates || []).some(g => g.key === ref)) || null;
-  const known = { board, nwo: entry?.nwo || '', entry, rowKey: entry ? rowKeyOf(entry.id) : null, title: entry?.task?.title || entry?.gateTitle || '' };
+  const known = { board, nwo: entry?.nwo || '', entry, rowKey: entry ? rowKeyOf(entry.id) : null,
+    title: entry?.task?.title || entry?.gateTitle || aide.gateTitles.get(ref) || '' };
   const b = aide.boards[board];
   if (!b || (!b.data && !b.error)) return null;
   if (!b.data) return { ...known, error: b.error };
   const g = (b.data.gates || []).find(x => x.id === gateId);
   if (!g || answeredGates.has(ref)) return { ...known, gone: true };
+  if (g.title) aide.gateTitles.set(ref, g.title);
   const task = (b.data.tasks || []).find(t => t.id === g.task) || null;
   const m = entry && !entry.isHub && work.doc ? workAwayModel(entry, workMarks(entry.nwo)[entry.id], [], workServerNow()) : null;
   return { ...known, g, task, away: m ? workAwayHtml(m, workServerNow(), false) : '',
@@ -173,11 +176,13 @@ function aideGateView(ref, rowKeyOf) {
 
 function aideCtx() {
   const waits = aideCurrentWaits();
+  // What each wait is called, kept for when its gate is gone.
+  for (const w of waits) if (!aide.gateTitles.has(w.key)) aide.gateTitles.set(w.key, w.title);
   const listed = work.doc ? workListRows() : { rows: [], turns: [], judged: new Map() };
   const rowKeyOf = id => [...listed.rows, ...listed.turns].find(r => r.id === id)?.key || null;
   return {
     waits,
-    finished: aideFinished(listed.judged),
+    finished: aideFinished(listed.judged, id => { const r = [...listed.rows, ...listed.turns].find(x => x.id === id); return r ? aideRowTitle(r) : ''; }),
     gate: ref => aideGateView(ref, rowKeyOf),
     rowKey: rowKeyOf,
     draft: ref => aide.drafts.get(ref) || '',

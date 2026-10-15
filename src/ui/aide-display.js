@@ -149,15 +149,15 @@ function aideNextWait(waits, done) {
 }
 
 /* Entries whose latest news is that they finished or failed, newest first: what the person was not there for. A hub does not
-   finish. `judged` is `workJudge()`'s map (entry id -> { entry, live }). */
-function aideFinished(judged) {
+   finish. `judged` is `workJudge()`'s map (entry id -> { entry, live }); `titleOf(entryId)` names an entry with no task as the list does. */
+function aideFinished(judged, titleOf = () => '') {
   const out = [];
   for (const [id, j] of judged || []) {
     const e = j?.entry;
     if (!e || e.isHub) continue;
     const item = (j.live || []).find(i => i.kind === 'done' || i.kind === 'failed');
     if (!item) continue;
-    out.push({ entryId: id, nwo: e.nwo, kind: item.kind, since: item.since, taskId: e.task?.id || null, title: e.task?.title || e.gateTitle || e.ref });
+    out.push({ entryId: id, nwo: e.nwo, kind: item.kind, since: item.since, taskId: e.task?.id || null, title: e.task?.title || titleOf(id) || e.gateTitle || e.ref });
   }
   const at = f => (Number.isFinite(f.since) ? f.since : -Infinity);
   return out.sort((a, b) => at(b) - at(a));
@@ -292,9 +292,9 @@ registerAidePart('gate', (part, ctx) => {
   const got = ctx.gate && ref ? ctx.gate(ref) : null;
   const base = { icon: 'pending_actions', label: '判断待ち', where: got?.nwo || '', title: '', cls: 'wait' };
   if (!got) return { ...base, body: '<div class="tp-muted">読み込み中…</div>' };
-  if (got.error) return { ...base, title: got.title || '', body: aideGateNoteHtml(`この判断待ちを読めませんでした: ${got.error}`, got, ref) };
+  if (got.error) return { ...base, title: got.title || part.ref?.id || '', body: aideGateNoteHtml(`この判断待ちを読めませんでした: ${got.error}`, got, ref) };
   if (got.gone || !got.g || got.g.wait === false) {
-    return { ...base, title: got.title || '', body: `<div class="tp-muted">この判断待ちは、もう待っていません（答えたか、閉じられました）</div>`
+    return { ...base, title: got.title || part.ref?.id || '', body: `<div class="tp-muted">この判断待ちは、もう待っていません（答えたか、閉じられました）</div>`
       + '<div class="aide-gate-actions"><button type="button" class="aide-link" data-aide-waits>' + `${aideIcon('list')}<span>判断待ちの一覧へ</span></button></div>` };
   }
   const { g, task } = got;
