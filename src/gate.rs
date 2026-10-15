@@ -21,6 +21,7 @@
 mod answer;
 mod close;
 mod close_resumed;
+mod decide;
 mod get;
 mod list;
 mod model;
@@ -32,6 +33,7 @@ mod store;
 pub use answer::*;
 pub use close::*;
 pub use close_resumed::*;
+pub use decide::*;
 pub use get::*;
 pub use list::*;
 pub use model::*;

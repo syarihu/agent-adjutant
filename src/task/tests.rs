@@ -2101,3 +2101,16 @@ fn what_the_hub_reads_cannot_be_rewritten_once_the_task_has_started() {
         assert!(update(&ctx, &open.id, &patch, false).is_ok());
     }
 }
+
+#[test]
+fn a_request_with_no_words_or_a_parent_the_hub_cannot_use_is_refused_before_an_id_is_claimed() {
+    let (_sb, ctx) = hub();
+    assert!(check_request("   ", None).is_err());
+    assert!(check_request("do it", Some("it's; rm -rf")).is_err());
+    assert!(check_request("do it", Some("not a url")).is_err());
+    assert!(check_request("do it", Some("https://github.com/acme/widget/issues/3")).is_ok());
+    assert!(check_request("do it", Some("  ")).is_ok());
+    // `check_request` writes nothing: no task directory, no reservation.
+    assert!(list(&ctx.state, &ctx.repo.slug).is_empty());
+    assert!(!dir(&ctx.state, &ctx.repo.slug).exists());
+}

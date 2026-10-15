@@ -5,7 +5,7 @@ use super::text_param;
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_gate_read",
-        "description": "One gate in full, open or kept as a record: every field the worker wrote, not the summary 「いまの仕事」 shows. Read only; it marks nothing as looked at. A gate is found by the `slug` of its board and its id, both as adjutant_work gives them: ids are unique only within a board.",
+        "description": "One gate in full, open or kept as a record: every field the worker wrote, not the summary 「いまの仕事」 shows. Read only; it marks nothing as looked at. `answeredBy` says who an answer goes to (`hub` or `worker`). A gate is found by the `slug` of its board and its id, both as adjutant_work gives them: ids are unique only within a board.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -36,6 +36,9 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
         "board": board,
         "repo": address.nwo,
         "hub": address.hub,
+        // Who receives an answer to it: the hub's inbox for a gate the hub opened, else the
+        // worker's outbox. What the aide words its confirmation with before adjutant_gate_answer.
+        "answeredBy": if gate.answered_by_hub() { "hub" } else { "worker" },
         "gate": gate,
     }))
 }

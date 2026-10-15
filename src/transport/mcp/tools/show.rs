@@ -6,7 +6,7 @@ use crate::board::aide::{DiffSource, Pick, PrOf, ShowRequest, TaskOf, show};
 /// The keys each kind takes, and the ones it must have. A key outside the first list is
 /// refused rather than ignored, so a reference that means something else is not shown as if it
 /// meant this.
-const KINDS: [(&str, &[&str]); 8] = [
+const KINDS: [(&str, &[&str]); 9] = [
     ("gate", &["board", "id"]),
     ("waits", &[]),
     ("reviews", &[]),
@@ -14,6 +14,7 @@ const KINDS: [(&str, &[&str]); 8] = [
     ("task", &["board", "id", "parent"]),
     ("pr", &["board", "id", "pr"]),
     ("session", &["board", "id"]),
+    ("request", &["board", "id"]),
     ("diff", &["pr", "board", "id", "path", "from", "to", "side"]),
 ];
 
@@ -24,13 +25,13 @@ const KEYS: [&str; 10] = [
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_show",
-        "description": "Put something in the display area next to the aide's terminal on the page. Pass a kind and a reference only: the page reads the content from the records and draws it. `board` is always the `slug` from adjutant_work. kind=gate: one gate (`board`, `id`). kind=waits: everything that waits on the person. kind=reviews: the code reviews the person is asked to do (what adjutant_reviews lists), no reference. kind=read: the read-through (AI 下読み) of a PR (`pr` = owner/repo#N), its attention points by default, or one by `point` (counted from 1) or all of one `level`; the answer lists the points as `readThrough`. kind=task: a task (`board`, `id`) or a parent with the progress of its sub-issues (`board`, `parent` = the key of `repos[].parents[]`). kind=pr: where a PR stands, for a task (`board`, `id`) or by `pr` (a PR with a record). kind=session: a worker session (`board`, `id` = `rows[].session.id`). kind=diff: some lines of a diff (`path`, `from`, `to` of at most 60 lines, `side` right or left), of the stored diff of a PR (`pr`) or of an open gate's diff (`board`, `id`). Showing something of another topic clears the area and keeps the old topic by name; something of the same topic is added on top, newest first. It writes nothing but the display area.",
+        "description": "Put something in the display area next to the aide's terminal on the page. Pass a kind and a reference only: the page reads the content from the records and draws it. `board` is always the `slug` from adjutant_work. kind=gate: one gate (`board`, `id`). kind=waits: everything that waits on the person. kind=reviews: the code reviews the person is asked to do (what adjutant_reviews lists), no reference. kind=read: the read-through (AI 下読み) of a PR (`pr` = owner/repo#N), its attention points by default, or one by `point` (counted from 1) or all of one `level`; the answer lists the points as `readThrough`. kind=task: a task (`board`, `id`) or a parent with the progress of its sub-issues (`board`, `parent` = the key of `repos[].parents[]`). kind=pr: where a PR stands, for a task (`board`, `id`) or by `pr` (a PR with a record). kind=session: a worker session (`board`, `id` = `rows[].session.id`). kind=request: a request passed to a hub (what adjutant_request answers as `show`: `board`, `id` of its task), with what was sent, to which hub and how far it got; show it again to see the progress. kind=diff: some lines of a diff (`path`, `from`, `to` of at most 60 lines, `side` right or left), of the stored diff of a PR (`pr`) or of an open gate's diff (`board`, `id`). Showing something of another topic clears the area and keeps the old topic by name; something of the same topic is added on top, newest first. It writes nothing but the display area.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "kind": { "type": "string", "enum": ["gate", "waits", "reviews", "read", "task", "pr", "session", "diff"], "description": "What to show." },
-                "board": { "type": "string", "description": "The `slug` of the board of the gate, task or session." },
-                "id": { "type": "string", "description": "A gate, task or session id." },
+                "kind": { "type": "string", "enum": ["gate", "waits", "reviews", "read", "task", "pr", "session", "request", "diff"], "description": "What to show." },
+                "board": { "type": "string", "description": "The `slug` of the board of the gate, task, request or session." },
+                "id": { "type": "string", "description": "A gate, task, request (its task) or session id." },
                 "parent": { "type": "string", "description": "kind=task: a parent's key, `repos[].parents[].key`." },
                 "pr": { "type": "string", "description": "A pull request, owner/repo#N." },
                 "point": { "type": "integer", "description": "kind=read: one point of the read-through, counted from 1." },
@@ -64,7 +65,8 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let kind = text_param(args, "kind").unwrap_or("");
     let Some((_, allowed)) = KINDS.iter().find(|(k, _)| *k == kind) else {
         return Err(
-            "kind must be gate, waits, reviews, read, task, pr, session or diff".to_string(),
+            "kind must be gate, waits, reviews, read, task, pr, session, request or diff"
+                .to_string(),
         );
     };
     // A key of the wrong type is refused, not read as absent: `level: 1` is not "no level". `null` is absent, as in the
@@ -146,6 +148,10 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
             "session" => ShowRequest::Session {
                 board: board("the slug of the session's board")?,
                 id: need(args, kind, "id", "rows[].session.id")?.to_string(),
+            },
+            "request" => ShowRequest::Request {
+                board: board("the slug of the request's board")?,
+                id: need(args, kind, "id", "the task id adjutant_request answered")?.to_string(),
             },
             _ => {
                 let source = match (get("pr"), get("board"), get("id")) {

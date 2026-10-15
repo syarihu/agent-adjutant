@@ -144,7 +144,7 @@
 .aide-excerpt { font: 12px/1.65 var(--font-mono); overflow-x: auto; max-height: 260px; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest);
   border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); }
 .aide-ev-file { padding: 2px 8px; font: 11.5px/1.6 var(--font-mono); background: var(--md-sys-color-surface-container); }
-.aide-read, .aide-task, .aide-pr, .aide-session, .aide-diff { display: flex; flex-direction: column; gap: 12px; }
+.aide-read, .aide-task, .aide-pr, .aide-session, .aide-diff, .aide-request { display: flex; flex-direction: column; gap: 12px; }
 .aide-points { gap: 12px; }
 .aide-point .aide-excerpt { margin-top: 4px; }
 .aide-more > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
@@ -166,3 +166,17 @@
 .aide-child .aide-link { margin-left: auto; }
 
 .aide-sync.warn { color: var(--md-sys-color-warning); font-weight: 700; }
+
+/* ── request part: what was sent, and how far it got ── */
+.aide-request-body { white-space: pre-wrap; max-height: 12em; overflow: auto; padding: 8px 10px; border-radius: 10px; background: var(--md-sys-color-surface-container-low); }
+.aide-hub-down { color: var(--md-sys-color-warning); font-weight: 700; }
+.aide-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.aide-step { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 10px; border-left: 3px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.aide-step .material-symbols-outlined { font-size: 16px; }
+.aide-step.done { border-left-color: var(--md-sys-color-success); color: var(--md-sys-color-on-surface); }
+.aide-step.now { border-left-color: var(--md-sys-color-primary); color: var(--md-sys-color-on-surface); font-weight: 700; }
+.aide-step.failed { border-left-color: var(--md-sys-color-error); color: var(--md-sys-color-error); font-weight: 700; }
+
+/* A step's state in words, for a screen reader only. */
+.aide-step-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

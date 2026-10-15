@@ -228,6 +228,10 @@ const aideCleanText = s => [...String(s ?? '').replace(/[\u0000-\u001f\u007f-\u0
 
 const aideScopeText = nwo => `[${nwo}] `;
 
+/* What the 「この判断」 chip and 「副官に答えを伝える」 type at the start of a message: the gate's ref, which `adjutant_gate_answer`'s procedure reads as
+   the gate being talked about (`[gate <board>/<id>] B で`). Typed into the prompt, never sent. */
+const aideGateTagText = ref => `[gate ${aideCleanText(ref)}] `;
+
 /* 「[owner/repo] #41「title」の確認待ちについて教えて」. The title gives way when it is too long, so the request still ends as one. */
 function aideAskRowText({ nwo, title, taskId, kindLabel }) {
   const id = taskId == null || taskId === '' ? '' : /^\d+$/.test(String(taskId)) ? `#${taskId} ` : `${taskId} `;
@@ -320,6 +324,7 @@ function aideGateBodyHtml(got, ref, ctx) {
   parts.push(`<div class="aide-gate-actions">`
     + (tid ? `<button type="button" class="aide-link" data-aide-expand ${here} data-aide-target="${esc(target)}" data-aide-gate-ref="${esc(ref)}">${aideIcon('open_in_full')}<span>${g.kind === 'plan' ? '拡大 → 依頼と計画' : '拡大で開く'}</span></button>` : '')
     + aideGateTermHtml(got)
+    + (waiting ? `<button type="button" class="aide-link" data-aide-tell-gate="${esc(ref)}" title="入力欄に「[gate …] 」を入れます。続けて「B で」のように書くと、副官が確認してから答えます">${aideIcon('support_agent')}<span>副官に答えを伝える</span></button>` : '')
     + `<button type="button" class="aide-link" data-aide-waits>${aideIcon('list')}<span>一覧へ戻る</span></button>`
     + (task ? `<button type="button" class="aide-link" data-aide-park ${here}>${aideIcon('schedule')}<span>置く</span></button>` : '')
     + (waiting ? `<button type="button" class="aide-link aide-gate-close" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">${aideIcon('done_all')}<span>解決済みとして閉じる</span></button>` : '')
@@ -626,6 +631,79 @@ registerAidePart('task', (part, ctx) => {
     + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next ?? aideTaskNext(task, gates))}</p>`)
     + `<div class="aide-gate-actions">${aideLinkBtn(`data-aide-expand ${here} data-aide-target="request"`, 'open_in_full', '拡大')}${got.rowKey ? aideTermButtonHtml(got.rowKey) : ''}</div>`;
   return { ...base, title: task.title || task.id, body: `<div class="aide-task">${aideStaleNote(got.refreshError)}${body}</div>` };
+});
+
+/* ── request ── */
+
+/* How far a request has got, from the task's own record: a list of `{ key, state, text }` in the order things happen. `state` is `done`,
+   `now` (the step it is at), `todo`, or `failed`, which stands for the end of the line (it could not start, or it was cancelled) and
+   leaves no step at `now`. `gates` are the task's gates; an open dispatch gate is the hub asking the person to confirm what it read. */
+function aideRequestSteps(task, gates = []) {
+  const t = task || {};
+  const open = (gates || []).find(g => g.kind === 'dispatch' && g.wait !== false);
+  const issue = String(t.issue || t.issueUrl || '').trim();
+  const number = (issue.match(/(\d+)\s*$/) || [])[1];
+  const filed = !!issue;
+  // Not `worktree` alone: a hub at its worker limit keeps the worktree and puts the task back to queued.
+  const started = ['dispatched', 'pr', 'done'].includes(t.status);
+  const reason = String(t.note || '').startsWith('Could not start:') ? String(t.note).slice('Could not start:'.length).trim() : null;
+  const cancelled = t.status === 'cancelled';
+  const read = !t.needsReading || filed || started;
+  const flags = [
+    { key: 'sent', done: true, text: '送信済み' },
+    { key: 'confirm', done: read && !open, text: open ? '読み取りの確認待ち（あなたの判断）' : read ? '読み取りの確認済み' : 'hub が読むのを待っています' },
+    { key: 'issue', done: filed, text: filed ? `起票済み${number ? ` #${number}` : ''}` : '起票' },
+    { key: 'worker', done: started, text: 'worker 着手' },
+    { key: 'pr', done: !!t.pr || t.status === 'pr', text: t.pr ? `PR ${t.pr}` : 'PR' },
+  ];
+  const ended = reason != null || cancelled;
+  let marked = false;
+  const steps = flags.map(f => {
+    if (f.done) return { key: f.key, state: 'done', text: f.text };
+    if (!marked && !ended) { marked = true; return { key: f.key, state: 'now', text: f.text }; }
+    return { key: f.key, state: 'todo', text: f.text };
+  });
+  // Finished with no PR (a report or a check): nothing is left to wait for, so no step is at `now` and the line ends in 完了.
+  if (t.status === 'done' && !t.pr && !ended) {
+    for (const st of steps) if (st.state === 'now') st.state = 'todo';
+    steps.push({ key: 'done', state: 'done', text: '完了' });
+  }
+  if (reason != null) steps.push({ key: 'failed', state: 'failed', text: `着手できず${reason ? `: ${reason}` : ''}` });
+  else if (cancelled) steps.push({ key: 'failed', state: 'failed', text: '取り消されました' });
+  return steps;
+}
+
+/* Said in words for a screen reader: the mark beside a step is an icon it does not read. */
+const AIDE_STEP_STATE = { done: '完了: ', now: '現在: ', todo: '未着手: ', failed: '失敗: ' };
+
+const aideStepsHtml = steps => `<ol class="aide-steps">${steps.map(s => `<li class="aide-step ${esc(s.state)}" data-state="${esc(s.state)}">`
+  + `<span class="aide-step-mark" aria-hidden="true">${aideIcon(s.state === 'done' ? 'check_circle' : s.state === 'now' ? 'pending' : s.state === 'failed' ? 'error' : 'radio_button_unchecked')}</span>`
+  + `<span class="aide-step-state">${esc(AIDE_STEP_STATE[s.state] || '')}</span>`
+  + `<span class="aide-step-text">${esc(s.text)}</span></li>`).join('')}</ol>`;
+
+/* `ctx.request(board, id)` is `{ task, gates, nwo, hubLabel, hubPresent, hubRowKey, rowKey, waitKey, refreshError, error, gone }` or null while the
+   board is being read. `hubRowKey` is the hub's row in the list, `rowKey` the worker's, `waitKey` the open gate of the task (`<board>/<gate id>`). */
+registerAidePart('request', (part, ctx) => {
+  const ref = part.ref || {};
+  const got = ctx.request ? ctx.request(ref.board, ref.id) : null;
+  const base = { icon: 'send', label: '依頼', where: got?.nwo || '', title: got?.title || ref.id || '', cls: '' };
+  if (!got) return { ...base, body: aideNote('読み込み中…') };
+  if (got.error) return { ...base, body: aideNote(`読めませんでした: ${got.error}`) };
+  if (got.gone || !got.task) return { ...base, body: aideNote('この依頼のタスクは、もうボードにありません') };
+  const { task, gates } = got;
+  const here = `data-aide-board="${esc(ref.board)}" data-aide-task="${esc(task.id)}"`;
+  const sentTo = `${got.hubLabel || 'hub'} · ${got.nwo || ''}`;
+  const stopped = got.hubPresent === false ? '<div class="tp-muted aide-hub-down">hub は止まっています。起動すると読みます</div>' : '';
+  const body = aideSection('送った内容', `<p class="aide-gate-task aide-request-body">${esc(String(task.body || '').trim() || task.title || task.id)}</p>`)
+    + aideSection('送り先', `<p class="aide-gate-task">${esc(sentTo)}</p>${stopped}`)
+    + aideSection('進み具合', aideStepsHtml(aideRequestSteps(task, gates)))
+    + `<div class="aide-gate-actions">`
+    + (got.waitKey ? aideLinkBtn(`data-aide-open-gate="${esc(got.waitKey)}"`, 'pending_actions', '判断を見る') : '')
+    + (got.hubRowKey ? aideLinkBtn(`data-aide-row="${esc(got.hubRowKey)}"`, 'terminal', 'hub のターミナル') : '')
+    + (got.rowKey ? aideLinkBtn(`data-aide-row="${esc(got.rowKey)}"`, 'terminal', 'worker のターミナル') : '')
+    + aideLinkBtn(`data-aide-expand ${here} data-aide-target="request"`, 'open_in_full', '拡大')
+    + '</div>';
+  return { ...base, title: task.title || task.id, body: `<div class="aide-task aide-request">${aideStaleNote(got.refreshError)}${body}</div>` };
 });
 
 /* ── pr ── */

@@ -37,6 +37,8 @@ pub enum ShowRequest {
     Pr { of: PrOf },
     /// A worker session of a board.
     Session { board: String, id: String },
+    /// A request passed to a hub, by the board and the id of the task it became.
+    Request { board: String, id: String },
     /// Some lines of a diff.
     Diff {
         source: DiffSource,
@@ -249,6 +251,14 @@ fn resolve(
                     });
                 }
             }
+        }
+        ShowRequest::Request { board, id } => {
+            let nwo = board_nwo(root, &board)?;
+            let task =
+                load_task(root, &board, &id)?.ok_or_else(|| format!("no such task: {id}"))?;
+            out.topic = task_topic(&nwo, &board, &task)?;
+            out.kind = "request";
+            out.reference = Some(PartRef::of(&board, &task.id));
         }
         ShowRequest::Session { board, id } => {
             let nwo = board_nwo(root, &board)?;
@@ -1358,6 +1368,15 @@ mod tests {
             of: TaskOf::Id("nope".to_string()),
         };
         assert!(show_with(&root, gone, no_work).is_err());
+        let gone_request = ShowRequest::Request {
+            board: slug.clone(),
+            id: "nope".to_string(),
+        };
+        assert!(
+            show_with(&root, gone_request, no_work)
+                .unwrap_err()
+                .contains("no such task")
+        );
         let bad = ShowRequest::Task {
             board: "../x".to_string(),
             of: TaskOf::Id("t1".to_string()),

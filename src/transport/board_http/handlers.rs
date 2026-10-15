@@ -450,21 +450,21 @@ pub(super) fn answer_gate(server: &Server, id: &str, body: &[u8]) -> Result<Valu
         .get("decision")
         .and_then(Value::as_str)
         .ok_or("a decision is required")?;
-    if decision == "close" || decision == "dismiss" {
-        let gate = crate::gate::close(
-            &server.ctx,
-            id,
-            input.get("comment").and_then(Value::as_str),
-            false,
-        )?;
-        return Ok(json!({ "gate": gate, "closed": true }));
-    }
-    let (gate, told) = crate::gate::answer(
+    use crate::gate::{Decided, Offered};
+    let decided = crate::gate::decide(
         &server.ctx,
         id,
         decision,
         input.get("choice").and_then(Value::as_str),
         input.get("comment").and_then(Value::as_str),
-    )?;
-    Ok(json!({ "gate": gate, "present": told.is_present(), "woken": told.was_woken() }))
+        // The cards pick a decision by column, not from the gate's options.
+        Offered::Any,
+    )
+    .map_err(|e| e.message().to_string())?;
+    Ok(match decided {
+        Decided::Closed { gate, .. } => json!({ "gate": gate, "closed": true }),
+        Decided::Answered { gate, told } => {
+            json!({ "gate": gate, "present": told.is_present(), "woken": told.was_woken() })
+        }
+    })
 }

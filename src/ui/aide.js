@@ -136,7 +136,7 @@ function aideWanted() {
         if (ai?.pr && ai.record?.ai?.sha) wantPr(ai.pr, { read: true });
       }
     }
-    if (['task', 'session'].includes(p.kind) && ref.board) boards.add(String(ref.board));
+    if (['task', 'session', 'request'].includes(p.kind) && ref.board) boards.add(String(ref.board));
     if (p.kind === 'pr') {
       if (ref.pr) {
         wantPr(ref.pr);
@@ -355,6 +355,29 @@ function aideTaskView(board, id, rowKeyOf) {
   return { task, plan: aidePlanOf(task, b.data), gates, nwo, next: aideTaskNext(task, gates), rowKey: row ? row.key : rowKeyOf(`${board}/${id}`), refreshError: b.error };
 }
 
+/* What `ctx.request(board, id)` says: the task a request became, its open gates, and where the hub and the worker are. The hub's row key is
+   worked out as `workRepoHubChips` works it out (the board its row opens on, then `hub:<session id>`) from the document alone, so it does not
+   wait for the list to have been drawn. */
+function aideRequestView(board, id) {
+  const b = aide.boards[board];
+  if (!b || (!b.data && !b.error)) return null;
+  const nwo = aideNwoOf(board);
+  if (!b.data) return { error: b.error, nwo };
+  const task = (b.data.tasks || []).find(t => t.id === id);
+  if (!task) return { gone: true, nwo };
+  const gates = (b.data.gates || []).filter(g => g.task === id && !answeredGates.has(`${board}/${g.id}`));
+  const open = gates.find(g => g.wait !== false);
+  const repo = workRepos().find(r => r.nwo === nwo) || null;
+  const hub = repo ? (repo.hubs || []).find(h => h.slug === board) || null : null;
+  const found = repo ? [...(repo.rows || []).filter(r => r.board === board && r.session.kind === 'hub'), ...(repo.hubSessions || []).filter(r => r.board === board)][0] : null;
+  const hubRowKey = repo && found ? `${workBoardOf(repo, found.board)}/${HUB_REF}${found.session.id}` : null;
+  const raw = `${nwo}/${board}`;
+  const row = work.doc ? workListRows().rows.find(r => r.raw === raw && r.task?.id === id) : null;
+  const hubLabel = !hub ? 'hub' : hub.parent ? `親 Issue の hub · ${hub.title || hub.key || hub.name}` : 'リポジトリの hub';
+  return { task, gates, nwo, hubLabel, hubPresent: hub ? !!hub.state?.present : null, hubRowKey, rowKey: row ? row.key : null,
+    waitKey: open ? `${board}/${open.id}` : null, refreshError: b.error };
+}
+
 /* A parent with the progress of its children: what the work document lists of it, joined to the open waits and the tasks it knows. */
 function aideParentView(board, key) {
   if (!work.doc) return null;
@@ -494,6 +517,7 @@ function aideCtx() {
     finished: aideFinished(listed.judged, id => { const r = [...listed.rows, ...listed.turns].find(x => x.id === id); return r ? aideRowTitle(r) : ''; }),
     gate: ref => aideGateView(ref, rowKeyOf),
     task: (board, id) => aideTaskView(board, id, rowKeyOf),
+    request: aideRequestView,
     parent: aideParentView,
     pr: aidePrView,
     prFacts: aidePrFacts,
@@ -655,10 +679,15 @@ function aidePlaceholderHtml() {
 /* 「対象」: the topic on display, and a chip for each repository, which puts `[owner/repo] ` at the start of what is typed. */
 function aideScopeHtml() {
   const label = aideShown().topic?.label || 'いまの話題なし';
+  // The newest part is the one the person is looking at: a gate that waits is the one 「B で」 would be about.
+  const top = aideShown().parts[0];
+  const gate = top?.kind === 'gate' && top.ref?.board && top.ref?.id && aideCurrentWaits().some(w => w.key === `${top.ref.board}/${top.ref.id}`)
+    ? `${top.ref.board}/${top.ref.id}` : '';
   const repos = workRepos().filter(r => !r.error).slice().sort((a, b) => a.nwo.localeCompare(b.nwo, undefined, { sensitivity: 'base' }));
   const chip = (scope, text, title) => `<button type="button" class="aide-chip" data-aide-scope="${esc(scope)}" title="${esc(title)}">${esc(text)}</button>`;
   return `<span class="aide-scope-label">${aideIcon('my_location')}対象</span>`
     + `<span class="aide-scope-cur" title="何も付けずに聞くと、いま表示領域に出ている話題の続きとして扱います">${esc(label)}</span>`
+    + (gate ? chip(`gate:${gate}`, 'この判断', '「[gate …] 」を入れて、いま出ている判断のことだと伝える（続けて「B で」のように書く）') : '')
     + repos.map(r => chip(r.nwo, workRepoName(r.nwo), `[${r.nwo}] を入れて、このリポジトリの話として聞く`)).join('')
     + chip('#', '#…', 'タスク番号を入れる');
 }
@@ -792,6 +821,7 @@ wk('wk-term').addEventListener('click', e => {
   }
   if ((b = e.target.closest('[data-aide-scope]'))) {
     const scope = b.dataset.aideScope;
+    if (scope.startsWith('gate:')) return aideTypeScope(aideGateTagText(scope.slice('gate:'.length)));
     return aideTypeScope(scope === '#' ? '#' : aideScopeText(scope));
   }
   if ((b = e.target.closest('[data-aide-row]'))) return aideOpenRow(b.dataset.aideRow);
@@ -916,6 +946,7 @@ wk('aide-display').addEventListener('click', e => {
   if ((b = e.target.closest('[data-aide-open-review]'))) return aideOpenReview(b.dataset.aideOpenReview);
   if ((b = e.target.closest('[data-aide-open-read], [data-aide-ask-reader]:not([disabled])'))) return aideOpenRead(b.dataset);
   if ((b = e.target.closest('[data-aide-open-gate]'))) return aideOpenGate(b.dataset.aideOpenGate);
+  if ((b = e.target.closest('[data-aide-tell-gate]'))) return aideTypeScope(aideGateTagText(b.dataset.aideTellGate));
   if (e.target.closest('[data-aide-waits]')) return aideBackToWaits();
   if (e.target.closest('[data-aide-reviews]')) return aideBackToReviews();
   if ((b = e.target.closest('[data-aide-park]'))) return aidePark(b.dataset.aideBoard, b.dataset.aideTask);

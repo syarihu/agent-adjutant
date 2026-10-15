@@ -121,6 +121,19 @@ pub(super) fn check_parent(parent: &str) -> Result<(), String> {
     check_url(parent, "a task")
 }
 
+/// What a request to the hub must hold before it is written: the person's words, and a parent the
+/// hub can use. For a caller that wants to refuse before it claims an id or runs `gh`, as `create`
+/// does for the same two things.
+pub fn check_request(body: &str, parent: Option<&str>) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("a request needs the person's words in `body`".to_string());
+    }
+    match parent.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(parent) => check_parent(parent),
+        None => Ok(()),
+    }
+}
+
 /// Write a new record, and hand it over if it was created already queued and `hand` says so.
 /// `hand` is an instruction to this function, not a field of the task.
 pub fn create(

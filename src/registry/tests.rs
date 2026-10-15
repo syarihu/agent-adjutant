@@ -2031,3 +2031,49 @@ fn a_repository_hubs_agent_is_given_no_state_dir_of_its_own() {
             .all(|(k, _)| k != "ADJUTANT_STATE_DIR")
     );
 }
+
+#[test]
+fn a_board_is_found_by_its_slug_and_nothing_else() {
+    let sandbox = Sandbox::empty();
+    let main = tempfile::tempdir().unwrap();
+    crate::testing::init_repo(main.path(), "main");
+    let repo =
+        crate::kernel::identity::resolve_in(Some(main.path()), Some("acme/widget"), None).unwrap();
+    // Not in the address book yet.
+    assert!(context_of_board(&sandbox.state(), &repo.slug).is_err());
+    note_board(&sandbox.state(), &repo);
+    let ctx = context_of_board(&sandbox.state(), &repo.slug).unwrap();
+    assert_eq!(ctx.repo.nwo, "acme/widget");
+    assert_eq!(ctx.repo.slug, repo.slug);
+    assert_eq!(ctx.state, sandbox.state());
+    // A slug that is a path, or only looks like one, is refused before the book is read.
+    for slug in [
+        "",
+        "a/b",
+        "..",
+        "../boards/x",
+        "ACME",
+        "a b",
+        "no-such-board",
+    ] {
+        let err = context_of_board(&sandbox.state(), slug).err().unwrap();
+        assert!(err.contains("no such board"), "{slug}: {err}");
+    }
+}
+
+#[test]
+fn an_address_that_no_longer_resolves_to_its_slug_is_not_a_context() {
+    let sandbox = Sandbox::empty();
+    let main = tempfile::tempdir().unwrap();
+    crate::testing::init_repo(main.path(), "main");
+    let address = Address {
+        slug: "acme-widget-0000000000000000".to_string(),
+        main: main.path().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        hub: None,
+    };
+    let err = context_at_address(&sandbox.state(), &address)
+        .err()
+        .unwrap();
+    assert!(err.contains("moved"), "{err}");
+}

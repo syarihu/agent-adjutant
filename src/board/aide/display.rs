@@ -48,7 +48,7 @@ impl Topic {
 #[serde(rename_all = "camelCase")]
 pub struct AidePart {
     pub id: String,
-    /// `gate`, `waits`, `read`, `task`, `pr`, `session` or `diff`; the page draws a kind it has no
+    /// `gate`, `waits`, `reviews`, `read`, `task`, `pr`, `session`, `request` or `diff`; the page draws a kind it has no
     /// renderer for as one it cannot show yet.
     pub kind: String,
     /// What it is about, by reference. `None` for a part that is about nothing in particular,
@@ -67,7 +67,7 @@ pub struct AidePart {
 
 /// What a part is about, by reference only: the page reads the content from the records.
 ///
-/// Which fields a kind uses: `gate` and `session` `board` + `id`; `task` `board` + `id`, or
+/// Which fields a kind uses: `gate`, `session` and `request` `board` + `id` (a request's is its task); `task` `board` + `id`, or
 /// `board` + `parent`; `pr` `board` + `id` or `pr`; `read` `pr`, with `point` or `level`; `diff`
 /// `path`, `from`, `to`, `side`, and a source (`pr`, or `board` + `id` of a gate). `board` and
 /// `id` are always written, empty when the kind has none, so an older binary still parses a file.
@@ -76,7 +76,7 @@ pub struct PartRef {
     /// The slug of a board.
     #[serde(default)]
     pub board: String,
-    /// A gate's, a task's or a session's id, unique only within the board.
+    /// A gate's, a task's, a request's or a session's id, unique only within the board.
     #[serde(default)]
     pub id: String,
     /// A parent issue, by `repos[].parents[].key` of `adjutant_work`.
@@ -105,7 +105,7 @@ pub struct PartRef {
 }
 
 impl PartRef {
-    /// A reference by a board and an id: a gate, a task, a session.
+    /// A reference by a board and an id: a gate, a task, a session, a request.
     pub fn of(board: &str, id: &str) -> Self {
         PartRef {
             board: board.to_string(),

@@ -910,3 +910,198 @@ fn a_gate_settled_by_somebody_else_is_a_typed_refusal_and_writes_nothing() {
     assert!(err.1, "{}", err.0);
     assert_eq!(outbox(&ctx), "");
 }
+
+/// A gate of two choices, one of which carries a draft, for the decisions the board's buttons make.
+fn gate_with_a_draft(ctx: &Context, id: &str, kind: Kind, wait: bool) -> Gate {
+    let wt = ctx.state.join("wt");
+    std::fs::create_dir_all(&wt).unwrap();
+    let mut g = gate(kind);
+    g.id = id.to_string();
+    g.worktree = wt.display().to_string();
+    g.wait = wait;
+    g.options = vec!["approve".to_string(), "changes".to_string()];
+    g.choices[0].comment = Some("Go with A as drafted.".to_string());
+    save(ctx, if wait { Shelf::Open } else { Shelf::Record }, &g).unwrap();
+    g
+}
+
+#[test]
+fn a_choice_with_no_comment_sends_its_draft_and_typed_words_win() {
+    let (_sandbox, ctx) = hub();
+    gate_with_a_draft(&ctx, "20260922T041233Z-plan", Kind::Plan, true);
+    let Ok(Decided::Answered { gate, .. }) = decide(
+        &ctx,
+        "20260922T041233Z-plan",
+        "choice",
+        Some("const"),
+        Some("  "),
+        Offered::Only,
+    ) else {
+        panic!("not answered");
+    };
+    assert_eq!(gate.comment.as_deref(), Some("Go with A as drafted."));
+    assert!(outbox(&ctx).contains("Go with A as drafted."));
+
+    gate_with_a_draft(&ctx, "20260922T041300Z-plan", Kind::Plan, true);
+    let Ok(Decided::Answered { gate, .. }) = decide(
+        &ctx,
+        "20260922T041300Z-plan",
+        "choice",
+        Some("const"),
+        Some(" A, but smaller "),
+        Offered::Only,
+    ) else {
+        panic!("not answered");
+    };
+    assert_eq!(gate.comment.as_deref(), Some("A, but smaller"));
+}
+
+#[test]
+fn a_decision_the_gate_does_not_offer_is_refused_with_nothing_written() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041233Z-plan";
+    gate_with_a_draft(&ctx, id, Kind::Plan, true);
+    for (decision, choice) in [
+        ("reject", None),
+        ("ack", None),
+        ("maybe", None),
+        ("choice", None),
+        ("choice", Some("nope")),
+    ] {
+        let err = decide(&ctx, id, decision, choice, Some("x"), Offered::Only).unwrap_err();
+        assert!(
+            matches!(err, DecideError::Refused(_)),
+            "{decision}: {err:?}"
+        );
+    }
+    assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id));
+    assert_eq!(outbox(&ctx), "");
+    // The board's cards pick theirs by column, so the same decision is not held to the options
+    // there.
+    assert!(matches!(
+        decide(&ctx, id, "reject", None, Some("x"), Offered::Any),
+        Ok(Decided::Answered { .. })
+    ));
+}
+
+#[test]
+fn a_record_is_sent_back_with_changes_and_words_and_nothing_else() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041233Z-diff-record";
+    gate_with_a_draft(&ctx, id, Kind::Diff, false);
+    for (decision, comment) in [
+        ("changes", None),
+        ("changes", Some("  ")),
+        ("approve", Some("x")),
+    ] {
+        let err = decide(&ctx, id, decision, None, comment, Offered::Only).unwrap_err();
+        assert!(
+            matches!(err, DecideError::Refused(_)),
+            "{decision}: {err:?}"
+        );
+    }
+    assert_eq!(outbox(&ctx), "");
+    // The board's route behaves as it always did: a record sent back with no comment goes (the page
+    // is what asks for words), and a decision a record cannot take is refused by `answer` itself.
+    assert!(decide(&ctx, id, "approve", None, Some("x"), Offered::Any).is_err());
+    assert!(matches!(
+        decide(&ctx, id, "changes", None, None, Offered::Any),
+        Ok(Decided::Answered { .. })
+    ));
+    assert!(matches!(
+        decide(
+            &ctx,
+            id,
+            "changes",
+            None,
+            Some("fix the bound"),
+            Offered::Only
+        ),
+        Ok(Decided::Answered { .. })
+    ));
+    assert!(outbox(&ctx).contains("fix the bound"));
+}
+
+#[test]
+fn closing_archives_and_a_second_decision_is_settled() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041233Z-plan";
+    gate_with_a_draft(&ctx, id, Kind::Plan, true);
+    let Ok(Decided::Closed { gate, already }) = decide(
+        &ctx,
+        id,
+        "close",
+        None,
+        Some(" done in the tab "),
+        Offered::Only,
+    ) else {
+        panic!("not closed");
+    };
+    assert!(!already);
+    assert_eq!(gate.decision.as_deref(), Some("closed"));
+    assert_eq!(gate.comment.as_deref(), Some("done in the tab"));
+    assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Answered, id));
+    assert!(!exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id));
+    // Nothing was delivered by the close.
+    assert_eq!(outbox(&ctx), "");
+    let err = decide(&ctx, id, "approve", None, None, Offered::Only).unwrap_err();
+    assert!(matches!(err, DecideError::Settled(_)), "{err:?}");
+    assert_eq!(outbox(&ctx), "");
+    // Closing what is already closed is not an error, and says so.
+    assert!(matches!(
+        decide(&ctx, id, "dismiss", None, None, Offered::Any),
+        Ok(Decided::Closed { already: true, .. })
+    ));
+}
+
+#[test]
+fn a_choice_id_goes_only_with_the_choice_decision_and_the_board_route_leaves_that_to_answer() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041233Z-plan";
+    gate_with_a_draft(&ctx, id, Kind::Plan, true);
+    let err = decide(&ctx, id, "approve", Some("const"), None, Offered::Only).unwrap_err();
+    assert!(matches!(err, DecideError::Refused(_)), "{err:?}");
+    let err = decide(&ctx, id, "close", Some("const"), None, Offered::Only).unwrap_err();
+    assert!(matches!(err, DecideError::Refused(_)), "{err:?}");
+    assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id));
+    assert_eq!(outbox(&ctx), "");
+    // As before on the board's route: an unknown choice is `answer`'s refusal, an existing one
+    // with another decision is accepted, and no draft is sent for it.
+    assert!(decide(&ctx, id, "approve", Some("nope"), None, Offered::Any).is_err());
+    let Ok(Decided::Answered { gate, .. }) =
+        decide(&ctx, id, "approve", Some("const"), None, Offered::Any)
+    else {
+        panic!("not answered");
+    };
+    assert_eq!(gate.comment, None);
+}
+
+#[test]
+fn a_gate_opened_with_no_options_takes_only_its_choices_and_closing() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041400Z-question";
+    let mut g = gate_with_a_draft(&ctx, id, Kind::Question, true);
+    g.options = Vec::new();
+    save(&ctx, Shelf::Open, &g).unwrap();
+    let err = decide(&ctx, id, "answer", None, Some("x"), Offered::Only).unwrap_err();
+    assert!(matches!(err, DecideError::Refused(_)), "{err:?}");
+    assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Open, id));
+    assert_eq!(outbox(&ctx), "");
+    assert!(matches!(
+        decide(&ctx, id, "choice", Some("const"), None, Offered::Only),
+        Ok(Decided::Answered { .. })
+    ));
+}
+
+#[test]
+fn a_record_is_not_closed_from_the_aide_only_sent_back() {
+    let (_sandbox, ctx) = hub();
+    let id = "20260922T041500Z-diff";
+    let mut g = gate_with_a_draft(&ctx, id, Kind::Diff, false);
+    // Even when its options name `close`.
+    g.options.push("close".to_string());
+    save(&ctx, Shelf::Record, &g).unwrap();
+    let err = decide(&ctx, id, "close", None, None, Offered::Only).unwrap_err();
+    assert!(matches!(err, DecideError::Refused(_)), "{err:?}");
+    assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Record, id));
+}

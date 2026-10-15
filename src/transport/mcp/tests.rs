@@ -123,9 +123,11 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
     for tool in listed["result"]["tools"].as_array().unwrap() {
         let properties = &tool["inputSchema"]["properties"];
         // `adjutant_work`'s `repo` only narrows a machine-wide document to one repository; it
-        // addresses no hub.
+        // addresses no hub. `adjutant_request` names its hub by `board` (a slug), and `repo` is
+        // what the slug must agree with.
         if properties.get("repo").is_none()
-            || ["adjutant_work", "adjutant_reviews"].contains(&tool["name"].as_str().unwrap_or(""))
+            || ["adjutant_work", "adjutant_reviews", "adjutant_request"]
+                .contains(&tool["name"].as_str().unwrap_or(""))
         {
             continue;
         }
@@ -553,6 +555,8 @@ fn the_aide_is_allowed_without_asking_no_tool_that_writes_but_the_display() {
         "adjutant_refresh",
         "adjutant_pending",
         "adjutant_outbox",
+        "adjutant_request",
+        "adjutant_gate_answer",
     ] {
         assert!(
             !crate::kernel::runner::AIDE_TOOLS
@@ -640,6 +644,253 @@ fn a_board_with_a_gate(sandbox: &crate::testing::Sandbox) -> (tempfile::TempDir,
     });
     std::fs::write(gates.join("g1.json"), gate.to_string()).unwrap();
     (main, slug)
+}
+
+/// `a_board_with_a_gate` with a git checkout for the board and a worktree of its own for the gate,
+/// so a tool that resolves the board's repository (and an answer, which lands in the worktree)
+/// has somewhere real to work. Hold the sandbox.
+fn a_git_board_with_a_gate(
+    sandbox: &crate::testing::Sandbox,
+) -> (tempfile::TempDir, tempfile::TempDir, String) {
+    let (main, slug) = a_board_with_a_gate(sandbox);
+    crate::testing::init_repo(main.path(), "main");
+    let worktree = tempfile::tempdir().unwrap();
+    let path = sandbox.state().join("gates").join(&slug).join("g1.json");
+    let mut gate: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    gate["worktree"] = json!(worktree.path().to_string_lossy());
+    gate["choices"] = json!([
+        {"id": "a", "label": "Hold it in memory", "comment": "Go with A as drafted."},
+        {"id": "b", "label": "Hold it on disk"},
+    ]);
+    std::fs::write(&path, gate.to_string()).unwrap();
+    (main, worktree, slug)
+}
+
+fn open_gate_file(sandbox: &crate::testing::Sandbox, slug: &str) -> std::path::PathBuf {
+    sandbox.state().join("gates").join(slug).join("g1.json")
+}
+
+#[test]
+fn a_gate_is_answered_by_the_tool_the_way_the_buttons_answer_it() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (_main, worktree, slug) = a_git_board_with_a_gate(&sandbox);
+    let read = call_tool("adjutant_gate_read", &json!({"board": slug, "id": "g1"})).unwrap();
+    assert_eq!(read["answeredBy"], "worker");
+
+    let before = snapshot(&sandbox.state());
+    let before_wt = snapshot(worktree.path());
+    // Refused before anything is written: a decision the gate does not offer, a choice it has not
+    // got, a choice with no id, the wrong JSON types, a board nobody knows.
+    for args in [
+        json!({"board": slug, "id": "g1", "decision": "ack"}),
+        json!({"board": slug, "id": "g1", "decision": "choice", "choice": "z"}),
+        json!({"board": slug, "id": "g1", "decision": "choice"}),
+        json!({"board": slug, "id": "g1", "decision": "maybe"}),
+        json!({"board": slug, "id": "g1", "decision": "approve", "comment": 1}),
+        json!({"board": slug, "id": "g1", "decision": "approve", "choice": ["a"]}),
+        json!({"board": 1, "id": "g1", "decision": "approve"}),
+        json!({"board": "nope-0000000000000000", "id": "g1", "decision": "approve"}),
+        json!({"board": "../boards/x", "id": "g1", "decision": "approve"}),
+        json!({"board": slug, "id": "../g1", "decision": "approve"}),
+        json!({"board": slug, "id": "missing", "decision": "approve"}),
+    ] {
+        assert!(call_tool("adjutant_gate_answer", &args).is_err(), "{args}");
+    }
+    assert_eq!(snapshot(&sandbox.state()), before);
+    assert_eq!(snapshot(worktree.path()), before_wt);
+
+    // A choice with no comment sends the draft of the choice, and the gate moves to answered.
+    let out = call_tool(
+        "adjutant_gate_answer",
+        &json!({"board": slug, "id": "g1", "decision": "choice", "choice": "a"}),
+    )
+    .unwrap();
+    assert_eq!(out["to"], "worker");
+    assert_eq!(out["choice"], "a");
+    assert_eq!(out["comment"], "Go with A as drafted.");
+    assert_eq!(out["gate"]["id"], "g1");
+    assert_eq!(out["gate"]["task"], "t1");
+    assert_eq!(out["present"], false);
+    assert!(!open_gate_file(&sandbox, &slug).exists());
+    assert!(
+        sandbox
+            .state()
+            .join("gates")
+            .join(&slug)
+            .join("answered")
+            .join("g1.json")
+            .exists()
+    );
+    let written: Vec<String> = snapshot(worktree.path())
+        .into_values()
+        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        .collect();
+    assert!(
+        written
+            .iter()
+            .any(|m| m.contains("Decision   choice") && m.contains("Go with A as drafted.")),
+        "{written:?}"
+    );
+
+    // Said a second time, it is settled and nothing more is sent.
+    let after = snapshot(worktree.path());
+    let err = call_tool(
+        "adjutant_gate_answer",
+        &json!({"board": slug, "id": "g1", "decision": "approve"}),
+    )
+    .unwrap_err();
+    assert!(err.contains("already answered"), "{err}");
+    assert_eq!(snapshot(worktree.path()), after);
+}
+
+#[test]
+fn typed_words_win_over_a_choice_s_draft_and_a_close_delivers_nothing() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (_main, worktree, slug) = a_git_board_with_a_gate(&sandbox);
+    let out = call_tool(
+        "adjutant_gate_answer",
+        &json!({"board": slug, "id": "g1", "decision": "choice", "choice": "a", "comment": "  A, but small  "}),
+    )
+    .unwrap();
+    assert_eq!(out["comment"], "A, but small");
+
+    // A second gate on the same board, written by hand next to the first.
+    let gate = json!({
+        "id": "g2", "kind": "plan", "worktree": worktree.path().to_string_lossy(),
+        "task": "t1", "title": "Another", "openedAt": "20260922T010000Z",
+    });
+    std::fs::write(
+        sandbox.state().join("gates").join(&slug).join("g2.json"),
+        gate.to_string(),
+    )
+    .unwrap();
+    let before = snapshot(worktree.path());
+    let out = call_tool(
+        "adjutant_gate_answer",
+        &json!({"board": slug, "id": "g2", "decision": "close", "comment": "settled in the tab"}),
+    )
+    .unwrap();
+    assert_eq!(out["closed"], true);
+    assert_eq!(snapshot(worktree.path()), before);
+}
+
+#[test]
+fn a_request_is_written_as_the_form_writes_it_and_handed_to_the_hub() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (_main, _worktree, slug) = a_git_board_with_a_gate(&sandbox);
+    let before = snapshot(&sandbox.state());
+    let wrong = [
+        json!({}),
+        json!({"repo": "acme/widget", "board": slug}),
+        json!({"repo": "acme/widget", "board": slug, "body": "   "}),
+        json!({"repo": "acme/widget", "board": slug, "body": 1}),
+        json!({"repo": "acme/widget", "board": slug, "body": "x", "parent": 3}),
+        json!({"repo": "acme/widget", "board": slug, "body": "x", "parent": "it's; ls"}),
+        // The repository and the hub must agree.
+        json!({"repo": "acme/other", "board": slug, "body": "x"}),
+        json!({"repo": "acme/widget", "board": "nope-0000000000000000", "body": "x"}),
+        json!({"repo": "acme/widget", "board": "../boards/x", "body": "x"}),
+        // The code-review hub keeps no tasks.
+        json!({"repo": "acme/widget", "board": "review", "body": "x"}),
+    ];
+    for args in wrong {
+        let err = call_tool("adjutant_request", &args).unwrap_err();
+        if args["board"] == "review" {
+            assert!(err.contains("下読み"), "{err}");
+        }
+    }
+    assert_eq!(snapshot(&sandbox.state()), before);
+
+    let out = call_tool(
+        "adjutant_request",
+        &json!({"repo": "Acme/Widget", "board": slug, "body": "Add a retry to the sync\nand log it",
+                "parent": "https://github.com/acme/widget/issues/40"}),
+    )
+    .unwrap();
+    assert_eq!(out["repo"], "acme/widget");
+    assert_eq!(out["board"], slug.as_str());
+    assert_eq!(out["task"]["title"], "Add a retry to the sync");
+    assert_eq!(out["task"]["status"], "queued");
+    // No hub is running in the sandbox: the request waits, and nothing was woken or announced.
+    assert_eq!(out["present"], false);
+    assert_eq!(out["woken"], false);
+    let id = out["task"]["id"].as_str().unwrap();
+    assert_eq!(
+        out["show"],
+        json!({"kind": "request", "board": slug, "id": id})
+    );
+    let record: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            crate::task::dir(&sandbox.state(), &slug).join(format!("{id}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["needsReading"], true);
+    assert_eq!(record["status"], "queued");
+    assert_eq!(record["parent"], "https://github.com/acme/widget/issues/40");
+    assert_eq!(record["body"], "Add a retry to the sync\nand log it");
+    let inbox: Vec<String> = snapshot(&sandbox.state())
+        .into_iter()
+        .filter(|(path, _)| path.ends_with("-request.md"))
+        .map(|(_, bytes)| String::from_utf8_lossy(&bytes).to_string())
+        .collect();
+    assert_eq!(inbox.len(), 1, "{inbox:?}");
+    assert!(
+        inbox[0].contains("## task") && inbox[0].contains(id),
+        "{}",
+        inbox[0]
+    );
+
+    // The part for it shows in the topic of its parent, by the task's own reference.
+    let shown = call_tool(
+        "adjutant_show",
+        &json!({"kind": "request", "board": slug, "id": id}),
+    )
+    .unwrap();
+    assert_eq!(shown["parts"][0]["kind"], "request");
+    assert_eq!(shown["parts"][0]["ref"]["id"], id);
+    assert_eq!(shown["parts"][0]["ref"]["board"], slug.as_str());
+    assert!(shown["topic"]["key"].as_str().unwrap().contains("#p:"));
+    assert!(
+        call_tool(
+            "adjutant_show",
+            &json!({"kind": "request", "board": slug, "id": "nope"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn the_hub_of_a_parent_takes_a_request_only_with_its_parent() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (main, _worktree, _slug) = a_git_board_with_a_gate(&sandbox);
+    let repo = crate::kernel::identity::resolve_in(
+        Some(main.path()),
+        Some("acme/widget"),
+        Some("feature-x"),
+    )
+    .unwrap();
+    crate::registry::note_board(&sandbox.state(), &repo);
+    let before = snapshot(&sandbox.state());
+    let err = call_tool(
+        "adjutant_request",
+        &json!({"repo": "acme/widget", "board": repo.slug, "body": "do it"}),
+    )
+    .unwrap_err();
+    assert!(err.contains("`parent`"), "{err}");
+    assert_eq!(snapshot(&sandbox.state()), before);
+    let out = call_tool(
+        "adjutant_request",
+        &json!({"repo": "acme/widget", "board": repo.slug, "body": "do it",
+                "parent": "https://github.com/acme/widget/issues/40"}),
+    )
+    .unwrap();
+    assert_eq!(out["hubKey"], "feature-x");
 }
 
 #[test]
