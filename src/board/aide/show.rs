@@ -83,19 +83,29 @@ fn gate_topic(root: &Path, board: &str, id: &str) -> Result<(Topic, PartRef), St
         return Err(format!("not a gate id: {id}"));
     }
     let gate = crate::gate::get(root, board, id)?;
-    let task = gate
+    // A gate whose task has no record is the gate's own topic; a record that is there and cannot
+    // be read is an error, since another topic would clear what is on show.
+    let task = match gate
         .task
         .as_deref()
         .map(str::trim)
         .filter(|t| !t.is_empty())
-        .and_then(|t| task::get(root, board, t).ok());
-    let issue_keys = crate::kernel::config::resolve_config(&address.nwo)
-        .map(|resolved| resolved.settings.issue_keys)
-        .unwrap_or_default();
-    let topic = topic_of(&address.nwo, board, &gate, task.as_ref(), &issue_keys);
+    {
+        Some(id) if task::exists(root, board, id)? => Some(task::get(root, board, id)?),
+        _ => None,
+    };
+    let topic = topic_of(
+        &address.nwo,
+        board,
+        &gate,
+        task.as_ref(),
+        // Only read when the parent is a key that needs it, so a broken config blocks nothing else.
+        || crate::kernel::config::resolve_config(&address.nwo).map(|r| r.settings.issue_keys),
+    )?;
     let reference = PartRef {
         board: board.to_string(),
         id: gate.id,
+        extra: Map::new(),
     };
     Ok((topic, reference))
 }
@@ -107,13 +117,13 @@ fn topic_of(
     board: &str,
     gate: &Gate,
     task: Option<&Task>,
-    issue_keys: &Map<String, Value>,
-) -> Topic {
+    issue_keys: impl FnOnce() -> Result<Map<String, Value>, String>,
+) -> Result<Topic, String> {
     let Some(task) = task else {
-        return Topic::new(
+        return Ok(Topic::new(
             format!("{nwo}#g:{board}:{}", gate.id),
             format!("{nwo} · {}", gate.title),
-        );
+        ));
     };
     let parent = task
         .parent
@@ -125,16 +135,16 @@ fn topic_of(
             true => format!("#{}", task.id),
             false => task.id.clone(),
         };
-        return Topic::new(
+        return Ok(Topic::new(
             format!("{nwo}#t:{board}:{}", task.id),
             format!("{nwo} · {id} {}", task.title),
-        );
+        ));
     };
     // The same reading of the record's `parent` as the board's cards: a key is turned into the
     // issue it names where `issueKeys` says which repository that is, and one it cannot turn is
     // kept as written.
     let url = match crate::kernel::brief::is_key(raw) {
-        true => task::parent_issue_url(raw, issue_keys),
+        true => task::parent_issue_url(raw, &issue_keys()?),
         false => Some(raw.to_string()),
     };
     let key = task::parent_key(url.as_deref().unwrap_or(raw));
@@ -142,7 +152,19 @@ fn topic_of(
         Some((repo, number)) if repo == nwo.to_ascii_lowercase() => format!("#{number}"),
         _ => key.clone(),
     };
-    Topic::new(format!("{nwo}#p:{key}"), format!("{nwo} · 親 {short}"))
+    Ok(Topic::new(
+        format!("{nwo}#p:{key}"),
+        format!("{nwo} · 親 {short}"),
+    ))
+}
+
+/// Whether two references name the same gate; a key a newer binary added to one is no difference.
+fn same_ref(a: &Option<PartRef>, b: &Option<PartRef>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a.board == b.board && a.id == b.id,
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// Put a part on top of `display`. `true` when it replaced a topic that had parts, which went
@@ -171,7 +193,7 @@ fn apply(
     }
     display
         .parts
-        .retain(|p| !(p.kind == kind && p.reference == reference));
+        .retain(|p| !(p.kind == kind && same_ref(&p.reference, &reference)));
     display.parts.insert(
         0,
         AidePart {
@@ -225,7 +247,10 @@ mod tests {
         gate_id: &str,
         issue_keys: &Map<String, Value>,
     ) -> (String, String) {
-        let t = topic_of(NWO, "acme-widget", &gate(gate_id, None), task, issue_keys);
+        let t = topic_of(NWO, "acme-widget", &gate(gate_id, None), task, || {
+            Ok(issue_keys.clone())
+        })
+        .unwrap();
         (t.key, t.label)
     }
 
@@ -285,6 +310,7 @@ mod tests {
         let reference = PartRef {
             board: "b".to_string(),
             id: id.to_string(),
+            extra: Map::new(),
         };
         apply(display, Topic::new(key, key), "gate", Some(reference), now)
     }
@@ -342,6 +368,7 @@ mod tests {
             Some(PartRef {
                 board: "b".to_string(),
                 id: "g1".to_string(),
+                extra: Map::new(),
             }),
             3,
         );
@@ -452,7 +479,8 @@ mod tests {
             part.reference,
             Some(PartRef {
                 board: slug.clone(),
-                id: "g1".to_string()
+                id: "g1".to_string(),
+                extra: Map::new()
             })
         );
         assert_eq!(shown.display.topic.unwrap().label, "acme/widget · 親 #40");
@@ -485,5 +513,70 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(root.join("aide-display.json")).unwrap())
                 .unwrap();
         assert_eq!(raw["future"], 1);
+        // And one inside a part's `ref`, which a newer binary may have added.
+        std::fs::write(
+            root.join("aide-display.json"),
+            json!({"topic": {"key": "a", "label": "a"}, "parts": [{
+                "id": "p0", "kind": "gate", "ref": {"board": "b", "id": "g", "more": 2},
+                "topic": "a", "shownAt": 1, "by": "aide"}]})
+            .to_string(),
+        )
+        .unwrap();
+        let gate_ref = |id: &str| PartRef {
+            board: "b".to_string(),
+            id: id.to_string(),
+            extra: Map::new(),
+        };
+        let mut d = display_of(&root);
+        apply(
+            &mut d,
+            Topic::new("a", "a"),
+            "gate",
+            Some(gate_ref("g2")),
+            2,
+        );
+        assert_eq!(d.parts[1].reference.as_ref().unwrap().extra["more"], 2);
+    }
+
+    #[test]
+    fn a_task_that_cannot_be_read_refuses_and_one_with_no_record_is_the_gates_own_topic() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let (_main, slug) = board(&sandbox);
+        let root = sandbox.state();
+        let req = || ShowRequest::Gate {
+            board: slug.clone(),
+            id: "g1".to_string(),
+        };
+        let record = task::dir(&root, &slug).join("t1.json");
+        std::fs::write(&record, "{ malformed").unwrap();
+        assert!(show(&root, req()).is_err());
+        assert!(!root.join("aide-display.json").exists());
+        assert!(!root.join("aide-display.lock").exists());
+
+        std::fs::remove_file(&record).unwrap();
+        let shown = show(&root, req()).unwrap();
+        assert_eq!(
+            shown.display.topic.unwrap().key,
+            format!("acme/widget#g:{slug}:g1")
+        );
+    }
+
+    #[test]
+    fn a_config_that_cannot_be_read_blocks_only_a_gate_whose_parent_needs_it() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let (_main, slug) = board(&sandbox);
+        let root = sandbox.state();
+        // The fixture's parent is a URL, which needs no config.
+        std::fs::write(root.join("../config.json"), "{ broken").unwrap();
+        let req = ShowRequest::Gate {
+            board: slug,
+            id: "g1".to_string(),
+        };
+        assert!(show(&root, req).is_ok());
+        let by_key = task_of("k", Some("ALPHA-40"));
+        let broken = topic_of(NWO, "b", &gate("g", None), Some(&by_key), || {
+            Err("config".to_string())
+        });
+        assert_eq!(broken.unwrap_err(), "config");
     }
 }

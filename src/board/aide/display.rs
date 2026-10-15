@@ -69,6 +69,8 @@ pub struct AidePart {
 pub struct PartRef {
     pub board: String,
     pub id: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 pub(super) fn display_path(root: &Path) -> PathBuf {
