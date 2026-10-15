@@ -365,7 +365,7 @@ fn starting_a_worker_in_a_path_that_is_not_a_directory_touches_nothing() {
         repo: None,
     };
     let err = worker::start(&ctx, &request, false).err().unwrap();
-    assert_eq!(err, format!("no such directory: {}", wt.display()));
+    assert_eq!(err, format!("no such worktree: {}", wt.display()));
     assert!(!wt.exists());
     assert!(!crate::registry::is_starting(
         &wt,

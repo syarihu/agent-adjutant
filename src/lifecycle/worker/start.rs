@@ -8,7 +8,8 @@ use crate::registry::Context;
 
 /// What a fresh worker is dispatched with.
 pub struct StartRequest {
-    /// The directory the worker works in. `~` is expanded.
+    /// The directory the worker works in. `~` is expanded and a relative path is made absolute,
+    /// since the tab it is passed to starts somewhere else.
     pub worktree: String,
     /// The title typed on the command line; empty when none was, and the title is then taken
     /// from the task's record.
@@ -45,15 +46,12 @@ pub fn start(ctx: &Context, request: &StartRequest, dry_run: bool) -> Result<Sta
         }
         _ => request.title.as_str(),
     };
-    let worktree = crate::infra::paths::expand_home(&request.worktree)
-        .to_string_lossy()
-        .to_string();
     // Asked here and not left to the spawn, because marking the slot writes into the
     // worktree and would create the very directory the spawn checks for — a mistyped path
     // would then open a tab in an empty directory outside any repository.
-    if !std::path::Path::new(&worktree).is_dir() {
-        return Err(format!("no such directory: {worktree}"));
-    }
+    let worktree = super::worker_worktree(Some(&request.worktree))?
+        .to_string_lossy()
+        .to_string();
     if let Some(refusal) = claim_worker_slot(ctx, std::path::Path::new(&worktree), dry_run)? {
         return Ok(Started::Full(refusal));
     }

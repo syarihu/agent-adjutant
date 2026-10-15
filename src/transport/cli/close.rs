@@ -33,7 +33,7 @@ pub fn close(args: &CloseArgs) -> Result<bool, String> {
     // read is the only thing the repository is asked for here, and this is the command most
     // likely to be run while the repository it belongs to is being taken apart.
     let settings = settings_for(args.repo.as_deref());
-    let worktree = crate::infra::paths::expand_home(&args.worktree);
+    let worktree = crate::infra::paths::absolute(&args.worktree);
     let outcome = crate::lifecycle::worker::close(&settings, &worktree, args.dry_run)?;
     say(&outcome, &worktree, args.quiet);
     Ok(outcome.is_free())

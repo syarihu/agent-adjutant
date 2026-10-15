@@ -3,7 +3,7 @@ use super::*;
 
 pub fn open_ide(args: &IdeArgs) -> Result<(), String> {
     let ctx = context_without_hub(args.repo.as_deref())?;
-    let worktree = crate::infra::paths::expand_home(&args.worktree)
+    let worktree = crate::infra::paths::absolute(&args.worktree)
         .to_string_lossy()
         .to_string();
     let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {

@@ -20,7 +20,7 @@ use crate::transport::wording::skill_text;
 /// What the hub has left for the worker in this worktree.
 pub fn outbox(args: &OutboxArgs) -> Result<(), String> {
     let worktree = match args.worktree.as_deref() {
-        Some(path) => crate::infra::paths::expand_home(path),
+        Some(path) => crate::infra::paths::absolute(path),
         None => std::env::current_dir()
             .map_err(|e| format!("cannot determine the current directory: {e}"))?,
     };

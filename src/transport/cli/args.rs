@@ -350,6 +350,7 @@ impl SpawnArgs {
 pub(crate) struct WorkArgs {
     #[arg(long)]
     pub(crate) repo: Option<String>,
+    /// The worktree to work in (a relative path is taken from the current directory)
     #[arg(long)]
     pub(crate) worktree: String,
     #[arg(long, default_value = "")]
