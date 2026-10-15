@@ -1525,6 +1525,21 @@ test('what no part on show names is let go: its task documents, PRs and gate dif
   assert.deepStrictEqual([...c.aide.gateDiffs.keys()], ['b/g1']);
 });
 
+test("a task's PR is the one a part names only when the task's current PR is that one, however it is written", () => {
+  const c = vm.createContext({});
+  vm.runInContext(fnSrc(aideSrc, 'aideSamePr'), c);
+  const same = (t, id, nwo) => { c.a = [t, id, nwo]; return vm.runInContext('aideSamePr(...a)', c); };
+  assert.strictEqual(same('https://github.com/Acme/Widget/pull/7', 'acme/widget#7'), true);
+  assert.strictEqual(same('https://github.com/acme/widget/pull/8/files', 'acme/widget#7'), false);
+  assert.strictEqual(same('acme/widget#7', 'acme/widget#7'), true);
+  assert.strictEqual(same('#7', 'acme/widget#7', 'Acme/Widget'), true);
+  assert.strictEqual(same('7', 'acme/widget#7', 'acme/widget'), true);
+  assert.strictEqual(same('#7', 'acme/widget#7', ''), false, 'a bare number with no repository names nothing');
+  assert.strictEqual(same('#8', 'acme/widget#7', 'acme/widget'), false);
+  assert.strictEqual(same('', 'acme/widget#7', 'acme/widget'), false);
+  assert.strictEqual(same(null, 'acme/widget#7', 'acme/widget'), false);
+});
+
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
   const log = [];
   let top = 'page-gate:b/g1';

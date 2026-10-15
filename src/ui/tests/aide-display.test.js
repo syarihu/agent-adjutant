@@ -795,3 +795,33 @@ test('read parts of one PR are told apart by their pick in the heading', () => {
   assert.equal(head({ level: 'info' }), 'AI 下読み · 参考のポイント');
   assert.equal(head({ level: 'attention' }), 'AI 下読み · 要注意のポイント');
 });
+
+test("a task's PR status is turned as the server turns it, a review still owed being another reviewer's", () => {
+  const turn = (state, review, ci = {}) => run('aideTurnOfStatus')({ state, review, ci });
+  assert.equal(turn('open', 'required'), 'other-reviewer');
+  assert.equal(turn('open', 'none'), 'unrequested');
+  assert.equal(turn('open', 'approved'), 'merge');
+  assert.equal(turn('open', 'approved', { pending: 1 }), 'checks');
+  assert.equal(turn('open', 'required', { fail: 1 }), 'ci-failed');
+  assert.equal(turn('open', 'changes', { fail: 1 }), 'changes');
+  assert.equal(turn('draft', 'approved'), 'draft');
+  assert.equal(turn('merged', 'none'), 'merged');
+  assert.equal(turn('weird', 'none'), null);
+  const out = html('pr', { board: 's', id: '41' }, { prFacts: () => ({ rec: null, task: TCARD, prStatus: { state: 'open', review: 'required', ci: { pass: 1 } }, nowSecs: 1e10 }) });
+  assert.ok(out.includes('他のレビュアーの返事待ちです'));
+});
+
+test('two gate diffs shown together are each parsed once, however the redraws alternate between them', () => {
+  const parse = run('aideParsedGateDiff');
+  const other = DIFF.replace(/src\/a\.rs/g, 'src/z.rs');
+  const a = parse(DIFF);
+  const b = parse(other);
+  assert.notStrictEqual(a, b);
+  for (let i = 0; i < 3; i++) {
+    assert.strictEqual(parse(DIFF), a);
+    assert.strictEqual(parse(other), b);
+  }
+  // A bounded few: more than that lets the oldest go.
+  for (let i = 0; i < 6; i++) parse(`${DIFF}\n# ${i}`);
+  assert.notStrictEqual(parse(DIFF), a);
+});

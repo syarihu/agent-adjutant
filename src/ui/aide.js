@@ -400,6 +400,14 @@ function aidePrView(id) {
 
 /* `ctx.prFacts(ref)`: what the PR part needs, of a task's PR (by the task) or of a PR by its id. The task card is the board's own read of the
    PR (its last refresh), the record the resident's: neither asks GitHub now. */
+/* Whether a task's `pr` (a URL, `owner/repo#N`, or a bare `#N` of the board's repository `nwo`) is the PR `id` (`owner/repo#N`), ignoring case. */
+function aideSamePr(taskPr, id, nwo) {
+  const text = String(taskPr || '').trim();
+  const url = text.match(/^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/i);
+  const key = url ? `${url[1]}/${url[2]}#${url[3]}` : /^[^/#\s]+\/[^#\s]+#\d+$/.test(text) ? text : /^#?\d+$/.test(text) && nwo ? `${nwo}#${text.replace('#', '')}` : '';
+  return !!key && key.toLowerCase() === String(id || '').toLowerCase();
+}
+
 function aidePrFacts(ref) {
   const nowSecs = workServerNow();
   const cardOf = (board, id) => (aide.boards[board]?.data?.tasks || []).find(t => t.id === id) || null;
@@ -410,7 +418,9 @@ function aidePrFacts(ref) {
     if (e.error && !e.rec) return { error: e.error };
     const link = e.rec?.task;
     const card = link ? cardOf(link.board, link.id) : null;
-    return { rec: e.rec, task: card, prId: ref.pr, prStatus: card?.prStatus || null, prTurn: card?.prTurn || null, phase: card && link ? phaseOf(link.board, link.id) : null, nowSecs,
+    // The task's own status is of the task's current PR: when it has moved on to another, that is not this PR's.
+    const same = !!card && aideSamePr(card.pr, ref.pr, aideNwoOf(link.board));
+    return { rec: e.rec, task: same ? card : null, prId: ref.pr, prStatus: same ? card.prStatus || null : null, prTurn: same ? card.prTurn || null : null, phase: same ? phaseOf(link.board, link.id) : null, nowSecs,
       refreshError: e.error || (link ? aideBoardError(link.board) : null) };
   }
   const b = aide.boards[ref.board];

@@ -171,11 +171,18 @@ function aideFinished(judged, titleOf = () => '') {
    `path:line`), else the first hunk of the diff. At most `max` lines in all, drawn as the diff view draws them (without its
    buttons). With the PR's read-through `read` the reader's annotations are under their lines, anchored in this diff.
    `{ html, annotated }`: whether an annotation was drawn is what the part says in its heading. */
-/* A gate's diff parsed once (the last one asked for), and its annotations anchored once for a read-through, not at every redraw. */
-let aideParsedLast = { diff: null, files: [] };
+/* A gate's diff parsed once, and its annotations anchored once for a read-through, not at every redraw. */
+/* The gate diffs parsed recently, by their text: a few, so that two parts with different diffs do not parse both at every redraw. */
+const AIDE_PARSED_KEPT = 4;
+const aideParsed = new Map();
 function aideParsedGateDiff(diff) {
-  if (aideParsedLast.diff !== diff) aideParsedLast = { diff, files: prParseDiff(diff).filter(f => f.hunks.length) };
-  return aideParsedLast.files;
+  let files = aideParsed.get(diff);
+  if (!files) files = prParseDiff(diff).filter(f => f.hunks.length);
+  // Taken out and put back last: the one used longest ago is the one let go.
+  aideParsed.delete(diff);
+  aideParsed.set(diff, files);
+  if (aideParsed.size > AIDE_PARSED_KEPT) aideParsed.delete(aideParsed.keys().next().value);
+  return files;
 }
 const AIDE_RESOLVED = new WeakMap();
 function aideResolved(files, read) {
@@ -634,12 +641,15 @@ function aideTurnOfRecord(rec) {
 /* Whose turn a task's PR is from what the task's last refresh read of it (`prStatus`), when no live card says: a finished task has no `prTurn`. */
 function aideTurnOfStatus(ps) {
   if (!ps) return null;
+  // As `task::pr_turn` reads it: the state first, then changes, a failed check, a running one, approval, a review still owed.
   if (ps.state === 'merged' || ps.state === 'closed') return ps.state;
   if (ps.state === 'draft') return 'draft';
+  if (ps.state !== 'open') return null;
   if (ps.review === 'changes') return 'changes';
   if (Number(ps.ci?.fail) > 0) return 'ci-failed';
   if (Number(ps.ci?.pending) > 0) return 'checks';
-  return ps.review === 'approved' ? 'merge' : 'unrequested';
+  if (ps.review === 'approved') return 'merge';
+  return ps.review === 'required' ? 'other-reviewer' : 'unrequested';
 }
 
 function aideMergeBlockers(turn, ci) {
