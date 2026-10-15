@@ -15,6 +15,11 @@ fn fixture(name: &str) -> &'static str {
         "claude-question" => include_str!("../../fixtures/panes/claude-question.txt"),
         "claude-permission" => include_str!("../../fixtures/panes/claude-permission.txt"),
         "claude-menu" => include_str!("../../fixtures/panes/claude-menu.txt"),
+        "claude-narrow-working" => include_str!("../../fixtures/panes/claude-narrow-working.txt"),
+        "claude-narrow-working-streaming" => {
+            include_str!("../../fixtures/panes/claude-narrow-working-streaming.txt")
+        }
+        "claude-narrow-idle" => include_str!("../../fixtures/panes/claude-narrow-idle.txt"),
         "agy-idle" => include_str!("../../fixtures/panes/agy-idle.txt"),
         "agy-idle-after-turn" => include_str!("../../fixtures/panes/agy-idle-after-turn.txt"),
         "agy-typing" => include_str!("../../fixtures/panes/agy-typing.txt"),
@@ -37,6 +42,13 @@ const FIXTURES: &[(Agent, &str, PaneState)] = &[
     (Agent::Claude, "claude-question", PaneState::Asking),
     (Agent::Claude, "claude-permission", PaneState::Asking),
     (Agent::Claude, "claude-menu", PaneState::Asking),
+    (Agent::Claude, "claude-narrow-working", PaneState::Working),
+    (
+        Agent::Claude,
+        "claude-narrow-working-streaming",
+        PaneState::Working,
+    ),
+    (Agent::Claude, "claude-narrow-idle", PaneState::Idle),
     (Agent::Agy, "agy-idle", PaneState::Idle),
     (Agent::Agy, "agy-idle-after-turn", PaneState::Idle),
     (Agent::Agy, "agy-typing", PaneState::Typing),
@@ -206,6 +218,19 @@ fn the_last_line_is_the_one_above_the_input_box() {
         last(Agent::Claude, "claude-working-tool").as_deref(),
         Some("✻ Pondering… (5s · ↓ 264 tokens · thought for 2s)")
     );
+    // In a narrow pane the footer is cut and the box's top border carries the session's name.
+    assert_eq!(
+        last(Agent::Claude, "claude-narrow-working").as_deref(),
+        Some("✢ Bootstrapping… (4s · thinking)")
+    );
+    assert_eq!(
+        last(Agent::Claude, "claude-narrow-working-streaming").as_deref(),
+        Some("tmux focus-events off · add 'set -g focus-event…")
+    );
+    assert_eq!(
+        last(Agent::Claude, "claude-narrow-idle").as_deref(),
+        Some("✻ Cogitated for 48s · done 13:44")
+    );
     assert_eq!(
         last(Agent::Agy, "agy-working").as_deref(),
         Some("⡿  Generating...")
@@ -213,6 +238,131 @@ fn the_last_line_is_the_one_above_the_input_box() {
     assert_eq!(
         last(Agent::Agy, "agy-idle-after-turn").as_deref(),
         Some("rustic appeal, and universally restorative, comforting charm.")
+    );
+}
+
+/// The streaming fixture with its footer's `esc to i…` swapped for `footer`.
+fn narrow_streaming_with_footer(footer: &str) -> PaneScreen {
+    let text = fixture("claude-narrow-working-streaming");
+    assert!(text.contains("esc to i…"));
+    parse_pane_screen(&text.replace("esc to i…", footer))
+}
+
+#[test]
+fn a_cut_running_footer_is_working_and_a_cut_idle_one_is_not() {
+    let state = |screen: &PaneScreen| pane_state(Agent::Claude, screen);
+    for footer in [
+        "esc to interrupt…",
+        "esc to interru…",
+        "esc to i…",
+        "esc to …",
+        "esc to…",
+        "esc t…",
+        "esc …",
+        "esc…",
+    ] {
+        assert_eq!(
+            state(&narrow_streaming_with_footer(footer)),
+            PaneState::Working,
+            "{footer}"
+        );
+    }
+    // Too short to tell from a cut `← for agents`, or from nothing.
+    for footer in ["← for ag…", "← for …", "←…", "e…"] {
+        assert_eq!(
+            state(&narrow_streaming_with_footer(footer)),
+            PaneState::Idle,
+            "{footer}"
+        );
+    }
+    // No `·` at all: the mode alone.
+    let text = fixture("claude-narrow-working-streaming").replace(" · esc to i…", "");
+    assert_eq!(state(&parse_pane_screen(&text)), PaneState::Idle);
+    // Without the mode glyph the words are only a line of text.
+    let text = fixture("claude-narrow-working-streaming").replace(
+        "⏵⏵ don't ask on (shift+tab to cycle) · esc to i…",
+        "esc to i…",
+    );
+    assert_eq!(state(&parse_pane_screen(&text)), PaneState::Idle);
+}
+
+#[test]
+fn a_session_name_in_the_top_border_is_still_the_box() {
+    // A name wide enough to leave no dashes in front of it.
+    let label = "adjutant-read-octo-org+octo-repository+1234";
+    for name in ["claude-narrow-idle", "claude-narrow-working-streaming"] {
+        let text = fixture(name);
+        assert!(text.contains(label), "{name}");
+        let text = text.lines().map(|l| {
+            if l.contains(label) {
+                " adjutant-read-octo-org+octo-repo… ─".to_string()
+            } else {
+                l.to_string()
+            }
+        });
+        let screen = parse_pane_screen(&text.collect::<Vec<_>>().join("\n"));
+        let expected = if name.ends_with("idle") {
+            PaneState::Idle
+        } else {
+            PaneState::Working
+        };
+        assert_eq!(pane_state(Agent::Claude, &screen), expected, "{name}");
+    }
+    // A transcript line that ends so, with no prompt line after it, is not a box.
+    let rule = "─".repeat(40);
+    let text = format!("some text ─\nmore text\n{rule}\n❯\n{rule}\n");
+    let screen = parse_pane_screen(&format!("{text}{PANE_META_SEPARATOR}\n0\t0\t0\n"));
+    let lines: Vec<Line> = screen
+        .text
+        .lines()
+        .map(|l| Line {
+            plain: l.to_string(),
+            raw: l.to_string(),
+        })
+        .collect();
+    assert_eq!(input_box(Agent::Claude, &lines).map(|b| b.top), Some(2));
+    let text = format!("some text ─\n{rule}\n");
+    let screen = parse_pane_screen(&format!("{text}{PANE_META_SEPARATOR}\n0\t0\t0\n"));
+    assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Unknown);
+}
+
+/// A screen of just `lines`, as a capture of it would read.
+fn screen_of(lines: &[&str]) -> PaneScreen {
+    parse_pane_screen(&format!(
+        "{}\n{PANE_META_SEPARATOR}\n0\t0\t0\n",
+        lines.join("\n")
+    ))
+}
+
+#[test]
+fn a_running_footer_without_a_box_is_working() {
+    let running = "  ⏵⏵ don't ask on (shift+tab to cycle) · esc to i…";
+    let idle = "  ⏵⏵ don't ask on (shift+tab to cycle) · ← for ag…";
+    assert_eq!(
+        pane_state(Agent::Claude, &screen_of(&["some output", "", running])),
+        PaneState::Working
+    );
+    assert_eq!(
+        pane_state(Agent::Claude, &screen_of(&["some output", "", idle])),
+        PaneState::Unknown
+    );
+    // Not for agy, whose footer is not read this way.
+    assert_eq!(
+        pane_state(Agent::Agy, &screen_of(&["some output", "", running])),
+        PaneState::Unknown
+    );
+}
+
+#[test]
+fn the_mode_footer_is_not_the_last_line_when_there_is_no_box() {
+    let screen = screen_of(&[
+        "the answer",
+        "",
+        "  ⏵⏵ don't ask on (shift+tab to cycle) · esc to i…",
+    ]);
+    assert_eq!(
+        last_output_line(Agent::Claude, &screen).as_deref(),
+        Some("the answer")
     );
 }
 

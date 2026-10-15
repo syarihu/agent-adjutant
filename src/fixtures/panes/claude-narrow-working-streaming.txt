@@ -1,0 +1,32 @@
+  ancestors are believed to return home. Mochi was
+  food for special days, made by families and
+  communities working together over a mortar.
+
+  Zunda depends on eating soybeans young. Edamame
+  are soybeans picked while still green and soft,
+  before they ripen into the dry, pale beans used
+  for tofu, miso, and soy sauce. Eating them this
+  way was common by the Edo period (1603 to 1868).
+  Street vendors in Edo sold boiled edamame still on
+  the branch, which is where the name, meaning
+  roughly "branch beans," comes from. In the
+  countryside, picking some of the crop green was a
+  natural way to enjoy it in late summer, when the
+  pods are full but the beans are still tender.
+
+  That timing matters. Zunda is above all a dish of
+  the Tohoku region, the northeastern part of
+  Honshu, and especially of Miyagi Prefecture and
+  its capital, Sendai. It is also made in Yamagata,
+  Fukushima, and Iwate. In these areas edamame ripen
+  in late summer, around the time of Obon. Making
+  mochi as an offering for returning ancestors and
+  covering it with a paste of freshly picked green
+  beans tied the dish to the calendar of farm life.
+  tmux focus-events off · add 'set -g focus-event…
+────── adjutant-read-octo-org+octo-repository+1234 ─
+[38;5;246m❯ 
+────────────────────────────────────────────────────
+  ⏵⏵ don't ask on (shift+tab to cycle) · esc to i…
+@@adjutant:pane@@
+0	2	27

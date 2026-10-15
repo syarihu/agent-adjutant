@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.300
+▝▜██████▀  Opus 5.5 · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Think hard about the history of zunda mochi, then
+  write 1200 words about it in plain prose. Do not
+  use any tools.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+✢ Bootstrapping… (4s · thinking)
+                                ◐ medium · /effort
+────── adjutant-read-octo-org+octo-repository+1234 ─
+[38;5;246m❯ 
+────────────────────────────────────────────────────
+  ⏵⏵ don't ask on (shift+tab to cycle) · esc to i…
+@@adjutant:pane@@
+0	2	27
