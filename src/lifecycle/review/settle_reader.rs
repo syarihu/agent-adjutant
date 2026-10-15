@@ -84,9 +84,10 @@ pub fn settle_reader(
 }
 
 /// `settle_reader` with the screen, the keys and the waiting handed in. `Ok` when the agent is
-/// at its prompt or running (also in a narrow pane, where the session's name in the input box's
-/// border and a footer cut to the width are how `mail::pane_state` has to read it; or its pane is gone, which the queue's reaping of dead readers
-/// already handles; or its screen is still blank at the deadline), `Err` with why the read should be failed otherwise.
+/// at its prompt or running (also in a narrow pane, where `mail::pane_state` reads the session's
+/// name in the input box's border and a footer cut to the width; or its pane is gone, which the
+/// queue's reaping of dead readers already handles; or its screen is still blank at the
+/// deadline), `Err` with why the read should be failed otherwise.
 ///
 /// The trust dialog is answered for `own_dir` alone, by exact match (the directory as given,
 /// as it resolves, and a `~/` written out), and at most once: the pointer is put on "Yes, I
