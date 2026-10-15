@@ -1393,11 +1393,11 @@ test('each part says what of the records it needs, and only a read or a diff of 
   ];
   const c = vm.createContext({
     aideShown: () => ({ parts }), cardDialog: { scope: null }, cardDialogEl: () => ({ open: false }), aideCurrentWaits: () => [{ board: 'w' }],
-    aide: { taskAis: new Map([['g/t7', { pr: 'o/r#6', record: { ai: { sha: 'abc' } } }]]), boards: { g: { data: { gates: [{ id: 'g1', task: 't7' }] } } } },
+    aide: { prs: new Map([['o/r#3', { rec: { task: { board: 'lb', id: '9' } } }]]), taskAis: new Map([['g/t7', { pr: 'o/r#6', record: { ai: { sha: 'abc' } } }]]), boards: { g: { data: { gates: [{ id: 'g1', task: 't7' }] } } } },
   });
   vm.runInContext(fnSrc(aideSrc, 'aideWanted'), c);
   const got = vm.runInContext('aideWanted()', c);
-  assert.deepStrictEqual([...got.boards].sort(), ['d', 'g', 'p', 's', 't', 'w']);
+  assert.deepStrictEqual([...got.boards].sort(), ['d', 'g', 'lb', 'p', 's', 't', 'w'], "a PR part by id reads the board of the task its record names");
   assert.deepStrictEqual([...got.taskAis.keys()].sort(), ['g/t7', 'p/2']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify([...got.prs])), [['o/r#6', { read: true }], ['o/r#3', {}], ['o/r#4', { read: true, diff: true }], ['o/r#5', { read: true, diff: true }]]);
 });

@@ -138,7 +138,12 @@ function aideWanted() {
     }
     if (['task', 'session'].includes(p.kind) && ref.board) boards.add(String(ref.board));
     if (p.kind === 'pr') {
-      if (ref.pr) wantPr(ref.pr);
+      if (ref.pr) {
+        wantPr(ref.pr);
+        // The task the record is read for has its own status of the PR on its board's card: that board is read once the record is in.
+        const link = aide.prs.get(ref.pr)?.rec?.task;
+        if (link?.board) boards.add(String(link.board));
+      }
       else if (ref.board) { boards.add(String(ref.board)); wantTask(ref.board, ref.id); }
     }
     if (p.kind === 'read') wantPr(ref.pr, { read: true, diff: true });
