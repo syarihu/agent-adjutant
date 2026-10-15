@@ -345,9 +345,13 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
         // The box is not found when the screen is not the agent's, but also when it is drawn in
         // a way not known; a running footer is still read, so the turn is not typed into. It
         // is looked for after the questions above, which win, and only on the bottom line,
-        // where the footer is drawn.
+        // where the footer is drawn, as the mode line it is (output that only mentions the
+        // keys is not one).
         let bottom_line = lines.iter().rev().find(|l| !l.plain.trim().is_empty());
-        if agent == Agent::Claude && bottom_line.is_some_and(|l| claude_running_footer(&l.plain)) {
+        if agent == Agent::Claude
+            && bottom_line
+                .is_some_and(|l| claude_mode_line(&l.plain) && claude_running_footer(&l.plain))
+        {
             return reading(PaneState::Working);
         }
         return reading(PaneState::Unknown);

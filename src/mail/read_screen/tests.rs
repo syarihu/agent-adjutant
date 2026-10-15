@@ -351,6 +351,21 @@ fn a_running_footer_without_a_box_is_working() {
         pane_state(Agent::Agy, &screen_of(&["some output", "", running])),
         PaneState::Unknown
     );
+    // Uncut, too, only as the mode line: output that mentions the keys is not the footer.
+    assert_eq!(
+        pane_state(
+            Agent::Claude,
+            &screen_of(&["some output", "", "  ⏵⏵ auto mode on · esc to interrupt"])
+        ),
+        PaneState::Working
+    );
+    assert_eq!(
+        pane_state(
+            Agent::Claude,
+            &screen_of(&["some output", "", "Press esc to interrupt the process"])
+        ),
+        PaneState::Unknown
+    );
 }
 
 #[test]
