@@ -9,6 +9,13 @@ Captured from real sessions, one file per state:
     question          the agent asked a question (claude AskUserQuestion, agy ask_question)
     permission        a shell command waiting for approval
     menu              the folder-trust dialog shown on first start in a directory
+    narrow-working    claude, a turn with its spinner in a narrow pane; the footer is cut to `esc to i…`
+    narrow-working-streaming  claude, the reply streaming with no spinner line; only the cut footer shows it
+    narrow-idle       claude, an empty box with a faint suggestion in a narrow pane; the footer is cut to `← for ag…`
+
+The three `narrow-` ones: Claude Code 2.1.300 at 52x30, fullscreen UI, started with
+`-n adjutant-read-<name> --permission-mode dontAsk`, so the session name is drawn in the box's
+top border and the footer is cut to the width.
 
 Versions: Claude Code 2.1.284, Antigravity CLI (agy) 1.2.6, tmux 3.7c. Each ran in its own
 pane of 100x30 on an isolated tmux server, driven with `send-keys`.

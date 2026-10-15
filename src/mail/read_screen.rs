@@ -92,6 +92,43 @@ fn agy_spinner(line: &str) -> bool {
         .is_some_and(|c| ('\u{2800}'..='\u{28ff}').contains(&c))
 }
 
+/// The mode line Claude draws under the input box (`⏵⏵ auto mode on (shift+tab to cycle)`,
+/// `⏸ manual mode on`): the footer that carries `esc to interrupt` while a turn runs.
+fn claude_mode_line(line: &str) -> bool {
+    line.trim_start().starts_with(['⏵', '⏸'])
+}
+
+/// The footer of a turn that is running: `esc to interrupt` after the mode. The footer is cut
+/// to the pane's width with an ellipsis, so in a narrow pane it reads `esc to i…`, and the
+/// fullscreen UI draws no spinner line while the reply streams: the footer is then the only
+/// sign of the turn. A cut that is a prefix of the words (three characters or more) counts,
+/// but only as the last segment of a mode line, after a `·`. `e…`, `es…` and a bare `…` are
+/// left out on purpose: too short to tell from the cut `← for agents` hint or from nothing at
+/// all, and a turn taken for idle there is the lesser harm than an idle one taken for running.
+///
+/// Only the footer's own row says so: a transcript line that reads like a cut footer (a diff
+/// or tool output quoting one) is not a turn, so callers look at the footer's row alone.
+fn claude_running_footer(line: &str) -> bool {
+    line.to_lowercase().contains("esc to interrupt") || claude_cut_running_footer(line)
+}
+
+/// The cut forms of `claude_running_footer`: a mode line ending in a prefix of the words.
+fn claude_cut_running_footer(line: &str) -> bool {
+    if !claude_mode_line(line) {
+        return false;
+    }
+    let mut segments = line.rsplit('·');
+    let last = segments.next().unwrap_or_default().trim();
+    if segments.next().is_none() {
+        return false;
+    }
+    let Some(cut) = last.strip_suffix('…') else {
+        return false;
+    };
+    let cut = cut.trim().to_lowercase();
+    cut.chars().count() >= 3 && "esc to interrupt".starts_with(&cut)
+}
+
 fn working_marker(agent: Agent, line: &str) -> bool {
     let lower = line.to_lowercase();
     match agent {
@@ -182,6 +219,16 @@ fn is_border(plain: &str) -> bool {
     line.starts_with("───") && line.chars().filter(|&c| c == '─').count() >= 10
 }
 
+/// The top edge of the input box: a rule, or one with the session's name drawn into it
+/// (`────── adjutant-read-x ─`, from `claude -n`). The name takes room from the rule, so in a
+/// narrow pane too few dashes are left for `is_border` (or none before the name). Whatever
+/// ends in ` ─` after some text is taken for it; the box still needs its prompt line right
+/// below and its full bottom rule, so a transcript line that ends so does not make one.
+fn is_box_top(plain: &str) -> bool {
+    let line = plain.trim();
+    is_border(plain) || (line.ends_with(" ─") && !line.trim_end_matches('─').trim_end().is_empty())
+}
+
 /// A line that is one of a numbered list's items with the pointer on it: `❯ 1. Yes`.
 fn is_pointed_option(plain: &str) -> bool {
     let line = plain.trim_start();
@@ -208,11 +255,11 @@ struct InputBox {
 }
 
 /// The input box nearest the bottom: a line starting with the prompt glyph that has a border
-/// above it and, further down, another one.
+/// above it (which may carry the session's name) and, further down, another one.
 fn input_box(agent: Agent, lines: &[Line]) -> Option<InputBox> {
     let glyph = prompt_glyph(agent);
     for top in (0..lines.len().saturating_sub(1)).rev() {
-        if !is_border(&lines[top].plain) || !lines[top + 1].plain.trim_start().starts_with(glyph) {
+        if !is_box_top(&lines[top].plain) || !lines[top + 1].plain.trim_start().starts_with(glyph) {
             continue;
         }
         let Some(bottom) = (top + 2..lines.len()).find(|&i| is_border(&lines[i].plain)) else {
@@ -295,6 +342,18 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
         return reading(PaneState::Asking);
     }
     let Some(input) = input else {
+        // The box is not found when the screen is not the agent's, but also when it is drawn in
+        // a way not known; a running footer is still read, so the turn is not typed into. It
+        // is looked for after the questions above, which win, and only on the bottom line,
+        // where the footer is drawn, as the mode line it is (output that only mentions the
+        // keys is not one).
+        let bottom_line = lines.iter().rev().find(|l| !l.plain.trim().is_empty());
+        if agent == Agent::Claude
+            && bottom_line
+                .is_some_and(|l| claude_mode_line(&l.plain) && claude_running_footer(&l.plain))
+        {
+            return reading(PaneState::Working);
+        }
         return reading(PaneState::Unknown);
     };
     if !input.text.is_empty() {
@@ -303,7 +362,13 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
             typed: input.text,
         };
     }
-    if lines.iter().any(|l| working_marker(agent, &l.plain)) {
+    // The cut footer counts only under the box, where the footer is drawn; the spinner and the
+    // whole words count anywhere, as they always did.
+    let footer_cut = agent == Agent::Claude
+        && lines[input.bottom + 1..]
+            .iter()
+            .any(|l| claude_cut_running_footer(&l.plain));
+    if footer_cut || lines.iter().any(|l| working_marker(agent, &l.plain)) {
         return reading(PaneState::Working);
     }
     reading(PaneState::Idle)
@@ -336,6 +401,7 @@ fn is_chrome(plain: &str) -> bool {
             .strip_prefix('⎿')
             .is_some_and(|rest| rest.trim_start().starts_with("Tip:"))
         || line.starts_with("tmux detected")
+        || claude_mode_line(line)
         || is_key_hint(line)
 }
 

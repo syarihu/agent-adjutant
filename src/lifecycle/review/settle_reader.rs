@@ -84,8 +84,10 @@ pub fn settle_reader(
 }
 
 /// `settle_reader` with the screen, the keys and the waiting handed in. `Ok` when the agent is
-/// at its prompt or running (or its pane is gone, which the queue's reaping of dead readers
-/// already handles; or its screen is still blank at the deadline), `Err` with why the read should be failed otherwise.
+/// at its prompt or running (also in a narrow pane, where `mail::pane_state` reads the session's
+/// name in the input box's border and a footer cut to the width; or its pane is gone, which the
+/// queue's reaping of dead readers already handles; or its screen is still blank at the
+/// deadline), `Err` with why the read should be failed otherwise.
 ///
 /// The trust dialog is answered for `own_dir` alone, by exact match (the directory as given,
 /// as it resolves, and a `~/` written out), and at most once: the pointer is put on "Yes, I
@@ -396,6 +398,20 @@ mod tests {
         let (out, sent) = run(Agent::Claude, vec![screen]);
         assert!(out.unwrap_err().contains("prompt adj does not know"));
         assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn a_narrow_reader_running_or_idle_is_settled_at_once() {
+        // The session's name in the box's top border and a footer cut to the width, as a
+        // reader in a narrow pane draws them.
+        for text in [
+            include_str!("../../fixtures/panes/claude-narrow-working.txt"),
+            include_str!("../../fixtures/panes/claude-narrow-working-streaming.txt"),
+            include_str!("../../fixtures/panes/claude-narrow-idle.txt"),
+        ] {
+            let (out, sent) = run(Agent::Claude, vec![parse_pane_screen(text)]);
+            assert_eq!((out, sent.len()), (Ok(()), 0));
+        }
     }
 
     #[test]
