@@ -768,3 +768,30 @@ test('where the points are in the diff is found once for a diff and a read-throu
   const parse = run('aideParsedGateDiff');
   assert.strictEqual(parse(DIFF), parse(DIFF));
 });
+
+test("a finished task's PR is read from the task's own status before a stale record: merged is merged, and its CI is the task's", () => {
+  const stale = { ...RECORD, draft: true, state: 'requested', ci: { pass: 1, fail: 0, pending: 2 }, reviewers: [] };
+  const out = html('pr', { board: 's', id: '41' }, { prFacts: () => ({ rec: stale, task: TCARD, prStatus: { state: 'merged', title: 'Merged <t>', review: 'approved', ci: { pass: 58, fail: 0, pending: 0 } }, prTurn: null, nowSecs: 1e10 }) });
+  assert.ok(out.includes('マージ済みです') && !out.includes('下書きです') && !out.includes('まだです') && !out.includes('コンフリクトは記録にありません'));
+  assert.ok(out.includes('成功 58 / 失敗 0 / 実行中 0') && out.includes('Merged &lt;t&gt;'));
+  const closed = html('pr', { board: 's', id: '41' }, { prFacts: () => ({ rec: stale, task: TCARD, prStatus: { state: 'closed', ci: {} }, nowSecs: 1e10 }) });
+  assert.ok(closed.includes('マージされずに閉じられています') && !closed.includes('下書きです'));
+  // An open PR with no live turn: the status says approved, and the record's draft flag is not what is read.
+  const open = html('pr', { board: 's', id: '41' }, { prFacts: () => ({ rec: stale, task: TCARD, prStatus: { state: 'open', review: 'approved', ci: { pass: 3, fail: 0, pending: 0 } }, nowSecs: 1e10 }) });
+  assert.ok(open.includes('承認済み・CI 成功') && !open.includes('下書きです'));
+});
+
+test('a finished task says its plan cannot be read here, not that there is none; a live one with none says there is none', () => {
+  const view = status => html('task', { board: 's', id: '41' }, { task: () => ({ task: { ...TCARD, status }, plan: null, gates: [], nwo: 'a/b' }) });
+  assert.ok(view('done').includes('終わったタスクの計画はここでは読めません') && !view('done').includes('計画はまだありません'));
+  assert.ok(view('cancelled').includes('終わったタスクの計画はここでは読めません'));
+  assert.ok(view('dispatched').includes('計画はまだありません'));
+});
+
+test('read parts of one PR are told apart by their pick in the heading', () => {
+  const head = ref => html('read', { pr: 'a/b#1', ...ref }, { pr: () => ({ state: 'loading' }) }).match(/aide-part-kind">.*?<\/span>(.*?)<\/span>/)[1];
+  assert.equal(head({}), 'AI 下読み');
+  assert.equal(head({ point: 3 }), 'AI 下読み · 見るポイント 3');
+  assert.equal(head({ level: 'info' }), 'AI 下読み · 参考のポイント');
+  assert.equal(head({ level: 'attention' }), 'AI 下読み · 要注意のポイント');
+});

@@ -456,7 +456,9 @@ registerAidePart('read', (part, ctx) => {
   const id = part.ref?.pr || '';
   const got = ctx.pr && id ? ctx.pr(id) : null;
   const rec = got?.rec || null;
-  const base = { icon: 'menu_book', label: 'AI 下読み', where: rec ? prSubText(rec) : id, title: rec?.title || id, cls: '' };
+  // The pick is in the heading, so folded parts of one PR are told apart.
+  const pick = part.ref?.point ? ` · 見るポイント ${part.ref.point}` : part.ref?.level ? ` · ${PR_LEVEL[part.ref.level] || part.ref.level}のポイント` : '';
+  const base = { icon: 'menu_book', label: `AI 下読み${pick}`, where: rec ? prSubText(rec) : id, title: rec?.title || id, cls: '' };
   if (!got || got.state === 'loading') return { ...base, body: aideNote('読み込み中…') };
   if (got.state === 'error') return { ...base, body: aideNote(`この下読みを読めませんでした: ${got.error}`) };
   if (got.state === 'none' || !got.read) return { ...base, body: aideNote('この PR の AI 下読みは、まだありません') };
@@ -504,8 +506,9 @@ function aideTaskNext(task, gates) {
 }
 
 /* The plan of a task in a line: `plan` is `{ title, state: 'decided' | 'waiting', at, text }` (`at` a stamp). */
-function aidePlanLine(plan) {
-  if (!plan) return '計画はまだありません';
+function aidePlanLine(plan, finished = false) {
+  // The server leaves a finished task's plan off its card: that is not the same as there being none.
+  if (!plan) return finished ? '終わったタスクの計画はここでは読めません' : '計画はまだありません';
   const when = plan.at && stampSecs(plan.at) != null ? ` · ${ago(plan.at)}` : '';
   const said = aidePlainLine(plan.text, 1, 100);
   return `${plan.title || '計画'} — ${plan.state === 'decided' ? '決定済み' : 'あなたの判断待ち'}${when}${said ? `: ${said}` : ''}`;
@@ -601,7 +604,7 @@ registerAidePart('task', (part, ctx) => {
   const here = `data-aide-board="${esc(ref.board)}" data-aide-task="${esc(task.id)}"`;
   const pr = task.pr ? ` · PR ${esc(task.pr)}` : '';
   const body = aideSection('このタスク', `<p class="aide-gate-task">${esc(aidePlainLine(task.body) || task.title || task.id)}</p><div class="tp-muted">${esc(`#${task.id} · ${task.status || ''}`)}${pr}</div>`)
-    + aideSection('計画', `<p class="aide-gate-task">${esc(aidePlanLine(plan))}</p>`)
+    + aideSection('計画', `<p class="aide-gate-task">${esc(aidePlanLine(plan, ['done', 'cancelled'].includes(task.status)))}</p>`)
     + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next ?? aideTaskNext(task, gates))}</p>`)
     + `<div class="aide-gate-actions">${aideLinkBtn(`data-aide-expand ${here} data-aide-target="request"`, 'open_in_full', '拡大')}${got.rowKey ? aideTermButtonHtml(got.rowKey) : ''}</div>`;
   return { ...base, title: task.title || task.id, body: `<div class="aide-task">${aideStaleNote(got.refreshError)}${body}</div>` };
@@ -628,6 +631,17 @@ function aideTurnOfRecord(rec) {
 }
 
 /* What stands between the PR and a merge, by the records: `{ ok, blockers }`. A conflict is not in them. */
+/* Whose turn a task's PR is from what the task's last refresh read of it (`prStatus`), when no live card says: a finished task has no `prTurn`. */
+function aideTurnOfStatus(ps) {
+  if (!ps) return null;
+  if (ps.state === 'merged' || ps.state === 'closed') return ps.state;
+  if (ps.state === 'draft') return 'draft';
+  if (ps.review === 'changes') return 'changes';
+  if (Number(ps.ci?.fail) > 0) return 'ci-failed';
+  if (Number(ps.ci?.pending) > 0) return 'checks';
+  return ps.review === 'approved' ? 'merge' : 'unrequested';
+}
+
 function aideMergeBlockers(turn, ci) {
   if (turn === 'merged') return { ok: false, merged: true, blockers: [] };
   const blockers = [];
@@ -649,13 +663,16 @@ const AIDE_TURN_WORD = { ...AIDE_PR_WAIT, merged: 'マージ済みです', close
 registerAidePart('pr', (part, ctx) => {
   const ref = part.ref || {};
   const got = ctx.prFacts ? ctx.prFacts(ref) : null;
-  const base = { icon: 'merge_type', label: 'PR', where: got?.rec ? prSubText(got.rec) : got?.prId || '', title: got?.rec?.title || got?.prStatus?.title || got?.task?.title || ref.pr || '', cls: '' };
+  const base = { icon: 'merge_type', label: 'PR', where: got?.rec ? prSubText(got.rec) : got?.prId || '', title: got?.prStatus?.title || got?.rec?.title || got?.task?.title || ref.pr || '', cls: '' };
   if (!got || got.loading) return { ...base, body: aideNote('読み込み中…') };
   if (got.error) return { ...base, body: aideNote(`この PR を読めませんでした: ${got.error}`) };
   const { rec, task, prStatus, phase } = got;
   if (!rec && !prStatus) return { ...base, body: aideNote('この PR は読めません（記録がありません）') };
-  const turn = got.prTurn || aideTurnOfRecord(rec);
-  const ci = rec?.ci || prStatus?.ci || {};
+  // The task's own read of its PR is newer than the record's, which only a sync or a read-through rewrites: it comes first, and says
+  // merged or closed whatever the record still holds.
+  const done = prStatus && ['merged', 'closed'].includes(prStatus.state) ? prStatus.state : null;
+  const turn = done || got.prTurn || (prStatus ? aideTurnOfStatus(prStatus) : aideTurnOfRecord(rec));
+  const ci = prStatus?.ci || rec?.ci || {};
   const rows = [];
   rows.push(prKv('レビュー（誰の番）', esc(task || !rec ? AIDE_TURN_WORD[turn] || '記録がありません' : AIDE_OTHERS_STATE[rec.state] || AIDE_TURN_WORD[turn] || '')));
   const bots = (rec?.reviewers || []).filter(r => aideIsBot(r.login));

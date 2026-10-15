@@ -302,6 +302,10 @@ fn resolve(
                 DiffSource::Gate { board, id } => {
                     let (topic, gate_ref) = gate_topic(root, &board, &id)?;
                     let gate = crate::gate::get(root, &board, &id)?;
+                    // `get` reads a record too; only a gate that waits has a diff the page can still show.
+                    if !gate.wait {
+                        return Err(format!("gate {id} is not open: it is a record"));
+                    }
                     let diff = gate
                         .diff
                         .ok_or_else(|| format!("gate {id} carries no diff"))?;
@@ -1434,6 +1438,14 @@ mod tests {
                 id: id.to_string(),
             })
         };
+        // A gate kept as a record is not open, whatever diff it carries.
+        std::fs::create_dir_all(gates.join("records")).unwrap();
+        let mut record = serde_json::to_value(gate("g4", Some("t1"))).unwrap();
+        record["diff"] = json!(FILE_DIFF);
+        record["wait"] = json!(false);
+        std::fs::write(gates.join("records/g4.json"), record.to_string()).unwrap();
+        let err = show_with(&root, by("g4"), no_work).unwrap_err();
+        assert!(err.contains("not open"), "{err}");
         let shown = show_with(&root, by("g2"), no_work).unwrap();
         let reference = shown.display.parts[0].reference.clone().unwrap();
         assert_eq!(
