@@ -1490,6 +1490,17 @@ test('a task document that comes back after a newer one is dropped, and a failed
   assert.deepStrictEqual([kept.pr, kept.error], ['new', 'boom']);
 });
 
+test("the annotations of a gate's 根拠 are the read-through of the head the task's record is at, and none while it is of another", () => {
+  const read = { sha: 'A' };
+  const c = vm.createContext({ prReadKey: rec => rec.ai.sha, aide: { taskAis: new Map(), prs: new Map([['o/r#1', { read, readKey: 'A' }]]) } });
+  vm.runInContext(fnSrc(aideSrc, 'aideTaskRead'), c);
+  const ask = ai => { c.aide.taskAis.set('b/t', ai); return vm.runInContext("aideTaskRead('b', 't')", c); };
+  assert.strictEqual(ask({ pr: 'o/r#1', record: { ai: { sha: 'A' } } }), read);
+  assert.strictEqual(ask({ pr: 'o/r#1', record: { ai: { sha: 'B' } } }), null, 'the record moved to B: A is not drawn');
+  assert.strictEqual(ask({ pr: 'o/r#1', record: { ai: {} } }), null);
+  assert.strictEqual(ask({ pr: null, record: null }), null);
+});
+
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
   const log = [];
   let top = 'page-gate:b/g1';

@@ -275,7 +275,11 @@ const aideParentTitle = (nwo, key) => workRepos().find(r => r.nwo === nwo)?.pare
 /* The read-through of the PR a task is of, when it has one that has been read: what annotates the lines of a gate's 「根拠」. */
 function aideTaskRead(board, taskId) {
   const ai = taskId ? aide.taskAis.get(`${board}/${taskId}`) : null;
-  return ai?.pr && ai.record?.ai?.sha ? aide.prs.get(ai.pr)?.read || null : null;
+  if (!ai?.pr || !ai.record?.ai?.sha) return null;
+  const e = aide.prs.get(ai.pr);
+  // Annotations are anchored in the head they were read at: with the task's record already at another head, they are not drawn
+  // until the read-through of that head has come.
+  return e?.read && e.readKey === prReadKey(ai.record) ? e.read : null;
 }
 
 /* What `ctx.gate(ref)` says of a gate (see the gate renderer in aide-display.js): null while its board has not been read. */
@@ -345,7 +349,7 @@ function aideParentView(board, key) {
   const rowsBy = new Map();
   for (const c of p.children || []) { const r = listed.find(x => x.raw === `${repo.nwo}/${c.hub}` && x.task?.id === c.id); if (r) rowsBy.set(aideChildKey(c), r.key); }
   const { items, counts, total } = aideParentBuckets(p.children || [], waitsBy, tasks, rowsBy, p.total);
-  return { p, children: items, counts, total, next: aideParentNext(items, waits), nwo: repo.nwo };
+  return { p, children: items, counts, total, next: aideParentNext(items, waits), nwo: repo.nwo, refreshError: work.error };
 }
 
 /* What `ctx.session(board, id)` says: the row of the list the session is, or one made of what the document lists when the list leaves it out. */
@@ -368,7 +372,7 @@ function aideSessionView(board, id) {
     phaseMinutes: x => (x.s.phaseAt != null && x.data.now != null ? minutesSince(x.s.phaseAt, x.data.now) : null),
     title: x => sessionLabel(x.s, false, x.data).text,
   };
-  return { r, fns, nwo: repo.nwo, stuckAfter: Number(aide.boards[board]?.data?.stuckAfterMinutes) || 0, refreshError: aideBoardError(board) };
+  return { r, fns, nwo: repo.nwo, stuckAfter: Number(aide.boards[board]?.data?.stuckAfterMinutes) || 0, refreshError: work.error || aideBoardError(board) };
 }
 
 /* `ctx.pr(id)`: the record, read-through and parsed diff of a PR the parts name. */
@@ -405,7 +409,7 @@ function aidePrFacts(ref) {
   if (!ai) return { loading: true };
   const e = ai.pr ? aide.prs.get(ai.pr) : null;
   return { rec: ai.record || e?.rec || null, task: card, prId: ai.pr, prStatus: card.prStatus || null, prTurn: card.prTurn || null, phase: phaseOf(ref.board, ref.id), nowSecs,
-    refreshError: ai.error || e?.error || b.error || null };
+    refreshError: ai.error || e?.error || b.error || work.error || null };
 }
 
 /* `ctx.diffOf(ref)`: the lines' file in the source the part names. A PR's diff is the one stored with its read-through, with the reader's

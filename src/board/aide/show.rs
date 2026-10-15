@@ -568,10 +568,21 @@ fn header_paths(rest: &str) -> Option<(String, String)> {
 /// Whether the unified diff `diff` has a file `path`: by its `diff --git` line, or its old or new
 /// name, read as the page reads them (so a name git quoted is found by what it says).
 fn diff_names_file(diff: &str, path: &str) -> bool {
+    // `---` and `+++` name a file only in the header of one, between its `diff --git` line and its first hunk: inside a hunk
+    // a removed line `-- x` reads as `--- x`, and is content.
+    let mut in_header = false;
     diff.lines().any(|line| {
         let line = line.trim_end_matches('\r');
         if let Some(rest) = line.strip_prefix("diff --git ") {
+            in_header = true;
             return header_paths(rest).is_some_and(|(a, b)| b == path || a == path);
+        }
+        if line.starts_with("@@") {
+            in_header = false;
+            return false;
+        }
+        if !in_header {
+            return false;
         }
         match (line.strip_prefix("--- "), line.strip_prefix("+++ ")) {
             (Some(r), _) | (_, Some(r)) => diff_line_path(r).is_some_and(|p| p == path),
@@ -1536,5 +1547,18 @@ diff --git a/old.rs b/new.rs\nsimilarity index 90%\nrename from old.rs\nrename t
         assert!(diff_names_file("diff --git a/あ い b/あ い\nx\n", "あ い"));
         assert!(diff_names_file("diff --git a/x b/日本語\n", "日本語"));
         assert!(!diff_names_file("diff --git a/x b/日本語\n", "y"));
+    }
+
+    #[test]
+    fn a_line_inside_a_hunk_that_looks_like_a_file_header_is_content() {
+        let diff = "diff --git a/real.rs b/real.rs\n--- a/real.rs\n+++ b/real.rs\n@@ -1,2 +1,2 @@\n--- ghost.rs\n+++ phantom.rs\n ctx\n";
+        assert!(diff_names_file(diff, "real.rs"));
+        assert!(!diff_names_file(diff, "ghost.rs"));
+        assert!(!diff_names_file(diff, "phantom.rs"));
+        // A header after a hunk is read again for its own file.
+        let two = format!(
+            "{diff}diff --git a/next.rs b/next.rs\n--- a/next.rs\n+++ b/next.rs\n@@ -1 +1 @@\n-a\n+b\n"
+        );
+        assert!(diff_names_file(&two, "next.rs"));
     }
 }

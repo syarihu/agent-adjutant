@@ -729,3 +729,8 @@ test('the session part says when the last read of its board failed', () => {
   const out = html('session', { board: 's', id: 'a' }, { session: () => ({ r: SROW(), fns: FNS, nwo: 'a/b', stuckAfter: 0, refreshError: 'boom' }) });
   assert.ok(out.includes('最新の読み込みに失敗しました: boom'));
 });
+
+test('a parent says when the last read of the work document failed', () => {
+  const out = html('task', { board: 's', parent: 'k' }, { parent: () => ({ p: { title: 'P' }, children: [], counts: { merged: 0, done: 0, waiting: 0, working: 0, notStarted: 0 }, total: 0, next: 'n', refreshError: 'boom' }) });
+  assert.ok(out.includes('最新の読み込みに失敗しました: boom'));
+});
