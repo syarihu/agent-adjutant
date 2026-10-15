@@ -8,1539 +8,180 @@ A task hub for coding agents, as one binary.
 
 ![agent-adjutant demo](docs/images/demo.gif)
 
-`adjutant` is a repository's 副官 — its adjutant: it hands work out to workers and takes
-their reports back in. The hub picks a task, cuts a worktree, writes a brief and starts a
-worker in a new tab; a worker that trips over an unrelated bug hands it back rather than
-fixing it or filing it itself. Both halves of that are procedures, and the procedures ship
-inside the binary.
+`adjutant` is a repository's 副官 — its adjutant: it hands work out to workers and takes their reports back in. The hub picks a task, cuts a worktree, writes a brief and starts a worker in a new tab; a worker that trips over an unrelated bug hands it back rather than fixing it or filing it itself. Both halves of that workflow are procedures, and the procedures ship inside the binary served over MCP.
+
+---
 
 ## Why a binary that serves prompts
 
-The procedures used to be markdown files copied into each agent's commands directory. A copy
-drifts: upgrade the tool and the copies stay behind, one per config directory, all subtly
-different. Served over MCP they are a pointer instead — one upgrade moves every caller.
+The procedures used to be markdown files copied into each agent's commands directory. A copy drifts: upgrade the tool and the copies stay behind, one per config directory, all subtly different. Served over MCP they are a pointer instead — one upgrade moves every caller.
 
-The mechanical parts (deriving the hub's name, resolving the config, opening a tab, moving a
-message) used to be prose repeated across three procedure files, which is a rule with three
-versions. They are commands now, and the procedures call them.
+The mechanical parts (deriving the hub's name, resolving the config, opening a tab, moving a message) used to be prose repeated across procedure files. They are now fast native CLI commands, and the procedures call them.
 
-## Install
+---
 
-Via Homebrew:
+## Installation
+
+### Homebrew
 
 ```bash
-brew install syarihu/tap/agent-adjutant # both binaries: `adjutant` and the short `adj`
-adjutant install-mcp                   # registers the MCP server with Claude Code (user scope)
-adjutant install-mcp --target agy       # registers the MCP server with Antigravity (agy)
-adjutant install-mcp --target json      # or print the JSON for another client
+brew install syarihu/tap/agent-adjutant # installs both `adjutant` and the short `adj`
+adjutant install-mcp                   # registers MCP server with Claude Code (user scope)
+adjutant install-mcp --target agy       # registers MCP server with Antigravity (agy)
+adjutant install-mcp --target json      # prints JSON configuration for other clients
 ```
 
-Via Cargo:
+### Cargo
 
 ```bash
-cargo install --git https://github.com/syarihu/agent-adjutant # both binaries: `adjutant` and the short `adj`
+cargo install --git https://github.com/syarihu/agent-adjutant # installs both `adjutant` and `adj`
 # or from a local checkout:
-#   cargo install --path .    (or `make install`; `make restart` restarts `adj server`; `make reinstall` does both)
-# or without cargo install:
-#   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
+#   cargo install --path . (or `make install`; `make restart` restarts `adj server`; `make reinstall` does both)
 ```
 
-`install-mcp` performs the registration rather than printing instructions for someone to
-follow: `--target claude-code` (the default) runs `claude mcp add`, and `--target agy` runs
-`agy mcp add`. The `json` target is the escape hatch for clients this does not know, and
-is the only path that asks you to paste anything.
+> [!IMPORTANT]
+> **Install before registering.** `install-mcp` records the command as `adjutant` if it is already found on your `PATH`. Running `install-mcp` from a target build directory pins that build path, which breaks if `cargo clean` is run.
 
-**Install before registering.** The registration records `adjutant` when PATH already
-resolves to the binary you ran, and its absolute path otherwise — so running `install-mcp`
-out of a build directory pins that build forever, and `cargo clean` then breaks the server.
+### Global Hooks Setup
 
-**Sessions adjutant did not start.** Claude Code hubs and workers adjutant starts get its hooks at
-launch. Antigravity sessions do not report yet ([#520](https://github.com/syarihu/agent-adjutant/issues/520)).
-To have Claude Code sessions you start yourself, or any Codex session, report to
-`adjutant agent-sessions` and the board's 「いまの仕事」, add the same hooks to your Claude Code user
-settings or Codex's hooks file:
+Claude Code hubs and workers launched by adjutant receive hooks automatically. To allow sessions you start manually, or any Codex session, to report to `adjutant agent-sessions` and the board's 「いまの仕事」, register the global hooks:
 
 ```bash
-adjutant setup claude            # adds adjutant's hooks to ~/.claude/settings.json ($CLAUDE_CONFIG_DIR/settings.json when set)
-adjutant setup claude --remove   # takes out only those again
-adjutant setup codex             # the same for Codex: ~/.codex/hooks.json ($CODEX_HOME/hooks.json when set); Codex asks you to trust the new hooks
-adjutant setup codex --remove    # and the same for Codex
+adjutant setup claude            # adds hooks to ~/.claude/settings.json
+adjutant setup claude --remove   # removes only adjutant hooks
+adjutant setup codex             # adds hooks to ~/.codex/hooks.json
+adjutant setup codex --remove    # removes only adjutant hooks
 ```
 
-It appends its entries next to your own hooks and never changes those; `--remove` takes out only
-entries that run `… hook <agent> --global`, whatever path they name. Run it again after moving or
-upgrading `adj` to rewrite them to the new path. It records the path of the binary it runs as, so run it from the
-installed `adjutant`, not from `cargo run` or a build directory. The file is rewritten formatted, with its keys sorted.
+> **Note on short name**: `adj` is a short alias for `adjutant`. Both binaries are identical.
 
-**`adj` is the same program under a shorter name** — both binaries are installed, and every
-example below works either way. `adj work` even starts its worker tabs as `adj worker`,
-because a command that names itself uses the name it was called by.
+---
 
-## Two modes
+## Quick Start
 
-Shell-side, for the places that run *before* an agent exists — launchers, hooks, the
-procedures' own `Bash` steps (`adj` everywhere, if you prefer):
+1. **Start the resident dashboard server**:
+   ```bash
+   adj server start
+   ```
+   Serves the unified web board at `http://127.0.0.1:4577`.
 
-| | |
+2. **Start the repository hub**:
+   In your repository's main checkout:
+   ```bash
+   adj hub
+   ```
+   The hub runs an interactive agent session responsible for orchestrating tasks and dispatching workers.
+
+3. **Dispatch a task to a worker**:
+   From the board's new-task form, or directly via CLI:
+   ```bash
+   adj work --worktree feature-auth --title "Implement OAuth2 login"
+   ```
+   A new tab or detached tmux window opens with an isolated worker operating in its own worktree.
+
+4. **Review and answer gates on the board**:
+   When the worker needs approval for its implementation plan, diff review, or manual testing, it opens a **gate**. Review and answer the gate directly on the board (`http://127.0.0.1:4577`) to let the worker proceed.
+
+---
+
+## Core Concepts
+
+### Hub & Workers
+- **Hub**: Runs in the repository's main checkout. It monitors the inbox, prioritizes tasks, creates isolated worktrees, and delegates tasks to workers.
+- **Worker**: Runs in a dedicated git worktree. It executes the task through defined phases (`plan` → `implement` → `self-review` → `verify` → `pr`), opening gates for human decisions when needed.
+
+### Gates (Human-in-the-Loop Decision Points)
+Instead of blocking in an unwatched terminal tab, agents create structured **gates** and suspend their turn. Gates display:
+- What needs review (plan, code diff, or verification results).
+- What has already been decided.
+- Where the agent's confidence ran out or where choices need human judgment.
+
+You can answer gates on the web board, in the worker's terminal (`adj gate close --terminal`), or via CLI.
+
+---
+
+## Command & Tool Reference
+
+### Shell CLI (`adj` / `adjutant`)
+
+| Command | Description |
 | --- | --- |
-| `adjutant hub [--tab] [--resume\|--new] [--no-dashboard\|--dashboard]` | start this repo's hub, in the main checkout, once — resuming the last session if it ended within `hubAutoResumeHours` (`--tab`: open a tab and start it there, rather than becoming it in this one; `--resume`: reopen the last session however long ago it ended; `--new`: start a fresh one even so; `--no-dashboard`: skip the listing it collects at startup, `--dashboard`: collect it anyway — both override `startupDashboard`) |
-| `adjutant hub-name [--json]` | the hub's session name — the address a report goes to |
-| `adjutant config` | the resolved config for this repo, as JSON |
-| `adjutant pending [--json\|--read N\|--ack N\|--path]` | what is waiting for the hub |
-| `adjutant send --subject … --body …` | hand a message to the hub (body may come on stdin) |
-| `adjutant work --worktree … (--title … \| --task <id> \| --resume)` | open a tab and start a worker there (`--task`: name the tab after that task record, so a title from an issue never has to be quoted onto a command line; `--resume`: reopen the worker session saved in that worktree). Exits 3 without starting anything when `maxWorkers` workers are already running |
-| `adjutant worker --worktree … [--resume]` | become the worker (what `work` opens a tab to run; `--resume` inside a worktree reopens its saved session) |
-| `adjutant tell --worktree … --subject …` | leave a message for that worktree's worker |
-| `adjutant outbox [--clear]` | what the hub has left for the worker here |
-| `adjutant spawn --cwd … -- cmd …` | open a tab and run something in it |
-| `adjutant focus [--worktree …]` | raise the running hub's tab (or, with `--worktree`, that worktree's worker); exit 1 if there is none |
-| `adjutant phase [--set …]` | in a worker: say which step it is in (`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`), or show it |
-| `adjutant review-engine [--json]` | in a worker: which engine reads the diff in this self-review round — `reviewEngine`, then under `auto` Claude's rate limits (from the agent session ledger when the status line relay fills it, else the rate-limit cache) and whether `codex` is on `PATH` — and the line to tell the user |
-| `adjutant agent-sessions [--json]` | what each agent session's hooks last reported — idle, running, waiting on a permission prompt, done or failed, its running sub-agents, the last tool it reported, and what it said at the end of its last turn; sessions whose process has gone are left out |
-| `adjutant setup claude\|codex [--remove]` | add adjutant's hooks to your Claude Code user settings or Codex hooks file, so sessions adjutant did not start report to `agent-sessions` too (see [Install](#install)) |
-| `adjutant close --worktree …` | close the tab that worktree's worker is sitting in; exit 1 if it is still there |
-| `adjutant ide --worktree …` | open a worktree in the configured editor |
-| `adjutant title --title …` | name the tab this process is in (the hub names its own) |
-| `adjutant notify --message …` | tell the human something happened |
-| `adjutant worktree-path --name … [--unique]` | the branch, path and the main checkout to create it in (`--unique`: the first of `name`, `name-2`, `name-3`… whose path and branch are free, said back as `name`) |
-| `adjutant serve [--port N] [--no-open]` | serve this repository's board at `http://127.0.0.1:4577` (`--port 0` picks a free one) — only needed when the hub does not serve it itself (see [The board](#the-board)) |
-| `adjutant task add\|list\|show\|next\|update\|refresh\|fetch-issue\|brief\|park\|unpark` | the records that board is a view of (`park --id … --reason pdm\|design\|review\|merge-timing\|other [--text …]`: set a task aside on purpose, because you wait on someone else's answer or on the right time to merge (`--reason other` needs a `--text`; `--text -` reads stdin; a finished task is refused); `unpark --id …`: take it back; `brief --id … --worktree … --base … [--language …]`: write the worker's `.claude/task-brief.md` from the record and the config (`--language`: the language the person reads, used when the config has no `language`); without `--id`, a task-less session's brief, instruction on stdin; `next`: the queued task a free worker slot takes next, and the ones that still need a `dispatch` gate; `refresh`: move the ones whose PR was merged to done; `fetch-issue --id`: read the task's GitHub issue again and keep its title and body on the record; `update --id … --parent URL`: set the task's parent (`''` clears it; a URL, or a key the hub turns into one); `update` also takes `--kind`, `--done-when`, `--stop-at`, `--issue-url` and `--worktree-name` (the last two: `''` clears), `--title` (`-` reads stdin; it cannot be blank) and `--read` (the person confirmed the hub's reading on the gate: clears `needsReading`, refused unless the record can start), which are what the hub writes when it reads a request (below); `add --needs-reading`: the body is all the person said, the hub reads it and asks on a gate before anything starts (what the board's form sends); `fetch-issue --take-title`: make the issue's title the task's, not only when the task has none yet)) |
-| `adjutant gate open\|list\|show\|answer\|close` | what an agent has put up for a person, and the answer back |
-| `adjutant jules start\|show\|findings\|relay` | hand a task's approved plan to Jules, ask how its session is doing, and pass review comments on to it (see [Handing a task to Jules](#handing-a-task-to-jules)) |
-| `adjutant hub-stop` | clear this repo's hub record |
-| `adjutant hub-close --hub KEY` | close a parent-task hub none of whose checkouts report to it any more: clear its record and take it off the board's list; run by the hub itself or against a hub that is no longer running, it refuses a running hub from outside (its saved session, tasks, gates and inbox stay) |
+| `adj hub [--tab] [--resume\|--new]` | Start the hub for this repository (`--resume` restores previous session, `--tab` opens in a new tab) |
+| `adj work --worktree … (--title … \| --task <id> \| --resume)` | Spawn a new tab/window and launch a worker in that worktree |
+| `adj worker --worktree … [--resume]` | Run the worker process inside a worktree (called internally by `work`) |
+| `adj server start\|stop\|status\|restart` | Manage the resident multi-repository dashboard server |
+| `adj focus [--worktree …]` | Raise the terminal tab for the hub or a worker |
+| `adj phase [--set …]` | View or update the worker's current progress phase |
+| `adj gate open\|list\|show\|answer\|close` | Manage structured human review gates |
+| `adj task add\|list\|show\|update\|refresh\|park\|unpark` | Manage task records and synchronize state with GitHub Issues/PRs |
+| `adj agent-sessions [--json]` | Inspect active agent states, tools, and token context from the session ledger |
+| `adj send --subject … --body …` | Send a message to the repository hub's inbox |
+| `adj tell --worktree … --subject …` | Send a message to a specific worker's outbox |
+| `adj close --worktree …` | Close the terminal tab for a worker |
+| `adj ide --worktree …` | Open the worktree in your configured IDE |
 
-**Model, context use and rate limits in `agent-sessions`.** Claude Code gives these only to the status line, so they reach adjutant only if your status line passes them on. adjutant does not install a status line, since that would replace yours; add one line to your own script instead. In a shell script, read stdin into a variable first:
+### MCP Tools & Prompts
 
-```sh
-input=$(cat); printf '%s' "$input" | /absolute/path/to/adj hook claude --status-line 2>/dev/null || true
-```
+When running inside an agent session (`adjutant mcp`), adjutant exposes tools and prompts:
 
-and draw from `"$input"` as before. `adj hook claude --status-line` prints nothing and, once it runs, always exits 0 (the `|| true` covers a missing binary). It records `model`, `contextPercent` and `rateLimits` only on a session that already has a row (see `adj agent-sessions --json`), and writes when they change, and otherwise at most once a minute. Name `adj` by its absolute path (`command -v adj`), since the status line's `PATH` may not include it. A script in another language passes the same text to the command's stdin.
+- **Prompts**: `adj-hub` (hub orchestration), `adj-worker` (task execution), `adj-report` (bug reporting to hub), `adj-review-hub`, `adj-reviewer`, `adj-aide`.
+- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_show`, `adjutant_request`, `adjutant_gate_answer`.
 
-Agent-side (`adjutant mcp`), the same machinery as sixteen tools and six prompts:
+---
 
-- **prompts** — `adj-hub` (run the hub), `adj-worker` (take a task from brief to handover),
-  `adj-report` (hand a bug you found to the hub), and `adj-review-hub`, `adj-reviewer` and `adj-aide` (the code-review hub, a PR's reader and the aide). Claude Code exposes these as
-  `/mcp__adjutant__adj-hub` and so on.
+## Configuration
 
-- **tools** — `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`,
-  `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`,
-  `adjutant_refresh`, `adjutant_skill`, and the four the aide reads the board with: `adjutant_work`
-  (what 「いまの仕事」 shows, across repositories), `adjutant_gate_read` (one gate in full),
-  `adjutant_reviews` (the review requests of the 「AI 下読み」 list: other people's PRs that wait on you) and
-  `adjutant_show` (put a gate, the list of waits, a read-through, a task or parent, a PR, a session, a request, some lines of a diff or the list of review requests in the aide's display area, by reference only), and the two the aide sends with: `adjutant_request` (pass a request for work to a hub, as the board's 「依頼」 form does) and `adjutant_gate_answer` (answer a gate as the board's buttons do). `adjutant_skill` serves the same procedure text as the prompts, tailored to the target agent format (such
-  as Claude Code's `AskUserQuestion` or Antigravity's `ask_question`), because MCP prompt
-  support is uneven across agents and a procedure nobody can fetch is a procedure nobody
-  follows.
+Configuration lives at `~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and `ADJUTANT_CONFIG` supported). See [`config.example.json`](config.example.json) for the full commented schema.
 
-The names are short where a person types them and long where something reads them back:
-`adj` on the command line and `adj-…` for the prompts, against `adjutant` for the MCP server
-and `adjutant_…` for the tools. A registration or a resolved config that says `adjutant` is
-one you can still identify a year later.
+### Key Settings
 
-Every command that answers *about a repository* takes `--repo owner/name` (`outbox`, `mcp`
-and `install-mcp` do not — they are not about one); without it the repository is read from
-the origin remote of whichever checkout you are standing in, worktrees included.
-
-A repository can have more than one hub. `--hub <id>` names which one: it moves the address
-— the session name, the inbox, the record — and nothing else. The configuration is still
-looked up under `owner/name`, so a second hub of a registered repository keeps its task
-sources, issue keys and verify command. Without `--hub` you get the repository's own hub, at
-exactly the address it has always had — except inside a worktree `adj work` opened, where a
-command that *addresses* a hub reads the identifier out of that worktree's record. The ones
-that *start* something — `hub`, `work`, `worker` — never do: a hub launched from inside a
-worktree, and a worker registering in the worktree its tab was opened at, would both be
-reading a record that belongs to somebody else.
-
-Nothing has to repeat the identifier afterwards. `adj hub --hub <id>` puts `ADJUTANT_HUB` on
-the command line it starts the agent with, so every `adj` call and every MCP tool call that
-agent makes addresses the hub it is; and `adj work` writes the identifier into the worktree
-it opens, so a worker reporting from there reaches the hub that dispatched it without being
-told where to send. `adj worker` puts the identifier it registered under on its agent's
-command line too, and takes an inherited `ADJUTANT_HUB` out of the environment first: a
-terminal template that passes its environment on (tmux does) would otherwise hand the agent
-the identifier of whichever hub opened the tab, which outranks the record.
-
-A running worker follows its record, though: a command run by the worker itself — its agent,
-that agent's MCP server, or a shell under it — reads the hub from the worker record in its
-worktree even when `ADJUTANT_HUB` says otherwise, and a record with no hub means the
-repository's own. That is what lets the board move a worker to another hub by linking it to a
-task (see [The board](#the-board)) without restarting its agent. Anything else keeps the old
-order, so a hub running a command inside a worker's worktree is still itself.
-
-`agentEnv` may name `ADJUTANT_HUB`. It is a default: `hub`, `work` and `worker` take it when
-neither `--hub` nor the environment says anything, and claim that hub rather than the
-repository's own, so the command and the agent it starts agree on one address. A flag or an
-inherited `ADJUTANT_HUB` still wins, and replaces the configured value on the agent's line.
-Stop a running hub of the repository before adding the key: from then on a plain `adj hub`
-looks for, and starts, the configured hub instead, and `adj work` files new workers under it.
-The commands that address a hub (`send`, `pending`, `hub-stop`, `hub-close` and the rest) do not read
-`agentEnv`, so from a shell that is not the hub's own, pass `--hub` or set `ADJUTANT_HUB`.
-
-`--no-dashboard` and `--dashboard` ride the same channel: they become
-`ADJUTANT_STARTUP_DASHBOARD` on that command line, and `adjutant config` folds the value in
-before it answers, so the procedure reading `settings.startupDashboard` sees the flag the hub
-was started under rather than the file it disagrees with. With `--tab` there is no such
-variable to see: a terminal is handed a command line and nothing else, so the flag is
-forwarded to the `adjutant hub` that runs in the new tab, and that one builds the
-environment. Same answer, one process later — which is why the two dry runs do not print the
-same thing.
-
-### Resuming after a restart
-
-Updating the agent, or a crash, ends the hub and its workers. A hub that ended within the last
-`hubAutoResumeHours` (3 by default) comes back on a plain `adj hub`; past that, `adj hub`
-starts a new, empty conversation, so the first hub of the morning is a clean one. `--resume`
-reopens the one it had whenever it ended, and `--new` starts fresh even inside the window:
-
-```bash
-adj hub --resume                  # this repo's hub, from anywhere in the repo
-adj hub --resume --hub ALPHA-233  # a parent task's hub — the identifier is never guessed
-adj worker --resume               # in a worktree: the worker that was working there
-```
-
-The board's 「hub をリセット」 (a button on the hub's row, in the hub's panel, and the first button
-of the bar above a hub's terminal) does
-what `--new` does: after a confirmation it stops the hub if it runs and starts it again on a new
-conversation. The old conversation is not deleted, but it is not resumed either,
-and from then on `adj hub --resume` reaches the new one (with a runner that records no session id
-there is nothing to resume). The inbox, the task and gate records and the running workers stay as they are.
-
-A fresh start through a runner that takes `{sessionId}` (the default ones do, as
-`--session-id {sessionId}`) makes up a session id, hands it to the agent and saves it. A
-resume reuses the id that was saved rather than making a new one. A fresh start through a
-runner without `{sessionId}` gets no id, and clears whatever the start before it saved, so
-nothing can reopen a conversation two starts ago. The id is saved beside the records, not in
-them: the hub's id under `sessions/` in the state directory, the worker's in the worktree's
-`.claude/adjutant-session.json`. That is why `hub-stop` and `close`, which clear the records,
-leave it alone. `--resume` reopens that id with `hubResumeRunner` / `agentResumeRunner`
-(Claude Code's `--resume` by default), goes through the same claim as a fresh start, and tells
-the agent to check its inbox or outbox for whatever arrived while it was gone.
-
-A parent-task hub is listed while a hub record or a checkout (a worktree whose worker record or
-saved session names its key) points at it. A stopped one with no such checkout is no longer
-listed, and neither is one known only from its saved session. `adjutant hub-close --hub KEY`, or
-「閉じる」 on the board, closes a parent-task hub that has no checkouts left and drops it from the
-list. The board's close stops a running hub first; `adjutant hub-close` does not stop one, so it
-is for the hub itself or a hub that is no longer running, and refuses a running hub from outside.
-Its saved session, tasks, gates and inbox stay, so `adj hub --hub KEY --resume` picks them up
-again. The repository's own hub can only be stopped.
-
-When the hub ended is written by the hub's own MCP server. For a start that records a session
-(a runner that takes `{sessionId}`, or a resume), `adj hub` puts `ADJUTANT_HUB_SESSION` on the
-line it `exec`s — a fresh start through a runner without `{sessionId}` gets no variable, and
-its MCP server records nothing even though it runs. The agent's `adjutant mcp` inherits it, and
-that server records the session as alive every minute and once more when the agent closes
-its pipe — in `sessions/<slug>.alive`, a file of its own so that an old hub's last beat can
-never overwrite a new hub's saved session. The same server runs under every session on the
-machine, and only the one carrying the variable writes anything; `adj worker` strips it
-before it starts an agent. With no MCP server under the hub nothing says when it ended, and
-`adj hub` starts fresh rather than guessing. The same goes for a hub started by a `hubRunner`
-of your own with no `hubResumeRunner` beside it: the built-in resume command would reopen it
-without whatever your runner adds, so it is only resumed when `--resume` asks.
-
-Workers are only resumed when asked: `adj work` is how a hub hands over a new brief, and
-coming back to an old conversation there would bury it.
-
-A resumed worker goes back under the hub that dispatched it, as saved — ahead of
-`ADJUTANT_HUB`, which the tab it is typed in may have inherited from a different hub. A hub
-asked to resume with nothing saved lists the hubs of the repository that do have a session.
-A runner with no `{sessionId}` starts sessions nobody can resume; that is not an error until
-`--resume` is asked for.
-
-`instructions` is five lines. The 1500 lines of procedure matter only while a hub or a worker
-is running, and both fetch them on purpose; the one thing worth always-on context is that a
-worker is allowed to report a bug it did not come to fix.
-
-## Permissions
-
-A procedure served over MCP cannot carry a tool allowlist. As a slash-command file it could
-— `allowed-tools:` in the frontmatter — and that is the one thing lost in moving the
-procedures into the binary.
-
-So **both sessions start unattended by default**, hub as well as worker. A worker must not
-stop because it has a build to finish; a hub must not stop because a hub waiting for
-approval is a hub not reading its inbox, and nobody is watching that tab — which is the
-entire premise. This does not remove the questions that matter: the procedures' own
-`AskUserQuestion` checkpoints (file this issue? start work on it?) are untouched. What goes
-away is being asked whether `gh issue view` may run.
-
-If you would rather the hub asked, take the mode back out of both hub runners —
-
-```jsonc
-"hubRunner": "claude -n {name} --session-id {sessionId} {prompt}",
-"hubResumeRunner": "claude -n {name} --resume {sessionId} {prompt}"
-```
-
-— and pre-approve what the procedures reach for, in `~/.claude/settings.json`. Note that
-this list is a snapshot: it drifts the moment a procedure reaches for something new, and the
-symptom is the hub going quiet.
-
-```jsonc
-"permissions": { "allow": [
-  "Bash(adj:*)", "Bash(adjutant:*)",
-  "Bash(git:*)", "Bash(gh:*)",
-  "Bash(cat:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(mv:*)", "Bash(cp:*)",
-  "Bash(sed:*)", "Bash(awk:*)", "Bash(printf:*)", "Bash(date:*)", "Bash(ps:*)",
-  "Bash(basename:*)", "Bash(open:*)", "Bash(which:*)",
-  "Bash(proctor:*)", "Bash(lk:*)", "Bash(codex:*)",
-  "mcp__adjutant__adjutant_config", "mcp__adjutant__adjutant_hub_status",
-  "mcp__adjutant__adjutant_send", "mcp__adjutant__adjutant_pending",
-  "mcp__adjutant__adjutant_tell", "mcp__adjutant__adjutant_outbox",
-  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_gate_close",
-  "mcp__adjutant__adjutant_refresh", "mcp__adjutant__adjutant_skill"
-]}
-```
-
-The hub runs in the main checkout, so an unattended one can touch that working tree. The
-procedure forbids it from implementing anything there — everything goes out to a worker in
-its own worktree — but that is a rule in prose, not a sandbox.
-
-## Config
-
-`~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and `ADJUTANT_CONFIG` are both honoured).
-See **`config.example.json`** — its `//` keys are the schema documentation, and they are
-stripped before any of it reaches a session.
-
-Most specific wins: a repo entry, then `defaults`, then the top level, then the built-ins.
-The resolver never fails on a bad config; it returns `warnings` and lets the hub say what is
-wrong.
-
-Nothing about the machine is hardcoded. Each of these is a command template whose
-placeholders are substituted **already shell-quoted** — so do not put quotes around them:
-
-| key | placeholders | default |
+| Key | Default | Description |
 | --- | --- | --- |
-| `terminal.preset` | — | none (iTerm2 on macOS) — `"tmux"` for built-in tmux backend |
-| `terminal.session` | — | `"adjutant"` (when `preset` is `"tmux"`, overridden by `$ADJUTANT_TMUX_SESSION`) |
-| `terminal.socket` | — | none (when `preset` is `"tmux"`, overridden by `$ADJUTANT_TMUX_SOCKET`) |
-| `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 (or tmux detached window with `preset: "tmux"`) |
-| `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 (or tmux window/pane selection with `preset: "tmux"`) |
-| `terminal.attach` | `{socket}` `{session}` `{window}` | iTerm2 with `tmux -CC attach`, on a Mac that has iTerm2 (opening a session from the board; otherwise the board refuses and names this key) |
-| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2 (or tmux window kill with `preset: "tmux"`) |
-| | | *`false` closes no tabs: `adjutant close` then exits 1 and clears nothing* |
-| `terminal.title` | `{title}` | OSC escape written to this process's tty (or `tmux rename-window` with `preset: "tmux"`) |
-| | | *also names every tab `spawn` opens* |
-| `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 `write text` into that session (or tmux literal `send-keys` with `preset: "tmux"`) |
-| `hubWake` / `workerWake` | the same | override `wake` for one direction |
-| | | *the built-in `focus`, `close` and `wake` reach a session through the terminal it was started in (recorded when it registered), so changing `preset` does not strand sessions started before; sessions with no such record, or one started by a `spawn` template outside tmux, follow the current `preset`* |
-| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
-| `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
-| `reviewerRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}` |
-| | | *starts the read-only reader of a PR (「AI 下読み」). The default holds it to reading: `--allowedTools` only adds to what your own Claude settings and MCP servers already allow, so `--setting-sources ''` and `--strict-mcp-config` drop those two (the reader has no settings file and no MCP server, and uses `adj skill` and `adj review say` from the command line), and under `dontAsk` anything off the list is denied, not asked. It has no `gh`. A `reviewerRunner` of your own has to keep both flags, or the reader gets whatever your settings give it. The one file it may write is named as `Edit(...)` because Claude's file rules match `Edit(path)` only, and an `Edit` rule covers Write too. `adj` has to be on PATH for the patterns to match. Another agent is held to reading by the `adj-reviewer` procedure alone* |
-| `agentResumeRunner` | same as `agentRunner` | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
-| `hubResumeRunner` | same as `hubRunner` | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
-| | | *`{settings}` becomes `--settings <file>`, the file holding adjutant's hooks for the session. It is added after `claude` when a template does not name it, unless the template passes its own `--settings`; do not quote it. A binary older than this does not know it, so write it by hand only once every binary sharing the config does* |
-| | | *drop `{name}` and the session is nameless in every listing* |
-| `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier` if installed, else `osascript` |
-| `ide` | `{worktree}` | none — the procedures ask rather than guess |
-| `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
-| `hubAutoResumeHours` | — (a number, `0` to turn it off) | `3` |
-| `startupDashboard` | — (`true` / `false`) | `true` |
-| | | *`false` skips the listing a hub collects at startup; asking for one still collects* |
-| `hubServe` | — (`true` / `false`) | `true` |
-| | | *`false` leaves the board to `adj serve`, started by hand* |
-| `stuckAfterMinutes` | — (a number, `0` to turn it off) | `120` |
-| | | *a card whose worker has sat in one phase this long is flagged; one whose worker has stopped is flagged regardless, unless its PR is open* |
-| `julesKey` | — (a command that prints the Jules API key) | the macOS keychain item `jules-api` |
-| | | *`false` turns handing tasks to Jules off* |
-| `maxWorkers` | — (a whole number, 1 or more) | no limit |
-| | | *counted per checkout; a worker parked at a gate or still starting up takes a slot, a dead one does not* |
-| `language` | — (a language name or tag, e.g. `ja`) | none: the hub uses the language you talk to it in |
-| | | *what agents write for a person on the board (gates, questions, plans, notes, reports, the task summary) is in this language; commits, PR bodies, issues and code follow the repository, and text from the tracker stays as written* |
+| `terminal.preset` | none (iTerm2 on macOS) | Set to `"tmux"` to enable the built-in tmux backend |
+| `agentRunner` | `claude ...` | Command template used to start worker agents |
+| `hubRunner` | `claude ...` | Command template used to start repository hubs |
+| `reviewerRunner` | `claude ...` | Command template used to start sandboxed PR readers (AI 下読み) |
+| `notification` | `terminal-notifier` / `osascript` | Command template for desktop notifications |
+| `maxWorkers` | no limit | Maximum concurrent workers allowed per checkout |
+| `hubAutoResumeHours` | `3` | Hours within which `adj hub` automatically resumes the previous conversation |
+| `stuckAfterMinutes` | `120` | Flags task cards red if a worker stays in one phase without progress |
+| `language` | none | Output language for gates, notes, and task summaries (e.g. `"ja"`) |
 
-Omitting a key gets the built-in; setting it to `false` turns the behaviour off, which is a
-different answer. Settings that are not commands take their own values instead:
-`startupDashboard` and `hubServe` are `true` / `false`, `hubAutoResumeHours` is a number, turned off by
-`0` — a `false` there is reported in `warnings` and the default is used — `maxWorkers`
-is a whole number, where anything else is reported and means no limit, and `language` is a plain
-string (a blank one counts as unset). `terminal` and the `wake` family merge key by key, so a repository can
-change one half without restating the other. A setting of the wrong type is dropped *and*
-reported in `warnings` — `adj config` is where to look when something silently does nothing.
+For tmux integration, custom runner templates, and environment resolution, see [Configuration & Runtime Reference](docs/configuration.md).
 
-A command line the terminal would have to type is **staged in a file once it grows past
-about 900 characters**, and what gets typed is `sh /tmp/adjutant-spawn-….sh`. Long lines do
-not fail, they arrive *corrupted* — a chunk dropped somewhere in the middle — and what runs
-is whatever that mangling happened to spell. An `agentEnv` carrying a `PATH` is the ordinary
-way to reach that length. A dry run is never staged: it is read by a person, and a path to a
-file tells them nothing about what would have run.
+---
 
-**`ADJUTANT_CONFIG` and `ADJUTANT_STATE_DIR` are forwarded onto the command line** of every
-tab `hub --tab` and `work` open, when this process was given them. `ADJUTANT_HUB` already
-travels as a flag; these two have none, and losing them does not fail — it splits. The tab
-reads the default config and the default state directory, so the worker it starts registers
-in one world while the hub that dispatched it waits in another, and both halves look healthy
-from where they stand. A relative `ADJUTANT_STATE_DIR` is forwarded as an absolute path,
-resolved against the repository's main checkout, the directory `adj hub` reads wherever the
-command was typed. `adj server start`, `stop`, `status` and `restart` resolve it the same way
-(against the main checkout of the repository they are typed in), and `start` hands the resident
-the absolute directory. The resident and every board it serves read that one directory, so with
-a relative `ADJUTANT_STATE_DIR` a resident started in one repository does not see the hubs of
-another repository whose state lives under that repository's checkout.
+## Permissions (Unattended Mode)
 
-`{pid}` and `{tty}` are the operating system's names for a session — a process id, and the
-terminal device it sits on (`ttys004`) — not a terminal's own id for a pane or a window. A
-`focus`, `close` or `wake` template has to look that handle up before it acts: handing `{pid}` to
-something expecting a pane id addresses a different number space and lands on whichever pane
-happens to hold that number, so point those keys at a wrapper that does the lookup. `close`
-is checked rather than believed for the same reason — a template is judged by its exit status
-alone, so the worker's record is cleared only once that worker is actually gone, and
-`adjutant close` exits 1 when it is still there.
+MCP-served procedures cannot declare tool allowlists. Therefore, **both hub and worker start unattended by default** (`--permission-mode auto`) so builds and background checks run smoothly.
 
-The built-in `notification` prefers [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
-and falls back to `osascript`, and the order is not a taste: macOS credits a notification posted by
-command-line `osascript` to **Script Editor**, so the banner arrives from an app nobody asked for and
-clicking it opens an empty Script Editor rather than the session that wanted you. With
-`brew install terminal-notifier` on the machine the built-in becomes —
+Crucial checkpoints (approving implementation plans, filing issues, reviewing diffs) remain guarded by the procedures' own gates and `AskUserQuestion` calls. To require confirmation on everyday CLI commands, configure runners without `--permission-mode auto` and allow common tools in `~/.claude/settings.json`.
 
-```jsonc
-"terminal-notifier -title {title} -message {message} -sound Glass -activate com.googlecode.iterm2"
-```
+---
 
-— a click that raises the terminal. `{nwo}` is there to go one better: it is the repository the
-message is about, the same value `--repo` takes — `owner/name`, or the checkout's own directory
-name when it has no usable remote — so a notifier that runs
-`adj focus --repo {nwo}` on click lands on *that repository's hub tab*. Point the key at a script
-rather than nesting a quoted command in the template, for the quoting reason the `wake` note below
-gives. `{nwo}` is empty when `adjutant notify` runs outside a repository, and says so on stderr
-rather than silently.
+## Documentation
 
-There is no built-in off macOS, where a missing notifier is silence rather than an error, so a Linux
-hub needs the key set (`"notify-send {title} {message}"`). And when something already watches the
-sessions — a terminal sidebar, a tmux status line — `false` is the honest answer rather than a second
-banner. `adjutant notify --message … --dry-run` prints the command a template resolves to without
-sending anything.
+Comprehensive guides are available in the [`docs/`](docs/) directory:
 
-`notification` also rings when a worker or a hub has been waiting on a permission prompt or a
-question for a few seconds and nobody has its terminal open on the board: the message says which
-session waits and on what (`worker-x is waiting: Bash: make`, or `worker-x is asking: <question>`
-for a question), once per wait. A gate that opens rings it too (`worker-x opened a plan gate: <title>`),
-once per gate; gates already open when the server starts do not. Each of these is announced on one
-channel only. While a board page is open with notifications allowed and 確認待ち on (it polled within
-the last 90 seconds), the page shows its own desktop notification and `notification` stays silent;
-clicking it opens the task in 「いまの仕事」 (on the resident server's page; a board served alone has no
-such list, and there it opens the session's terminal). With no such page open, `notification` rings.
-A wait the page was left to is looked at again if the page closes or sleeps while the session still
-waits, and rings `notification` then, so a late reminder is possible but silence is not.
-`send` and `tell` are not affected: they ring `notification` as before.
-Which of waiting, done, failed and review requests the page notifies for is set in the page's notification dialog (the
-bell button; waiting, failed and review requests are on by default) and is kept in the browser; turning waiting off
-hands waits and gates back to `notification` within about 90 seconds. While a notifying page is open,
-waits it keeps quiet (a parked task, the row open in a visible tab) do not ring `notification` either.
+- [**Web Board & Resident Server**](docs/board.md) ([日本語](docs/board.ja.md)): Board views, 「いまの仕事」, AI 下読み (PR review), 副官 (Aide), REST API, and launchd setup.
+- [**Jules Integration**](docs/jules.md) ([日本語](docs/jules.ja.md)): Delegating tasks to Google Jules, automated design planning, and review comment relay.
+- [**Configuration & Runtime**](docs/configuration.md) ([日本語](docs/configuration.ja.md)): Deep dive into tmux presets, wake hooks, runner templates, and session lifecycles.
+- [**Architecture & Layering**](docs/architecture.md): Internal crate modules, architectural rules, and state storage design.
+- [**Review Checklist**](docs/review-checklist.md): Checklist used for self-review and automated code reviews.
 
-`wake` splits along the line the rest of the config does not: **how** to poke a session is a
-property of the terminal, and **what to say** once poked is a property of the agent. So
-`hubWake` / `workerWake` take a long form that overrides either half —
-
-```jsonc
-"wake": "wake-tab {tty} {line}",                  // the machine
-"workerWake": { "line": "check `adj outbox`" }     // this agent has no MCP
-```
-
-— which is what a repo whose hub is one agent and whose workers are another needs. The
-built-in sentences name MCP tools (`adjutant_pending`, `adjutant_outbox`), and each direction
-is pointed at its own box. A `wake` template of your own should type `{line}` and press
-Enter as two separate writes: an agent's input box can take the line and its newline, sent
-together, as a paste, and then the newline lands in the box instead of submitting it. For
-anything longer than one command, point at a script rather than wrapping it in `sh -c '…'`:
-a substituted value arrives with its own quoting and would end
-the wrapper's quoted string early. A `spawn` template containing `{cwd}` is trusted to change directory
-itself; one without gets a `cd` prepended. A new tab is named by the shell inside it calling
-`adjutant title`, not through the terminal's own API — `set name of session` is the one
-mechanism that does not generalise, since a profile whose title format is driven by user
-variables ignores it and the tab silently keeps the wrong name. `agentEnv` is an object of environment variables
-both the hub and its workers are started with, for a repository that runs under a separate
-agent profile. The AI reader of a pull request in that repository gets it too, with `ADJUTANT_HUB`
-set to the code-review hub and `ADJUTANT_STATE_DIR` to the absolute state directory on top.
-
-### Running Workers in tmux
-
-When `"terminal": { "preset": "tmux" }` is configured, adjutant acts as a first-class tmux backend:
-- **Detached window spawning**: Workers start in detached windows (`tmux new-window -d -t <session> -c <cwd> -n <title> <command>`) so current focus is not stolen. The command first `cd`s into its directory itself, because the tmux server's own directory may have been removed. If the session does not exist, an initial session is created, starting from `$HOME`. The worker's window is started the way the hub's is (a placeholder window, then `respawn-pane`) and watched for about three seconds: a worker that exits at once is reported by `adj work` as an error with what it printed, not announced as started, and its slot is given back. A worker that dies later is still reported as started, and with a `spawn` template or on iTerm2 there is nothing to watch, so `adj work` says so.
-- **Process-to-pane mapping**: adjutant automatically maps worker `{pid}` and `{tty}` to tmux panes by inspecting pane PIDs, TTYs, and process hierarchy. No wrapper scripts required.
-- **Waking**: The built-in wake reads the pane first (`tmux capture-pane`) and types only when the agent (Claude Code for the built-in runner or a `claude` one, agy for an `agy` one) sits at an empty input prompt. Keys are sent literally via `tmux send-keys -l -t <pane> <line>`, the line is checked to have landed at the prompt, and Enter follows after a short delay. A question, permission prompt or menu on screen, text someone is midway through typing, and a screen that is not recognised are left alone: nothing is typed, the reply of `send` / `tell` says why (`wakeNote`), and the person is notified as for any wake that did not happen. A turn in progress is waited for, up to five seconds. With a `wake` template, on iTerm2, or for any other custom runner, the line is typed without looking at the screen. When the session has a row in `adj agent-sessions`, a wake is held while the row is `running` (for at most 10 minutes since its last event) or `waiting`, whatever the terminal, for up to five seconds before giving up; tmux still reads the screen before typing. The line typed has to be all that is in the input box before Enter is pressed.
-- **Focus & Close**: `adj focus` selects the window and pane (`tmux select-window`, `tmux select-pane`). `adj close` disposes of the worker's window (`tmux kill-window`).
-- **Attaching**: Connect to the session at any time with `tmux attach -t adjutant`, control mode with `tmux -CC attach -t adjutant`, or browse via web terminal (e.g. `ttyd`).
-- **CLI helpers**: `adj tmux` provides subcommands to inspect and manage tmux sessions directly:
-  - `adj tmux pane [--pid <pid>] [--tty <tty>] [--json]`: list panes or look up pane info.
-  - `adj tmux spawn [--title <title>] [--cwd <cwd>] <command...>`: spawn a detached window.
-  - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: type into a worker pane; with `--agent claude` or `agy` the pane is read first, and the default `generic` types without looking.
-  - `adj tmux focus --pid <pid> [--dry-run]`: select a worker window and pane.
-  - `adj tmux close --pid <pid> [--dry-run]`: close a worker window.
-- **Environment variables**: `$ADJUTANT_TMUX_SESSION` (overrides default `"adjutant"`) and `$ADJUTANT_TMUX_SOCKET` (runs `tmux -L <socket>`).
-
-## The board
-
-`adjutant serve` puts this repository's work on one page in a browser: what is in the
-backlog, what has been handed to the hub, which worktrees have a worker in them, and what is
-sitting unread in the inbox.
-
-It is not a second coordination system. Every button on it ends in something this binary
-could already do — handing a task over writes a `request` into the hub's inbox and pokes its
-tab, through the same code `adjutant send` runs, so waking and notifying cannot drift between
-the two callers. The page says so out loud: a strip along the bottom prints the command each
-action maps to.
-
-**The hub serves it.** The MCP server started under a hub (`adj hub` puts
-`ADJUTANT_HUB_SERVE` on the agent's line) serves that hub's board for as long as it runs, and
-since that server lives exactly as long as the hub's session, the board stops when the hub
-does. It takes `127.0.0.1:4577` when that is free and any free port when it is not, so two hubs
-— of one repository or of two — can each have theirs. 4577 goes to whichever hub started
-first, so go by the URL the hub gives rather than a bookmark of that port. A hub for a parent task serves its own
-board, scoped to it, as `adj serve --hub` does. The hub reads the URL from `board` in
-`adjutant_config` (and `adj config`) and says it as it goes to wait. If a board for the hub is
-already running, started by hand, it is left alone. `hubServe: false` turns this off, and a
-hub whose agent has no adjutant MCP server gets no board; for both, `adj serve` is the way.
-Nothing opens a browser.
-
-**One resident server for every repository.** `adj server start` runs a single server per
-state directory that serves the board of every repository on this machine, each at
-`/b/<slug>/`, whether or not a hub is running. `/` is one page that switches between those
-boards in place: the sidebar, which has a 「ボード」 / 「いまの仕事」 switch at its top, lists on 「ボード」 a row per repository, with its parent-task hubs under it
-(each row shows whether its hub runs and how many workers are at work; the one count in the sidebar is 新着, on the 「いまの仕事」 tab),
-and "すべて" reads every board at once. The repository's board also shows its parent-task hubs' tasks as cards marked with the parent key; opening one switches to that hub's board, and without the resident server they are read-only. A parent-task hub's board shows only its own tasks. 「いまの仕事」 (see below) is one view of the work under way
-for every board, gates and sessions included. Each screen has an address that carries the board
-and the view, so back and forward and a pasted link land on the same screen. It detaches
-(its output goes to `server.log` in the state directory); `--foreground` keeps it in the
-terminal, which is what a service manager wants. It takes `127.0.0.1:4577` when that is free
-and any free port when it is not; `--port 0` asks for any. A second `adj server start` says
-where the first one is. `adj server status` lists the boards (`--json` for a script, exit 1
-when nothing runs) and `adj server stop` stops it. It never stops a hub. `adj server restart`
-stops it, waits up to 5 seconds for it to exit, and starts it again on the same port (`--port`
-picks another; `--open` opens the board); with none running it starts one. The new server is
-the binary that ran the restart, so `make reinstall` (install, then restart) puts the new
-build in service. Hubs and workers are not touched, and open board tabs reconnect on their own
-when the port stays the same.
-
-While it runs, it is the board: `adj config`, `adjutant_config` and `adj gate open` report it
-(`board.resident` is `true`), and a hub's MCP server binds nothing of its own. The server
-learns where a repository is from the hubs that start in it and from `adj config` and
-`adj gate open` run in it, and reads the hubs already recorded when it starts; a repository
-none of these has seen is added by running `adj server start` inside it. Without a resident
-server, everything is as described above.
-
-**A session's terminal in the board.** On the resident server's boards, a session's tmux window is the middle column of
-「いまの仕事」 (below) and the ターミナル tab of a task's or a hub's panel (see "The task panel" below). Each of a
-board's hubs is a row there (below), and a hub's panel lists its sessions' worktrees that have no process:
-the card 「動いていない worktree（N）」 is folded, holds the worktrees with no session and the sessions that ended
-(the repository hub's card lists the whole board, grouped by the hub each belongs to), and each one opens as a session
-of its own, with 再開, 「IDE で開く」, 「パスをコピー」 and 「片付ける…」. A terminal is offered only for a session
-that runs in tmux (`terminal.preset: "tmux"`) and is alive. Switching to another session or leaving the view only
-detaches: the window and the agent in it keep running. The board attaches as a client of its own,
-so the window's size follows tmux's `window-size` option, which is `latest` by default: the client
-that acted last decides. The tabs under a board's title are エージェント and 人; there is no tab for sessions.
-The addresses of the old セッション tab (`?view=sessions[&task=<ref>]`, `&session=<id>`, `#session/<id>`,
-`#sessions`) open 「いまの仕事」 on the same board and task, or the list when they name none, and the terminal
-is in the middle column whichever tab of the panel is on.
-
-**いまの仕事 (the work under way).** The 「いまの仕事」 tab of the sidebar's switch (`?view=work`), on the resident server only, is one view of
-the work under way in every repository, in three columns: the list in the sidebar, the terminal in the middle and the task panel on the right. The heading row of the list is a switch between 「タスク」 (the list described here) and 「AI 下読み」 (below), each half with its own count of new rows. The tasks have two groupings, chosen in a menu behind the icon at the end of that row (the icon shows the one in use, and the menu is there only on 「タスク」): 「親 Issue」
-(the default: owner (the part of `owner/name` before the slash), then repository, then parent issue, then task,
-with the tasks that have no parent in the group of the repository's hub, which comes first, above the parent issues; the owner heading is shown even when there is only one owner,
-owners are in name order with case ignored, and a repository with no owner goes last under 「オーナーなし」) and
-「状態」 (the boxes 新着, 実行中, そのほか in that order, and inside each box by repository, headed by its
-full `owner/name`, in name order with case ignored; empty boxes are not drawn). Only work under way is listed: a
-worker session with a task or without one. A repository is left out while it is idle (its hub is not running, no
-session of it is running, and nothing of it waits on you); it comes back by itself when that changes, and its board and
-the hub panel's 「動いていない worktree」 still list everything. The same holds in 「状態」; the repository of the row
-you have open, and one that could not be read, stay listed. A hub is a row, with what a session's row carries (the state icon, the agent with its model and context use, what it last said,
-its sub-agents), and how many messages its inbox holds unseen (「受信箱 未確認 N」) and seen (「確認済み M」), each only while above 0;
-pressing it opens the hub (a stopped one offers 「hub を起動」). The repository's hub is the first row of the group of the tasks with no
-parent; that group is named 「hub ・」 and what the hub is doing (作業中, 待機中, エラー, 状態不明 or 動いていない), with the unseen count when
-there is one, and is drawn first in the repository. A parent-task hub is the first row of the group of the parent it runs; one with
-no group of its own is a row after the repository's hub, titled by its key (`hub #9`). In 「状態」 a hub is the first row of its repository's
-group in the box its state puts it in: 新着 while it is new (with 既読), else 実行中 while it runs, else そのほか; a repository that has only a hub
-still has a heading while that hub runs or something waits on you in it. A hub is not counted among a group's task rows. While a heading is folded, the hubs it
-runs are chips on it (the hub icon, "hub", what it is doing, and a hand icon with the count while something waits on you in that hub),
-and it says how many things the hubs below it wait on you with. A running session with no agent-ledger row is listed under 実行中, marked 状態不明. A task whose worker is gone is not, except while something waits on you (below). A parent's header shows a bar with a segment per
-child (merged, done, PR, working, not started), "N / M マージ" and "stack" for a stacked series; headers fold, each group is drawn as a card, a step stronger per nesting level, and a
-folded header says how many rows are in each state. A row carries the state icon, the agent with its model
-and context use, the title, the PR number, the branch and how long ago the state changed, the sub-agents, the diff,
-what a permission prompt asks, the tool that is running, and a line such as "設計レビュー · あなたの判定待ち" while
-a gate waits on you. When the worker has gone on since the gate opened (running, asking for a permission, or stopped on an error, e.g. because you answered in its terminal), the row says that first and the gate line reads "設計レビュー · あなたの判定待ち（答えないまま進行中）"; the gate stays open and can be answered. The rate limits are under the list. The middle column is the terminal of the selected
-session (selecting a parent shows the terminal of the hub that runs it), never behind a tab; the right column
-is the task panel on the selected row's board, without its ターミナル tab (「ターミナルで話す」 moves the keyboard to
-the middle terminal), or, for a parent, its overview: how far it is, the stack from the base branch up,
-「次を着手させる」 and 「子タスクを足す」. The address is `/?view=work` with nothing selected and
-`/b/<slug>/?view=work&task=<ref>&pane=<tab>` with a row selected, where `<ref>` is a task id, `hub:<id>`,
-`session:<id>`, `gate:<board>/<id>` (a gate with no task card, below) or `parent:<key>`. The widths of the task panel and the sidebar are dragged from their
-edges (arrow keys too; a double click puts one back) and kept in this browser; the sidebar has one width, shared by 「ボード」 and 「いまの仕事」. In 「いまの仕事」 the button at the left end of the row over the middle hides and shows the sidebar (for any selection); the choice is kept in this browser, and while the sidebar is hidden the button carries the 新着 count. The list is
-`GET /api/work`, served by the resident only (a board served alone answers 404): `{now, rateLimits, repos}`,
-where each repository is `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}`; `parents` are the board's
-(see `/api/state` below) deduplicated across carriers, `rows` are the worker sessions and the repository's hub
-as `{board, session, task?}` (`board` is the slug of the board the row opens on, `task` is
-`{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson, gateAnsweredAt?, prTurnAt?, parked?}`; `parked` is `{reason, text?, since}` and absent for a finished task), `hubSessions` are the
-sessions of the parent-task hubs, and `turns` are what waits on you with or without a row: `{board, task?, gates}`
-for each task whose PR is yours or that is parked, and each group of open gates that wait on a person (`gates` are `{id, kind, title?,
-openedAt, slug, task?}`; a gate that only records is left out). `gateAnsweredAt` and `prTurnAt` are UTC stamps (when a
-gate of the task was last answered, and when its PR's turn last changed), and a session's `agentSession.lastPromptAt` is
-when you last typed into it.
-
-The PRs that asked for your review are kept apart from tasks, one record each, in the repositories of the
-owners adj has a board for. `POST /api/others/sync` (the resident only) reads them from GitHub: the open PRs that
-ask for you directly, and every record not yet done (or done with a reader still open), by number. It runs only when asked, never at start or on a timer.
-`GET /api/others` returns `{now, lastSync, records, hub}`; each record carries the PR's title, author, branches, head
-SHA, diff size with the files, CI, reviewers, your last review and the commits pushed since, and a derived `state`
-(`requested`, `ai-reading`, `ai-ready`, `pushed`, `waiting-on-author`, `done`). A record done for a day is removed by the next
-sync, unless a reader is still open on it. Every key is described in [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review).
-
-**AI 下読み.** The other half of the switch lists those records, one group per repository (marked when adj has no board for it), the oldest request
-first and the done ones last, with 「同期」 and the time of the last sync, and a chip per repository to narrow the list, with chips for where the AI 下読み stands (すべて / 下読み済み / 下読み中 / 未, each with its count); each row carries the same mark. A row has the PR's title, number, author,
-`+additions -deletions`, files, a size (S below 200 changed lines, M below 1000, L above), the time since the request and a line for its state (its buttons sit at the right end of that line; when they do not fit beside the text, the text wraps and they stay at the right of its last line). Selecting a row opens the PR the way a task's 「AI 下読み」 tab opens: the read-through in the middle, with the tabs 下読み, 差分 and 下書き over it, and the reader's terminal in the panel on the right (once an AI 下読み has started, to ask it about the diff; the panel says so when no reader runs, and has 「下読みを閉じる」). 「GitHub で開く」 and 「拡大」, for the whole of it, are at the head of the middle. The address carries it, as `/?view=work&task=pr:<owner/repo#N>` (with `&pane=drafts` for the third tab), so a link opens it. The 差分 tab (and the 差分 group of 「拡大」) shows the whole diff the reader read, in five tabs decided from the path alone (仕様・ロジック, UI, ドキュメント, テスト, リソース) with each one's share of the changed lines, files in the read-through's reading order, and its annotations under their lines (all open; one button folds them). A 「＋」 on a line starts a draft there; 見るポイント and 読む順 jump to the line or file, and a file deleted whole or of more than 1500 rows starts closed. The draft comments you edit there are kept by adj on the server, not in the browser, so a reload or another browser still has them. 「N 件を pending review に積む」 under them puts them into your pending review on the PR (added to the one you already have): the drafts become its line comments, the overall comment its body. A pending review is visible only to you, and you finish and submit it on GitHub; adj never submits a review and never approves or requests changes. Drafts it has put in stay in the list, read-only, and copying stays available.
-A PR whose change is too large to read (one file changed by more than 1,500 lines, not counting files deleted whole, lock files, snapshots and generated files; the total of the PR does not count) is 「レビュー対象外」: its row names the file that is too large and offers 「分割案」 in place of 「AI 下読み」, which asks a worker to draft how to cut the PR into reviewable ones from the file structure and the hunk headers only (no lines of the diff are read). The proposal lands in the drafts as the overall comment, where you edit it, copy it or put it into a pending review. The 下読み tab lists the files over the limit with 「分割を提案する」 and 「それでも AI 下読み」, which reads the whole PR anyway.
-A row is new when a request, a re-request, a finished read-through or a push is later than when you pressed 既読 on it (or started its AI 下読み, or put drafts into a pending review); a PR waiting on its author, or done, never is. While a row is new, the toolbar has a `done_all` 新着をすべて既読にする button that marks every new row read at once, including the ones the repository and AI 下読み chips hide.
-The one sync button reads 「同期・最終同期: <time ago>」 (「まだ同期していません」 before the first sync); when the last sync is more than 30 minutes old it is highlighted, and the half of the switch gets a dot. A sync that brings in a request or a re-request rings a desktop notification once
-(「レビュー依頼 N 件」 for several); a push alone does not. The code-review hub's row says whether AI 下読み is available; while it is not, the sync and the list work. The read marks are in this browser (`adj.seenOthers`).
-The hub's own procedure no longer lists these PRs in its terminal: it points at this list.
-
-**The code-review hub and the reader.** 「AI 下読み」 is made by a hub that belongs to no repository: `adj hub --review` (the same as
-`--hub @review`; it conflicts with `--repo`) starts it from any directory, in `<state>/review`, and 「hub を起動」 on its row
-(`POST /api/others/hub/start`, `terminal.preset: "tmux"` only) does the same, and 「hub を止める」 on its row (`POST /api/others/hub/stop`, after a confirmation) closes its tmux pane; the records, read-throughs and queue stay, and readers that are running keep running (queued reads start when the hub is started again). A task's 「AI 下読み」 tab says when the hub is stopped, and offers 「hub を起動」 there. It is not in 「ボード」. A read-through is asked for
-with the row's button (`POST /api/others/ai` with `{"id": "owner/repo#N"}`, and `"mode": "split"` for a split proposal of a PR that is out of review; 409 `hub-stopped` while the hub is down, so nothing is
-queued) or `adj review request --pr <URL|owner/repo#N>` (`--split` for the proposal). A task that has a PR can have it read the same way, through the same record and queue: `adj review request --task <id>` (with `--repo` or `--hub` from outside the task's repository) or `POST /b/<slug>/api/tasks/<id>/ai` (`{"mode"}` optional; `GET` on the same path answers `{pr, record, hub}`). It shares the 3 places, needs the code-review hub to be running (409 `hub-stopped` otherwise), is not in the 「AI 下読み」 list unless that PR was also requested from you, keeps its read-through when the PR gets a new push (「下読みし直す」), has its reader closed when the PR is merged or closed or the task is finished (unless the PR is also requested of you), and stays with the task. In 「いまの仕事」 a task with a PR has a 「AI 下読み」 tab over the middle: the read-through there, its reader in the panel, and 「worker への指示」, where its drafts are instructions for the task's worker. 「N 件を worker に渡す」 sends the ones not sent yet as `changes` on the task's waiting diff or verify gate, or else on its latest diff record, with a header saying they come from a read-through (`POST /b/<slug>/api/tasks/<id>/hand`); a pending review is not offered for a task's PR. A sync never asks for a read, though a place it frees by closing a reader may start the next one in the queue. At most 3 readers run at once and the rest wait in the
-order asked. Each reader is a window of its own, in an empty directory, with no checkout and no `gh`: `adj review context --pr <id> --out .`
-writes the diff, the body, the commit messages and the review comments next to it (read-only requests, no mutation), and the reader hands in one
-JSON file with `adj review submit --pr <id> --file read-through.json`, checked against the schema before anything is stored (a reader that cannot finish says so with `adj review fail --pr <id> --why <text>`, which frees its place and lets the PR be asked again, and speaks to the hub only with `adj review say` (it can reach no other hub); a read stuck in `running` for 30 minutes is taken over by a new request once its old reader is gone or has been stopped (its tmux window is closed), and otherwise stays). It
-cannot push, comment or review. That is enforced for Claude by the default `reviewerRunner`; for another agent it is the `adj-reviewer`
-procedure's rule, so set a `reviewerRunner` that restricts it. A reader stays running after it hands in, until the board's 「下読みを閉じる」 closes it (`POST /api/others/reader/close` with `{"id": "owner/repo#N"}`; 409 `no-reader` when none is open), a sync or the PR poll finds its PR merged or closed, or the task it is read for is finished (done, cancelled or deleted, unless the PR is also requested of you; closing only the worker's session does not close it); closing keeps the read-through and the drafts, and a read that was running is failed and can be asked for again. `GET /api/others/read?id=<owner/repo#N>` answers the stored read-through, and `GET /api/others/diff?id=<owner/repo#N>` the diff the reader read (`{id, sha, bytes, diff}`): it is kept with the read-through at its head and removed with it, an empty diff is `""`, and one over 8 MiB is `null` with its size. When the PR gets a new head, the read-through is kept and shown as made at the old one
-(「下読みし直す」), and nothing is read again by itself. The schema and the queue rules are in
-[docs/architecture.md](docs/architecture.md#the-read-through).
-
-**The aide.** The aide (shown as 副官) is the one session of the machine that belongs to no repository, a window to ask about what is going on rather than a hub. It is started by `POST /api/aide/open` (the 副官 pane of 「いまの仕事」, shown when nothing is selected, calls it when you press the 「副官」 row, 「副官を起動」 or 「副官に聞く」; showing the pane does not start it; `terminal.preset: "tmux"` only, otherwise 409 `not-startable`). `GET /api/aide` reads its state, and `POST /api/aide/reset` (「リセット」 on the board) replaces it with a fresh one, even in the middle of a turn, because pressing reset is asking for that. It is started fresh and not resumed, since it holds nothing it cannot fetch again. It runs in `<state>/aide` with your own Claude Code settings, like any session you open: your settings files, instructions, MCP servers, permission mode and rules all apply, and a permission prompt is answered in its pane. On top of them adj adds its own MCP server (unless your config already names `adjutant`), its hooks and a status line of its own (which replaces yours in that window, because the aide's context use is recorded from it), and allows a few tools without asking: the ones that only read, and `adjutant_show`, which writes only what the display area shows. The two tools that send, `adjutant_request` and `adjutant_gate_answer`, are not among them: they are asked about under your own permission rules, and the aide shows what it will send and sends it only after you say yes in the chat. Unlike the AI 下読み reader, which reads pull requests unattended and is held to reading, the aide is meant to act only on what you type in front of it, under your own permission rules. Your `defaults` from adj's config, or a `repos["@aide"]` entry, still apply (`terminal`, `agentEnv`). Claude Code asks once whether to trust that directory; you answer it in the pane the first time. Details are in [docs/architecture.md](docs/architecture.md#the-aide).
-
-**The aide's display area.** Beside the aide's terminal the pane has a display area the aide fills with `adjutant_show`; with nothing shown, it holds the list of what waits on you. A `gate` part is a decision note: the gate's kind, repository, task and how long it has waited, then what the task is, what happened since you last looked (the same 離れていた間に as the task panel), what is asked (`focus`, the choices with their consequences, the recommended one marked), what the worker is unsure about, and a few lines of the diff as evidence. You answer from the part through the same `POST /api/gates/<id>` as the task panel; the aide is not woken and nothing is written to the display state. With 「処理したら次へ」 on, the page then shows the next wait of the same parent. 「副官に答えを伝える」 on a waiting gate, and the 「この判断」 chip over the prompt, type `[gate <board>/<id>] ` into the prompt (they do not send it): the aide then reads 「B で」 as an answer to that gate, shows what it will send (repository, task, kind, choice, comment, who receives it) and answers it, through the same path as the buttons, only after you say yes. A `waits` part lists the waiting gates by repository and parent, with what each asks, and below it what finished while you were away; each wait opens its `gate` part. 「拡大」 on a part opens the task in the large dialog without selecting it. A choice may carry a `comment` draft (`adjutant_gate_open`): pressing that choice sends your own comment if you typed one, else the draft.
-
-`reviews` (no reference) is the list of review requests: the PRs of other people that wait on your review, by repository, with the author, new or asked again, and where the AI 下読み stands; a row opens its read-through in the area when it has one, else the PR in 「AI 下読み」. Five more kinds follow, each named by a reference and drawn from the records (never from GitHub). `read` is the AI 下読み of a PR: what the PR does in three lines, the points that need attention (or the one the aide names by `point`, or all of a `level`) with the lines of code they are about and the reader's annotations, the other points folded, and buttons to open the read-through and to talk to its reader. `task` is a task with its plan and what happens next, or a parent with a bar of its sub-issues (merged, done with no merged PR, waiting on you, in progress, not started), whose turn each child is, and what comes next. `pr` says whose turn a PR is, its review bots, CI, whether the records show it approved with CI passing, what is in the way if not (a conflict is not in the records, and the part says to check GitHub), its size and whether it was read. `session` is a worker session: its state, agent and last message, and whether it looks stuck. `request` is a request the aide passed to a hub (`adjutant_request`): what was sent, to which hub (and that the hub is not running, when it is not), and how far it got, read from the task's record (sent, the hub's reading waiting on you, filed with its issue number, worker started, PR, or could not start), with buttons to the gate, the hub's terminal and the worker's terminal. `diff` is up to 60 lines of a diff (at most 80 rows are drawn, with a row saying how many lines were left out), of a PR's stored diff (with the reader's annotations) or of an open gate. When a gate's task has a PR with an AI 下読み, the gate's 「根拠」 carries the reader's annotations on its lines (only those of the head the record is at now). A part whose latest read failed says so over what it still shows, and `adjutant_show` refuses an option of the wrong JSON type.
-
-**新着.** 新着 holds what waits on you and that you have not read since it began: a gate that
-opened, a session waiting on a permission prompt or a question, a worker whose turn ended with no gate open, a
-session that failed, or a PR that is yours (changes requested, CI failed, approved, closed without merging), also
-for a task with nothing running, which then has a row of its own. Each row shows what it asks, or else what the agent
-last said. A row stays in 新着 until what it waits on you for ends (the gate is answered, the permission prompt is gone,
-the worker is given a new prompt, the PR's turn moves on) or something newer replaces it, or until you mark it read with
-its `done` button 「既読にする」 or with `done_all` in the 新着 header. Acting on it counts too, wherever you do it:
-answering its gate on the board, through the hub or the CLI, or typing in its session's terminal, even outside the
-board (the ledger's `lastPromptAt`; the sentences adjutant types to wake a session are not counted, but a `wake` /
-`workerWake` / `hubWake` of your own that types other text is, since it cannot be told from you). Opening a row and
-leaving it does not mark it read, nor does opening a task in the board's own panel or switching browser tabs. Marking a
-finished (done or failed) row read takes that finished item off the list: a task with nothing else running or waiting
-leaves the list, and its repository drops out when nothing else is under way there (#600). Everything else out of 新着
-stays listed where its state puts it, in the 「状態」 boxes and in the 「親 Issue」 tree. In 「親 Issue」 新着 is a band above the tree (a task session's row stays in the tree too; a hub
-that is new has its row in the band, and its row stays in its group), and in 「状態」 it is the first box. A row is
-new again only when something changes what you have to do: a gate opens, a permission prompt or question arrives, a
-worker finishes a turn with no gate open, a session fails, the PR turns to yours again, or you take a park off (置くのをやめる,
-`adj task unpark`) from a row that still has something open; a phase moving on, a tool, a sub-agent or a PR turning to
-checks does not. Two buttons: `done` on a new row marks it read, and `done_all` in the 新着 header marks every new row
-read. The badge on the sidebar's 「いまの仕事」 tab counts the new rows of both lists, and is refreshed every 10 seconds while another
-view is open; it is the only count in the sidebar, and on the resident server it is the number in front of the page's
-title (a board served alone puts what waits on you there). The checkbox 「処理したら次へ」 in the 新着 header (on by
-default, kept in the browser) opens the next new row, in the order the list shows them, once you answer or close a gate on
-the row that is open (the first one left when none follows, and none when none is left). The marks are times on the server's clock in this browser's local storage
-(`adj.seenWork.<owner/repo>`), so another browser starts with none and other tabs of this one follow.
-
-**離れていた間に.** Opening a task or a task-less session in 「いまの仕事」 puts a block of that name at the top of its タスクサマリ: what you did last (a gate you answered, a record you sent back, a line you typed, a park), when you left, what happened since, and what it waits on now. "Since" is the later of the time you left the row and the time you last acted on it, so a row you never opened or acted on shows nothing. What counts is a phase moving on, a gate opening (a question in its own words), a permission wait, a turn that finished or failed, and the PR's turn changing; for the PR and the session's status only the latest change is known, so only that one is listed. A gate opened and answered while you were away shows only as your last action. Each row in the list carries `+N`, how many of these there are, which goes when you open the row; the panel of the row you have open does not list what happens during that visit. A parent's overview shows its children's events, each child by its own time, with the child's title, and counts what the children wait on; opening a parent writes no marks.
-
-**Parking a task.** A task you wait on on purpose (the PdM's or the designer's answer, an engineer's review, the right
-time to merge, or something else you say in words) can be parked with a reason: `adj task park --id … --reason
-pdm|design|review|merge-timing|other [--text …]`, or 置く in the task panel's タスクサマリ and next to a gate's
-answers (in the task panel and in a gate's own panel), which opens one dialog for the reason and a text (required for その他).
-A parked task is never in 新着, so the sidebar badge does not count it, but it stays listed where its state puts it: a
-parked task with nothing else waiting (a draft PR with no worker, say) is in そのほか and under its parent. The row says 「置いている — PdM の確認待ち」 with the text and since when. A parked task's gates stay open and are answered as usual; the gate box and a gate's own panel
-show a 「置いている — …」 line with 置くのをやめる, and its 「いまの仕事」 gate line says it is parked.
-置くのをやめる (or `adj task unpark`) sends the row back to 新着 when it still has something open. A task that is done or cancelled is never parked: parking one is refused, and
-moving a task to done (a merged PR included) clears its park. A GitHub review request does not park anything. The
-page makes the same change with `POST /api/tasks/<id>` and `{"parked": {"reason": "pdm", "text": "…"}}` (`{"parked":
-null}` takes it back), and the hub runs the CLI verbs when you ask it to. The record keeps `parked`
-(`{reason, text?, since}`) and an older binary keeps the key. A park and its un-park that both happen while no tab of
-this browser is open are not seen, so the row does not come back to 新着 on its own.
-
-**The task panel.** Clicking a card opens a panel for that one task beside the sidebar; clicking
-another card shows that one instead. Its header has the task's key, the board it comes from, its
-state and its title, with 「カードへ」, three placement buttons and a close button. Inside are five
-tabs: タスクサマリ, ターミナル, コードレビュー, 動作確認 and 経過. タスクサマリ
-shows, from the top, the Issue and the PR (a row each, with its number and title; the PR
-also with its state, its CI and its review status, or a note that there is no PR yet), the open
-gate and what can be done about it (one click for a decision that needs no comment, 「判定画面を開く」
-for the rest, which opens the tab the gate is judged in), the phases, the 概要 (the
-problem, the goal, the instructions, the plan with its decision panel, the worktree and branch with
-「IDE」), the details (among them the 親タスク row: the parent with whether it came from GitHub's
-sub-issues or the record, how many of its children are merged, the place in a stack, a note when the
-record names another parent, and 「子タスクを足す」, which opens the new-task form with that parent shown
-(the request is sent with it, and the hub files the issue as its child)) and the records. コードレビュー, 動作確認 and 経過 show a gate's report, diff, checks and history,
-with the decision panel in place; a dot marks the tab of the open gate. A card carries the same
-two numbers in its header, each opening on GitHub, and
-the PR is coloured by its state (open, draft or merged). The PR's state, CI and review status are
-read by the resident server's PR poll and by the PR refresh (「PR確認」, `adjutant task refresh`),
-never by the page, so they are as new as the last read. ターミナル is the task's
-session in the built-in terminal, with a bar for resuming, closing or opening it in your own
-terminal; it shows 「入力待ち」 while the session waits for input, and is disabled when the task has
-no session. The head of a task's panel, and each card that holds report text (報告, 計画, 指摘, 差分, …), have a 「拡大」 button that opens the whole task in one scroll in a large dialog, with room for code blocks and tables, under an index on the left (the gates waiting for you, the review, the diff, the plan, the gates answered, 経過, 詳細; the cards sit one to a row, top to bottom; each answered gate is one full-width block with a heading of its own (its kind and title, how it was answered, when, and the answer), its parts one to a row inside). A card's button opens the dialog at that card, the head's at the first gate that waits (or the top). While a gate waits, a column on the right holds the answer controls (in a narrow window it becomes a band under the content). It shows one gate's controls at a time, labelled with the gate it answers, with a switch between the waiting gates when two or more wait and 「この gate へ」 to jump to that gate's card. It starts on the opened card's gate if it waits, else the first gate that waits, and as you scroll into another waiting gate's group it follows (once you have switched by hand it stays while you read the same group). A comment is kept for each gate and stays when you switch. The choices of every waiting gate can be picked from its card (the column switches to that gate first, then answers). A sent answer does not close the dialog: the gate is marked as answered and moves to 回答済み, and the column goes on to the next waiting gate; when none is left it says 「判断待ちはもうありません」 and the column goes away. 「ターミナルで話す」 closes the dialog before it moves you there. Escape or × closes the dialog and returns focus to the panel (a failed answer keeps it open with the draft). The dialog follows the panel while it is open, and when the task leaves the panel it stays, read-only, with a note. Changes show at once: a card that changed, and its entry in the index, get an 「更新」 badge until the card has been scrolled into view, and a short notice under the head names what changed, with a 「見る」 button that scrolls to it, and goes away after a few seconds. A gate that opens while you read joins the waiting gates (its entry and its switch in the column are marked), and one answered elsewhere is marked as answered. Nothing is redrawn while you type a comment; the redraw waits until the box loses focus, and what you typed is kept. A hub, a session or a gate with no task opens one card alone, with its answer controls; a sent answer closes that dialog. The cards' buttons are not shown while the board's panel is itself open as the large dialog; the head's is. A card's body opens タスクサマリ; its 「ターミナル」 button, and 「ターミナルで答える」 on a
-question, open ターミナル. The panel sits on the right (the default) or the left of the page, or
-opens as a large dialog (↗, 「ダイアログで開く」). The dialog is a remembered mode: while it is on,
-every panel opens as a dialog, and × or a click outside close the panel without leaving
-the mode (Escape does not: in a terminal it is the agent's key); the left and right sidebar buttons switch back to the sidebar. The side, the mode and
-the width are remembered by the browser; while the panel is on the left the sidebar (on its 「ボード」 tab; 「いまの仕事」's list has no icon form) shrinks
-to its icon rail (on the 「ボード」 tab only: on the 「いまの仕事」 tab the sidebar keeps the list, which narrows to 30% of the window (never under the sidebar's minimum width) at 1400px or less so that the task panel and the terminal keep room, is fixed at that minimum width at 1024px or less, and at 720px or less puts the list above the terminal), and on a narrow window the panel floats over the board. Moving the panel only
-changes where it is laid out: the terminal is not rebuilt, so its connection and scrollback stay.
-The open task and tab are in the address (`task=<id>`, `pane=term`, `review`, `check` or `history`;
-タスクサマリ is the default), so back and forward and a
-pasted link open the same task and tab.
-
-A browser extension that takes keys before the page, such as Vimium, can take Escape (and Ctrl+[) from a session
-terminal, so it never reaches the agent; the board says so once when a terminal loses the focus to nothing. Exclude
-the board's URL in that extension: for Vimium, add an "Excluded URLs and keys" rule for e.g. `http://127.0.0.1:*/*`
-with no pass keys (a rule that only lists pass keys still takes Escape).
-
-**Judging a gate.** A gate waiting on you is judged in the panel, wherever you meet it: its task's panel, on the tab of
-its kind, when the task is on the board (the gate's chip on a card, 「判定画面を開く」, a row of 「いまの仕事」 and a
-notification all open it there); and, for a gate with no task card (a gate the hub opened to confirm a dispatch, an issue or a
-question, or one whose task is gone), a panel of its own, `task=gate:<board>/<id>` (`gate:<id>` on a board served alone,
-where the gate's chip and 「判定画面を開く」 open it). The same screen is drawn inside the panel of the hub, or of the
-session with no task, that waits on it: one column with the task's Issue and PR rows when there is a task, what is waiting
-and why, what the kind of gate needs read (the plan or question, the diff and findings, or the verify checks), the buttons
-the gate's options name, a comment box, 「ターミナルで話す」 (the middle terminal in 「いまの仕事」) and 「解決済みとして
-閉じる」; when several gates wait, the first is drawn and the others are listed under it. An answered gate leaves the
-counts and the 人 board at once, and is not read again by a poll that was already on its way. There is no list of gates
-other than 「いまの仕事」: its 新着 band holds them, and 「処理したら次へ」 goes through it. `/review` and
-`/review?item=<board>/<id>`, the addresses of the old queue, and `#gate/<id>` open 「いまの仕事」 on the resident server (on
-the gate's row, or its panel, once the list is in); a board served alone opens its エージェント board with the gate's panel
-open. A board served alone has no list of work and so no list of gates: there a gate is judged from its chip on the 人 board
-and from 「判定画面を開く」, and a session waiting on a permission prompt or a question shows only as a mark on its card and as
-a notification.
-
-A hub or worker that has waited 5 seconds on a permission prompt or a question, with no gate holding
-it, is a 新着 item of its row in 「いまの仕事」, as 許可待ち or 質問への回答待ち. It is answered in its
-terminal, not in a panel, which is the middle column of that row. It leaves 新着 once the session stops waiting.
-
-**A hub in the task panel.** A hub opens in the same panel, in three ways: the 「hub」 button at
-the right of the board's title (for the board being viewed), a terminal icon that appears when you
-hover a board's row in the sidebar (not in the icon rail, which has the title button instead), and
-the hub's row in 「いまの仕事」, where the terminal is the middle column. On a board it opens on ターミナル, the hub's own
-session. 詳細 shows the hub's state, the workers at work, what waits on you, the queue and the
-inbox (the newest few of each, with 「ほか N 件」; a queued task opens its own panel), and holds the
-hub's actions: 着手を促す (start the next queued task if a worker slot is free; it has left the title bar and lives here),
-再同期, 止める (or 閉じる for a finished parent-task hub), 「hub をリセット…」, 「タスクなしのセッションを始める…」
-and, on the repository's hub, 「親タスクの hub を起動…」 (see "Starting and linking sessions"). A session asked of the hub
-that it has not started yet is a card 「起動を依頼中」 there, and the gates the hub waits on are judged at the top. A stopped hub's
-ターミナル tab is disabled, and 詳細 offers 「hub を起動」; so is the tab of a hub that runs outside
-tmux, whose 詳細 still works. A hub of another board opens in place with its own numbers and a
-「ボードへ」 button. The hub is in the address as `task=hub:<id>`.
-
-The bar above the terminal carries the actions for the selected session: resume a stopped
-worker, restart a running hub or worker on its same conversation, close a running worker, start or stop a hub, open the session in your own terminal, and,
-under the menu, reset a hub (start it again on a new conversation; above a hub's terminal in the
-task panel it is also the first button of the bar), open the worktree in your IDE, copy its path
-and clean it up. Cleaning up removes
-the worktree and its local branch (never the remote one) and refuses when work would be lost
-(uncommitted or untracked files, commits no remote has); forcing it means typing the worktree's
-name back. A session that waits on a gate shows the gate, to be answered there (see "Judging a gate"); the
-answer goes to the board of the hub that opened the gate. A session that is not running shows a panel over the terminal
-with what the page last saw of it and a button to resume it, or to start the hub (also on a new conversation, with 「hub をリセット」).
-
-To keep it up across logins on macOS, a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`
-does it:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>adj.server</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/path/to/adj</string>
-    <string>server</string>
-    <string>start</string>
-    <string>--foreground</string>
-    <string>--no-open</string>
-  </array>
-  <key>KeepAlive</key><true/>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
-  </dict>
-</dict>
-</plist>
-```
-
-Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/adj.server.plist`. Under
-`KeepAlive`, `adj server stop` is undone as soon as it lands; stop it with `launchctl bootout
-gui/$(id -u)/adj.server`. Do not use `adj server restart` under it either: it races
-launchd's own respawn and can leave a second, unsupervised server; use `launchctl kickstart -k
-gui/$(id -u)/adj.server` instead.
-
-**It holds almost no clock.** A request arrives because a person clicked, and the page asks
-for state every two seconds. The one thing that answer reaches outside for is a task handed to
-Jules: its session is asked about at most once every 45 seconds, and only while the page is
-open and the card is in progress or in review (see [Handing a task to
-Jules](#handing-a-task-to-jules)). The clocks are the resident server's PR poll, described
-below under where a pull request's card sits, and the sweep every board runs every two seconds
-to close the gates whose worker has moved on; `/api/state` itself never asks GitHub and
-changes nothing.
-
-A task is a file in `~/.local/state/adjutant/tasks/<slug>/`, and it is deliberately not the
-message that announces it: the message is read once and acked, and after that the hub would
-have no way to say what became of the thing. The hub writes back to the record — `adjutant
-task update --id … --status dispatched --worktree …` — and that is what the board shows.
-The record is also the referee: a card dragged back to the backlog sets `status` there, and
-the hub reads it once more just before it starts, so a task pulled back while its message
-was still in the inbox does not get picked up anyway.
-
-A card with a worker behind it shows the step the worker says it is in (`adjutant phase
---set`, one line at the top of each section of the worker's procedure) and how long it has
-been there, and has buttons to raise the worker's tab, open the worktree in the editor, and
-close the tab. They run `terminal.focus`, `ide` and `terminal.close`, the same templates the
-commands use, and only on a worktree of this checkout. A card goes red when its worker has
-stopped, or has sat in one step for `stuckAfterMinutes` — a badge rather than a column, so the
-card keeps the column that says how far it got. Time counts only while the ball is the
-worker's: a card waiting on a gate or on its pull request's reviewers is not flagged for it,
-and once the pull request is open a closed worker tab is not flagged either. A pull request
-waiting on review bots (`pr-bots`) stays in the agents' column with no waiting badge, but only
-while the PR is not the person's turn: a PR with changes requested, an approval, failing CI or a
-close sends it to the person's column even then (below).
-Done cards fold away after a day; the records stay.
-
-Every worker has a record, whichever way its task came in. A task the hub starts from a
-worker's report or from its own tab gets one written before the brief (`adjutant task add
---waiting-in <worktree>`, which queues it without messaging the hub), so the brief can name
-it. The record then moves with the work: the worker sets `pr` when it opens its pull request,
-and the hub sets `done` when it removes the worktree. A card the board shows as in progress is
-a worker that is actually running.
-
-**Where a pull request's card sits.** A card with a `pr` is placed by what GitHub says about
-that PR, and the state is kept on the record (`prStatus`). Whose turn it is is worked out from it on every read and never stored (only the time a refresh saw the turn change is, as `prTurnAt`, for the 「いまの仕事」 view):
-
-| The PR is | Whose turn | The card |
-| --- | --- | --- |
-| a draft | the worker | where it was |
-| ready, and another reviewer was asked | another reviewer | agents' column, 「レビュー待ち（他の人）」, no waiting badge |
-| waiting on review bots or CI | the bots | agents' column, 「bot・CI 待ち」, no waiting badge |
-| changes requested | you | PRレビュー, 「修正の依頼あり」 |
-| approved | you, to merge | PRレビュー, 「マージ待ち」 |
-| failing CI | you | PRレビュー, 「CI 失敗」 |
-| merged | nobody | done |
-| closed without merging | you, to decide | PRレビュー, 「閉じられた」; never cancelled by itself |
-
-A worker that is still in a phase other than `pr` or `pr-bots` keeps its card on the agents'
-board whatever the PR says. A PR whose turn says nothing (a draft, one nobody was asked to
-review, one not read yet) is placed as before: in the human column when the worker's phase is
-`pr`, or, with no worker record, when the task's status is `pr`. A Jules task with a PR, once
-Jules is not working, follows the same turn: the person's turn puts it in the human column,
-another reviewer's, the bots' or a merge takes it off, and a PR whose turn says nothing sits in
-the human column as before.
-
-The resident server keeps this up to date by itself, with no setting to turn on. It asks
-`GET /notifications?participating=true&all=true` with `If-Modified-Since` (and `since`, so the
-page holds only what changed after the last answer), waits the `X-Poll-Interval` GitHub asks for
-(60 seconds when it says nothing, and never more than an hour), and when something has
-changed reads only the PRs a card holds, all in one GraphQL query. A 304 costs nothing against
-the rate limit. Notifications are never marked as read: nothing here writes to GitHub. GitHub
-does not notify you of what you did yourself (a PR you merge, close or mark ready), and a
-CI run that passes sends nothing either, so every card not yet merged (and one whose PR could not be
-read) is also read again every five minutes. The first
-round after the server starts, and a page of 50 changed threads, are taken to hold only part
-of the news, and every card is read. If GitHub cannot be reached, the cards stay where they were, the wait
-doubles up to 15 minutes, and the 「PRレビュー」 column header says 「PR の自動確認が止まっています」
-with the reason. A board served by itself (`adjutant serve`) has no poll.
-
-`adjutant task refresh` (the `adjutant_refresh` tool, or 「PR確認」 on the board's review
-column) reads every record that is not finished with the same query, as a safety net, and moves
-the ones whose PR was merged to `done`. A PR that is open, closed without merging, or that `gh`
-cannot read is left alone and listed instead: a closed PR may have been replaced by another,
-and only a person knows. The hub runs it once when it starts.
-
-A record holds the task's own text, not the issue's. So that the board can show what the issue
-said, `adjutant task add` and `task update` read a GitHub issue (`gh issue view`) when they
-start the task — dispatched or in review — or change its issue, and keep its title and body on
-the record as `issueSnapshot`, with the time it was read. The title is cut to 256 characters
-and the body to 16 KiB, and a cut body is marked. Other updates do not read it, and the server
-never polls a tracker: an issue edited afterwards is read again only when someone clicks
-「再取得」 on the task or runs `adjutant task fetch-issue --id <id>`. A `gh` that cannot read
-the issue leaves the record as it was and prints why; other trackers' URLs are left alone.
-
-The board's new-task form is one text box: what the person wants done, in their own words. It
-sends that text, the button's status and `needsReading: true` (and, from 「子タスクを足す」, the
-parent it was opened for). The record exists at once, with the first line of the text as its title,
-and the server holds it: `autoStart` is forced off, `adjutant task next` never picks it and lists
-it among the tasks that need a `dispatch` gate, and the server does not read the issue. The request
-the hub receives starts with `## Read first   yes`, and the lines after it are the record's
-defaults, not answers. The hub reads the text: an issue URL, number or key, a branch to cut from
-and a parent issue are resolved, not guessed, and the issue's title becomes the task's
-(`task fetch-issue --take-title`, or `task update --title -` for another tracker); the kind, Done
-when, Stop at, the implementer and the worktree name are inferred with the repository's defaults.
-It writes that reading to the record (it leaves the marker alone) and always opens a
-`dispatch` gate with what it read, what it inferred and what is still open, and nothing starts, is
-filed or is created until the person answers it: approve, pick the one open point offered, or
-correct it with a comment. The answer is written with `task update … --read --auto-start true`, which
-clears the marker and is refused unless the record can start (then the hub opens the gate again with what is missing). A request without `## Read first` (handed over before the form changed,
-by `task add`, or by a caller that sends the old fields to `/api/tasks`) takes the old path
-unchanged.
-
-A caller that sends `issueUrl` and no content of its own (`task add`, `POST /api/tasks`) still needs
-no text: the server reads the issue when it creates the record (the same read as `task fetch-issue`),
-and the card shows its title from the start. Text the person typed wins over the issue's. If the
-issue cannot be read, the record is kept anyway under the title `owner/repo#N` with
-`titlePending: true` (shown as 「タイトル未取得」), and the first successful read — at start, or
-`task fetch-issue` — replaces the title and clears the flag. A request with no URL, or with one that is not a GitHub issue URL
-(another tracker, a pull request), still needs content; a GitHub issue that `gh` cannot read
-does not count against it, and is kept with the pending title.
-
-### Sessions without a task
-
-A worker normally starts from a task, and the board joins a task to its worker by worktree, so
-a worker with no task has no card. `POST /api/sessions` asks a hub to start one anyway:
-`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}`. Every field is
-optional. The hub defaults to this board's own; the name is checked as a task's is, and left
-out it is the first four ASCII words of the instruction, lowercased and joined with `-`, or
-`session-YYYYMMDD-HHMM` (UTC; the start dialog proposes the same in local time) when there are
-none; with no instruction the worker greets the person in its tab and waits (`## Instruction`
-reads `-` in the message); `agent`, when given, has to be the one `agentRunner` starts
-(`state.sessionStart.agent`). The reply adds `hub` (the `hubs[].id` that took it) and `message`
-(the inbox file name, as in `hubs[].inbox[].name`) to `{handed, hubStarted, worktreeName,
-hubStartError?}`. The request is a `session` message in that hub's inbox, and the hub starts
-its tab if it is not running and the resident server can. Nothing is queued for a free worker
-slot, so the request is refused when none is free. The hub creates the worktree under the first
-free `name`, `name-2`… (`worktree-path --unique`) and starts the worker with the instruction in
-its brief; no task record is made.
-
-`POST /api/sessions/<id>/link` gives that session a task afterwards: `{"task": "<id>"}` for an
-existing one or `{"newTask": {…}}` with the fields `POST /api/tasks` takes, and an optional
-`hub`. `newTask.kind: "file-and-start"` also asks the hub to file an issue for the new task: a
-`file-issue` message goes to the hub the task landed on, and the reply adds `fileIssue`
-(`{handed, message}`, as for a session request) and `hubStarted` / `hubStartError` for a
-stopped hub the resident server tried to start, or `fileIssueError` when the hub could not be
-told, which does not undo the link and tells the worker `[issue <id>] not filed`.
-`file-and-start` with an existing `task` is refused. The hub the session belongs to follows the
-task: the one whose task directory holds it, so a task on a parent-task hub's board moves the
-worker to that hub, a repository-board task moves it back to the repository's, and a new task
-made under a parent-task hub is a child of that parent. The task becomes `dispatched` (or stays
-`pr`) with the worktree, the worker's record gets the task and, if it has none, the `implement`
-phase, and the worker is told in its outbox (`[linked <id>]`) and woken, as for a question. An
-optional `phase` (one of the eight `adjutant phase` takes) sets the phase instead, and is
-entered even when the record already has one; a value outside the list is refused before
-anything is written. A session that has not started, one that has ended (no worker running),
-one that already has a different task, a finished task, a Jules task and one another running
-worker holds are refused.
-
-### Telling sessions apart
-
-`GET /api/state` says more about each `sessions[]` entry than what it is, so that two sessions
-can be told apart without opening either. All of it is read on the same two-second poll from
-what is already at hand: one `tmux list-panes` and one `tmux list-clients` per tmux socket, and
-the gate directories.
-
-- `lastActivityAt`: tmux's `window_activity` for the session's window, in epoch seconds. Left
-  out when the session is not in tmux or its window is not listed.
-- `lastLine` (only with `GET /api/state?lines=1`, which the page no longer sends, or `lines=hub`, which
-  the board view sends and which reads the hubs' panes alone): the
-  last line the session's pane shows above its input box, cut to 200 characters. Read with one
-  `tmux capture-pane` per present tmux session, and only when the window has had activity since
-  the last read and that was at least 5 seconds ago, so a busy agent does not make the poll dear.
-  Left out for a session that is not in tmux, a pane with nothing written, and always with
-  `sessions=0`.
-- `attached`: how many clients are attached to that window, not counting the board's own
-  browser terminals (`adjboard-*`); a terminal the board opened for a person (`adjterm-*`) is a person and counts. A control-mode client (iTerm2's `-CC`) counts on every
-  window of its session, a plain one on the window it is looking at. `0` when nobody is; left
-  out when the window is not listed.
-- `waiting`: the oldest open gate the session waits on, `{id, kind, hub, slug, title,
-  openedAt, count}` with `hub` a `hubs[].id` and `count` how many it waits on in all. A worker's
-  is read from the gate directory of the hub it reports to, so the repository's board also
-  shows the gates of workers under a parent-task hub; a gate whose worker has moved on is left
-  out, though only the board that owns the directory closes it. A hub's is the gates it opened
-  for a person.
-- `phases`: every phase the worker said, oldest first, as `[phase, epoch seconds]`. Kept in the
-  worker's record (the latest 64), and kept when the worker is started again for the same task
-  while its record is still there; a record removed by stop or cleanup starts fresh. An older
-  record without `phases` reads as its current phase only. `phase` and `phaseAt` remain the
-  current one.
-- `agentSession`: what the agent's hooks last said about a running session, from the agent session
-  ledger (`adjutant agent-sessions`): `status` (`idle`, `running`, `waiting` on a permission prompt,
-  `done`, `failed`, or a newer word passed through), `pending`, `updatedAt`, `lastEventAt`,
-  `activity` and `request` (first line, cut to 200 characters), `model` (the status line's display
-  name) and `contextPercent` (0 to 100, rounded) when the status line has said them, and `subagents`:
-  the ones that run, each `{id, type, startedAt, activity}` (`activity` is the tool it last ran, first
-  line, cut to 200 characters; keys it has not said are left out). `lastMessage` and `lastMessageAt`
-  are what the agent said at the end of its last turn (line breaks kept, cut to 1000
-  characters; the expanded view reads the whole text through `GET /api/sessions/<id>/message`) and
-  when, left out until it has said one. Left out
-  for a session that is not running or has no row (no hooks); a running session with no row shows as
-  状態不明 (state unknown) rather than as working or idle, since the window's activity is not read as a
-  state (a resize redraws it); so does one whose `agentSession` is `{error}` or whose `status` is a word the
-  page does not know. Hooks reach the ledger from a session adjutant started with its settings
-  (restart it from the board to reopen it that way) or one started after `adjutant setup claude` /
-  `adjutant setup codex`. When the ledger cannot be listed it is
-  `{error}`; `sessionId` is the row's own id. 「いまの仕事」, the hub's entry and the cards show
-  a session `waiting` on a permission prompt as waiting on a person even with no gate open (許可待ち
-  with a `request`, 入力待ち without; 質問への回答待ち when the `request` is an `AskUserQuestion`).
-- `uncommitted` (`files`, `untracked`, `insertions`, `deletions`, `binary`, as in `/git` below) and
-  `uncommittedError`: for a worker only, read by git on a thread of its own, never on the poll. The
-  poll that lists the sessions asks for each worktree and takes what was last read: a worktree whose
-  session runs is read again after 10 seconds, any other after a minute, each git call under a
-  3-second deadline. Left out until the first read; a failed read keeps the last counts and sets
-  `uncommittedError`.
-- `branchPr` (`{number, url, state}`, `state` being `open`, `draft`, `merged` or `closed`): the pull
-  request of the session's branch, for a session with no task (a task's own is on its card).
-  Resident server only, on a repository whose origin is github.com: it is looked up by the
-  poll in the same round as the cards, held in memory and refreshed every 5 minutes (sooner when the
-  card poll's notifications name the repository, which only happens while a card on that board server
-  holds a PR). A pull request from a fork is not the branch's; of
-  several, an open one wins, else the newest. `branchPrError` is set when the last lookup of the
-  branch failed (no login, a rate limit, a repository that could not be read), with the pull
-  request of an earlier lookup left beside it; the poll's own `prPoll.error` is not touched by it.
-- `waits` (on `/api/state` and on each `/api/boards` entry; left out when empty): the sessions that
-  have waited on a permission prompt or a question for a few seconds and still do, each
-  `{agentSessionId, since, session, kind, name, request, quiet}` (`quiet` only when true). The page
-  lists each as a 新着 item of its session's row and rings its desktop notification from it, once per
-  `(agentSessionId, since)`, unless `quiet` (not announced: its terminal was open, or it
-  was already waiting when the server started). `session` is what the notification opens, in 「いまの仕事」, when it is clicked.
-  The server rings `notification` for a wait only while no page that may notify is open: every page
-  request carries `X-Adjutant-Notify: 1` or `0`, and a `1` within 90 seconds counts as open.
-- `parentIssue` (on a task, in `tasks` and `hubTasks`; left out when there is none): the issue the
-  task is a child of, `{key, url, number?, title?, source, hub, recordKey?}`. `hub` is the slug of the
-  hub that owns the task, the same name `parents[].children[].hub` gives it, and `recordKey` is the
-  record's own `parent` as a `key` when it names an issue (absent when there is none, or a key no
-  repository is known for); the page says the record differs when it is present and not `key`. `source` is `tracker` when GitHub says
-  the task's issue is a sub-issue of it, else `record` for the task's own `parent` (a key such as
-  `ALPHA-233` is turned into its issue through `issueKeys`; one that names no repository is shown as
-  written, with no `number`). The tracker's word wins, and the tracker never clears the record's: with
-  no parent there (or none read yet) the record's stands. `key` is `owner/repo#N` (lower case) for an
-  issue on github.com, so two spellings of one issue are one parent. The resident server asks GitHub
-  for the parents of the tasks' issues that are on github.com in the poll's round, holds the answers
-  in memory and reads each again at the first poll round after 10 minutes (after 2 minutes while no
-  read of it has succeeded and the last one failed as a whole, not for that issue alone; a task that
-  is done or cancelled is read once while the server lives); a failed read keeps the last answer the tracker gave, and a parent that
-  was read and found to have none is not the same as one never read, though the record is shown in
-  both. Without the resident server only the record is used. `adjutant task update --parent` fixes a
-  record's value.
-- `parents` (on `/api/state`; left out when no task has a parent): each parent with its children
-  from `tasks` and `hubTasks`, sorted by `key`: `{key, url, number?, title?, children, merged,
-  total, stacked, hub}`. `hub` is the slug of the hub that runs the children: a parent-task hub among the
-  children's, else the repository's own. A child is `{hub, id, title, merged, progress, prTurnAt?, branch?, base?, on?, onHub?}`:
-  `hub` is the slug of the hub that owns it
-  (an id is unique only within one hub), `title` is the task's, `prTurnAt` is when its PR's turn last changed (a UTC stamp), `merged` is whether its PR is merged, `progress` is `merged` (its PR is
-  merged), `done` (the task is done and has no merged PR), `pr` (a PR is set, or the task says `pr`, and it is not merged), `working` (the
-  task was handed to a worker) or `not-started` (anything else, a cancelled task included), `branch` is the branch its work is on and `base` what it is cut
-  from (less one leading `origin/`), and `on` (with `onHub`, the sibling's hub) is the
-  sibling whose branch it is cut from (its `base`, less one leading `origin/`, equal to the
-  sibling's branch: the one its worktree is on, else its PR's head). `stacked` is whether any child
-  has an `on`, and the children then come in stack order, root first, and the rest in queue order.
-  `total` is the number of sub-issues GitHub counts under the parent when a child brought it, else
-  the number of children listed, and never fewer than the children listed; `merged` counts the
-  merged children. With several chains the children come chain by chain, each root followed by what
-  is cut from it (children sharing a base in queue order).
-
-`rateLimits` (on `/api/state`, whether or not sessions are listed) is `{accounts, error?}`: one entry
-for each Claude account (config directory) the ledger has a figure for, `{agent, configDir,
-sessionId, lastEventAt, fiveHour, sevenDay}` with each window `{usedPercent, resetsAt}` (epoch
-seconds; keys not said are left out). It is taken from the account's row with the newest
-`lastEventAt` that has a figure, which is when that session was last heard from and not when the
-figures were drawn, so the page judges how old they may be. `error` is set instead when the ledger
-could not be listed.
-
-`hubs[].inbox` lists the messages waiting for that hub, newest first and at most 20, each with
-`name`, `subject`, `kind`, `from`, `worktree`, `at` (a UTC stamp), `seen` and `counted` (whether
-`unseen` / `seen` count it at all, as below). `inboxCount` stays the number waiting in all.
-
-A message is *seen* once its body was read (`adjutant_pending action=read`, `adjutant pending
---read`) and stays waiting until it is acked. Listing it does not count, and the board never
-reads a body. `hubs[]` also says `unseen` and `seen`, the waiting messages that call for waking
-the hub and have not / have been read (the hub's own `question` and `needs-user` copies, acks and
-notices are in neither), and `oldestUnseenAt`, the `at` of the oldest unseen one (left out when
-there is none). A read leaves an empty `.seen-<name>` file beside the message in the inbox, which
-the ack removes; a marker older than the message belongs to an earlier message of that name and
-is ignored.
-
-On a board other than 「すべて」 the agent board has the hub's entry above its columns: the hub's
-session as a row of 「いまの仕事」 shows it (state and last line) and, while `unseen + seen` is
-above 0, the counts, the age of the oldest unseen message and a 「hub を起こす」 button.
-`POST /api/hub/wake` is what it sends: the hub's wake line is typed into its tab, with the
-settings as they are now, and no message is written to the inbox. The answer is `{present, woken,
-screen, why?}`: `woken` is whether it was typed, `screen` whether the agent's screen is what
-stopped it, and `why` the reason, present only when a running hub was not typed into (when the hub
-is not running, `present` is false and there is no `why`). The button is enabled only while
-`unseen` is above 0 and the hub runs, and the page shows the reason next to it when nothing was
-typed.
-
-The same button is at the end of the 受信箱 card of the hub's panel while the inbox holds unseen or
-seen messages (off at 0 unseen, as on the board's entry), and beside a hub's row in 「いまの仕事」 (and its chip on a folded
-heading) only while that hub has unseen messages. It follows the same rules and shows the
-reason beside it in the same way; it is also off, with the reason, when this server does
-not have the hub's board (the wake goes to that board).
-
-A parent-task hub's `hubs[]` entry also has `titleState`, which says where the parent issue's title
-stands: `{status, reading, why?, missing?, retryAt?, total?, completed?, readAt?, parentKey?}`.
-`status` is `pending` (not read yet, or being read: `reading`), `failed` (`why` is what `gh` or
-GitHub said, `retryAt` is when it is tried again, in epoch seconds), `missing` (`missing` is
-`noKey`, `noIssue` or `notFound`: the hub's key cannot be told, names no issue, or GitHub has no
-such issue) or `read` (`total` and `completed` are the issue's sub-issues, `readAt` a UTC stamp;
-a title kept before they were read has neither). A failed background read is tried again after
-30 seconds, then 2 minutes, then every 10 minutes. The page words these codes and draws them beside
-the hub's title, on the board's hub entry, in the hub's panel and on the parent's heading in
-「いまの仕事」, with a button that reads that one issue now. `POST /api/hub/title` (the hub's own
-board only, like the wake) reads the board's parent issue through `gh` at once, keeps its title
-and counts under `hub-titles/<slug>.json`, and answers `{title, total, completed, readAt}`,
-`{busy: true}` when a read of it is already out, or `{missing}`; a failed read is a 400 with the
-reason as `error`. A `parents[]` entry whose key is a parent-task hub's issue says that hub in `titleHub`, and takes
-its title and its count from the hub when the tracker's read of a child gave none.
-
-`GET /api/sessions/<id>/git` looks at one session's worktree when asked, not on the poll:
-`branch` (null when detached), `head`, `uncommitted` (`files`, `untracked`, `insertions`,
-`deletions` against HEAD, and `binary`, the tracked files whose lines git does not count; `untracked` counts entries, so a wholly new directory counts once, and
-the lines of untracked files are not in `insertions`; the files adjutant itself writes under `.claude/` — `adjutant-*` and
-`task-brief.md` — are not counted), `upstream` (as configured), `unpushed` (`count`, the newest
-20 `commits`, and what they were counted `against`) and `merged` (`base`, `ref`, `merged`, and
-a `reason` when it could not be told). Unpushed commits are counted against the upstream only
-when it is the branch's own counterpart (same branch name); otherwise, and when there is no
-upstream, against every remote (`HEAD --not --remotes`). A worktree made from `origin/main`
-has `origin/main` as its upstream, and counting against that would say nothing once its work
-is merged. The base is the task's own when it has one, otherwise the remote's default branch
-(`origin/HEAD`, then `main`, then `master`, remote-tracking before local). Nothing is fetched, so
-`unpushed` and `merged` are as of the last fetch; a squash or rebase merge is not seen as
-merged, because the commits it left in the base are not the ones in the worktree. The whole
-check has a 10-second deadline, and a worktree that is gone is refused. An unknown session id
-is a 400, as for `link`.
-
-`GET /api/sessions/<id>/message` reads the whole last message of the session's agent when the
-expanded 「最後のメッセージ」 opens, not on the poll, which carries the first 1000 characters
-only. It answers `{sessionId, at, text, whole}`: `sessionId` is the agent session's id, `at` the
-time the message was received (the state's `lastMessageAt`), and `text` the message. The hook keeps
-the whole text, up to 50,000 characters (cut there with an ellipsis), in a file beside the session's
-row when the row had to cut it. `whole` is `false` when only the cut text is left (a row written
-before this was kept, an agent whose hook gives no last message, or a file that is gone or belongs
-to another message), and `text` is then the cut text. A session with no agent session, or an
-unknown session id, is a 400, as for `git`.
-
-### Acting on a session
-
-Six more routes act on a session or a hub. They are served only by the resident server: a
-board a hub serves answers 404 for them, since they reach outside the repository's own records.
-Refusals are a 400 with `{"error": …}`, like every other action.
-
-`POST /api/sessions/<id>/resume` reopens a worker that is not running, as `adjutant work
---resume` would: a tab that runs `adjutant worker --resume` on its worktree. Only a worker with
-a saved conversation, that is not running or starting, and only under `terminal.preset:
-"tmux"` and no `terminal.spawn` of your own, as for starting a hub. It is refused for an agent other than Claude unless
-`agentResumeRunner` is set (with `{sessionId}` in it), because the built-in line only reopens a
-Claude conversation. The worker is told no hub: it goes back to the one it was last linked to,
-which its saved session remembers. It counts against `maxWorkers`, and a full machine is
-refused with that reason. The answer is `{resumed, description, hub, hubRunning}`, with `hub` a
-`hubs[].id`.
-
-`POST /api/sessions/<id>/restart` is 「セッションを再起動」 for a worker: it closes the worker's
-window and reopens it with `adjutant worker --resume --worktree <worktree>`, on the same
-conversation, for instance to pick up a new Claude Code version. The board asks first, and warns
-when the restart would cut something off (the session waits on a gate, wrote output within
-the last minute, or its state is unknown). Everything `resume` refuses is refused before anything is closed (not
-`terminal.preset: "tmux"`, no saved conversation, a resume runner without `{sessionId}`, another
-agent without `agentResumeRunner`, a worker that is still starting), and so is
-`terminal.close` set to `false`, since the old window could not be closed. A worker that is still
-running 10 seconds after its window was closed is left alone: nothing is started, its record is
-kept and the answer is a 400. When it was closed but could not be opened again, the answer is a
-400 whose message says so, and the saved conversation is kept, so 再開 still works. One restart
-of a session at a time. The answer is `{restarted, wasRunning, description, hub, hubRunning}`.
-While it runs the page shows 「再起動しています…」 and holds the session's other buttons, until the
-new process appears.
-
-`POST /api/sessions/<id>/open` shows a session that runs in tmux in the person's own terminal.
-It makes a session of its own in the tmux group of the original (`adjterm-<pid>-<n>`), showing
-that window, so the other clients' current windows do not move, and hands it to
-`terminal.attach`: `{socket}` is the tmux socket arguments (`-L name`, `-S path` or nothing),
-`{session}` and `{window}` are quoted. The command has to return at once; one that stays in the
-foreground holds the request until the terminal closes. Where `terminal.attach` is not set the
-default is a new iTerm2 window running `tmux -CC attach`, on a Mac that has iTerm2 installed;
-control mode (`-CC`) is used only there. Anywhere else the board refuses and names the key.
-With the default opener on tmux 3.4 or later the session goes when its last client leaves. A
-session opened through a custom `terminal.attach`, or on an older tmux, is not destroyed on
-detach; the next sweep removes it, and the sweep runs on every open and on every board terminal.
-The sweep takes only sessions nobody is attached to and older than 30 seconds, so an attach
-that has not connected within 30 seconds may be swept from under it. If the command
-fails, the session made for it is removed again. `state.sessionOpen` says in advance:
-`{available, terminal}`, with `terminal` `"terminal.attach"`, `"iTerm2"` or null. Answer:
-`{opened, description, session, window}`.
-
-`POST /api/sessions/<id>/cleanup` removes a worker's worktree and its local branch, closing the
-session first if it is running. It is the board's own check, from the same look as `GET
-/api/sessions/<id>/git`, so it does not need the hub to be running. A worktree that holds
-uncommitted changes, untracked files or commits no remote has, or one whose check failed or
-timed out, is not removed (the check runs again once the session is closed, in case the worker committed meanwhile). Ignored files (build output, local env files) are not in the reasons and go with the worktree: the answer is a 200 `{removed: false, reasons: [{kind, detail}],
-git}`, with `kind` `uncommitted`, `untracked`, `unpushed` or `git`. It is a 200 because the page
-keeps only the message of an error, and the reasons are what a person decides on. To remove it
-anyway, send `{"force": true, "confirm": "<the worktree's directory name>"}`; `force` without
-the name typed back is a 400. Some things are refused whatever is sent: the main checkout, a
-hub, a session that is starting, one whose worker could not be stopped, a worktree a queued task
-is waiting in, and one a Jules plan is being written in. The remote branch is never touched.
-After the worktree is gone: the local branch is deleted (unlike the hub, which deletes only a merged or empty one) (a failure is reported and does not undo
-anything); the repository's `onWorktreeRemove` commands run in the main checkout with `{worktree}`
-and `{name}`, as when the hub cleans up, and each result is listed; and the `dispatched` or `pr`
-tasks of that worktree become `done`. The worker's record lives inside the worktree, so the
-session leaves the board with it. The answer is `{removed, forced, closed, branch: {name,
-deleted, error?}, tasks, hooks}`. The hub's own cleanup is unchanged; when it later meets a
-request for a worktree the board has removed, it removes nothing.
-
-`POST /api/hubs` with `{"key": "WID-957", "start": "auto"|"resume"|"new"}` starts the hub for a
-parent-task key, as `adjutant hub --hub KEY` does, before anything points at it (the
-`/api/hubs/<id>/start` route needs a hub the board already lists). The answer is `{started,
-description, hub: {id, slug}}`, or `{alreadyRunning, pid, hub}`. The hub appears in `hubs[]`
-once its `adjutant hub` has written its record. With `terminal.preset: "tmux"` and no
-`terminal.spawn` of your own, every route that starts a hub (`start`, `reset`, `restart` too)
-watches the new window for about 3 s and answers 400 with what the hub printed if it exits in that
-time.
-
-`POST /api/hubs/<id>/reset` (resident server only) stops the hub if it runs and starts it again as
-`adj hub --tab --new [--hub KEY]` does, so the new hub opens a new conversation. Everything start
-would refuse (no `terminal.preset: "tmux"`, a parent-task hub whose key is not known) is refused
-before anything is stopped. The answer is `{reset, wasRunning, started, description}`, or
-`{reset, wasRunning, alreadyRunning, pid}`; when a hub came up in the meantime that the
-reset did not start, `reset` is `false`, and `wasRunning` says whether one was stopped first. When the hub was stopped but could not be started
-again, the answer is a 400 whose message says it was stopped.
-
-`POST /api/hubs/<id>/restart` (resident server only) is the same for a hub: it stops the hub and
-starts it again as `adj hub --tab --resume [--hub KEY]` does, on the conversation it had. It is
-refused before anything is stopped when the start would be (no `terminal.preset: "tmux"`, a
-parent-task hub whose key is not known), when no conversation is saved, when `hubResumeRunner`
-has no `{sessionId}`, and when `hubRunner` is your own with no `hubResumeRunner` (the built-in
-runner would reopen the session instead of yours). A hub that does not stop within 10 seconds is
-not restarted and keeps its record. The answer is `{restarted, wasRunning, started, description}`,
-or `{restarted: false, wasRunning, alreadyRunning, pid}`; a hub stopped but not started again is
-a 400 that says it was stopped. `state.hubResume` is `{available, reason}`, as `sessionResume`
-is for a worker.
-
-### A session in the panel
-
-A session opens in the task panel as the task it belongs to, as the hub, or, with no task, as itself
-(`task=session:<id>`; once it is linked to a task the panel shows the task and the address follows).
-A worker with a task shows the task: its key and Issue link, the parent with where it came from and how
-many of its children are merged, where the card sits on the two boards, the latest five entries of what was asked
-and answered with a link to the full history, the phase timeline with times, the done-when and stop-at settings,
-the PR link and its state from the record, the branch, base and worktree with its git state, the children of
-the same parent (a backlog child is handed over from the panel, starting its hub first when it is stopped), the
-note, and the cached issue body with its refetch. A hub shows the inbox, the queue, the workers it started and the
-buttons of "A hub in the task panel". A session with no task, or a worktree with no session, shows what it is
-and its git state, and the buttons below. For a running session the panel also shows what the agent's hooks last
-said (state, since when, the tool or the permission asked for, sub-agents). The task, gates and history of a
-session under a parent-task hub are read from that hub's own board. The git state is read when a session is
-shown, when its phase or branch changes and on the refresh button, never on a timer. `state.hubRunner` is
-the hub's command template as configured, sent with its placeholders in place; the panel fills in only `{name}` and
-shows the rest as they are. It is shown on the board as configured, so keep secrets out of it.
-
-### Starting and linking sessions
-
-A hub's panel (open it from the hub's row in 「いまの仕事」 or the 「hub」 button) has two buttons under 操作, both off
-unless the page is served by the resident server, and off for a hub whose board that server does not serve: 「タスクなしの
-セッションを始める…」 (off too while `state.sessionStart.agent` is empty) and, on the repository's hub only, 「親タスクの hub を
-起動…」, which asks for a parent task's key and starts that hub by key. Starting a stopped repository hub is
-「hub を起動」 in the panel (and 起動 on its row in the sidebar). The start dialog picks the hub (a stopped one is started
-after the request is sent, and the dialog says so), takes an optional first instruction and proposes a worktree name
-from it (a dated one is in local time, where the server's own fallback is UTC) until the name
-field is edited. A name git refuses is marked and cannot be sent; a name already in use is only
-noted, since the hub picks the final one. Only the agent `agentRunner` starts can be chosen,
-and the button is off while no worker slot is free. A refused request keeps the dialog and its
-text open with the reason. Until the hub has started the session its panel shows a card 「起動を依頼中」 for it,
-derived from the hub's inbox so it survives a reload: waiting, hub stopped (with a start button, or why it could not
-start), or, when the hub took the request and started nothing for about 15 seconds, could not start (with 閉じる).
-When the session appears it is opened, in 「いまの仕事」 or over the board, if the panel the request was made from is still open.
-A notice above the page (閉じる to dismiss) says what the last action did, in whichever view.
-
-On a session with no task the panel offers 「タスクにする…」 (title, body, done-when,
-whether to have an issue filed, the current phase) and 「既存のタスクに紐づける…」 (a task
-from any hub's board that is unfinished, not Jules', not a postscript and has no running
-worker, and the phase). The dialog says beforehand when linking moves the session to another
-hub, and when that hub is stopped.
-
-### Gates
-
-A gate is the other half: something an agent has prepared for a person to look at, and the
-ball handed over with it. A worker used to stop at three places — its plan, its diff, the
-handover for a manual check — and ask in a tab nobody was watching. Now it writes the
-question down, ends its turn, and the board shows it.
-
-The payload is three frames rather than one wall of prose, because a reviewer who has to
-read four hundred lines to find the two decisions that matter is a reviewer who approves
-without reading: **what to look at**, **what was already decided** (folded away), and
-**where the agent's confidence ran out**. A gate may also carry two designs side by side and
-ask which one — the thing a terminal cannot do, since in a tab the second option has
-scrolled past the first by the time you have read it.
-
-The answer goes back out through that worktree's outbox and pokes the worker, which is
-`adjutant tell` and nothing new. That path already survives the worker having died: the
-answer simply waits there for whoever starts one next.
-
-The hub opens gates too: a task handed over with "confirm before starting" becomes a
-`dispatch` gate, and the card sits in the 人 board's 着手確認 column, and in 新着, until someone answers. The hub reads its inbox
-rather than an outbox, so the answer to a gate the hub opened is delivered there, as a
-`gate` message.
-
-**A gate is one question, one decision and one comment.** Past two rounds it has become a
-conversation, and a conversation is faster in the tab than through an outbox — so the board
-counts the rounds, says so, and offers a button that raises the tab *without* closing the
-gate. Leaving is not failing.
-
-A gate the person answers in the worker's terminal instead is closed by the worker with
-`adj gate close --terminal --comment "<what was decided>"`. If it forgets, the board closes
-the gate once the same worker moves to a later phase or opens its next gate, and shows it as
-answered in the terminal; a gate the hub opened is never closed this way.
-
-`adj gate open` reads its payload as JSON on stdin and answers with `server: up` or
-`server: down`. That second answer is the whole reason it reports rather than just
-succeeding: with nothing serving, a gate is a message into a directory no one opens, so the
-procedure falls back to asking in its own tab. **A worker must never wait on a queue nobody
-is watching.**
-
-A `diff` or `verify` gate can also be kept as a record with `"wait": false`, for a review or
-a check with nothing in it for a person. It is written to `records/` beside `answered/`
-rather than to the open queue, so nothing waits on it and it is not 新着, and the command tells the
-worker to go on. A person can still send one back with `changes`: the answer reaches the
-worktree's outbox like any other, and the record stays, with the answer appended to it.
-Both kinds of gate take structured fields beside the prose — `reviewRounds` and `findings`
-for a diff, `commands` and `manual` for a check, `problem` and `goal` for a plan — and
-`/api/state` hands each live task its records and the plan a person last approved.
-A plan is usually a worker's, but the hub opens one for a task handed to Jules; that gate
-carries `"openedBy": "hub"` so its answer goes to the hub's inbox, and `--body-file` puts a
-file in as the body as it is.
-The worker's procedure decides between the two by rule: a diff or a check waits only when
-the review hit its round limit with a must open, `verify` failed and could not be fixed,
-there is something only a person can check, the worker wrote something under `unsure`, or
-the task's stop point covers it. A gate that waits says which of those fired in
-`stoppedBy` (`round-limit`, `verify-failed`, `manual-check`, `unsure`, `stop-at`).
-
-On the board, a card carries a chip for the latest review and check its worker recorded
-(`レビュー 3R ✓ 収束`, `verify ✓`, `手で見る 2件`; a failure is red and marked ✗), with a dot
-until the record has been opened. Which records have been opened is kept in the browser's
-localStorage: it is one reader's state, not the task's. The task panel lists each record with a
-short summary and a button that opens it in its tab of the panel, where it can be sent back
-with a comment — that answer goes to the worktree's outbox. A gate that stopped the worker
-says which rule stopped it, on the card and in the panel. The stop point is read from
-the request and confirmed on the gate (`adj task add --stop-at` still sets it).
-
-The task panel's tabs are where everything a task's gates left can be read at any time, whether
-they stopped the worker or not. タスクサマリ has the problem and the goal with where each came from,
-the plan with when a person approved it (or that it is waiting), and the task's details.
-コードレビュー has the facts, the rounds, the findings (open, fixed,
-then false positives with the reason) and the files and diff; 動作確認 has the verify
-commands (folded, a failure open, a pass that took a second run marked — `attempts` on the
-command), the checks left for a person and how to run it. 経過 lists, in time order, the
-gates that waited, the records that did not and what people answered; the worker's phase is
-kept only as the one it is in now, so it closes the list. A gate waiting on a person is
-answered in the tab it belongs to — the gate's tag on a card, 判定画面を開く in the task panel, a
-notification all open it there (as the dialog, when the link comes from outside the panel, and
-the placement you saved is left as it was), and a gate with no task on the board opens in a panel
-of its own (see "Judging a gate"). The
-answered gates come from `GET /api/tasks/<id>/history`, read when the panel opens rather than on
-every poll, since the archive only grows. An address from before the panel had these tabs
-(`#task/<id>/<tab>`) opens the panel on the matching one.
-
-**The port is bound on `127.0.0.1` and everything needs a token**, kept in
-`~/.local/state/adjutant/dashboard-token` and handed out in the URL the command prints.
-Anything that changes state needs it in a header as well, and needs an `Origin` naming this
-server — a page on another site can submit a form to a loopback port, but it cannot set that
-header, and these endpoints are how work gets started.
-
-## Handing a task to Jules
-
-A task can be implemented by [Jules](https://jules.google) instead of by a worker. No worker
-session is started for it: the hub cuts a detached worktree to read from and has a subagent
-write the plan there — that is where a strong model pays for itself — and once a person
-approves the plan the hub hands it to a Jules session and removes the worktree. Jules
-implements it, reviews its own patch and opens the pull request.
-
-The choice is on the record: `adjutant task add --executor jules` (or `task update
---executor jules`). The hand-over is one command, run by the hub:
-
-```bash
-adj jules start --id <task> --prompt-file design.md
-```
-
-It starts a session on this repository with the file as its prompt, from the branch the task
-records as its base (`adj task update --base`; `--base` given on the command line takes its
-place), asks for the pull request to be opened automatically and for the plan to be approved
-without asking (a person already approved it), and writes the session's id onto the task as `julesSession`. `adj
-jules show --id <task>` asks how the session is doing: its state, its page on
-jules.google.com and, once there is one, its pull request. A task is handed over once;
-starting a second session for it is refused until `julesSession` is cleared.
-
-**The key stays out of the agent's reach.** `julesKey` is a command that prints it, not the
-key, because `adj config` prints every setting and an agent reads that. The built-in reads
-the macOS keychain item `jules-api`; add it once, typing the key at the prompt rather than on
-the command line:
-
-```bash
-security add-generic-password -s jules-api -a "$USER" -w
-```
-
-The key reaches `curl` on its stdin — an argument would be readable through `ps` — and is
-taken out of anything printed back, errors included. Off macOS, point `julesKey` at a
-command that prints the key from wherever it is kept.
-
-On the board, such a card shows the session in place of a worker: its state (queued,
-working, done, failed), linked to its page. No worker is flagged as gone for a card like
-this — none is ever started for it — and a session that failed is. The answer is asked for behind the page, never while it waits, so a slow API makes the
-badge a little stale rather than the board slow. The first time a session is seen with a pull
-request, the board writes it onto the task, moves the card to review, and sends the hub a
-`jules-pr` message naming the task and the PR. That happens once: Jules finishes again after
-every round of comments it answers, and the record already has its PR by then. Who implements is read from
-the request and confirmed on the gate (`adj task add --executor` still sets it).
-
-The procedures carry it from there. For a Jules task, `adj-hub` has its planning subagent
-write a design for Jules — every file, what changes in it, what must not be touched, the
-tests — rather than a summary, because the model on the other end needs the decisions made for
-it. The subagent reports back only the file's path and one line, so the plan stays out of the
-resident hub's context, and the hub opens the plan gate with `adj gate open --body-file` and
-`"openedBy": "hub"`: the board shows the file as it is, and the answer comes to the hub's inbox
-rather than to an outbox nobody reads. On approval the hub runs `adj jules start` with that
-file and removes the worktree; on `changes` the same subagent revises it. If the plan shows the
-task needs a worker after all, the hub gives the worktree a branch and starts one, and the
-worker implements the approved plan instead of planning again. When the `jules-pr`
-message arrives, `adj-hub` hands the pull request's description to a subagent on a light model
-to rewrite in the repository's own style, from the design (`adj jules show --json` returns it
-as `prompt`), Jules' own description and the list of changed files. The CodeRabbit summary
-block and Jules' link back to the session are kept as they are.
-
-**Review comments are passed on by hand, in your name.** Jules answers the comments of the
-person who started it and keeps out of other bots' threads, so a review bot's findings do not
-reach it by themselves. The task panel of a Jules task in review has 「レビュー指摘を Jules に
-回す」: it lists the first comment of each thread by anyone but Jules and you — a review
-bot, Copilot and a colleague alike, since Jules answers none of them — and posts the ones you
-tick as one comment on the pull request through `gh`, which is signed in as you. It does not
-go by `reviewBots`, which names the reviews a worker waits for rather than whose findings are
-worth passing on. Jules is not mentioned in the comment: it reads comments on its own pull
-requests without one. What each finding carries is the comment's bold headline with the bot's
-prompt for an agent when there is one — without the paragraphs every such prompt repeats, one
-of which tells the agent to run the bot's own CLI — and otherwise the comment without its
-hidden and folded parts. The ids passed on are kept on the task as `relayed`, so a comment goes once. `gh` has to be
-signed in as the account that started the session — `adj jules start` records it as `julesBy` —
-since Jules would ignore a comment from any other; a relay from another account is refused. From
-a shell it is `adj jules findings --id <task>` and `adj jules relay --id <task> --comment <id>`.
-Only inline comments are listed; what a bot writes in the body of its review is not.
-
-**The hub prepares a review for you to approve.** While the board is open, it also looks at
-the pull request of each Jules task in review. When comments by anyone but Jules and you have
-arrived and Jules is idle, it sends the hub a `jules-review` message naming them. The hub has a
-subagent read each one against the pull request's code — without checking the branch out — and
-decide whether it still applies and where the change really belongs, since a review bot can
-only comment on lines the diff touched. It opens a `relay` gate with what would go, the note
-for each, and what it left out and why. Approving it runs `adj jules relay --plan-file`, which
-posts them with each note under its finding; `changes` has the hub adjust and pass them on,
-and `reject` drops them. The board does this at most twice per pull request (`relayRounds` on
-the task); after that a reviewer and Jules are likely answering each other, and the task panel's
-manual relay is the way.
-
-The Jules GitHub app has to be installed on the repository first; a repository Jules cannot
-see is refused by the API.
-
-## How the two sides reach each other
-
-The address is the hub name, and both sides derive it the same way (`adjutant hub-name`)
-rather than each spelling the rule out. It is `owner/name` collapsed to something readable
-plus a digest of the lower-cased original — the readable half alone is not unique
-(`acme/foo-bar`, `acme/foo_bar` and `acme-foo/bar` collapse together), and two repositories
-sharing an address share an inbox. Lower-cased because the config finds a repository
-case-insensitively, and an address that did not would split one repository in two. **Do not assemble the name by hand**; one character off is a
-different box, and the digest is not guessable.
-
-**Worker → hub** is a file. `adjutant send` (or the `adjutant_send` tool) writes into
-`~/.local/state/adjutant/inbox/<slug>/`, and `adjutant pending` reads it. Delivery never
-fails for want of a listener: if the hub is not running the message simply waits, and the
-reply says which of the two happened. `adjutant hub-stop`, and a `kill -0` plus a command-line
-check against the recorded PID, keep an exited hub from looking present. Every message also
-carries a `worktree:` header — the absolute path the sender was standing in, derived rather
-than typed — so a hub acting on one has an address it did not have to take from the body.
-It is left out when git cannot place the sender in a worktree, and messages written before
-it existed still read.
-
-**Hub → worker** is also a file, but addressed by worktree rather than by session:
-`adjutant tell` appends a `##` section to `{worktree}/.claude/adjutant-outbox.md`, and
-`adjutant outbox` reads it. The worker's own record sits beside it, written by
-`adjutant worker` — the launcher the tab actually runs, which records its PID and then
-`exec`s the agent over itself, exactly as `adjutant hub` does for the hub. That record is
-what makes `workerWake` possible; without a PID there is nothing to poke.
-
-A worker's command line says nothing distinctive (it is whatever agent the config names), so
-its record is anchored to the process start time instead — `exec` preserves it, which is what
-lets a record written by the launcher still identify the agent that replaced it.
-
-A file appearing in a directory notifies nobody, so delivery has a second half in both
-directions: when the other side is up, `send` runs **`hubWake`** and `tell` runs
-**`workerWake`** — by default iTerm2's `write text` into the session on that tty, which
-reaches an interactive agent exactly as if the person had typed it. The line
-typed points at the inbox rather than repeating the report, so the text lives in one place.
-`send` fires `notification` either way; `tell` fires it only when the worker could not be
-woken, since a woken worker reads the message without anyone's help. Both replies say which
-of `present` / `woken` happened. Under tmux the built-in wake types only when the agent's screen
-shows an empty prompt: over a question or someone's own typing nothing is typed, and the person is
-notified instead. Waking is best-effort by construction: the message is already delivered before the
-hook runs, so a failed poke never fails a send, and the hub re-reads its inbox at three fixed
-points anyway. When the session has a row in `adj agent-sessions`, a wake is held while the row is `running` (for at most 10 minutes since its last event) or `waiting`, whatever the terminal, for up to five seconds before giving up; tmux still reads the screen before typing.
-
-The point of routing all of that through templates is that the channel then works from any
-agent in any terminal. The previous version was built on one coding agent's session list and
-its session-to-session messages, and could not run anywhere else.
-
-## Layout
-
-```
-infra      fs, clock, paths, env, shell, git and gh runners, the terminal mechanism and its settings, agent kind, notify, ide, template, pty, http, ws
-kernel     config, repository identity, worktree git state, prompts and skill rendering, runner, brief
-registry   Context and addressing, hub and worker records, saved sessions, liveness, slots, locks, the board address book and server record
-mail       inbox, outbox, delivery and wake, reading an agent's screen
-task       task records, their operations and the GitHub reads behind them
-gate       gate records and their operations
-jules      Jules sessions: starting one, following it, relaying review comments
-others     PRs other people asked you to review: their records, the sync that reads them, the state derived from them
-lifecycle  starting, stopping, resuming, closing, focusing and linking hubs and workers
-board      the daemon, the resident server, the read model, the background jobs, and the page's session and hub actions
-transport  cli, mcp and board_http: read input, call an operation, word the result
-```
-
-The list is bottom first: a module may use the ones above it, never one below it; `lib.rs` and
-`main.rs` are the crate roots over all eleven. `scripts/check-layering.sh` enforces the arrows, and CI
-runs it. As long as it passes, splitting into a Cargo workspace later stays a mechanical move.
-
-[docs/architecture.md](docs/architecture.md) has the details: a picture of the layers, what each
-module holds and must not hold, the rules that come with them, and where a change goes.
+---
 
 ## Development
 
 ```bash
-cargo test                    # unit + end-to-end
-./scripts/check-layering.sh
+cargo test                    # Unit and integration tests
+./scripts/check-layering.sh   # Verify architectural boundary rules
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
 ```
 
-The tests are hermetic: `ADJUTANT_CONFIG` and `ADJUTANT_STATE_DIR` point into tempdirs, so no
-test can read your config or drop a fixture report into a hub you actually have running.
-Anything that would open a window, start an agent or notify a human runs under `--dry-run`.
-
-## Subagents
-
-Workers make use of specialized subagents during a task if your environment defines them:
-
-- **Research**: An agent specialized in exploring the codebase and reading issues/docs (e.g. `task-researcher` or an agent whose description mentions research/exploration). If none is available, the worker falls back to the built-in `Explore` agent or `general-purpose` with explicit read-only instructions.
-- **Review triage**: An agent that fetches and groups PR review comments (e.g. `review-triage` or triage-focused). Falls back to `general-purpose`.
-- **Self-review**: An agent dedicated to independent diff verification (e.g. `self-reviewer` or review-focused). Falls back to `general-purpose` (or codex when configured).
-
-Custom subagents are defined on the agent client side (such as `~/.claude/agents/*.md` in Claude Code). You do not need to define them to use `agent-adjutant`; a clean environment with only `general-purpose` works out of the box.
-
-## Optional neighbours
-
-[`proctor`](https://github.com/syarihu/agent-proctor) (worktree conventions) and [`lk`](https://github.com/syarihu/local-knowledge-cli) (the local knowledge
-base) are used when they are on PATH and skipped when they are not.
-
-Neither is needed. A convention tool does not *create* worktrees — it answers where they go
-and what branch they sit on, and the `git worktree add` is typed either way — so what is
-missing without one is a convention, which `adjutant worktree-path --name` supplies: branch
-`{user}/{name}`, path `<main>/.claude/worktrees/{name}`, deliberately the same shape a
-convention tool uses rather than a second competing one. The one thing with no equivalent is
-its per-repo `copyFiles`; that belongs in this config's `postCreate`, which runs in both
-cases.
-
-[`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is the third of these, and
-the only one a built-in reaches for by itself: with it installed a notification comes from a
-notifier whose click can be aimed, without it from `osascript` and therefore from Script Editor.
+---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-The board terminal bundles xterm.js and two of its addons (MIT); their notice is in
-`src/ui/vendor/xterm/`.
+The board terminal bundles xterm.js and addons (MIT); notice in `src/ui/vendor/xterm/`.
