@@ -3,7 +3,7 @@ use super::*;
 
 pub fn tell(args: &TellArgs) -> Result<(), String> {
     let ctx = context(args.repo.as_deref(), args.hub.as_deref())?;
-    let worktree = crate::infra::paths::expand_home(&args.worktree);
+    let worktree = crate::infra::paths::absolute(&args.worktree);
     if !worktree.is_dir() {
         return Err(format!("no such worktree: {}", worktree.display()));
     }

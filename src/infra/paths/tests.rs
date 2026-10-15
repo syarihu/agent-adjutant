@@ -28,3 +28,21 @@ fn the_home_fallback_is_absolute_and_not_shared_with_anyone() {
         );
     }
 }
+
+#[test]
+fn a_relative_path_is_taken_from_the_current_directory() {
+    let cwd = std::env::current_dir().unwrap();
+    assert_eq!(absolute("wt/one"), cwd.join("wt/one"));
+}
+
+#[test]
+fn a_home_path_is_expanded_and_then_left_alone() {
+    let home = home_dir();
+    assert_eq!(absolute("~/wt"), home.join("wt"));
+    assert_eq!(absolute("~"), home);
+}
+
+#[test]
+fn an_absolute_path_is_unchanged() {
+    assert_eq!(absolute("/tmp/wt"), PathBuf::from("/tmp/wt"));
+}

@@ -153,8 +153,15 @@ pub fn spawn_held(
     dry_run: bool,
 ) -> Result<(Performed, Option<String>), String> {
     let backend = Backend::of(terminal);
-    let hold = terminal.spawn.is_none() && matches!(backend, Backend::Tmux { .. });
+    let hold = watches_start(terminal);
     spawn_on_inner(terminal.spawn.as_deref(), &backend, req, dry_run, hold)
+}
+
+/// Whether `spawn_held` gives back a pane to watch: the built-in tmux backend with no
+/// `terminal.spawn` template. A caller that cannot watch says so rather than announce a start
+/// it has no way to check.
+pub fn watches_start(terminal: &TerminalSettings) -> bool {
+    terminal.spawn.is_none() && matches!(Backend::of(terminal), Backend::Tmux { .. })
 }
 
 fn spawn_on_inner(

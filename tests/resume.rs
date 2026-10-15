@@ -845,3 +845,47 @@ fn a_worker_records_the_terminal_it_was_started_in() {
         "{record}"
     );
 }
+
+/// The tab starts in another directory, where a worktree typed relative to this one names a
+/// place that is not there (#707).
+#[test]
+fn work_hands_the_tab_an_absolute_worktree_whatever_was_typed() {
+    let fixture = Fixture::new(QUIET);
+    let spawned = fixture.repo.join("spawned.txt");
+    write_resumable_stub_config(&fixture, &spawned);
+    // Typed from the main checkout, the way a person reopens a worker in a worktree under it.
+    let sub = fixture.repo.join(".claude").join("worktrees").join("wt-1");
+    std::fs::create_dir_all(&sub).unwrap();
+    let relative = ".claude/worktrees/wt-1";
+    let absolute = sub.to_str().unwrap();
+    fixture.ok(&[
+        "worker",
+        "--worktree",
+        absolute,
+        "--title",
+        "WID-1",
+        "--hub",
+        FEATURE,
+    ]);
+
+    for resume in [true, false] {
+        let mut args = vec!["work", "--worktree", relative, "--title", "WID-1"];
+        if resume {
+            args.push("--resume");
+        }
+        args.push("--dry-run");
+        let out = fixture.command(&args).output().unwrap();
+        let line = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(line.contains(&format!("--worktree {absolute}")), "{line}");
+        assert!(!line.contains(&format!("--worktree {relative}")), "{line}");
+        assert!(
+            !line.contains(&format!("--worktree '{relative}'")),
+            "{line}"
+        );
+    }
+}

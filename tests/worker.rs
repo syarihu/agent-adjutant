@@ -231,7 +231,7 @@ fn a_worktree_that_does_not_exist_is_refused_rather_than_made() {
     ]);
     assert!(!out.status.success(), "{out:?}");
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("no such directory"),
+        String::from_utf8_lossy(&out.stderr).contains("no such worktree"),
         "{out:?}"
     );
     assert!(!missing.exists());

@@ -208,7 +208,7 @@ fn resuming_opens_a_tab_that_reopens_the_worker_under_its_own_hub() {
     let log = tmux.logged();
     let window = log
         .lines()
-        .find(|l| l.contains("new-window"))
+        .find(|l| l.contains("respawn-pane"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(
         window.contains(&format!(
@@ -269,7 +269,7 @@ fn restarting_a_worker_closes_its_window_and_resumes_it() {
         .unwrap_or_else(|| panic!("no window was closed: {log}"));
     let open = log
         .lines()
-        .position(|l| l.contains("new-window"))
+        .position(|l| l.contains("respawn-pane"))
         .unwrap_or_else(|| panic!("no window was opened: {log}"));
     assert!(kill < open, "{log}");
     assert!(

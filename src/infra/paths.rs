@@ -75,6 +75,17 @@ pub fn expand_home(path: &str) -> PathBuf {
     }
 }
 
+/// `expand_home`, made absolute against the current directory (#707).
+///
+/// For a path that is handed on to something running somewhere else — a tab opened in
+/// another directory — where a relative one names a different place or none. Not
+/// `canonicalize`: a stored path is not rewritten (`/tmp` to `/private/tmp`), and what
+/// compares paths canonicalises for itself.
+pub fn absolute(path: &str) -> PathBuf {
+    let expanded = expand_home(path);
+    std::path::absolute(&expanded).unwrap_or(expanded)
+}
+
 /// Whether two paths name one directory, for a task's stored worktree against the one git lists.
 pub fn same_path(a: &str, b: &str) -> bool {
     let resolved = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());

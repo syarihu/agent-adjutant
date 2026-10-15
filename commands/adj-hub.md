@@ -1610,8 +1610,10 @@ adj task update --id {task_id} --status dispatched --worktree '{worktree}' --not
 adjutant work --worktree '{worktree}' --task {task_id}
 ```
 
-- **In exactly this order.** `adjutant work` returns as soon as the tab is open, without waiting for
-  the worker to finish. Write `dispatched` after starting it and, if the worker has set it to `pr` in
+- **In exactly this order.** `adjutant work` returns once the tab is open (with tmux, after about
+  three seconds of checking that the worker did not exit at once), without waiting for the worker to
+  finish. Exit 0 means a tab was opened, even when what it prints says the worker could not be
+  checked or found one already running; leave the task as `dispatched`. Write `dispatched` after starting it and, if the worker has set it to `pr` in
   the meantime, you roll it back.
 - **Do not write the title on the command line.** With `--task`, the record's title becomes the tab's
   name. The title is text from an issue or a report; write `--title '…'` and a `'` closes the quote

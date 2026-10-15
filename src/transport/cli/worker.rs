@@ -68,6 +68,7 @@ pub fn work(args: &WorkArgs) -> Result<i32, String> {
         }
         Started::Opened(done) => {
             print_performed(&done, args.dry_run);
+            say_unwatched(&ctx, args.dry_run);
             Ok(0)
         }
     }
@@ -95,8 +96,18 @@ fn work_resumed(
         }
         Started::Opened(done) => {
             print_performed(&done, dry_run);
+            say_unwatched(&ctx, dry_run);
             Ok(0)
         }
+    }
+}
+
+/// A terminal that cannot be watched announces a start it has no way to check, so say so.
+fn say_unwatched(ctx: &Context, dry_run: bool) {
+    if !dry_run && !terminal::watches_start(&ctx.settings.terminal) {
+        println!(
+            "(this terminal gives no way to check that the worker stayed up; it appears on the board once it registers)"
+        );
     }
 }
 
@@ -134,7 +145,7 @@ fn focus_hub(args: &FocusArgs) -> Result<bool, String> {
 fn focus_worker_cmd(args: &FocusArgs, worktree: &str) -> Result<bool, String> {
     let (quiet, dry_run) = (args.quiet, args.dry_run);
     let settings = settings_for(args.repo.as_deref());
-    let worktree = crate::infra::paths::expand_home(worktree);
+    let worktree = crate::infra::paths::absolute(worktree);
     let Some(done) = focus_worker(&settings, &worktree, dry_run)? else {
         if !quiet {
             println!("no worker is running in {}", worktree.display());
@@ -177,7 +188,21 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         prompt: args.prompt.clone(),
         resume: args.resume,
     };
-    let launch = match plan_launch(&request)? {
+    // Resolved here as well, so a failure below can give the slot back. A worktree that cannot
+    // be resolved is a refusal before anything was marked.
+    let worktree = worker_worktree(args.worktree.as_deref())?;
+    // Harmless once registered, since registering already gave it back. It is for the
+    // terminals that cannot be watched (iTerm2, a template), where nobody else notices a
+    // worker that never started and its slot would be held for the rest of the grace period.
+    // Not on a dry run, which `adj work` did not mark for and which must not clear the mark of
+    // one in flight.
+    let give_back = |e: String| {
+        if !args.dry_run {
+            let _ = registry::unmark_worker_starting(&worktree);
+        }
+        e
+    };
+    let launch = match plan_launch(&request).map_err(give_back)? {
         Planned::Running { pid } => {
             println!(
                 "a worker is already running in this worktree (pid {})",
@@ -198,7 +223,7 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         println!("{}", launch.command);
         return Ok(());
     }
-    match register_launch(&launch)?.session {
+    match register_launch(&launch).map_err(give_back)?.session {
         Some(SessionNote::NotSaved(e)) => {
             eprintln!("adjutant: {e}; --resume may not reopen this worker");
         }
@@ -207,5 +232,5 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         }
         None => {}
     }
-    Err(exec_launch(&launch))
+    Err(give_back(exec_launch(&launch)))
 }

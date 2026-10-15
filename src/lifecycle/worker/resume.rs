@@ -82,10 +82,11 @@ pub fn resume_worker(
 }
 
 /// The worktree a worker runs in: the one named, or — for `--resume`, typed by a person
-/// standing in it — the one this command was run from.
+/// standing in it — the one this command was run from. Always absolute: it is passed on to a
+/// tab opened somewhere else, where a relative path names another place or none (#707).
 pub fn worker_worktree(worktree: Option<&str>) -> Result<std::path::PathBuf, String> {
     let worktree = match worktree {
-        Some(path) => crate::infra::paths::expand_home(path),
+        Some(path) => crate::infra::paths::absolute(path),
         None => identity::current_worktree(None)
             .map(std::path::PathBuf::from)
             .ok_or("not inside a git worktree; pass --worktree")?,
