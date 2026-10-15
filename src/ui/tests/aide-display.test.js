@@ -620,7 +620,7 @@ test('the PR part says whose turn it is, the bots, the CI, whether it can merge 
   assert.ok(out.includes('GitHub で開く') && out.includes('data-aide-open-read'));
   assert.ok(out.includes('T &lt;t&gt;') && !out.includes('<t>'));
   const merge = facts({ rec: { ...RECORD, ci: { pass: 5, fail: 0, pending: 0 } }, task: TCARD, prTurn: 'merge', phase: 'pr-bots' });
-  assert.ok(merge.includes('できます') && merge.includes('worker が bot の指摘待ち') && merge.includes('承認済みです'));
+  assert.ok(merge.includes('承認済み・CI 成功') && !merge.includes('できます') && merge.includes('コンフリクトは記録にありません') && merge.includes('worker が bot の指摘待ち') && merge.includes('承認済みです'));
   const bad = facts({ rec: { ...RECORD, draft: true, ci: { pass: 0, fail: 2, pending: 0 } }, task: TCARD, prTurn: 'draft' });
   assert.ok(bad.includes('下書きです') && bad.includes('CI が落ちています'));
   // A task's PR with no record: only what the task card read of it.
@@ -700,4 +700,16 @@ test('a part of a kind a newer server sends, and one whose renderer throws, is a
     { ctx: { prFacts: () => { throw new Error('boom'); } } });
   assert.ok(area.includes('この部品はまだ表示できません') && area.includes('hologram'));
   assert.equal((area.match(/data-aide-part=/g) || []).length, 2);
+});
+
+test('a part whose last read failed says so over what it still shows, and says nothing when the read worked', () => {
+  const err = 'boom <x>';
+  const diff = { state: 'ok', files: DIFF_FILES() };
+  const has = out => out.includes('最新の読み込みに失敗しました: boom &lt;x&gt;') && !out.includes('<x>');
+  assert.ok(has(html('read', { pr: 'a/b#1' }, { pr: () => ({ state: 'ok', rec: REC, read: READ, diff, refreshError: err }) })));
+  assert.ok(has(html('pr', { pr: 'a/b#1' }, { prFacts: () => ({ rec: RECORD, nowSecs: 1e10, refreshError: err }) })));
+  assert.ok(has(html('diff', { pr: 'a/b#1', path: 'src/b.rs', from: 5, to: 6 }, { diffOf: () => ({ state: 'ok', file: DIFF_FILES()[1], refreshError: err }) })));
+  assert.ok(has(html('task', { board: 's', id: '41' }, { task: () => ({ task: TCARD, plan: null, gates: [], refreshError: err }) })));
+  assert.ok(has(gatePart({ gate: () => ({ g: GATE, task: TASK, nwo: 'a/b', board: 's', refreshError: err }) })));
+  assert.ok(!html('read', { pr: 'a/b#1' }, { pr: () => ({ state: 'ok', rec: REC, read: READ, diff }) }).includes('最新の読み込みに失敗'));
 });

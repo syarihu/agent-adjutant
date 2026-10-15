@@ -151,6 +151,9 @@ function aideWanted() {
   return { boards, taskAis, prs };
 }
 
+/* Whether the entry of a PR holds what `what` asks for: the read-through when wanted (`undefined` is never fetched), the diff when wanted. */
+const aideHasWanted = (e, what) => !!e && e.settled && (!what.read || e.read !== undefined) && (!what.diff || !e.read || e.diff.state !== 'loading');
+
 /* Whether something read at `at` is recent enough not to be read again. */
 const aideIsFresh = (at, force) => !force && at != null && Date.now() - at < AIDE_BOARD_FRESH_MS;
 
@@ -190,7 +193,8 @@ async function loadAideBoards(force = false) {
 async function loadAideRecords(force = false) {
   const tasks = [...aideWanted().taskAis.values()].filter(t => !aideIsFresh(aide.taskAis.get(`${t.board}/${t.task}`)?.at, force));
   await Promise.all(tasks.map(loadAideTaskAi));
-  const prs = [...aideWanted().prs].filter(([id]) => !aideIsFresh(aide.prs.get(id)?.at, force));
+  // Fresh is not enough when the PR was read for a part that wanted less (a `pr` part reads the record only): what this one needs is read.
+  const prs = [...aideWanted().prs].filter(([id, what]) => !aideIsFresh(aide.prs.get(id)?.at, force) || !aideHasWanted(aide.prs.get(id), what));
   await Promise.all(prs.map(([id, what]) => loadAidePr(id, what)));
 }
 
@@ -274,7 +278,7 @@ function aideGateView(ref, rowKeyOf) {
   if (g.title) aide.gateTitles.set(ref, g.title);
   const task = (b.data.tasks || []).find(t => t.id === g.task) || null;
   const m = entry && !entry.isHub && work.doc ? workAwayModel(entry, workMarks(entry.nwo)[entry.id], [], workServerNow()) : null;
-  return { ...known, g, task, read: aideTaskRead(board, g.task), away: m ? workAwayHtml(m, workServerNow(), false) : '',
+  return { ...known, g, task, refreshError: b.error, read: aideTaskRead(board, g.task), away: m ? workAwayHtml(m, workServerNow(), false) : '',
     parentTitle: entry?.task?.parent ? aideParentTitle(entry.nwo, entry.task.parent) || entry.task.parent : '' };
 }
 
@@ -286,6 +290,9 @@ function aidePlanOf(task, data) {
   const plan = open ? { g: open, state: 'waiting' } : task.approvedPlan ? { g: task.approvedPlan, state: 'decided' } : newest ? { g: newest, state: 'decided' } : null;
   return plan && { title: plan.g.title, state: plan.state, at: plan.g.answeredAt || plan.g.openedAt, text: plan.g.goal || plan.g.focus || '' };
 }
+
+/* Why the last read of a board failed while what was read before is still held, else null. */
+const aideBoardError = board => aide.boards[board]?.error || null;
 
 const aideNwoOf = board => boards.find(b => b.slug === board)?.nwo || '';
 
@@ -300,7 +307,7 @@ function aideTaskView(board, id, rowKeyOf) {
   const nwo = aideNwoOf(board);
   const raw = `${nwo}/${board}`;
   const row = work.doc ? workListRows().rows.find(r => r.raw === raw && r.task?.id === id) : null;
-  return { task, plan: aidePlanOf(task, b.data), gates, nwo, next: aideTaskNext(task, gates), rowKey: row ? row.key : rowKeyOf(`${board}/${id}`) };
+  return { task, plan: aidePlanOf(task, b.data), gates, nwo, next: aideTaskNext(task, gates), rowKey: row ? row.key : rowKeyOf(`${board}/${id}`), refreshError: b.error };
 }
 
 /* A parent with the progress of its children: what the work document lists of it, joined to the open waits and the tasks it knows. */
@@ -350,9 +357,10 @@ function aideSessionView(board, id) {
 function aidePrView(id) {
   const e = aide.prs.get(id);
   if (!e || !e.settled) return { state: 'loading' };
-  if (e.error && !e.rec && !e.read) return { state: 'error', error: e.error };
+  // A read that failed is no answer that there is none; one that failed after an earlier success keeps that content, said to be old.
+  if (e.error && !e.read) return { state: 'error', error: e.error };
   if (!e.read) return { state: 'none', rec: e.rec };
-  return { state: 'ok', rec: e.rec, read: e.read, diff: { ...e.diff, resolved: e.resolved } };
+  return { state: 'ok', rec: e.rec, read: e.read, diff: { ...e.diff, resolved: e.resolved }, refreshError: e.error };
 }
 
 /* `ctx.prFacts(ref)`: what the PR part needs, of a task's PR (by the task) or of a PR by its id. The task card is the board's own read of the
@@ -367,7 +375,8 @@ function aidePrFacts(ref) {
     if (e.error && !e.rec) return { error: e.error };
     const link = e.rec?.task;
     const card = link ? cardOf(link.board, link.id) : null;
-    return { rec: e.rec, task: card, prId: ref.pr, prStatus: card?.prStatus || null, prTurn: card?.prTurn || null, phase: card && link ? phaseOf(link.board, link.id) : null, nowSecs };
+    return { rec: e.rec, task: card, prId: ref.pr, prStatus: card?.prStatus || null, prTurn: card?.prTurn || null, phase: card && link ? phaseOf(link.board, link.id) : null, nowSecs,
+      refreshError: e.error || (link ? aideBoardError(link.board) : null) };
   }
   const b = aide.boards[ref.board];
   if (!b || (!b.data && !b.error)) return { loading: true };
@@ -377,7 +386,8 @@ function aidePrFacts(ref) {
   const ai = aide.taskAis.get(`${ref.board}/${ref.id}`);
   if (!ai) return { loading: true };
   const e = ai.pr ? aide.prs.get(ai.pr) : null;
-  return { rec: ai.record || e?.rec || null, task: card, prId: ai.pr, prStatus: card.prStatus || null, prTurn: card.prTurn || null, phase: phaseOf(ref.board, ref.id), nowSecs };
+  return { rec: ai.record || e?.rec || null, task: card, prId: ai.pr, prStatus: card.prStatus || null, prTurn: card.prTurn || null, phase: phaseOf(ref.board, ref.id), nowSecs,
+    refreshError: ai.error || e?.error || b.error || null };
 }
 
 /* `ctx.diffOf(ref)`: the lines' file in the source the part names. A PR's diff is the one stored with its read-through, with the reader's
@@ -390,7 +400,7 @@ function aideDiffView(ref) {
     if (!e.read || e.diff.state === 'gone') return { state: 'gone' };
     if (e.diff.state !== 'ok') return { state: 'loading' };
     const file = e.diff.files.find(f => f.path === ref.path) || null;
-    return { state: 'ok', file, res: file && e.resolved ? e.resolved.files.get(file.path) : null, read: e.read, board: e.rec?.task?.board || '', taskId: e.rec?.task?.id || '' };
+    return { state: 'ok', file, res: file && e.resolved ? e.resolved.files.get(file.path) : null, read: e.read, board: e.rec?.task?.board || '', taskId: e.rec?.task?.id || '', refreshError: e.error };
   }
   const gateRef = `${ref.board}/${ref.id}`;
   const b = aide.boards[ref.board];
@@ -400,7 +410,7 @@ function aideDiffView(ref) {
   if (!g || g.wait === false || answeredGates.has(gateRef) || !g.diff) return { state: 'gone' };
   let parsed = aide.gateDiffs.get(gateRef);
   if (!parsed || parsed.diff !== g.diff) aide.gateDiffs.set(gateRef, parsed = { diff: g.diff, files: prParseDiff(g.diff) });
-  return { state: 'ok', file: parsed.files.find(f => f.path === ref.path) || null, res: null, read: null, board: ref.board, taskId: g.task || '', gateRef };
+  return { state: 'ok', file: parsed.files.find(f => f.path === ref.path) || null, res: null, read: null, board: ref.board, taskId: g.task || '', gateRef, refreshError: b.error };
 }
 
 function aideCtx() {

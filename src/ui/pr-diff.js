@@ -447,16 +447,29 @@ function prDiffLabels(paths) {
 
 /* ── a few lines of a file ── */
 
+/* The most rows an excerpt has: a range of at most 60 lines can lie around any number of removed lines (a huge deletion between two
+   added ones), and what is drawn must not grow with them. */
+const PRD_EXCERPT_ROWS = 80;
+
 /* The lines numbered `from` to `to` on `side` (right: the added and context lines by their new number, left: the removed and
-   context lines by their old one), and every line between the first and the last of them, removed ones among them:
-   `{ ks, hunks }` (`ks` are the lines' places, `hunks` the hunks they are in), or null when no line of the file is in the range. */
+   context lines by their old one), and every line between the first and the last of them, removed ones among them: `{ ks, hunks }`
+   (`ks` are the lines' places, `hunks` the hunks they are in), or null when no line of the file is in the range. Past `PRD_EXCERPT_ROWS`
+   rows the lines asked for are kept and the others fill what room is left, in order; `prDiffExcerptHtml` says where lines were left out. */
 function prDiffExcerpt(file, { from, to, side = 'right' }) {
   const left = side === 'left';
   const no = l => (left ? (l.kind === 'del' || l.kind === 'ctx' ? l.old : null) : (l.kind === 'add' || l.kind === 'ctx' ? l.new : null));
   const picked = (file?.all || []).filter(l => l.kind !== 'meta' && no(l) != null && no(l) >= from && no(l) <= to);
   if (!picked.length) return null;
-  const ks = [];
+  let ks = [];
   for (let k = picked[0].k; k <= picked[picked.length - 1].k; k++) ks.push(k);
+  if (ks.length > PRD_EXCERPT_ROWS) {
+    const asked = new Set(picked.map(l => l.k));
+    if (asked.size >= PRD_EXCERPT_ROWS) ks = picked.slice(0, PRD_EXCERPT_ROWS).map(l => l.k);
+    else {
+      let room = PRD_EXCERPT_ROWS - asked.size;
+      ks = ks.filter(k => asked.has(k) || room-- > 0);
+    }
+  }
   return { ks, hunks: new Set(ks.map(k => file.all[k].h)) };
 }
 
@@ -466,15 +479,19 @@ function prDiffExcerptHtml(file, ks, res, read) {
   const anns = read?.annotations || [];
   const cls = { add: 'prd-a', del: 'prd-d', ctx: 'prd-c' };
   let hunk = null;
+  let prev = null;
   return ks.map(k => {
     const l = file.all[k];
     if (!l) return '';
+    // Lines between two that are drawn were left out (a cut excerpt): one row says how many.
+    const gap = prev != null && k - prev > 1 ? `<div class="prd-l prd-m"><span class="prd-no"></span><span class="prd-sign"></span><span class="prd-code">… ${k - prev - 1} 行省略</span></div>` : '';
+    prev = k;
     const head = l.h !== hunk ? `<div class="prd-h">${esc(file.hunks[l.h]?.header || '')}</div>` : '';
     hunk = l.h;
-    if (l.kind === 'meta') return `${head}<div class="prd-l prd-m"><span class="prd-no"></span><span class="prd-sign"></span><span class="prd-code">${esc(l.text)}</span></div>`;
+    if (l.kind === 'meta') return `${gap}${head}<div class="prd-l prd-m"><span class="prd-no"></span><span class="prd-sign"></span><span class="prd-code">${esc(l.text)}</span></div>`;
     const line = `<div class="prd-l ${cls[l.kind]}${res?.tint.has(l.k) ? ' prd-tint' : ''}" data-prd-i="${l.k}"><span class="prd-no">${prDiffShownNo(l)}</span>`
       + `<span class="prd-sign">${l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span><span class="prd-code">${esc(l.text)}</span></div>`;
     const under = (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx), false, { plain: true })).join('');
-    return head + line + under;
+    return gap + head + line + under;
   }).join('');
 }

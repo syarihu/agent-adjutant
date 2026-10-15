@@ -378,3 +378,17 @@ test('an excerpt is drawn as the diff draws its rows, without the buttons, with 
   assert.ok(ctx.prdAnnHtml(0, { kind: 'ex', text: 't' }, 'right:1').includes('data-prd-todraft'));
   assert.ok(!ctx.prdAnnHtml(0, { kind: 'ex', text: 't' }, 'right:1', true, { plain: true }).includes('prd-ann-acts'));
 });
+
+test('an excerpt with a huge removal between two added lines keeps the lines asked for, is cut to a fixed number of rows and says how many were left out', () => {
+  const del = Array.from({ length: 5000 }, (_, i) => `-gone ${i}`);
+  const text = ['diff --git a/x b/x', '--- a/x', '+++ b/x', '@@ -1,5001 +1,2 @@', '+first', ...del, '+last'].join('\n');
+  const [f] = prParseDiff(text);
+  const got = ctx.prDiffExcerpt(f, { from: 1, to: 2 });
+  assert.equal(got.ks.length, 80);
+  assert.ok(got.ks.includes(0) && got.ks.includes(f.all.length - 1), 'both lines asked for are there');
+  const html = ctx.prDiffExcerptHtml(f, got.ks, null, null);
+  assert.equal(html.split('class="prd-l ').length - 1, 80 + 1);
+  assert.ok(html.includes('… 4922 行省略'));
+  // A range with no gap is not marked.
+  assert.ok(!ctx.prDiffExcerptHtml(f, [0, 1, 2], null, null).includes('行省略'));
+});

@@ -1448,6 +1448,25 @@ test('a PR is read as its record, then its read-through, then its diff parsed on
   assert.ok(c.aide.prs.get('o/r#1').rec);
 });
 
+test('a PR read for a part that wanted less is read again for one that wants more, whatever its age, and a failed re-read is said', () => {
+  const c = vm.createContext({ aide: { prs: new Map() } });
+  vm.runInContext(cut(aideSrc, /^const aideHasWanted = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'aidePrView'), c);
+  const has = (e, what) => { c.e = e; c.what = what; return vm.runInContext('aideHasWanted(e, what)', c); };
+  const record = { settled: true, rec: {}, read: undefined, diff: { state: 'loading', files: [] } };
+  assert.strictEqual(has(record, {}), true);
+  assert.strictEqual(has(record, { read: true, diff: true }), false, 'a record-only entry has no read-through');
+  assert.strictEqual(has({ ...record, read: null }, { read: true, diff: true }), true, 'a PR with no read-through has no diff to fetch either');
+  assert.strictEqual(has({ ...record, read: {} }, { read: true, diff: true }), false, 'a read-through without its diff');
+  assert.strictEqual(has({ ...record, read: {}, diff: { state: 'ok', files: [] } }, { read: true, diff: true }), true);
+  assert.strictEqual(has(undefined, {}), false);
+  // A failed re-read keeps the content and says why; with no content it is an error, not "none".
+  c.aide.prs.set('a', { settled: true, rec: { id: 'a' }, read: { sha: 's' }, diff: { state: 'ok', files: [] }, resolved: null, error: 'boom' });
+  c.aide.prs.set('b', { settled: true, rec: { id: 'b' }, read: undefined, diff: { state: 'loading', files: [] }, error: 'boom' });
+  const view = id => JSON.parse(JSON.stringify((c.id = id, vm.runInContext('aidePrView(id)', c))));
+  assert.deepStrictEqual([view('a').state, view('a').refreshError], ['ok', 'boom']);
+  assert.deepStrictEqual([view('b').state, view('b').error], ['error', 'boom']);
+});
+
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
   const log = [];
   let top = 'page-gate:b/g1';

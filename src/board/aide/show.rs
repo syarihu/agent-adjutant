@@ -457,14 +457,125 @@ fn session_task(work: &Value, board: &str, id: &str) -> Result<Option<String>, S
     Err(format!("no session {id} on board {board}"))
 }
 
-/// Whether the unified diff `diff` has a file `path`: by its `diff --git` header, or its old or
-/// new name. A path git quotes is not found, and the request is refused.
+/// A path as git writes it: plain, or in double quotes with C escapes when it holds a quote, a
+/// backslash, a control character or (by default) a byte over 127: `"a/\346\227\245.txt"`. The same
+/// reading as `prdUnquote` in `src/ui/pr-diff.js`.
+fn git_unquote(text: &str) -> String {
+    let Some(inner) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
+        return text.to_string();
+    };
+    let bytes = inner.as_bytes();
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' || i + 1 >= bytes.len() {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let c = bytes[i];
+        if (b'0'..=b'7').contains(&c) {
+            let mut n = 0u32;
+            let mut len = 0;
+            while len < 3 && i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) {
+                n = n * 8 + u32::from(bytes[i] - b'0');
+                i += 1;
+                len += 1;
+            }
+            out.push((n & 255) as u8);
+            continue;
+        }
+        out.push(match c {
+            b'n' => 10,
+            b't' => 9,
+            b'a' => 7,
+            b'b' => 8,
+            b'f' => 12,
+            b'r' => 13,
+            b'v' => 11,
+            other => other,
+        });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The path of a `---` or `+++` line: unquoted, without the tab git adds and its `a/` or `b/`.
+fn diff_line_path(raw: &str) -> Option<String> {
+    let raw = raw.split('\t').next().unwrap_or("").trim();
+    let path = git_unquote(raw);
+    (path != "/dev/null").then(|| {
+        path.strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .map(str::to_string)
+            .unwrap_or(path)
+    })
+}
+
+/// The two paths of a `diff --git` line, each word quoted or not.
+fn header_paths(rest: &str) -> Option<(String, String)> {
+    let rest = rest.trim_end();
+    let word = |text: &str| -> Option<(usize, String)> {
+        if text.starts_with('"') {
+            let mut escaped = false;
+            for (i, c) in text.char_indices().skip(1) {
+                match (escaped, c) {
+                    (true, _) => escaped = false,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => return Some((i + 1, git_unquote(&text[..=i]))),
+                    _ => {}
+                }
+            }
+            None
+        } else {
+            let end = text.find(' ').unwrap_or(text.len());
+            Some((end, text[..end].to_string()))
+        }
+    };
+    let (n, a) = word(rest)?;
+    if let Some(b) = rest[n..].strip_prefix(' ')
+        && let Some((m, b)) = word(b)
+        && n + 1 + m == rest.len()
+    {
+        let strip = |p: String| {
+            p.strip_prefix("a/")
+                .or_else(|| p.strip_prefix("b/"))
+                .map(str::to_string)
+                .unwrap_or(p)
+        };
+        return Some((strip(a), strip(b)));
+    }
+    // A path with a space in it: the same path on both sides, else split at the last ` b/`.
+    let same = rest.strip_prefix("a/").and_then(|r| {
+        let half = r.len().checked_sub(2)? / 2;
+        (r.len() % 2 == 1 && r[half..].starts_with(" b/") && r[..half] == r[half + 3..])
+            .then(|| r[..half].to_string())
+    });
+    if let Some(p) = same {
+        return Some((p.clone(), p));
+    }
+    let at = rest.rfind(" b/")?;
+    Some((
+        git_unquote(&rest[..at])
+            .trim_start_matches("a/")
+            .to_string(),
+        rest[at + 3..].to_string(),
+    ))
+}
+
+/// Whether the unified diff `diff` has a file `path`: by its `diff --git` line, or its old or new
+/// name, read as the page reads them (so a name git quoted is found by what it says).
 fn diff_names_file(diff: &str, path: &str) -> bool {
-    let header = format!("diff --git a/{path} b/{path}");
-    let (new, old) = (format!("+++ b/{path}"), format!("--- a/{path}"));
     diff.lines().any(|line| {
-        let line = line.trim_end();
-        line == header || line == new || line == old
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            return header_paths(rest).is_some_and(|(a, b)| b == path || a == path);
+        }
+        match (line.strip_prefix("--- "), line.strip_prefix("+++ ")) {
+            (Some(r), _) | (_, Some(r)) => diff_line_path(r).is_some_and(|p| p == path),
+            _ => false,
+        }
     })
 }
 
@@ -1391,5 +1502,21 @@ mod tests {
         assert_eq!(old, PartRef::of("b", "g"));
         let new: PartRef = serde_json::from_value(json!({"pr": PR, "point": 2})).unwrap();
         assert_eq!((new.board.as_str(), new.point), ("", Some(2)));
+    }
+
+    #[test]
+    fn a_path_git_quotes_is_found_by_what_it_says_and_a_plain_one_by_its_lines() {
+        let quoted = "diff --git \"a/\\346\\227\\245.txt\" \"b/\\346\\227\\245.txt\"\n--- \"a/\\346\\227\\245.txt\"\n+++ \"b/\\346\\227\\245.txt\"\n@@ -1 +1 @@\n-a\n+b\n\
+diff --git \"a/q\\\"x\\\\y\\tz\" \"b/q\\\"x\\\\y\\tz\"\nBinary files a and b differ\n\
+diff --git a/with space.rs b/with space.rs\nBinary files a and b differ\n\
+diff --git a/old.rs b/new.rs\nsimilarity index 90%\nrename from old.rs\nrename to new.rs\n";
+        assert!(diff_names_file(quoted, "日.txt"));
+        assert!(diff_names_file(quoted, "q\"x\\y\tz"));
+        assert!(diff_names_file(quoted, "with space.rs"));
+        assert!(diff_names_file(quoted, "new.rs"));
+        assert!(!diff_names_file(quoted, "\\346\\227\\245.txt"));
+        assert!(!diff_names_file(quoted, "other.rs"));
+        assert!(!diff_names_file(FILE_DIFF, "src/a.rs.bak"));
+        assert!(diff_names_file(FILE_DIFF, "src/a.rs"));
     }
 }

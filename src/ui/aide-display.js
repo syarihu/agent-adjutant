@@ -276,6 +276,7 @@ function aideGateBodyHtml(got, ref, ctx) {
   const waiting = g.wait !== false;
   const parts = [];
   if (got.parentTitle) parts.push(`<div class="aide-gate-parent">${aideIcon('account_tree')}<span>${esc(got.parentTitle)}</span></div>`);
+  if (got.refreshError) parts.push(aideStaleNote(got.refreshError));
   parts.push(aideSection('このタスク', `<p class="aide-gate-task">${esc(aideTaskLine(g, task))}</p>`));
   if (got.away) parts.push(aideSection('前回見てから', got.away));
   const ask = g.focus ? `<div class="aide-gate-focus">${md(g.focus)}</div>` : '<div class="tp-muted">確認してほしい点は書かれていません</div>';
@@ -376,6 +377,8 @@ registerAidePart('waits', (part, ctx) => {
    Each is drawn from what `ctx` says of the thing the part names, read from the records and never from GitHub. A part whose thing
    is not there yet says so (`読み込み中…`), one that failed says why, and one that is gone says it is gone: never an empty body. */
 
+/* The last read of something failed while an earlier one is still on show: said, so what is drawn is not taken for current. */
+const aideStaleNote = err => (err ? `<div class="tp-muted aide-stale">${esc(`最新の読み込みに失敗しました: ${err}（前回読んだ内容を出しています）`)}</div>` : '');
 const aideNote = text => `<div class="tp-muted">${esc(text)}</div>`;
 const aideLinkBtn = (attrs, icon, text, off = '') => `<button type="button" class="aide-link" ${attrs}${off ? ` disabled title="${esc(off)}"` : ''}>${aideIcon(icon)}<span>${esc(text)}</span></button>`;
 
@@ -429,7 +432,7 @@ registerAidePart('read', (part, ctx) => {
   const link = rec?.task || null;
   const attrs = `data-aide-pr="${esc(id)}" data-aide-board="${esc(link?.board || '')}" data-aide-task="${esc(link?.id || '')}"`;
   const stale = rec?.headSha && read.sha && rec.headSha !== read.sha ? `<div class="tp-muted">${esc(prStaleText(read, rec))}</div>` : '';
-  const parts = [stale];
+  const parts = [aideStaleNote(got.refreshError), stale];
   const three = prThree(read);
   if (three) parts.push(aideSection('この PR がすること', three.html));
   const split = prSplitProposal(read);
@@ -550,7 +553,7 @@ registerAidePart('task', (part, ctx) => {
       + (children.length ? aideSection('子タスク', `<ul class="aide-children">${list}</ul>`) : '')
       + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next || '')}</p>`)
       + (httpUrl(p?.url) ? `<div class="aide-gate-actions"><a class="aide-link" href="${esc(httpUrl(p.url))}" target="_blank" rel="noopener noreferrer">${aideIcon('open_in_new')}<span>GitHub で開く</span></a></div>` : '');
-    return { ...base, where: got.nwo || '', title: `${p?.number ? `#${p.number} ` : ''}${p?.title || ref.parent}`, body: `<div class="aide-task">${body}</div>` };
+    return { ...base, where: got.nwo || '', title: `${p?.number ? `#${p.number} ` : ''}${p?.title || ref.parent}`, body: `<div class="aide-task">${aideStaleNote(got.refreshError)}${body}</div>` };
   }
   const { task, plan, gates } = got;
   const here = `data-aide-board="${esc(ref.board)}" data-aide-task="${esc(task.id)}"`;
@@ -559,7 +562,7 @@ registerAidePart('task', (part, ctx) => {
     + aideSection('計画', `<p class="aide-gate-task">${esc(aidePlanLine(plan))}</p>`)
     + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next ?? aideTaskNext(task, gates))}</p>`)
     + `<div class="aide-gate-actions">${aideLinkBtn(`data-aide-expand ${here} data-aide-target="request"`, 'open_in_full', '拡大')}${got.rowKey ? aideTermButtonHtml(got.rowKey) : ''}</div>`;
-  return { ...base, title: task.title || task.id, body: `<div class="aide-task">${body}</div>` };
+  return { ...base, title: task.title || task.id, body: `<div class="aide-task">${aideStaleNote(got.refreshError)}${body}</div>` };
 });
 
 /* ── pr ── */
@@ -620,7 +623,8 @@ registerAidePart('pr', (part, ctx) => {
   const ciKnown = [ci.pass, ci.fail, ci.pending].some(n => Number(n) > 0);
   rows.push(prKv('CI', esc(ciKnown ? `成功 ${Number(ci.pass) || 0} / 失敗 ${Number(ci.fail) || 0} / 実行中 ${Number(ci.pending) || 0}` : 'なし')));
   const m = aideMergeBlockers(turn, ci);
-  const merge = m.merged ? 'マージ済みです' : m.ok ? 'できます' : `まだです — ${m.blockers.join('、') || '承認がまだです'}`;
+  // The records say nothing of a conflict or of a branch rule, so "can merge" is never said: only what they do show.
+  const merge = m.merged ? 'マージ済みです' : m.ok ? '承認済み・CI 成功' : `まだです — ${m.blockers.join('、') || '承認がまだです'}`;
   rows.push(prKv('マージ', `${esc(merge)}${m.merged ? '' : '<div class="tp-muted">コンフリクトは記録にありません（GitHub で確認）</div>'}`));
   rows.push(prKv('差分の大きさ', rec ? `<span class="add">+${Number(rec.additions) || 0}</span> <span class="del">−${Number(rec.deletions) || 0}</span> · ${Number(rec.changedFiles) || 0} files · ${esc(othersSize(rec))}` : '記録がありません'));
   const ai = rec ? othersAiView(rec, [], got.nowSecs) : null;
@@ -632,7 +636,7 @@ registerAidePart('pr', (part, ctx) => {
   const attrs = rec ? `data-aide-pr="${esc(rec.id)}" data-aide-board="${esc(rec.task?.board || '')}" data-aide-task="${esc(rec.task?.id || '')}"` : '';
   const acts = (url ? `<a class="aide-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${aideIcon('open_in_new')}<span>GitHub で開く</span></a>` : '')
     + (rec?.ai ? aideLinkBtn(`data-aide-open-read ${attrs}`, 'menu_book', 'AI 下読みを開く') : '');
-  return { ...base, body: `<div class="aide-pr"><div class="tp-kvs">${rows.join('')}</div>${acts ? `<div class="aide-gate-actions">${acts}</div>` : ''}</div>` };
+  return { ...base, body: `<div class="aide-pr">${aideStaleNote(got.refreshError)}<div class="tp-kvs">${rows.join('')}</div>${acts ? `<div class="aide-gate-actions">${acts}</div>` : ''}</div>` };
 });
 
 /* ── session ── */
@@ -691,5 +695,5 @@ registerAidePart('diff', (part, ctx) => {
   const act = ref.pr
     ? aideLinkBtn(`data-aide-open-read data-aide-pr="${esc(ref.pr)}" data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(got.taskId || '')}"`, 'menu_book', 'AI 下読みを開く')
     : got.taskId ? aideLinkBtn(`data-aide-expand data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(got.taskId)}" data-aide-target="gate" data-aide-gate-ref="${esc(got.gateRef || '')}"`, 'open_in_full', '拡大で開く') : '';
-  return { ...base, body: `<div class="aide-diff">${body}${act ? `<div class="aide-gate-actions">${act}</div>` : ''}</div>` };
+  return { ...base, body: `<div class="aide-diff">${aideStaleNote(got.refreshError)}${body}${act ? `<div class="aide-gate-actions">${act}</div>` : ''}</div>` };
 });

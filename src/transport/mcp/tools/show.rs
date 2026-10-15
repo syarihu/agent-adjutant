@@ -64,8 +64,23 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let Some((_, allowed)) = KINDS.iter().find(|(k, _)| *k == kind) else {
         return Err("kind must be gate, waits, read, task, pr, session or diff".to_string());
     };
+    // A key of the wrong type is refused, not read as absent: `level: 1` is not "no level". `null` is absent, as in the
+    // other tools, and so is a blank string (`text_param`).
     for key in KEYS {
-        let given = text_param(args, key).is_some() || args[key].is_number();
+        let v = &args[key];
+        let typed = match key {
+            "point" | "from" | "to" => v.is_null() || v.is_number(),
+            _ => v.is_null() || v.is_string(),
+        };
+        if !typed {
+            let want = if matches!(key, "point" | "from" | "to") {
+                "a whole number from 1"
+            } else {
+                "a string"
+            };
+            return Err(format!("`{key}` must be {want}"));
+        }
+        let given = text_param(args, key).is_some() || v.is_number();
         if given && !allowed.contains(&key) {
             return Err(format!("kind={kind} takes no `{key}`"));
         }
