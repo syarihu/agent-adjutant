@@ -882,3 +882,13 @@ test('a read part opened from the review requests has the way back to the list, 
   assert.deepEqual([part.kind, part.ref, part.by], ['reviews', null, 'board']);
   assert.equal(run('AIDE_REVIEWS_TOPIC').key, 'reviews');
 });
+
+test('an empty list is said to have no requests only after a clean, fresh sync, else it may have missed some', () => {
+  const say = sync => html('reviews', null, { reviews: () => ({ state: 'ok', records: [], nowSecs: 1e10, sync: { words: 'w', never: false, stale: false, notes: [], ...sync } }) });
+  assert.ok(say({}).includes('レビュー依頼はありません'));
+  for (const sync of [{ stale: true }, { notes: [{ text: '一部を読めませんでした' }] }, { notes: [{ alert: true, text: 'x' }] }]) {
+    const out = say(sync);
+    assert.ok(out.includes('同期に問題があるので、レビュー依頼が漏れているかもしれません') && !out.includes('レビュー依頼はありません'), JSON.stringify(sync));
+  }
+  assert.ok(html('reviews', null, { reviews: () => ({ state: 'ok', records: [], sync: { words: 'w', never: true, notes: [] } }) }).includes('同期するまで'));
+});

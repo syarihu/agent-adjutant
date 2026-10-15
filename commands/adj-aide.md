@@ -39,9 +39,10 @@ These are allowed without asking:
   people that wait on their review (what 「AI 下読み」 lists), each with its repository, title,
   author, whether it was asked again, and where its AI 下読み stands. `repo` narrows it. Read only;
   it needs the resident server like `adjutant_work`. Its `lastSync` is the last sync with GitHub,
-  which runs only when the person asks: when it never ran (`at` empty), did not finish (`complete`
+  which runs only when the person asks: when it never ran (`lastSync` null, or its `at` empty), did not finish (`complete`
   false), was cut short (`truncated`) or failed (`error`), the list may be missing requests. Say so;
-  never answer "no reviews" from such a list.
+  never answer "no reviews" from such a list. Also say how long ago the last sync was (from `now` and
+  `lastSync.at`).
 - `adjutant_gate_read` reads one gate in full. `board` is the gate's `slug` from `adjutant_work`,
   and `id` is its id. It marks nothing as looked at.
 - `adjutant_show` puts something in the display area beside your terminal. You pass a kind and a

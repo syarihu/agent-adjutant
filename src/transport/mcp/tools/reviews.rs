@@ -2,16 +2,16 @@ use serde_json::{Value, json};
 
 use super::text_param;
 
-/// The states in which a PR waits on the person: what `OTHERS_LIVE` is on the page.
 /// How long a read may run before it is said to have hung: `OTHERS_HUNG_SECS` of the page.
 const HUNG_SECS: i64 = 1800;
 
+/// The states in which a PR waits on the person: what `OTHERS_LIVE` is on the page.
 const WAITING_ON_YOU: [&str; 4] = ["requested", "ai-reading", "ai-ready", "pushed"];
 
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_reviews",
-        "description": "The code reviews the person is asked to do: what 「AI 下読み」 lists, the pull requests of other people that wait on the person's review. Not the review handling of the person's own task PRs: those are in adjutant_work. Per PR: `id` (owner/repo#N), `repo`, `title`, `url`, `author`, `state`, `rerequest` (asked again after a review), `requestedAt`, `events` (when each thing happened), and `ai`, where the 下読み stands (`stage` none, queued, running, hung, ready, stale or failed, with `counts` when read). `lastSync` is the last sync with GitHub (it runs only when the person asks): when it never ran (`at` empty), did not finish (`complete` false, `failed`), was cut short (`truncated`) or failed (`error`), the list may be missing requests, so say so instead of saying there are none. Read only; it marks nothing as seen. It needs the resident server running (`adj server start`). Show the list with adjutant_show kind=reviews, or one PR's read-through with kind=read.",
+        "description": "The code reviews the person is asked to do: what 「AI 下読み」 lists, the pull requests of other people that wait on the person's review. Not the review handling of the person's own task PRs: those are in adjutant_work. Per PR: `id` (owner/repo#N), `repo`, `title`, `url`, `author`, `state`, `rerequest` (asked again after a review), `requestedAt`, `events` (when each thing happened), and `ai`, where the 下読み stands (`stage` none, queued, running, hung, ready, stale or failed, with `counts` when read). `lastSync` is the last sync with GitHub (it runs only when the person asks): when it never ran (`lastSync` null, or its `at` empty), did not finish (`complete` false, `failed`), was cut short (`truncated`) or failed (`error`), the list may be missing requests, so say so instead of saying there are none, and say how long ago the last sync was (from `now` and `lastSync.at`). Read only; it marks nothing as seen. It needs the resident server running (`adj server start`). Show the list with adjutant_show kind=reviews, or one PR's read-through with kind=read.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -215,5 +215,12 @@ mod tests {
             ["hung", "running", "running"]
         );
         assert_eq!(out["requests"][0]["ai"]["launchedAt"], at(1801));
+    }
+
+    #[test]
+    fn a_list_never_synced_passes_its_null_last_sync_through() {
+        let out = reviews_of(&json!({"now": 5, "lastSync": null, "records": []}), None).unwrap();
+        assert!(out["lastSync"].is_null());
+        assert_eq!(out["now"], 5);
     }
 }

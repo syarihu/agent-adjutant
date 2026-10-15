@@ -164,3 +164,5 @@
 .aide-child-title { flex: 1 1 12em; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
 .aide-child-bucket, .aide-child-turn { font-size: 11px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
 .aide-child .aide-link { margin-left: auto; }
+
+.aide-sync.warn { color: var(--md-sys-color-warning); font-weight: 700; }

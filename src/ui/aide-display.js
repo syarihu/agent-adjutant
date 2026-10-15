@@ -795,7 +795,10 @@ registerAidePart('reviews', (part, ctx) => {
   const syncHtml = !sy ? '' : `<div class="tp-muted aide-sync${sy.stale || sy.never ? ' warn' : ''}">${esc(sy.never ? 'まだ同期していません（同期するまで、レビュー依頼は出ません）' : sy.words)}</div>`
     + (sy.notes || []).map(n => `<div class="tp-muted aide-sync${n.alert ? ' warn' : ''}">${esc(n.text)}</div>`).join('');
   const stale = aideStaleNote(got.refreshError) + syncHtml;
-  if (!waiting.length) return { ...base, body: `${stale}${aideNote(sy?.never ? '同期するまで、レビュー依頼があるかは分かりません' : 'レビュー依頼はありません')}` };
+  // Only a clean, fresh sync may say there are none: a sync that never ran, failed, was partial or is old may have missed some.
+  const doubtful = !!sy && (sy.never || sy.stale || (sy.notes || []).length > 0);
+  const none = sy?.never ? '同期するまで、レビュー依頼があるかは分かりません' : doubtful ? '同期に問題があるので、レビュー依頼が漏れているかもしれません' : 'レビュー依頼はありません';
+  if (!waiting.length) return { ...base, body: `${stale}${aideNote(none)}` };
   const row = r => {
     const flags = [othersSeenClass(r, got.marks?.[r.id] || {}) === 'new' ? '新着' : '', r.rerequest ? '頼み直し' : ''].filter(Boolean).join('・') || '依頼';
     const ai = othersAiView(r, got.records, got.nowSecs);
