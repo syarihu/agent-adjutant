@@ -25,7 +25,7 @@ pub(super) fn definition() -> Value {
                 "body": { "type": "string", "description": "A report, for a result gate." },
                 "run": { "type": "string", "description": "How to run it, for verify." },
                 "diff": { "type": "string", "description": "The diff, for diff." },
-                "choices": { "type": "array", "items": { "type": "object" }, "description": "Designs to choose between: id, label, why, points, recommended." },
+                "choices": { "type": "array", "items": { "type": "object" }, "description": "Designs to choose between: id, label, why, points, recommended, comment (a draft to send if this one is picked and the person typed none)." },
                 "options": { "type": "array", "items": { "type": "string" }, "description": "The buttons. Default: by kind." },
                 "rounds": { "type": "integer", "description": "How many times this same point has gone back and forth with a person." },
                 "problem": { "type": "string", "description": "plan: what is wrong today, from the request and the issue." },

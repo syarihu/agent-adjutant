@@ -1,6 +1,16 @@
 /* Helpers that read nothing but their arguments, and the words for the vocabulary the server
    defines: gate kinds, decisions, worker phases. Loaded first, so every view can use them. */
 
+/* The state the card renderers read when they are not handed one: the page's, or, while a dialog the aide opened draws a task of
+   another board (`withViewState`, card-dialog.js), that board's, so that a card never mixes in what the page holds of another board. */
+let viewData = null;
+const stateNow = () => viewData || state;
+function withViewState(data, draw) {
+  const was = viewData;
+  viewData = data;
+  try { return draw(); } finally { viewData = was; }
+}
+
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const stampSecs = stamp => {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
@@ -306,3 +316,10 @@ const handoffText = h => (Number(h?.count) > 0
 /* What was sent, folded: the comment of the answer is the message the worker read, one point to a heading. */
 const handoffDetailsHtml = comment => comment
   ? `<details class="handoff"><summary>渡した内容</summary><div class="who" style="white-space:pre-wrap">${esc(comment)}</div></details>` : '';
+
+/* The lines of a diff as the page draws them: headers, additions and deletions told apart. Escaped. */
+const renderDiff = d => esc(d).split('\n').map(l => {
+  const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
+            : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : '';
+  return `<div class="${cls}">${l || ' '}</div>`;
+}).join('');

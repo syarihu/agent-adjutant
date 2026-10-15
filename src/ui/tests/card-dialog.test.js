@@ -33,7 +33,9 @@ vm.runInContext([
   cut(decSrc, /^const deciding = new Set\(\);[^\n]*\n/m),
   'async function answer(...a) { calls.push(["answer", ...a]); return answerResult; }',
   cut(decSrc, /^async function decideAct\(b\) \{[\s\S]*?\n\}/m),
-  cut(decSrc, /^async function closeGate\(id\) \{[\s\S]*?\n\}/m),
+  cut(decSrc, /^const sentComment = [\s\S]*?;\n/m),
+  cut(decSrc, /^async function closeGateOf\(g, comment\) \{[\s\S]*?\n\}/m),
+  cut(decSrc, /^async function closeGate\(id\) {[\s\S]*?\n\}/m),
 ].join('\n'), ctx);
 const run = code => vm.runInContext(code, ctx);
 
@@ -107,7 +109,7 @@ test('the panel cards of a gate carry the attributes the dialog finds them by', 
   vm.runInContext([
     ...['reviewPanels', 'roundsCardHtml', 'findingsCardHtml', 'checkPanels', 'commandsCardHtml', 'manualCardHtml']
       .map(n => cut(decSrc, new RegExp(`^function ${n}\\(g\\) \\{[\\s\\S]*?\\n\\}`, 'm'))),
-    cut(decSrc, /^function choicesHtml\(g, pickable\) \{[\s\S]*?\n\}/m),
+    cut(decSrc, /^function choicesHtml\(g, pickable, opts = \{\}\) \{[\s\S]*?\n\}/m),
   ].join('\n'), c2);
   const g = { id: 'g1', reviewRounds: [{ engine: 'e' }], findings: [{ outcome: 'open', severity: 'must', text: 't' }],
     commands: [{ command: 'c', result: 'pass' }], manual: ['m'], choices: [{ id: 'a', label: 'A' }] };

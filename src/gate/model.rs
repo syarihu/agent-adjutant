@@ -299,6 +299,13 @@ pub struct Choice {
     /// Which one the agent would pick. Said out loud rather than implied by ordering.
     #[serde(default)]
     pub recommended: bool,
+    /// What the worker would send with this choice, as a draft. The board sends the person's own
+    /// comment when they typed one, else this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    /// Keys this binary does not know, kept from the file (rule 10).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

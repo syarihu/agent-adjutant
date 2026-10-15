@@ -175,7 +175,7 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
    is alive in a tmux window. Where it cannot, there is no button at all. */
 const boardTerminalReady = s =>
   !!(state.boardTerminal?.available && s?.present && s.terminal?.backend === 'tmux' && s.terminal.window);
-const sessionOfTask = task => task && !scopeAll() && (state.sessions || []).find(s =>
+const sessionOfTask = task => task && !scopeAll() && (stateNow().sessions || []).find(s =>
   // The worktree stands in only for a session with no task of its own: one that belongs to
   // another task is not this card's, even where a worktree was reused.
   s.kind === 'worker' && (s.task ? s.task === task.id : !!task.worktree && s.worktree === task.worktree));

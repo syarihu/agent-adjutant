@@ -33,11 +33,11 @@ function boxWorld() {
       querySelector: sel => sel === '#card-dialog[open]' ? dialog : sel === '#task-panel' ? panel : null,
       createDocumentFragment: () => root([]),
     },
-    gateByRef: id => ({ id, wait: true, worktree: '/w' }), gateKey: g => g.id, baseOf: () => '', baseName: x => x,
+    sentComment: (g, d, ch, c) => c || (d === 'close' ? 'タブで解決済み' : '') || '', gateByRef: id => ({ id, wait: true, worktree: '/w' }), gateKey: g => g.id, baseOf: () => '', baseName: x => x,
     handedNote: () => '', note() {}, gateAnswered() {}, dropGate() {}, refresh: async () => {}, refreshBoards() {},
     boardApi: async (base, url, o) => { posts.push([url, JSON.parse(o.body)]); return {}; },
   });
-  vm.runInContext([fnSrc(decSrc, 'commentBox'), fnSrc(decSrc, 'outboxNote'), fnSrc(decSrc, 'answer'), fnSrc(decSrc, 'closeGate')].join('\n'), c);
+  vm.runInContext([fnSrc(decSrc, 'commentBox'), fnSrc(decSrc, 'outboxNote'), fnSrc(decSrc, 'answerGate'), fnSrc(decSrc, 'answer'), fnSrc(decSrc, 'closeGateOf'), fnSrc(decSrc, 'closeGate')].join('\n'), c);
   return { c, posts, dialog };
 }
 
@@ -114,7 +114,8 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
   const world = { waiting, subject: 't1', exists: true, hidden: false, nowKnown: true, html: 'v1', groups: [], dockMark: '', title: 'T',
     sent: [], goGate: [], closed: 0, shown: [], marks: 0, recorded: [], pruned: 0 };
   const c = vm.createContext({
-    selectedTaskId: 't1', tp: () => ({ hidden: world.hidden }), state: { get now() { return world.nowKnown ? 1 : null; } },
+    selectedTaskId: 't1', tp: () => ({ hidden: world.hidden }), state: { get now() { return world.nowKnown ? 1 : null; }, get tasks() { return world.exists ? [{ id: 't1', title: world.title }] : []; } },
+    sentComment: (g, d, ch, c) => c || (d === 'choice' ? (g.choices || []).find(x => x.id === ch)?.comment : '') || '', deciding: new Set(), aideBoardWrote() {}, withViewState: (d, f) => f(), answerGate: async () => true, closeGateOf: async () => true, aide: { boards: {} }, refresh() {}, refreshBoards() {},
     document: { activeElement: focused ? { matches: () => true } : null },
     taskById: () => world.exists ? { id: 't1', title: world.title } : undefined, cardDialogFocusTarget: () => null, Date,
     gatesOf: () => [...world.waiting.map(r => ({ id: r, openedAt: r })), ...world.recorded.map(r => ({ id: r, openedAt: r, decision: 'approve' }))], gateRef: g => g.id, isWaiting: g => world.waiting.includes(g.id), claimSeq: () => 1,
@@ -125,11 +126,12 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
     cardDialogApplyTarget() {}, cardDialogSpy() {}, cardDialogCardEl: () => null, esc: x => x, clearTimeout() {}, setTimeout() { return 1; },
     cardDialogShowUpdate: ch => { world.shown.push(ch); }, cardDialogPruneUpdate: () => { world.pruned++; }, cardDialogMarkUpdated: () => { world.marks++; },
     decideAct: async b => { world.sent.push(b.dataset.act); world.waiting = world.waiting.filter(r => r !== b.ref); return true; },
-    gateByRef: ref => ({ id: ref, openedAt: ref }), commentBox: ref => col.docks.find(d => d.ref === ref)?.gate.ta || null,
+    gateByRef: ref => ({ id: ref, openedAt: ref, choices: [{ id: 'c1', comment: 'draft c1' }] }), commentBox: ref => col.docks.find(d => d.ref === ref)?.gate.ta || null,
     closeCardDialog: () => { world.closed++; }, secsStamp: secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, ''), cardDialogGoGate: ref => { world.goGate.push(ref); },
   });
   vm.runInContext([
     cut(dlgSrc, /^const cardDialog = \{[\s\S]*?\n\};\nconst CARD_DIALOG_GONE = [^\n]*;\nconst CARD_DIALOG_GATE_GONE = [^\n]*;\nconst CARD_DIALOG_TASK_GONE = [^\n]*;\nconst CARD_DIALOG_NONE_LEFT = [^\n]*;\nconst cardDialogDrafts = [^\n]*;/m),
+    cut(dlgSrc, /^const cdData = [^\n]*;/m), cut(dlgSrc, /^const cdTaskById = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogDockEl = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogIndexed = [^\n]*;/m),
     cut(dlgSrc, /^const cardDialogUpdateEl = [^\n]*;/m),
@@ -139,7 +141,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
     ...['cardDialogChanged', 'cardDialogHideUpdate', 'cardDialogResetUpdates'].map(n => fnSrc(dlgSrc, n)),
     ...['cardDialogStrip', 'cardDialogStripEl', 'cardDialogNotice', 'cardDialogNoticeText', 'cardDialogTaskSync', 'cardDialogDockGate',
       'cardDialogFocusOf', 'cardDialogFocusBack', 'cardDialogShowDock', 'cardDialogSetDock', 'cardDialogWithAnswered',
-      'cardDialogAnswer', 'cardDialogAfterAnswer', 'cardDialogSync', 'cardDialogGateButton', 'cardDialogFollowDock'].map(n => fnSrc(dlgSrc, n)),
+      'cardDialogAnswer', 'cardDialogScopedAct', 'cardDialogAfterAnswer', 'cardDialogSync', 'cardDialogGateButton', 'cardDialogFollowDock'].map(n => fnSrc(dlgSrc, n)),
     cut(dlgSrc, /^const cardDialogWaiting = [^\n]*;/m),
     fnSrc(dlgSrc, 'cardDialogShell'),
     cut(dlgSrc, /^cardDialogEl\(\)\.addEventListener\('close', \(\) => \{[\s\S]*?\n\}\);/m),
@@ -465,7 +467,7 @@ test('a failed answer keeps the dialog, the dock and the draft; in a card alone 
 
 test('an answered gate comes into the gates until the history has its record', () => {
   const answered = new Map([['A', { id: 'A', openedAt: '2026-10-02T00:00:00Z', decision: 'approve' }]]);
-  const c = vm.createContext({ gateRef: g => g.id, isWaiting: () => false, claimSeq: () => 1 });
+  const c = vm.createContext({ gateRef: g => g.id, isWaiting: () => false, claimSeq: () => 1, cdData: () => ({}) });
   vm.runInContext(fnSrc(dlgSrc, 'cardDialogWithAnswered'), c);
   c.answered = answered;
   const of = all => { c.all = all; return JSON.parse(JSON.stringify(vm.runInContext('cardDialogWithAnswered(all, answered)', c))).map(g => g.id + (g.decision ? ':' + g.decision : '')); };
@@ -1266,4 +1268,203 @@ test('a sync that brings no change asks a notice that is up to prune itself', ()
   w.sync();
   assert.strictEqual(w.world.shown.length, 1);
   assert.strictEqual(w.world.pruned, before + 1);
+});
+
+test('a dialog the aide opened is not closed because the panel shows another task, and reads its task from its scope', () => {
+  const w = taskWorld();
+  w.c.selectedTaskId = 'other';
+  const scoped = { board: 'b', base: '/b/b', data: () => ({ now: 1, tasks: [{ id: 't1', title: 'Scoped' }], gates: [] }) };
+  vm.runInContext('cardDialog.scope = null', w.c);
+  w.sync();
+  // Without a scope the old guard closes it, quietly.
+  assert.strictEqual(w.dlg.closed, true);
+  assert.strictEqual(w.state().scope, null);
+
+  const v = taskWorld();
+  v.c.selectedTaskId = 'other';
+  v.c.scoped = scoped;
+  vm.runInContext('cardDialog.scope = scoped', v.c);
+  v.world.exists = false;
+  v.world.hidden = true;
+  v.sync();
+  assert.strictEqual(v.dlg.closed, false);
+  // The page has no such task and the scope does: the title is the scope's.
+  assert.strictEqual(v.titleEl.textContent, 'Scoped');
+  assert.strictEqual(v.goneEl.textContent, '');
+});
+
+test("a scoped dialog says the task is gone when its board's state no longer has it", () => {
+  const v = taskWorld();
+  v.c.scoped = { board: 'b', base: '/b/b', data: () => ({ now: 5, tasks: [], gates: [] }) };
+  vm.runInContext('cardDialog.scope = scoped', v.c);
+  v.sync();
+  assert.match(v.goneEl.textContent, /^パネルからこのタスク/);
+  assert.strictEqual(v.dlg.closed, false);
+});
+
+test("an answer in a scoped dialog goes through answerGate for the scope's own gate, and does not use the page's decideAct", async () => {
+  const v = taskWorld({ waiting: ['A'] });
+  const gate = { id: 'A', _slug: 'b', openedAt: 'A' };
+  v.c.scoped = { board: 'b', base: '/b/b', data: () => ({ now: 5, tasks: [{ id: 't1', title: 'T' }], gates: [gate] }) };
+  v.c.sentTo = [];
+  v.c.answerGate = async (g, decision, choice, comment) => { v.c.sentTo.push([g.id, decision, choice, comment]); return true; };
+  v.c.aide.boards.b = { data: { gates: [gate] } };
+  vm.runInContext('cardDialog.scope = scoped', v.c);
+  assert.strictEqual(await v.click('A', 'approve'), undefined);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(v.c.sentTo)), [['A', 'approve', null, '']]);
+  assert.deepStrictEqual(v.world.sent, [], 'the page decideAct was not used');
+  // The answered gate is off the aide's copy of the board at once.
+  assert.deepStrictEqual(v.c.aide.boards.b.data.gates, []);
+});
+
+test('isWaiting looks in the data it is given, and in the page state when given none', () => {
+  const c = vm.createContext({ stateNow: () => ({ gates: [{ id: 'A' }] }), gateRef: g => g.id });
+  vm.runInContext(cut(viewSrc, /^const isWaiting = [^\n]*;/m), c);
+  const is = (g, data) => { c.g = g; c.data = data; return vm.runInContext(data ? 'isWaiting(g, data)' : 'isWaiting(g)', c); };
+  assert.strictEqual(is({ id: 'A' }), true);
+  assert.strictEqual(is({ id: 'B' }), false);
+  assert.strictEqual(is({ id: 'B' }, { gates: [{ id: 'B' }] }), true);
+  assert.strictEqual(is({ id: 'A' }, { gates: [] }), false);
+  assert.strictEqual(is({ id: 'A' }, {}), false);
+});
+
+test("the dialog's copy of an answered gate carries the comment that was sent: the choice's draft when nothing was typed", async () => {
+  const w = taskWorld({ waiting: ['A'] });
+  await w.click('A', 'choice', 'c1');
+  assert.strictEqual(w.state().answered.get('A').comment, 'draft c1');
+});
+
+/* openTaskDialogFor, the scoped dialog's [data-ide] and [data-focus], and the aide's reading of a board. */
+const aideSrc = read('aide.js');
+
+test('a gate part opens the dialog on its own gate, a plan on its request, and the board is the scope', async () => {
+  const task = { id: 't1', title: 'T' };
+  const opened = [];
+  const c = vm.createContext({
+    aide: { boards: { b: { data: { tasks: [task] } } } }, loadAideBoards: async () => {}, note() {},
+    cardDialogEl: () => ({ open: false }), openCardDialogTask: (t, btn, want) => opened.push([t.id, btn, want, c.cardDialog.scope?.board]), cardDialog: { scope: null },
+  });
+  vm.runInContext(fnSrc(dlgSrc, 'openTaskDialogFor'), c);
+  const open = args => { c.args = args; return vm.runInContext('openTaskDialogFor(args)', c); };
+  await open({ board: 'b', taskId: 't1', target: 'gate', gate: 'b/g2' });
+  await open({ board: 'b', taskId: 't1', target: 'request', gate: 'b/g2' });
+  await open({ board: 'b', taskId: 't1', target: 'gate' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(opened)), [
+    ['t1', null, { section: null, gate: 'b/g2' }, 'b'], ['t1', null, { section: 'request', gate: null }, 'b'], ['t1', null, null, 'b']]);
+});
+
+test("in a scoped dialog 開く and ターミナル act on the scoped board, and ideReady is asked of that board's state", async () => {
+  const calls = [];
+  const handlers = {};
+  const els = { '[data-ide]': { dataset: { ide: '/wt' } }, '[data-focus]': { dataset: { focus: '/wt' } } };
+  const c = vm.createContext({
+    cardDialog: { scope: { board: 'b', base: '/b/b' } }, cdData: () => ({ ideConfigured: false }),
+    withViewState: (d, f) => { calls.push(['view', d.ideConfigured]); return f(); },
+    worktreeAct: (...a) => calls.push(['act', ...a]), closeCardDialog() {}, parkClick: () => false,
+  });
+  const src = dlgSrc.match(/^cardDialogEl\(\)\.addEventListener\('click', async e => \{[\s\S]*?\n\}\);/m)[0]
+    .replace('cardDialogEl().addEventListener', 'addEventListener');
+  c.addEventListener = (t, f) => { handlers[t] = f; };
+  vm.runInContext(src, c);
+  const click = sel => handlers.click({ target: { closest: s => (s === sel ? els[sel] : null) } });
+  await click('[data-ide]');
+  await click('[data-focus]');
+  assert.deepStrictEqual(calls, [['view', false], ['act', 'ide', '/wt', false, 'b'], ['act', 'focus', '/wt', false, 'b']]);
+});
+
+test("a board the aide reads has every list the cards match by `_slug` tagged with its board", async () => {
+  const state = { tasks: [{ id: 't' }], gates: [{ id: 'g' }], waits: [{ id: 'w' }], parents: [{ key: 'p' }], workers: [{ worktree: 'x' }], hubs: [{ id: 'h' }], now: 1 };
+  const c = vm.createContext({ aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWantedBoards: () => new Set(['b']), boardApi: async () => state, cardDialog: { scope: null }, renderAide() {} });
+  vm.runInContext(cut(aideSrc, /^const aideTagged = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'loadAideBoards'), c);
+  await vm.runInContext('loadAideBoards(true)', c);
+  const data = JSON.parse(JSON.stringify(c.aide.boards.b.data));
+  for (const k of ['tasks', 'gates', 'waits', 'parents', 'workers', 'hubs']) {
+    assert.strictEqual(data[k][0]._slug, 'b', k);
+    assert.strictEqual(data[k][0]._base, '/b/b', k);
+  }
+  assert.strictEqual(data.now, 1);
+});
+
+test('after an answer the next wait is shown only while the part answered is still the top one', () => {
+  const log = [];
+  let top = 'page-gate:b/g1';
+  const c = vm.createContext({
+    aideShown: () => ({ parts: [{ id: top }] }), prefs: { reviewNext: true }, aideNextWait: () => ({ board: 'b', gateId: 'g2', nwo: 'o/r' }),
+    aideCurrentWaits: () => [], aideSetLocal: (p, t) => log.push(['local', p.id]), aideGatePart: (b, id) => ({ id: `page-gate:${b}/${id}` }),
+    aideWaitsPart: () => ({ id: 'page-waits' }), AIDE_WAITS_TOPIC: {}, workRepoName: x => x, refresh: () => log.push(['refresh']), refreshBoards() {},
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aideAfterAnswer'), c);
+  c.done = { key: 'b/g1' };
+  vm.runInContext("aideAfterAnswer(done, 'page-gate:b/g1')", c);
+  assert.deepStrictEqual(log, [['local', 'page-gate:b/g2'], ['refresh']]);
+  // Another wait was opened while the answer was on its way.
+  log.length = 0;
+  top = 'page-gate:b/other';
+  vm.runInContext("aideAfterAnswer(done, 'page-gate:b/g1')", c);
+  assert.deepStrictEqual(log, [['refresh']]);
+});
+
+test('a read of a board that comes back after a newer one, or after an answer, is dropped', async () => {
+  const pending = [];
+  const state = n => ({ gates: n === 1 ? [{ id: 'old' }] : [{ id: 'new' }] });
+  const c = vm.createContext({
+    aide: { boards: {}, boardSeq: {}, boardApplied: {} }, Date, AIDE_BOARD_FRESH_MS: 10000, aideWantedBoards: () => new Set(['b']), cardDialog: { scope: null }, renderAide() {},
+    boardApi: () => new Promise(res => pending.push(res)),
+  });
+  vm.runInContext(cut(aideSrc, /^const aideTagged = [^\n]*;/m) + '\n' + cut(aideSrc, /^const aideBoardWrote = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'loadAideBoards'), c);
+  const gates = () => c.aide.boards.b?.data.gates.map(g => g.id);
+  const first = vm.runInContext('loadAideBoards(true)', c);
+  const second = vm.runInContext('loadAideBoards(true)', c);
+  pending[1](state(2));
+  await second;
+  pending[0](state(1));
+  await first;
+  assert.deepStrictEqual(gates(), ['new'], 'the older read did not replace the newer');
+  // A read sent before an answer must not bring the answered gate back.
+  const third = vm.runInContext('loadAideBoards(true)', c);
+  vm.runInContext("aideBoardWrote('b')", c);
+  pending[2]({ gates: [{ id: 'answered' }] });
+  await third;
+  assert.deepStrictEqual(gates(), ['new']);
+  const fourth = vm.runInContext('loadAideBoards(true)', c);
+  pending[3]({ gates: [] });
+  await fourth;
+  assert.deepStrictEqual(gates(), []);
+});
+
+test('a comment draft of blanks is no draft: it is not sent and not shown', () => {
+  const sent = vm.runInContext(decSrc.match(/^const sentComment = [\s\S]*?;\n/m)[0] + ';sentComment', vm.createContext({}));
+  const g = { choices: [{ id: 'a', comment: '  \n ' }, { id: 'b', comment: '  keep  ' }] };
+  assert.strictEqual(sent(g, 'choice', 'a', ''), '');
+  assert.strictEqual(sent(g, 'choice', 'a', '   '), '');
+  assert.strictEqual(sent(g, 'choice', 'b', ' '), 'keep');
+  assert.strictEqual(sent(g, 'close', undefined, '  '), 'タブで解決済み');
+  const c = vm.createContext({ esc: x => x, gateRef: g => g.id, expandAttrs: () => '', expandBtnHtml: () => '' });
+  vm.runInContext(fnSrc(decSrc, 'choicesHtml'), c);
+  c.g = { id: 'g', choices: g.choices };
+  const html = vm.runInContext('choicesHtml(g, true, { expand: false })', c);
+  assert.strictEqual((html.match(/choice-draft/g) || []).length, 1);
+  // An answered gate shows no draft: nothing can be sent with it any more.
+  assert.strictEqual(vm.runInContext('choicesHtml(g, false)', c).includes('choice-draft'), false);
+});
+
+test('the aide display keeps its times fresh, and holds a redraw for them only while a comment is typed', () => {
+  const el = { scrollTop: 0, innerHTML: '', contains: x => !!x?.inside };
+  const c = vm.createContext({ aideDrawn: {}, aide: { held: false }, document: { activeElement: null }, timeFree: h => h.replace(/\d+分前/g, '·') });
+  vm.runInContext(fnSrc(aideSrc, 'setAideDisplay'), c);
+  const set = h => { c.h = h; vm.runInContext('setAideDisplay(el, h)', c); };
+  c.el = el;
+  set('<p>3分前</p><textarea>a</textarea>');
+  set('<p>4分前</p><textarea>typed</textarea>');
+  assert.strictEqual(el.innerHTML, '<p>4分前</p><textarea>typed</textarea>', 'a minute turning over is drawn when nobody is typing');
+  c.document.activeElement = { inside: true, matches: () => true };
+  set('<p>5分前</p><textarea>x</textarea>');
+  assert.strictEqual(el.innerHTML, '<p>4分前</p><textarea>typed</textarea>', 'not while typing');
+  assert.strictEqual(c.aide.held, false, 'a time alone is no reason to hold');
+  set('<p>5分前</p><textarea>x</textarea><b>new</b>');
+  assert.strictEqual(c.aide.held, true);
+  c.document.activeElement = null;
+  set('<p>5分前</p><textarea>x</textarea><b>new</b>');
+  assert.ok(el.innerHTML.includes('<b>new</b>'));
+  assert.strictEqual(c.aide.held, false);
 });

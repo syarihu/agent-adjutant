@@ -54,6 +54,8 @@ function historyOf(task, base = baseOf(task), data = state) {
 /* Redraws what shows a task's history: the task panel open on it. The panel
    keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
+  // A dialog opened by the aide holds a task of its own, which the panel does not show.
+  if (cardDialog.scope && cardDialog.mode === 'task' && cardDialog.subject === id) cardDialogFollow();
   if ((view === 'board' || view === 'work') && selectedTaskId === id) renderTaskPanel();
 }
 
@@ -93,15 +95,16 @@ function gatesOf(task, data = state, base = baseOf(task)) {
    none for the first. */
 const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 
-const isWaiting = g => (state.gates || []).some(x => gateRef(x) === gateRef(g));
+/* `data` is the state whose open gates are looked in: this page's, or another board's (the aide's 「拡大」). */
+const isWaiting = (g, data = stateNow()) => (data.gates || []).some(x => gateRef(x) === gateRef(g));
 
 /* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. `pick`
    is what was picked in the task panel. */
-function gateForTab(task, tab, all, pick) {
+function gateForTab(task, tab, all, pick, data = stateNow()) {
   const picked = pick[tab] && all.find(g => g.id === pick[tab]);
   if (picked) return picked;
   const ofKind = all.filter(g => g.kind === KIND_OF_TAB[tab]);
-  return ofKind.find(isWaiting) || ofKind[ofKind.length - 1] || null;
+  return ofKind.find(g => isWaiting(g, data)) || ofKind[ofKind.length - 1] || null;
 }
 
 /* The files a unified diff touches, with the lines each gained and lost. */
@@ -253,7 +256,7 @@ const prPillClass = task => (PR_TURN[task.prTurn] || prStateInfo(task))[1];
 const prTurnPill = task => PR_TURN[task.prTurn] && task.prTurn !== 'draft'
   ? `<span class="m3-pill ${PR_TURN[task.prTurn][1]}">${esc(PR_TURN[task.prTurn][0])}</span>` : '';
 /* Said when the automatic check is failing, so a state that may be out of date says so. */
-const prStale = () => (state.prPoll?.error ? '（自動確認が止まっています）' : '');
+const prStale = () => (stateNow().prPoll?.error ? '（自動確認が止まっています）' : '');
 /* 「レビュー待ち · CI 通過」: the state, the review for an open PR, and the checks if it has any. */
 /* The checks of a PR in a word, or null when it has none. */
 function ciNoteOf(task) {
@@ -367,7 +370,7 @@ function ghRowsHtml(task) {
    its own board listed. */
 function parentGroupOf(task) {
   const key = task.parentIssue?.key;
-  return (state.parents || []).find(g => g.key === key && (!task._slug || g._slug === task._slug));
+  return (stateNow().parents || []).find(g => g.key === key && (!task._slug || g._slug === task._slug));
 }
 
 /* The 親タスク row: the parent the board joined to the task, where that came from, how many of its
@@ -650,7 +653,7 @@ function historyTab(task, all, pick) {
 }
 
 /* The gate a tab has on screen, if it shows one. */
-function gateShownIn(task, tab, all, pick) {
+function gateShownIn(task, tab, all, pick, data = stateNow()) {
   if (tab === 'history') return (pick.history && all.find(g => g.id === pick.history)) || null;
   if (tab === 'overview') {
     // The plan being worked to is the one approved last; a plan waiting now is the one to judge.
@@ -659,7 +662,7 @@ function gateShownIn(task, tab, all, pick) {
     const approved = plans.filter(g => ['approve', 'choice'].includes(g.decision))
       .sort((a, b) => (a.answeredAt || '').localeCompare(b.answeredAt || '')).pop();
     return (pick.overview && all.find(g => g.id === pick.overview))
-      || plans.find(isWaiting) || task.approvedPlan || approved || plans[plans.length - 1] || null;
+      || plans.find(g => isWaiting(g, data)) || task.approvedPlan || approved || plans[plans.length - 1] || null;
   }
-  return gateForTab(task, tab, all, pick);
+  return gateForTab(task, tab, all, pick, data);
 }

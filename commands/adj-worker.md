@@ -534,7 +534,8 @@ adj gate open --json <<'JSON'
   "unsure": "Not sure whether to keep the hit rate in metrics.",
   "choices": [
     { "id": "const", "label": "Option A — a constant", "why": "there is no remote config",
-      "points": ["small diff (1 file)", "QA cannot change the value"], "recommended": true },
+      "points": ["small diff (1 file)", "QA cannot change the value"], "recommended": true,
+      "comment": "Go with a constant. Keep the value in one place so a setting can replace it later." },
     { "id": "config", "label": "Option B — a setting", "why": "QA can change it",
       "points": ["medium diff (3 files)", "one more path for reading settings"] }
   ]
@@ -548,9 +549,13 @@ JSON
 | `decided` | What is settled. Folded on the board (need not be read) |
 | `unsure` | Where you were not confident. **Do not swallow it** |
 
+A waiting gate always fills `focus`: the aide's display area shows it as the question, so a gate with
+no `focus` reaches the person with nothing asked.
+
 - `facts` are what is true whatever the decision (number of rounds, the `verify` result, lines).
 - `choices` only **when you want an option picked**. Two options are shown side by side. Be honest
-  with `recommended`.
+  with `recommended`. A choice may carry `comment`, a draft of what you would send with it: picking
+  that choice sends the person's own comment if they typed one, else this draft.
 - Extra fields per `kind`: `diff` (the diff as a string) / `run` (how to run it) / `body` (the
   report).
 - `plan` has `problem` and `goal` (step 3 of §1).
