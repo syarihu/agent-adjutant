@@ -165,6 +165,39 @@ pub fn context_at(repo: RepoInfo, state: PathBuf) -> Result<Context, String> {
     })
 }
 
+/// The context of the board `address` names, over the state directory `root`: the checkout and
+/// hub it was noted with, the slug still having to come out the same. Nothing is taken from the
+/// working directory, so it answers for a board whatever this process was started in.
+pub(crate) fn context_at_address(root: &Path, address: &Address) -> Result<Context, String> {
+    let repo = identity::resolve_in(
+        Some(Path::new(&address.main)),
+        Some(&address.nwo),
+        address.hub.as_deref(),
+    )?;
+    if repo.slug != address.slug {
+        return Err(format!(
+            "the board {} now resolves to {}: it moved",
+            address.slug, repo.slug
+        ));
+    }
+    context_at(repo, root.to_path_buf())
+}
+
+/// The context of the board `slug` of the address book, for a caller that is handed a slug (the
+/// MCP tools that answer a gate or pass a request). The slug becomes a file name, so one outside
+/// `[a-z0-9-]` is refused before the book is read.
+pub fn context_of_board(root: &Path, slug: &str) -> Result<Context, String> {
+    let plain = !slug.is_empty()
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !plain {
+        return Err(format!("no such board: {slug}"));
+    }
+    let address = address_of(root, slug).ok_or_else(|| format!("no such board: {slug}"))?;
+    context_at_address(root, &address)
+}
+
 /// Where we are, and which hub of it we are talking to.
 ///
 /// Every subcommand that addresses a hub goes through here rather than calling

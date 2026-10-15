@@ -240,7 +240,7 @@ heavy collection to a sub-agent.
    | `kind` | Written by | What the hub does |
    | --- | --- | --- |
    | `report` | a worker | Run "When a request arrives" from Step 0 |
-   | `request` | a person (the dashboard) | Run "A request from the dashboard" (it says where to start) |
+   | `request` | a person (the dashboard or the aide) | Run "A request from the dashboard" (it says where to start) |
    | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
    | `file-issue` | a person (the dashboard, linking a running session to a new task) | "A linked task that needs an issue" |
    | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
@@ -2081,8 +2081,10 @@ they asked for it to be started. Reply in one line with what was not done and ho
 ### A request from the dashboard (`kind: request`)
 
 What a person handed over from the board. **It goes through the same procedure as a worker's
-`report`; only the two ends differ.** There is **nobody to ask back** — the requester is a browser,
-not a session, and `adjutant_tell` has no address — so what needs the person is asked on the board.
+`report`; only the two ends differ.** There is **nobody to ask back** — the requester is a person at
+the board's form, or the aide passing on what they said in its chat; neither is a session with an
+address, so do not `adjutant_tell` it. The record is the reply: what needs the person is asked on the
+board, and the board (and the aide's `request` part) shows how far the request got from the record.
 
 **Read the `## Read first` line.** When it says `yes`, the person wrote what they want done in their
 own words and chose nothing else: the lines from `## Kind` to `## Start` are the record's defaults,
@@ -2199,8 +2201,8 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   "4. Start the worker", so the brief's Task line has its URL. If the record's `executor` is `jules` (the body's
   `## Implementer` line says so too), take "5. Hand it to Jules" in place of "4. Start the worker": no
   brief is written, and the handover note goes into the planning sub-agent's brief instead.
-  **There is nobody to ask back either** — the requester is a browser, not a session, and
-  `adjutant_tell` has no address. If something is missing, write it in Step 5's `--note` and leave it.
+  **There is nobody to ask back either** — neither the board nor the aide has an address
+  `adjutant_tell` could use; the record is the reply. If something is missing, write it in Step 5's `--note` and leave it.
 - **If the request says the title is not read yet (`## Title`), run `adj task fetch-issue --id
   {task_id}` before `adj task brief`**: the issue could not be read when it was handed over, and
   the read puts the issue's title on the record, which the brief's Task line is written from.
@@ -2321,7 +2323,7 @@ made or picked there and the session is told; that is not the hub's step.
      slot is free. Run `adj notify` too: the board checked for a free slot when the request came in,
      so the requester believes it is starting and nothing else will tell them it did not.
    - **Any other failure:** say what failed in this tab, and run `adj notify` so a person at the board
-     hears of it, because the requester is a browser and nothing else will tell them.
+     hears of it, because the requester has no address and nothing else will tell them.
 4. **Ack the inbox message** (`adjutant_pending` `action: ack`) once the worker is started or the
    failure is said. Tell the person in one line which worktree and tab it is, then go back to waiting.
 
@@ -2343,7 +2345,7 @@ body is the task's request lines, and `## Worker running in {worktree}` names th
    `[issue {task id}] {url}` and the URL in the body. The worker's `[linked]` message said the URL
    would arrive this way, and the board shows it on the card from the record.
 5. **When it could not be filed**, write the reason to the record's note through a file
-   ("Keep task text off the shell"), run `adj notify` (the requester is a browser and nothing else
+   ("Keep task text off the shell"), run `adj notify` (the requester has no address and nothing else
    tells them), and tell the worker with `[issue {task id}] not filed: {reason}`.
 6. **Ack the inbox message.**
 

@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 
 pub(super) mod config;
+pub(super) mod gate_answer;
 pub(super) mod gate_close;
 pub(super) mod gate_open;
 pub(super) mod gate_read;
@@ -11,6 +12,7 @@ pub(super) mod hub_status;
 pub(super) mod outbox;
 pub(super) mod pending;
 pub(super) mod refresh;
+pub(super) mod request;
 pub(super) mod reviews;
 pub(super) mod send;
 pub(super) mod show;
@@ -28,6 +30,13 @@ pub(super) fn cwd_param(args: &Value) -> Option<PathBuf> {
 /// A string argument, with blank the same as absent.
 pub(super) fn text_param<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args[key].as_str().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// The context of the board a tool is told by its `slug`, for the tools that act on a board from
+/// anywhere (answer a gate, pass a request). The slug is checked before it becomes a path.
+pub(super) fn board_context(args: &Value) -> Result<registry::Context, String> {
+    let board = text_param(args, "board").ok_or("pass `board`: the `slug` from adjutant_work")?;
+    registry::context_of_board(&registry::state_root(None), board)
 }
 
 pub(super) fn resolve_repo(args: &Value) -> Result<identity::RepoInfo, String> {
@@ -122,6 +131,16 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_reviews",
         definition: reviews::definition,
         call: reviews::call,
+    },
+    Tool {
+        name: "adjutant_request",
+        definition: request::definition,
+        call: request::call,
+    },
+    Tool {
+        name: "adjutant_gate_answer",
+        definition: gate_answer::definition,
+        call: gate_answer::call,
     },
 ];
 

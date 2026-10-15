@@ -115,7 +115,9 @@ pub const AIDE_NAME: &str = "adjutant-aide";
 ///
 /// `adjutant_pending` stays off the list because reading marks a message as looked at and
 /// acknowledging archives it; `adjutant_refresh`, `send`, `tell`, `gate_open`, `gate_close` and
-/// `outbox` write.
+/// `outbox` write. `adjutant_request` and `adjutant_gate_answer` send, so they stay off it too:
+/// they are asked about under the person's own permission rules, on top of the confirmation the
+/// aide's procedure takes in the chat before it calls either.
 pub const AIDE_TOOLS: &[&str] = &[
     "mcp__adjutant__adjutant_skill",
     "mcp__adjutant__adjutant_config",

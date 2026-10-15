@@ -12,9 +12,9 @@ for (const file of ['util.js', 'aide-display.js']) {
 }
 // Functions are on the context's global object, `const`s of a script are only in its scope.
 const { aideEmptyDisplay, aideDisplayOf, aideDisplayWithWaits, registerAidePart, aideDisplayHtml, aidePartHtml, aideWaits, aidePinSub, aidePeekCount,
-  aideAskRowText, aideStateOf, aideNewLineHtml, aideHeadHtml, aideScopeText, aideCleanText, kindOf } = vm.runInContext(
+  aideAskRowText, aideStateOf, aideNewLineHtml, aideHeadHtml, aideScopeText, aideCleanText, kindOf, aideRequestSteps, aideGateTagText } = vm.runInContext(
   `({ aideEmptyDisplay, aideDisplayOf, aideDisplayWithWaits, registerAidePart, aideDisplayHtml, aidePartHtml, aideWaits, aidePinSub, aidePeekCount,
-     aideAskRowText, aideStateOf, aideNewLineHtml, aideHeadHtml, aideScopeText, aideCleanText, kindOf })`, ctx);
+     aideAskRowText, aideStateOf, aideNewLineHtml, aideHeadHtml, aideScopeText, aideCleanText, kindOf, aideRequestSteps, aideGateTagText })`, ctx);
 
 const count = (html, needle) => html.split(needle).length - 1;
 const NOW = 100000;
@@ -891,4 +891,113 @@ test('an empty list is said to have no requests only after a clean, fresh sync, 
     assert.ok(out.includes('同期に問題があるので、レビュー依頼が漏れているかもしれません') && !out.includes('レビュー依頼はありません'), JSON.stringify(sync));
   }
   assert.ok(html('reviews', null, { reviews: () => ({ state: 'ok', records: [], sync: { words: 'w', never: true, notes: [] } }) }).includes('同期するまで'));
+});
+
+
+/* ── the request part ── */
+
+const stepsOf = (task, gates = []) => JSON.parse(JSON.stringify(aideRequestSteps(task, gates)));
+const stateOf = (steps, key) => steps.find(s => s.key === key)?.state;
+const requestTask = (extra = {}) => ({ id: 't1', title: 'Add a retry', body: 'Add a retry to the sync', status: 'queued', needsReading: true, ...extra });
+
+test('a request just sent is sent, and the hub is yet to read it', () => {
+  const steps = stepsOf(requestTask());
+  assert.deepEqual(steps.map(s => s.key), ['sent', 'confirm', 'issue', 'worker', 'pr']);
+  assert.equal(stateOf(steps, 'sent'), 'done');
+  assert.equal(stateOf(steps, 'confirm'), 'now');
+  assert.ok(steps.find(s => s.key === 'confirm').text.includes('hub が読むのを待っています'));
+  assert.equal(count(steps.map(s => s.state).join(' '), 'now'), 1);
+  assert.ok(!steps.some(s => s.state === 'failed'));
+});
+
+test('an open dispatch gate of the task is the hub waiting for the person to confirm what it read', () => {
+  const steps = stepsOf(requestTask({ needsReading: false }), [{ id: 'g1', kind: 'dispatch', wait: true }]);
+  assert.equal(stateOf(steps, 'confirm'), 'now');
+  assert.ok(steps.find(s => s.key === 'confirm').text.includes('読み取りの確認待ち'));
+  // A record of a dispatch gate, or a gate of another kind, is not that.
+  const other = stepsOf(requestTask({ needsReading: false }), [{ id: 'g1', kind: 'dispatch', wait: false }, { id: 'g2', kind: 'plan', wait: true }]);
+  assert.equal(stateOf(other, 'confirm'), 'done');
+});
+
+test('a filed issue names its number, from the issue or its URL, and the worker step follows', () => {
+  const byNumber = stepsOf(requestTask({ needsReading: false, issue: '#42' }));
+  assert.equal(stateOf(byNumber, 'issue'), 'done');
+  assert.ok(byNumber.find(s => s.key === 'issue').text.includes('起票済み #42'));
+  assert.equal(stateOf(byNumber, 'worker'), 'now');
+  const byUrl = stepsOf(requestTask({ needsReading: false, issueUrl: 'https://github.com/acme/widget/issues/7' }));
+  assert.ok(byUrl.find(s => s.key === 'issue').text.includes('#7'));
+});
+
+test('a worker that started, and a PR, are done; one that is not there yet is not', () => {
+  const started = stepsOf(requestTask({ needsReading: false, issue: '#42', status: 'dispatched', worktree: '/w' }));
+  assert.equal(stateOf(started, 'worker'), 'done');
+  assert.equal(stateOf(started, 'pr'), 'now');
+  const out = stepsOf(requestTask({ needsReading: false, issue: '#42', status: 'pr', worktree: '/w', pr: 'https://github.com/acme/widget/pull/9' }));
+  assert.equal(stateOf(out, 'pr'), 'done');
+  assert.ok(out.find(s => s.key === 'pr').text.includes('pull/9'));
+  assert.ok(!out.some(s => s.state === 'now'));
+});
+
+test('a request that could not start, or was cancelled, ends in a failed step and has no step at now', () => {
+  const failed = stepsOf(requestTask({ needsReading: false, note: 'Could not start: no worktree name' }));
+  assert.equal(failed.at(-1).state, 'failed');
+  assert.ok(failed.at(-1).text.includes('着手できず') && failed.at(-1).text.includes('no worktree name'));
+  assert.ok(!failed.some(s => s.state === 'now'));
+  const cancelled = stepsOf(requestTask({ status: 'cancelled' }));
+  assert.equal(cancelled.at(-1).state, 'failed');
+  assert.ok(cancelled.at(-1).text.includes('取り消'));
+  // An ordinary note is not a failure.
+  assert.ok(!stepsOf(requestTask({ note: 'PR指摘: x' })).some(s => s.state === 'failed'));
+});
+
+test('the request part says what was sent, to which hub, how far it got, and escapes all of it', () => {
+  const ref = { board: 'acme-widget-abc', id: 't1' };
+  const got = {
+    task: requestTask({ title: '<b>T</b>', body: '<script>x</script> do it' }), gates: [{ id: 'g1', kind: 'dispatch', wait: true }],
+    nwo: 'acme/widget', hubLabel: '親 Issue の hub · <i>P</i>', hubPresent: false, hubRowKey: 'acme-widget-abc/hub:h1', rowKey: 'acme-widget-abc/t1', waitKey: 'acme-widget-abc/g1',
+  };
+  const html = aidePartHtml({ id: 'p1', kind: 'request', ref }, true, { request: () => got });
+  assert.ok(html.includes('依頼') && html.includes('送った内容') && html.includes('送り先') && html.includes('進み具合'));
+  assert.ok(html.includes('&lt;script&gt;x&lt;/script&gt; do it'));
+  assert.ok(!html.includes('<script>') && !html.includes('<b>T</b>') && !html.includes('<i>P</i>'));
+  assert.ok(html.includes('hub は止まっています。起動すると読みます'));
+  assert.ok(html.includes('data-aide-open-gate="acme-widget-abc/g1"'));
+  assert.ok(html.includes('data-aide-row="acme-widget-abc/hub:h1"') && html.includes('hub のターミナル'));
+  assert.ok(html.includes('data-aide-row="acme-widget-abc/t1"') && html.includes('worker のターミナル'));
+  assert.ok(html.includes('data-aide-expand'));
+  // A running hub is not said to be stopped, and a part with no gate or session has none of the buttons.
+  const quiet = aidePartHtml({ id: 'p1', kind: 'request', ref }, true, { request: () => ({ ...got, hubPresent: true, hubRowKey: null, rowKey: null, waitKey: null, gates: [] }) });
+  assert.ok(!quiet.includes('hub は止まっています') && !quiet.includes('data-aide-open-gate') && !quiet.includes('data-aide-row'));
+});
+
+test('a request part says it is loading, could not be read, or has no task any more', () => {
+  const ref = { board: 'b', id: 't1' };
+  const draw = view => aidePartHtml({ id: 'p1', kind: 'request', ref }, true, { request: () => view });
+  assert.ok(draw(null).includes('読み込み中'));
+  assert.ok(draw({ error: 'boom <x>' }).includes('読めませんでした: boom &lt;x&gt;'));
+  assert.ok(draw({ gone: true }).includes('もうボードにありません'));
+  assert.ok(aidePartHtml({ id: 'p1', kind: 'request', ref }, true, {}).includes('読み込み中'));
+});
+
+test('the tag a gate is named by is typed as text the aide reads, cleaned of anything that would be a key', () => {
+  assert.equal(aideGateTagText('acme-widget-abc/g1'), '[gate acme-widget-abc/g1] ');
+  assert.equal(aideGateTagText('a/b\nc'), '[gate a/b c] ');
+});
+
+test('a request that is done with no PR ends in 完了, and no step is left at now', () => {
+  const steps = stepsOf(requestTask({ needsReading: false, issue: '#42', status: 'done', worktree: '/w' }));
+  assert.equal(stateOf(steps, 'pr'), 'todo');
+  assert.equal(steps.at(-1).key, 'done');
+  assert.equal(steps.at(-1).state, 'done');
+  assert.ok(steps.at(-1).text.includes('完了'));
+  assert.ok(!steps.some(s => s.state === 'now'));
+  // With a PR it is the PR step that is done, and there is no extra line.
+  const withPr = stepsOf(requestTask({ needsReading: false, issue: '#42', status: 'done', worktree: '/w', pr: 'https://github.com/acme/widget/pull/9' }));
+  assert.equal(stateOf(withPr, 'pr'), 'done');
+  assert.ok(!withPr.some(s => s.key === 'done'));
+});
+
+test('aideRequestSteps: a worktree kept on a queued task is not a started worker', () => {
+  const steps = aideRequestSteps({ needsReading: false, issue: '#42', status: 'queued', worktree: '/w' }, []);
+  assert.equal(steps.find(s => s.key === 'worker').state, 'now');
 });

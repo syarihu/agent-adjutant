@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
@@ -57,14 +56,7 @@ impl Resident {
             //
             // Never `set_current_dir`: this process is threaded, and the checkout is named to
             // each call instead.
-            let repo = crate::kernel::identity::resolve_in(
-                Some(Path::new(&address.main)),
-                Some(&address.nwo),
-                address.hub.as_deref(),
-            )
-            .ok()
-            .filter(|repo| repo.slug == slug)?;
-            let ctx = crate::registry::context_at(repo, self.root.clone()).ok()?;
+            let ctx = crate::registry::context_at_address(&self.root, &address).ok()?;
             let server = Arc::new(Server {
                 ctx,
                 token: self.token.clone(),
