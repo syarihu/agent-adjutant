@@ -47,7 +47,7 @@ These are allowed without asking:
   PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `session` is a worker
   session (`board`, `id` = `rows[].session.id`); `diff` is some lines of a diff (`path`, `from`, `to`
   of at most 60 lines, `side` `right` or `left`) of the diff stored with a PR's read-through (`pr`)
-  or of an open gate (`board`, `id`). For `read` the answer lists the read-through as
+  or of an open gate (`board`, `id`); a file is named by its new path or, for a renamed file, its old one. A value of the wrong JSON type (a number where a string is wanted, or the reverse) is refused, not ignored. For `read` the answer lists the read-through as
   `readThrough.points` (`n`, `level`, `title`, `path`, `line`) and its `mode`: when the person asks
   about one of them, show it again by its `point` number, or its `diff` by `path` and the lines.
   Showing something of another topic clears the area and keeps the old topic by name, so show the

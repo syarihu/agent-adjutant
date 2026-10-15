@@ -412,6 +412,11 @@ function aidePrFacts(ref) {
     refreshError: ai.error || e?.error || b.error || work.error || null };
 }
 
+/* The file a diff part names: by its new path, else by the old one of a renamed file (the server accepts either side's name). */
+function aideDiffFile(files, path) {
+  return files.find(f => f.path === path) || files.find(f => f.oldPath === path) || null;
+}
+
 /* `ctx.diffOf(ref)`: the lines' file in the source the part names. A PR's diff is the one stored with its read-through, with the reader's
    annotations anchored in it; a gate's is its own, open only while the gate waits. */
 function aideDiffView(ref) {
@@ -421,7 +426,7 @@ function aideDiffView(ref) {
     if (e.error && !e.read) return { state: 'error', error: e.error };
     if (!e.read || e.diff.state === 'gone') return { state: 'gone' };
     if (e.diff.state !== 'ok') return { state: 'loading' };
-    const file = e.diff.files.find(f => f.path === ref.path) || null;
+    const file = aideDiffFile(e.diff.files, ref.path);
     return { state: 'ok', file, res: file && e.resolved ? e.resolved.files.get(file.path) : null, read: e.read, board: e.rec?.task?.board || '', taskId: e.rec?.task?.id || '', refreshError: e.error };
   }
   const gateRef = `${ref.board}/${ref.id}`;
@@ -432,7 +437,7 @@ function aideDiffView(ref) {
   if (!g || g.wait === false || answeredGates.has(gateRef) || !g.diff) return { state: 'gone' };
   let parsed = aide.gateDiffs.get(gateRef);
   if (!parsed || parsed.diff !== g.diff) aide.gateDiffs.set(gateRef, parsed = { diff: g.diff, files: prParseDiff(g.diff) });
-  return { state: 'ok', file: parsed.files.find(f => f.path === ref.path) || null, res: null, read: null, board: ref.board, taskId: g.task || '', gateRef, refreshError: b.error };
+  return { state: 'ok', file: aideDiffFile(parsed.files, ref.path), res: null, read: null, board: ref.board, taskId: g.task || '', gateRef, refreshError: b.error };
 }
 
 function aideCtx() {

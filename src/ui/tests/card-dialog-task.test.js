@@ -1501,6 +1501,17 @@ test("the annotations of a gate's 根拠 are the read-through of the head the ta
   assert.strictEqual(ask({ pr: null, record: null }), null);
 });
 
+test("a diff part finds a file by its new path, or by the old one of a renamed file, as the server accepts either", () => {
+  const c = vm.createContext({});
+  vm.runInContext(fnSrc(aideSrc, 'aideDiffFile'), c);
+  c.files = [{ path: 'new.rs', oldPath: 'old.rs' }, { path: 'same.rs', oldPath: 'same.rs' }];
+  const find = p => { c.p = p; return JSON.parse(JSON.stringify(vm.runInContext('aideDiffFile(files, p)', c))); };
+  assert.strictEqual(find('new.rs').path, 'new.rs');
+  assert.strictEqual(find('old.rs').path, 'new.rs');
+  assert.strictEqual(find('same.rs').path, 'same.rs');
+  assert.strictEqual(find('none.rs'), null);
+});
+
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
   const log = [];
   let top = 'page-gate:b/g1';
