@@ -105,10 +105,15 @@ fn claude_mode_line(line: &str) -> bool {
 /// but only as the last segment of a mode line, after a `·`. `e…`, `es…` and a bare `…` are
 /// left out on purpose: too short to tell from the cut `← for agents` hint or from nothing at
 /// all, and a turn taken for idle there is the lesser harm than an idle one taken for running.
+///
+/// Only the footer's own row says so: a transcript line that reads like a cut footer (a diff
+/// or tool output quoting one) is not a turn, so callers look at the footer's row alone.
 fn claude_running_footer(line: &str) -> bool {
-    if line.to_lowercase().contains("esc to interrupt") {
-        return true;
-    }
+    line.to_lowercase().contains("esc to interrupt") || claude_cut_running_footer(line)
+}
+
+/// The cut forms of `claude_running_footer`: a mode line ending in a prefix of the words.
+fn claude_cut_running_footer(line: &str) -> bool {
     if !claude_mode_line(line) {
         return false;
     }
@@ -127,7 +132,7 @@ fn claude_running_footer(line: &str) -> bool {
 fn working_marker(agent: Agent, line: &str) -> bool {
     let lower = line.to_lowercase();
     match agent {
-        Agent::Claude => claude_spinner(line) || claude_running_footer(line),
+        Agent::Claude => claude_spinner(line) || lower.contains("esc to interrupt"),
         Agent::Agy => agy_spinner(line) || lower.trim_start().starts_with("esc to cancel"),
         Agent::Generic => false,
     }
@@ -339,8 +344,10 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
     let Some(input) = input else {
         // The box is not found when the screen is not the agent's, but also when it is drawn in
         // a way not known; a running footer is still read, so the turn is not typed into. It
-        // is looked for after the questions above, which win.
-        if agent == Agent::Claude && lines.iter().any(|l| claude_running_footer(&l.plain)) {
+        // is looked for after the questions above, which win, and only on the bottom line,
+        // where the footer is drawn.
+        let bottom_line = lines.iter().rev().find(|l| !l.plain.trim().is_empty());
+        if agent == Agent::Claude && bottom_line.is_some_and(|l| claude_running_footer(&l.plain)) {
             return reading(PaneState::Working);
         }
         return reading(PaneState::Unknown);
@@ -351,7 +358,13 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
             typed: input.text,
         };
     }
-    if lines.iter().any(|l| working_marker(agent, &l.plain)) {
+    // The cut footer counts only under the box, where the footer is drawn; the spinner and the
+    // whole words count anywhere, as they always did.
+    let footer_cut = agent == Agent::Claude
+        && lines[input.bottom + 1..]
+            .iter()
+            .any(|l| claude_cut_running_footer(&l.plain));
+    if footer_cut || lines.iter().any(|l| working_marker(agent, &l.plain)) {
         return reading(PaneState::Working);
     }
     reading(PaneState::Idle)

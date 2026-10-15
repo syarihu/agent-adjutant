@@ -288,7 +288,7 @@ fn a_cut_running_footer_is_working_and_a_cut_idle_one_is_not() {
 
 #[test]
 fn a_session_name_in_the_top_border_is_still_the_box() {
-    // A name wide enough to leave no dashes in front of it.
+    // A name wide enough to leave no dashes before it (the trailing ` ─` stays).
     let label = "adjutant-read-octo-org+octo-repository+1234";
     for name in ["claude-narrow-idle", "claude-narrow-working-streaming"] {
         let text = fixture(name);
@@ -349,6 +349,32 @@ fn a_running_footer_without_a_box_is_working() {
     // Not for agy, whose footer is not read this way.
     assert_eq!(
         pane_state(Agent::Agy, &screen_of(&["some output", "", running])),
+        PaneState::Unknown
+    );
+}
+
+#[test]
+fn a_transcript_line_that_reads_like_a_cut_footer_is_not_a_turn() {
+    let quoted = "  ⏵⏵ don't ask on (shift+tab to cycle) · esc to i…";
+    // Above a box whose own footer is idle.
+    let text =
+        fixture("claude-narrow-idle").replacen("✻ Cogitated for 48s · done 13:44", quoted, 1);
+    assert!(text.contains(quoted));
+    assert_eq!(
+        pane_state(Agent::Claude, &parse_pane_screen(&text)),
+        PaneState::Idle
+    );
+    // On a screen with no box, only the bottom line is the footer.
+    let idle = "  ⏵⏵ don't ask on (shift+tab to cycle) · ← for ag…";
+    assert_eq!(
+        pane_state(
+            Agent::Claude,
+            &screen_of(&[quoted, "some output", "", idle])
+        ),
+        PaneState::Unknown
+    );
+    assert_eq!(
+        pane_state(Agent::Claude, &screen_of(&[quoted, "some output", ""])),
         PaneState::Unknown
     );
 }
