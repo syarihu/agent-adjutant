@@ -95,3 +95,46 @@
 
 .wk-act.aide-ask { color: var(--md-sys-color-tertiary); }
 .wk-act.aide-ask:hover { background: var(--md-sys-color-tertiary-container); }
+
+/* ── a gate on show (the `gate` part) ── */
+.aide-gate { display: flex; flex-direction: column; gap: 12px; }
+.aide-gate-parent { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
+.aide-gate-parent .material-symbols-outlined { font-size: 15px; }
+.aide-gate-sec { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.aide-gate-sec-title { font-size: 11px; font-weight: 800; color: var(--md-sys-color-outline); }
+.aide-gate-task { margin: 0; overflow-wrap: anywhere; }
+.aide-gate-focus, .aide-gate-unsure { overflow-wrap: anywhere; }
+.aide-gate-focus > :first-child, .aide-gate-unsure > :first-child { margin-top: 0; }
+.aide-gate-focus > :last-child, .aide-gate-unsure > :last-child { margin-bottom: 0; }
+/* The choices are cards of their own inside a part: no second frame around them. */
+.aide-gate .panel { margin: 0; padding: 10px 12px; background: transparent; border: 0; }
+.aide-gate .panel h3 { display: none; }
+.aide-gate .gate-comment { width: 100%; min-height: 64px; padding: 10px 12px; box-sizing: border-box; resize: vertical; font: inherit; font-size: 13px;
+  color: var(--md-sys-color-on-surface); background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); }
+.aide-gate .gate-comment:focus-visible { outline: 2px solid var(--md-sys-color-primary); border-color: transparent; }
+.aide-gate-diff { max-height: 220px; overflow: auto; border-radius: var(--md-shape-corner-md); }
+.aide-gate-away .timeline { margin: 0; }
+.aide-gate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.aide-gate-close { margin-left: auto; color: var(--md-sys-color-outline); }
+
+/* ── the list of waits (the `waits` part) ── */
+.aide-waits-repo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.aide-waits-repo-name { font-size: 12.5px; font-weight: 800; color: var(--md-sys-color-primary); }
+.aide-waits-parent-title { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); margin: 2px 0 4px; }
+.aide-waits-parent-title .material-symbols-outlined { font-size: 15px; }
+.aide-waits-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.aide-wait { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline; text-align: left; padding: 8px 10px; cursor: pointer;
+  font: inherit; color: var(--md-sys-color-on-surface); background: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: 12px; }
+.aide-wait:hover { background: var(--md-sys-color-primary-container); }
+.aide-wait:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.aide-wait-kind { padding: 0 8px; border-radius: 9999px; font-size: 10.5px; font-weight: 800; white-space: nowrap;
+  background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.aide-wait-kind.bad { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.aide-wait-title { font-weight: 700; overflow-wrap: anywhere; }
+.aide-wait-when, .aide-wait-repo { font-size: 11px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
+.aide-wait-focus { grid-column: 2 / -1; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.aide-waits-done { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--md-sys-color-outline-variant); }
+.aide-finished { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
+.aide-finished .aide-link { margin-left: auto; }

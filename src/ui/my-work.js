@@ -1411,8 +1411,9 @@ function workAdvanceAfter(key) {
 const workAwayAt = secs => `<span class="at" title="${esc(ago(secsStamp(secs)))}">${esc(when(secsStamp(secs)))}</span>`;
 
 /* The block of 離れていた間に: the last thing the person did, when they left, what happened since, and what the task waits on
-   now. `m` is `workAwayModel` or `workParentAway` (which has no `left`); `who` of a line is a child's title, for a parent. */
-function workAwayHtml(m, now) {
+   now. `m` is `workAwayModel` or `workParentAway` (which has no `left`); `who` of a line is a child's title, for a parent.
+   `heading` false leaves out the title, for a place that names the block itself. */
+function workAwayHtml(m, now, heading = true) {
   const li = (at, html, cls = '') => `<li${cls ? ` class="${cls}"` : ''}>${at}<div class="what">${html}</div></li>`;
   const who = ev => ev.title ? `<span class="wk-away-who">${esc(ev.title)}</span>` : '';
   const items = [];
@@ -1422,7 +1423,7 @@ function workAwayHtml(m, now) {
   else items.push(li('<span class="at"></span>', '<div class="tp-muted">離れていた間の動きはありません</div>'));
   if (m.more) items.push(li('<span class="at"></span>', `<div class="tp-muted">${esc(`ほか ${m.more} 件`)}</div>`));
   if (m.now) items.push(li('<span class="at">いま</span>', `<div>${esc(m.now)}</div>`, 'now'));
-  return `${secTitle('離れていた間に')}<ol class="timeline wk-away-list">${items.join('')}</ol>`;
+  return `${heading ? secTitle('離れていた間に') : ''}<ol class="timeline wk-away-list">${items.join('')}</ol>`;
 }
 
 /* The block above a task's or a session's タスクサマリ: filled into #tp-away, which the page keeps, and hidden unless the work

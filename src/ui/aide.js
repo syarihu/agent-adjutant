@@ -16,12 +16,19 @@ const aide = {
   readOk: 0,         // which of them was the last that worked; a queued request is typed only from one sent after it
   askAfter: 0,       // how many reads had been sent when the queued request was made
   display: aideEmptyDisplay(),
+  gateTitles: new Map(), // gate ref -> its title as last read, so a part of a gate that is gone still says which it was
+  boardSeq: {},      // board slug -> reads of its state sent so far
+  boardApplied: {},  // board slug -> the newest of them that was applied; an older answer arriving later is dropped
   opening: false,
   resetting: false,
   wantOpen: false,   // the person asked for it to be started; acted on when a read says it can be
   pendingAsk: null,  // a request typed once the aide can take it (aideFlushAsk)
   from: null,        // { board, ref, title }: the row the aide sent the person to, for the way back; page memory, not the address
   seen: null,        // the keys of the waits the pane last showed, for 「待ちが N 件増えました」; null before it was shown
+  boards: {},        // board slug -> { data, at, error }: the state of each board a gate part or a wait names, tagged as mergeStates does
+  local: null,       // { part, serverTop, topic }: the part this page put on top of the aide's (aideDisplayFollowed); page memory only
+  drafts: new Map(), // gate ref -> a comment typed in a part, kept across redraws (like cardDialogDrafts)
+  held: false,       // a redraw of the display area is waiting for the comment box that has the focus to lose it
 };
 /* The aide's terminal: a slot like the middle's (`workTerm`), connected through the aide's own socket and not a board's. */
 const aideTerm = { host: () => wk('aide-term-host'), redraw: () => renderAide(), base: () => '',
@@ -34,6 +41,30 @@ function setAidePart(name, el, html) {
   if (!el || aideDrawn[name] === html) return;
   aideDrawn[name] = html;
   el.innerHTML = html;
+}
+
+/* The display area is drawn when its markup changed apart from the times in it and the text typed into a comment box (that is
+   kept in `aide.drafts`, so the markup of a box is not what makes it differ). While a comment box has the focus the redraw
+   waits, and goes when the focus leaves, so that what is being typed is not thrown away. */
+function setAideDisplay(el, html) {
+  if (!el) return;
+  const sig = html.replace(/(<textarea[^>]*>)[^<]*(<\/textarea>)/g, '$1$2');
+  const typing = !!document.activeElement?.matches?.('.gate-comment') && el.contains(document.activeElement);
+  // The times in it stay fresh: they are left out of the comparison only while a comment is being typed, when a redraw would
+  // cost what is being typed and the minute turning over is no reason for one.
+  if (typing ? timeFree(aideDrawn.display ?? '') === timeFree(sig) : aideDrawn.display === sig) {
+    aide.held = false;
+    return;
+  }
+  if (typing) {
+    aide.held = true;
+    return;
+  }
+  aide.held = false;
+  aideDrawn.display = sig;
+  const top = el.scrollTop;
+  el.innerHTML = html;
+  el.scrollTop = top;
 }
 
 /* What the display area shows: the state the aide's adjutant_show tool left, which the resident reads from its file. */
@@ -62,6 +93,110 @@ function aideNews() {
   const kindLabel = gate ? kindOf(gate.gate)[0] : '';
   const what = kindLabel || (pr && WORK_PR_NOW[pr.turn]) || WORK_GLYPH[r.st]?.[1] || '';
   return { count: fresh.length, first: { title: aideRowTitle(r), what, key: r.key, nwo: r.nwo, taskId: r.task?.id || null, kindLabel } };
+}
+
+/* ── what the parts show: the content of the boards ── */
+
+/* How long what was read of a board is kept before a poll reads it again. */
+const AIDE_BOARD_FRESH_MS = 10000;
+
+const aideTagged = (list, slug) => (list || []).map(x => ({ ...x, _slug: slug, _base: `/b/${slug}` }));
+
+/* What the display area shows now: the aide's parts with the one this page put on top, or the list of waits when there is
+   nothing at all. */
+const aideShown = () => aideDisplayWithWaits(aideDisplayFollowed(aide.display, aide.local), aideCurrentWaits());
+
+/* The boards whose content the parts on show need: a gate part's own, and every board that has a wait when the list of waits is on. */
+function aideWantedBoards() {
+  const shown = aideShown();
+  const slugs = new Set();
+  for (const p of shown.parts) {
+    if (p.kind === 'gate' && p.ref?.board) slugs.add(String(p.ref.board));
+    if (p.kind === 'waits') for (const w of aideCurrentWaits()) if (w.board) slugs.add(w.board);
+  }
+  // The board of a dialog the aide opened stays read as long as the dialog is open.
+  if (cardDialog.scope && cardDialogEl().open) slugs.add(cardDialog.scope.board);
+  return slugs;
+}
+
+/* Read the state of each wanted board (without its sessions, as 「すべて」 does), unless it was read a moment ago and `force`
+   does not say otherwise. A board that cannot be read keeps what was read of it, with the reason; one never read has only the reason. */
+async function loadAideBoards(force = false) {
+  const at = Date.now();
+  const stale = [...aideWantedBoards()].filter(slug => force || !aide.boards[slug] || at - aide.boards[slug].at >= AIDE_BOARD_FRESH_MS);
+  await Promise.all(stale.map(async slug => {
+    const n = aide.boardSeq[slug] = (aide.boardSeq[slug] || 0) + 1;
+    // A read sent before a newer one was applied (or before an answer took a gate off) must not put it back.
+    const current = () => {
+      if (n < (aide.boardApplied[slug] || 0)) return false;
+      aide.boardApplied[slug] = n;
+      return true;
+    };
+    try {
+      const next = await boardApi(`/b/${slug}`, '/api/state?sessions=0');
+      if (!current()) return;
+      // The lists `mergeStates` (core.js) tags with their board, since the cards match on `_slug`.
+      const tagged = Object.fromEntries(['tasks', 'gates', 'waits', 'parents', 'workers', 'hubs'].map(k => [k, aideTagged(next[k], slug)]));
+      aide.boards[slug] = { data: { ...next, ...tagged }, at: Date.now(), error: null };
+      renderAide();
+    } catch (e) {
+      if (!current()) return;
+      aide.boards[slug] = { data: aide.boards[slug]?.data || null, at: Date.now(), error: e.message };
+      renderAide();
+    }
+  }));
+  // A dialog the aide opened follows what was read.
+  if (cardDialog.scope) cardDialogFollow();
+}
+
+/* What was read of a board before now is older than what this page just did to it (an answer): the answers still on their way are dropped. */
+const aideBoardWrote = slug => { aide.boardApplied[slug] = (aide.boardSeq[slug] || 0) + 1; };
+
+const aideParentTitle = (nwo, key) => workRepos().find(r => r.nwo === nwo)?.parents?.find(p => p.key === key)?.title || '';
+
+/* What `ctx.gate(ref)` says of a gate (see the gate renderer in aide-display.js): null while its board has not been read. */
+function aideGateView(ref, rowKeyOf) {
+  const cut = ref.lastIndexOf('/');
+  const board = ref.slice(0, cut);
+  const gateId = ref.slice(cut + 1);
+  const entry = [...(work.entries?.values() || [])].find(e => (e.gates || []).some(g => g.key === ref)) || null;
+  const known = { board, nwo: entry?.nwo || '', entry, rowKey: entry ? rowKeyOf(entry.id) : null,
+    title: entry?.task?.title || entry?.gateTitle || aide.gateTitles.get(ref) || '' };
+  const b = aide.boards[board];
+  if (!b || (!b.data && !b.error)) return null;
+  if (!b.data) return { ...known, error: b.error };
+  const g = (b.data.gates || []).find(x => x.id === gateId);
+  if (!g || answeredGates.has(ref)) return { ...known, gone: true };
+  if (g.title) aide.gateTitles.set(ref, g.title);
+  const task = (b.data.tasks || []).find(t => t.id === g.task) || null;
+  const m = entry && !entry.isHub && work.doc ? workAwayModel(entry, workMarks(entry.nwo)[entry.id], [], workServerNow()) : null;
+  return { ...known, g, task, away: m ? workAwayHtml(m, workServerNow(), false) : '',
+    parentTitle: entry?.task?.parent ? aideParentTitle(entry.nwo, entry.task.parent) || entry.task.parent : '' };
+}
+
+function aideCtx() {
+  const waits = aideCurrentWaits();
+  // What each wait is called, kept for when its gate is gone.
+  for (const w of waits) if (!aide.gateTitles.has(w.key)) aide.gateTitles.set(w.key, w.title);
+  const listed = work.doc ? workListRows() : { rows: [], turns: [], judged: new Map() };
+  const rowKeyOf = id => [...listed.rows, ...listed.turns].find(r => r.id === id)?.key || null;
+  return {
+    waits,
+    finished: aideFinished(listed.judged, id => { const r = [...listed.rows, ...listed.turns].find(x => x.id === id); return r ? aideRowTitle(r) : ''; }),
+    gate: ref => aideGateView(ref, rowKeyOf),
+    rowKey: rowKeyOf,
+    draft: ref => aide.drafts.get(ref) || '',
+    parentTitle: aideParentTitle,
+    repoName: workRepoName,
+    // Not read yet, failed and a gate with no focus are three different things to say.
+    focusOf: w => {
+      const b = aide.boards[w.board];
+      if (!b || (!b.data && !b.error)) return { state: 'loading' };
+      if (!b.data) return { state: 'error', error: b.error };
+      const g = (b.data.gates || []).find(x => x.id === w.gateId);
+      return g ? { state: 'ok', focus: g.focus || '' } : { state: 'gone' };
+    },
+  };
 }
 
 /* ── reading and starting ── */
@@ -102,6 +237,9 @@ async function refreshAide(force = false) {
   }
   renderAide();
   aideFlushAsk();
+  // The boards of the parts are read on their own: a slow or failed read of one holds nothing else (not this round, nor the
+  // aide's state), and each draws as it arrives. Their order is kept by the per-slug sequence, not by `aide.busy`.
+  loadAideBoards(force);
   if (aide.again) {
     aide.again = false;
     refreshAide(true);
@@ -200,7 +338,7 @@ function aidePlaceholderHtml() {
 
 /* 「対象」: the topic on display, and a chip for each repository, which puts `[owner/repo] ` at the start of what is typed. */
 function aideScopeHtml() {
-  const label = aide.display.topic?.label || 'いまの話題なし';
+  const label = aideShown().topic?.label || 'いまの話題なし';
   const repos = workRepos().filter(r => !r.error).slice().sort((a, b) => a.nwo.localeCompare(b.nwo, undefined, { sensitivity: 'base' }));
   const chip = (scope, text, title) => `<button type="button" class="aide-chip" data-aide-scope="${esc(scope)}" title="${esc(title)}">${esc(text)}</button>`;
   return `<span class="aide-scope-label">${aideIcon('my_location')}対象</span>`
@@ -223,7 +361,9 @@ function renderAide() {
     setAidePart('ph', ph, aidePlaceholderHtml());
     ph.hidden = !aideDrawn.ph;
     setAidePart('scope', wk('aide-scope'), aideScopeHtml());
-    setAidePart('display', wk('aide-display'), aideDisplayHtml(aideDisplayWithWaits(aide.display, aideCurrentWaits()), { news: aideNews(), ctx: { doc: work.doc } }));
+    // The aide showing something new takes the floor from a part the page made.
+    if (aide.local && !aideLocalHolds(aide.display, aide.local)) aide.local = null;
+    setAideDisplay(wk('aide-display'), aideDisplayHtml(aideShown(), { news: aideNews(), ctx: aideCtx() }));
     // What the person has now seen: a wait that comes after this is what the count says grew.
     if (work.doc) aide.seen = new Set(aideCurrentWaits().map(w => w.key));
   }
@@ -354,6 +494,102 @@ wk('wk-term').addEventListener('click', e => {
     }
     resetAide();
   }
+});
+
+/* ── events of the parts ── */
+
+/* The part the page puts on top: `part` over the aide's parts, until the aide shows something new. */
+function aideSetLocal(part, topic) {
+  aide.local = { part, serverTop: aide.display.parts[0]?.id ?? null, topic };
+  renderAide();
+}
+
+function aideBackToWaits() {
+  aideSetLocal(aideWaitsPart(), AIDE_WAITS_TOPIC);
+  refreshAide(true);
+}
+
+function aideOpenGate(key) {
+  const cut = key.lastIndexOf('/');
+  if (cut <= 0) return;
+  const w = aideCurrentWaits().find(x => x.key === key);
+  aideSetLocal(aideGatePart(key.slice(0, cut), key.slice(cut + 1)), { key: 'page', label: `${w ? workRepoName(w.nwo) : ''} · 判断待ち` });
+  // The board is read now: what the part shows must not be a poll old.
+  refreshAide(true);
+}
+
+/* After an answer: the next wait of the same parent when 「処理したら次へ」 is on and there is one, else the list of waits.
+   The aide is not told and nothing is written to the server. `done` is the wait as it was before the answer took it off the list. */
+function aideAfterAnswer(done, top) {
+  // The person may have opened another part while the answer was on its way: that is what they are on, so it stays.
+  if (aideShown().parts[0]?.id === top) {
+    const next = prefs.reviewNext ? aideNextWait(aideCurrentWaits(), done) : null;
+    if (next) aideSetLocal(aideGatePart(next.board, next.gateId), { key: 'page', label: `${workRepoName(next.nwo)} · 次の判断待ち` });
+    else aideSetLocal(aideWaitsPart(), AIDE_WAITS_TOPIC);
+  }
+  // The work document, the aide's read (the boards of the parts with it) and the sidebar, so that the answer is off the list and the next gate is read now.
+  refresh(true);
+  refreshBoards();
+}
+
+async function aideDecide(b) {
+  const box = b.closest('[data-aide-gate]');
+  const ref = box.dataset.aideGate;
+  if (deciding.has(ref)) return;
+  const view = aideGateView(ref, () => null);
+  const g = view?.g;
+  if (!g || g.wait === false) return note('判断', true, 'この判断待ちは、いま読めません。もう待っていないか、読み込みに失敗しています');
+  const act = b.matches('.pick[data-choice]') ? 'choice' : b.dataset.act;
+  const typed = box.querySelector('.gate-comment')?.value.trim() || '';
+  // Taken before the answer: the answer takes the gate off the list the next one is looked for in.
+  const wait = aideCurrentWaits().find(w => w.key === ref);
+  const done = wait || { key: ref, nwo: view.nwo, parent: null, taskId: g.task || null };
+  const top = aideShown().parts[0]?.id;
+  deciding.add(ref);
+  let sent;
+  try {
+    sent = act === 'close' ? await closeGateOf(g, typed) : await answerGate(g, act, act === 'choice' ? b.dataset.choice : undefined, typed);
+  } finally {
+    deciding.delete(ref);
+  }
+  // A refused answer keeps what was typed.
+  if (!sent) return;
+  aide.drafts.delete(ref);
+  aideBoardWrote(view.board);
+  aideAfterAnswer(done, top);
+}
+
+function aidePark(board, taskId) {
+  const task = aide.boards[board]?.data?.tasks?.find(t => t.id === taskId);
+  if (task) openParkDialog(task, task._base);
+  else note('置く', true, 'このタスクは、いま読めません');
+}
+
+wk('aide-display').addEventListener('click', e => {
+  let b;
+  if ((b = e.target.closest('[data-aide-open-gate]'))) return aideOpenGate(b.dataset.aideOpenGate);
+  if (e.target.closest('[data-aide-waits]')) return aideBackToWaits();
+  if ((b = e.target.closest('[data-aide-park]'))) return aidePark(b.dataset.aideBoard, b.dataset.aideTask);
+  if ((b = e.target.closest('[data-aide-expand]'))) {
+    // Part of the task's 「拡大」 dialog (card-dialog.js); until it is there the button says so.
+    const args = { board: b.dataset.aideBoard, taskId: b.dataset.aideTask, target: b.dataset.aideTarget, gate: b.dataset.aideGateRef || null, opener: b };
+    return typeof openTaskDialogFor === 'function' ? openTaskDialogFor(args) : note('拡大で開く', true, 'この画面ではまだ開けません');
+  }
+  if ((b = e.target.closest('[data-aide-gate] [data-act], [data-aide-gate] .pick[data-choice]'))) aideDecide(b);
+});
+
+wk('aide-display').addEventListener('input', e => {
+  const box = e.target.closest?.('.gate-comment');
+  const ref = box?.closest('[data-aide-gate]')?.dataset.aideGate;
+  if (!ref) return;
+  if (box.value) aide.drafts.set(ref, box.value); else aide.drafts.delete(ref);
+});
+
+wk('aide-display').addEventListener('focusout', () => {
+  if (!aide.held) return;
+  // Not at once: the focus may be leaving for a button that is being pressed, and a redraw now would replace it under the pointer
+  // (a browser that does not focus a pressed button says nothing of where the focus went).
+  setTimeout(() => { if (aide.held) renderAide(); }, 300);
 });
 
 wk('aide-reset-dialog').addEventListener('close', e => {

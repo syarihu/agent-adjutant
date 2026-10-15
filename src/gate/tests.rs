@@ -48,6 +48,8 @@ fn gate(kind: Kind) -> Gate {
             why: "there is no remote config".to_string(),
             points: vec!["small diff".to_string()],
             recommended: true,
+            comment: None,
+            extra: serde_json::Map::new(),
         }],
         options: vec!["approve".to_string(), "changes".to_string()],
         rounds: 0,
@@ -87,6 +89,49 @@ fn a_key_this_binary_does_not_know_survives_a_load_save_and_archive() {
     let archived = archive(&ctx, &loaded).unwrap();
     let text = std::fs::read_to_string(archived).unwrap();
     assert!(text.contains("\"futureField\": \"x\""), "{text}");
+}
+
+#[test]
+fn a_choice_keeps_its_comment_draft_through_write_and_read() {
+    let (_sandbox, ctx) = hub();
+    let mut gate = gate(Kind::Plan);
+    gate.choices[0].comment = Some("Go with the constant; no setting yet.".to_string());
+    gate.choices.push(Choice {
+        id: "config".to_string(),
+        label: "Option B — a setting".to_string(),
+        why: String::new(),
+        points: Vec::new(),
+        recommended: false,
+        comment: None,
+        extra: serde_json::Map::new(),
+    });
+    save(&ctx, Shelf::Open, &gate).unwrap();
+
+    let loaded = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    assert_eq!(
+        loaded.choices[0].comment.as_deref(),
+        Some("Go with the constant; no setting yet.")
+    );
+    assert_eq!(loaded.choices[1].comment, None);
+    // A choice with no draft writes no key for it.
+    let json = serde_json::to_value(&loaded.choices[1]).unwrap();
+    assert!(json.get("comment").is_none(), "{json}");
+}
+
+#[test]
+fn a_key_a_choice_does_not_know_survives_a_load_and_save() {
+    let (_sandbox, ctx) = hub();
+    let gate = gate(Kind::Plan);
+    let open = dir_of(&ctx, Shelf::Open);
+    std::fs::create_dir_all(&open).unwrap();
+    let mut raw = serde_json::to_value(&gate).unwrap();
+    raw["choices"][0]["futureField"] = serde_json::json!("y");
+    std::fs::write(path_of(&open, &gate.id), raw.to_string()).unwrap();
+
+    let loaded = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    save(&ctx, Shelf::Open, &loaded).unwrap();
+    let text = std::fs::read_to_string(path_of(&open, &gate.id)).unwrap();
+    assert!(text.contains("\"futureField\": \"y\""), "{text}");
 }
 
 #[test]

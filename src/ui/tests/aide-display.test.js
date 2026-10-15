@@ -187,9 +187,9 @@ test('the earlier topics stay when the waits fill an area with no topic', () => 
   assert.deepEqual(filled.earlier, [{ key: 'z', label: 'Z' }]);
 });
 
-test('a waits part with no renderer says it cannot be shown yet, and a null shownAt breaks nothing', () => {
-  const html = aideDisplayHtml(aideDisplayWithWaits(aideEmptyDisplay(), SOME_WAITS));
-  assert.ok(html.includes('この部品はまだ表示できません'));
+test('a waits part is drawn, with its time from the page and nothing invalid, whatever shownAt says', () => {
+  const html = aideDisplayHtml(aideDisplayWithWaits(aideEmptyDisplay(), SOME_WAITS), { ctx: { waits: SOME_WAITS } });
+  assert.ok(!html.includes('この部品はまだ表示できません'));
   assert.ok(html.includes('判断待ちの一覧'));
   assert.ok(!html.includes('Invalid Date'));
 });
@@ -209,7 +209,270 @@ test('a state as the server sends it goes through the page untouched and is draw
   const html = aideDisplayHtml(server);
   assert.ok(html.includes('data-aide-part="p1"') && html.includes('data-aide-part="p0"'));
   assert.ok(html.includes('前の話題 1'));
-  assert.ok(html.includes('この部品はまだ表示できません'));
+  assert.ok(html.includes('この部品はまだ表示できません'), 'the kind this page does not know');
   const nulled = aideDisplayHtml({ ...server, parts: server.parts.map(p => ({ ...p, shownAt: null })) });
   assert.ok(!nulled.includes('Invalid Date'));
+});
+
+/* ── the gate and waits parts, in a context of their own: the first tests above replace the `gate` renderer of the shared one ── */
+
+function world() {
+  const c = vm.createContext({ document: { addEventListener() {} }, TextEncoder, TextDecoder });
+  for (const file of ['util.js', 'pr-diff.js', 'decide.js', 'aide-display.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), c, { filename: file });
+  }
+  // The attributes the panel's cards carry (card-dialog.js): the aide asks for none.
+  vm.runInContext("const expandAttrs = (s, g) => ` data-expand=\"${s}\"`; const expandBtnHtml = l => '<button data-expand-open></button>';", c);
+  return c;
+}
+const W = world();
+const run = code => vm.runInContext(code, W);
+const plain = x => JSON.parse(JSON.stringify(x));
+const { aideNextWait, aideDisplayFollowed, aideLocalHolds } = vm.runInContext('({ aideNextWait, aideDisplayFollowed, aideLocalHolds })', W);
+const part = (board, id) => ({ id: `page-gate:${board}/${id}`, kind: 'gate', ref: { board, id } });
+
+test('a wait carries the board, parent, ids and entry its gate is on', () => {
+  const [w] = aideWaits([entry('s/41', [gate('acme-1/20260922T041233Z-plan', 100)], { task: { id: '41', title: 'Timer', parent: 'p40' } })]);
+  assert.equal(w.board, 'acme-1');
+  assert.equal(w.gateId, '20260922T041233Z-plan');
+  assert.equal(w.id, 'acme-1/20260922T041233Z-plan');
+  assert.equal(w.entryId, 's/41');
+  assert.equal(w.parent, 'p40');
+  assert.equal(aideWaits([entry('x', [gate('b/g', 1)])])[0].parent, null);
+});
+
+const wait = (key, since, extra = {}) => ({ key, since, nwo: 'acme/widget', parent: 'p40', taskId: '41', ...extra });
+
+test('the next wait is the oldest of the same repository and parent, never the one just answered', () => {
+  const waits = [wait('b/a', 1, { nwo: 'other/repo' }), wait('b/c', 2, { parent: 'p41' }), wait('b/d', 3), wait('b/e', 4)];
+  assert.equal(aideNextWait(waits, { key: 'b/x', nwo: 'acme/widget', parent: 'p40', taskId: '41' }).key, 'b/d');
+  assert.equal(aideNextWait(waits, { key: 'b/d', nwo: 'acme/widget', parent: 'p40', taskId: '41' }).key, 'b/e');
+  assert.equal(aideNextWait([wait('b/d', 3)], { key: 'b/d', nwo: 'acme/widget', parent: 'p40' }), null);
+  assert.equal(aideNextWait([], { key: 'b/d', nwo: 'acme/widget', parent: 'p40' }), null);
+  assert.equal(aideNextWait(waits, null), null);
+});
+
+test('with no parent the next wait is one of the same task, and a task with no id has none', () => {
+  const waits = [wait('b/a', 1, { parent: null, taskId: '7' }), wait('b/b', 2, { parent: null, taskId: '41' }), wait('b/c', 3, { parent: 'p40', taskId: '41' })];
+  assert.equal(aideNextWait(waits, { key: 'b/x', nwo: 'acme/widget', parent: null, taskId: '41' }).key, 'b/b');
+  assert.equal(aideNextWait(waits, { key: 'b/x', nwo: 'acme/widget', parent: null, taskId: null }), null);
+  // A wait with a parent is not of a task with none, even on the same task id.
+  assert.equal(aideNextWait([wait('b/c', 3, { parent: 'p40', taskId: '41' })], { key: 'b/x', nwo: 'acme/widget', parent: null, taskId: '41' }), null);
+});
+
+test("a part the page made goes on top of the server's, and is dropped as soon as the server's newest part is another", () => {
+  const local = { part: part('b', 'g'), serverTop: 'p1', topic: { key: 'page', label: 'L' } };
+  const server = { topic: { key: 'a', label: 'A' }, parts: [{ id: 'p1', kind: 'gate' }, { id: 'p0', kind: 'gate' }], earlier: [] };
+  const on = plain(aideDisplayFollowed(server, local));
+  assert.deepEqual(on.parts.map(p => p.id), ['page-gate:b/g', 'p1', 'p0']);
+  assert.equal(on.topic.key, 'a');
+  // The aide showed something new.
+  assert.deepEqual(plain(aideDisplayFollowed({ ...server, parts: [{ id: 'p2', kind: 'gate' }, ...server.parts] }, local).parts.map(p => p.id)), ['p2', 'p1', 'p0']);
+  assert.equal(aideLocalHolds(server, local), true);
+  assert.equal(aideLocalHolds({ ...server, parts: [{ id: 'p2' }, ...server.parts] }, local), false);
+  assert.equal(aideDisplayFollowed(server, null).parts.length, 2);
+});
+
+test('with nothing from the server the page-made part stays until the server shows something, and brings its own topic', () => {
+  const local = { part: part('b', 'g'), serverTop: null, topic: { key: 'page', label: 'L' } };
+  const none = aideEmptyDisplay();
+  const on = plain(aideDisplayFollowed(none, local));
+  assert.deepEqual(on.parts.map(p => p.id), ['page-gate:b/g']);
+  assert.equal(on.topic.label, 'L');
+  // The list of waits does not take its place.
+  assert.equal(aideDisplayWithWaits(aideDisplayFollowed(none, local), SOME_WAITS).parts[0].kind, 'gate');
+  // null -> an id: the aide has the floor.
+  const shown = { topic: { key: 'a', label: 'A' }, parts: [{ id: 'p0', kind: 'gate' }], earlier: [] };
+  assert.deepEqual(plain(aideDisplayFollowed(shown, local).parts.map(p => p.id)), ['p0']);
+  assert.equal(aideLocalHolds(shown, local), false);
+});
+
+const DIFF = [
+  'diff --git a/src/a.rs b/src/a.rs', '--- a/src/a.rs', '+++ b/src/a.rs', '@@ -1,2 +1,2 @@', ' keep', '-old <b>', '+new <b>',
+  'diff --git a/src/b.rs b/src/b.rs', '--- a/src/b.rs', '+++ b/src/b.rs', '@@ -5,2 +5,2 @@', ' ctx b', '-gone', '+here',
+].join('\n');
+
+test('the evidence is the hunk of the file a finding names, else the first hunk, capped, and escaped', () => {
+  const named = run('aideEvidence')(DIFF, [{ location: 'src/b.rs:6', text: 't' }]);
+  assert.ok(named.includes('src/b.rs') && named.includes('+here'));
+  assert.ok(!named.includes('src/a.rs'));
+  const fallback = run('aideEvidence')(DIFF, [{ location: 'elsewhere.rs:1' }]);
+  assert.ok(fallback.includes('+++ src/a.rs') && !fallback.includes('src/b.rs'));
+  assert.equal(run('aideEvidence')(DIFF, undefined), fallback);
+  // Escaped: the diff's own markup is text.
+  assert.ok(fallback.includes('-old &lt;b&gt;') && !fallback.includes('<b>'));
+  const lines = ['diff --git a/big b/big', '--- a/big', '+++ b/big', '@@ -1,30 +1,30 @@', ...Array.from({ length: 30 }, (_, i) => ` line ${i}`)].join('\n');
+  assert.equal(run('aideEvidence')(lines, []).split('<div').length - 1, 12);
+  assert.equal(run('aideEvidence')(lines, [], 5).split('<div').length - 1, 5);
+  assert.equal(run('aideEvidence')('', []), '');
+  assert.equal(run('aideEvidence')(null, null), '');
+});
+
+test('finished work is what ended, newest first, with hubs left out', () => {
+  const j = (kind, since, extra = {}) => ({ entry: { nwo: 'acme/widget', ref: 'r', task: { id: '1', title: 'T' }, isHub: false, ...extra }, live: [{ kind, since }] });
+  const judged = new Map([['a', j('done', 10)], ['b', j('failed', 30)], ['c', j('done', 20, { isHub: true })], ['d', j('gate', 40)], ['e', { entry: { nwo: 'x/y', ref: 'r', isHub: false }, live: [] }]]);
+  const got = run('aideFinished')(judged);
+  assert.deepEqual(got.map(f => [f.entryId, f.kind]), [['b', 'failed'], ['a', 'done']]);
+  assert.deepEqual(run('aideFinished')(null), []);
+});
+
+const GATE = {
+  id: 'g1', kind: 'plan', title: 'Design <review>', focus: 'Pick the **TTL** <x>', unsure: 'Not <sure>', problem: 'Slow <back>', openedAt: '20260922T041233Z',
+  options: ['approve', 'changes'], wait: true, task: '41', diff: DIFF, findings: [{ location: 'src/b.rs:6' }],
+  choices: [{ id: 'const', label: 'A <const>', why: 'w', points: ['p <1>'], recommended: true, comment: 'Go with A <now>' }, { id: 'cfg', label: 'B' }],
+};
+const TASK = { id: '41', title: 'Timer <task>', body: '# Heading\n\nA request <b>bold</b> for the timer.\nSecond line.\nThird line is left out.', _slug: 's' };
+const gatePart = ctx => run('aidePartHtml')(part('s', 'g1'), true, ctx);
+
+test('a gate part has its sections, escapes what it shows and marks the recommended choice and the draft', () => {
+  const html = gatePart({ gate: ref => ({ g: GATE, task: TASK, nwo: 'acme/widget', board: 's', rowKey: 's/41', away: '<ol class="timeline"><li>away</li></ol>', parentTitle: 'Parent <p>' }), draft: () => 'typed <t>' });
+  for (const sec of ['このタスク', '前回見てから', '決めること', '迷っていること', '根拠']) assert.ok(html.includes(sec), sec);
+  assert.ok(html.includes('data-aide-gate="s/g1"'));
+  assert.ok(!html.includes('<review>') && !html.includes('<task>') && !html.includes('<sure>') && !html.includes('<const>') && !html.includes('<now>') && !html.includes('<t>'));
+  assert.ok(html.includes('Timer &lt;task&gt;') && html.includes('Go with A &lt;now&gt;') && html.includes('typed &lt;t&gt;'));
+  assert.ok(html.includes('AI の推し案'));
+  assert.ok(html.includes('data-choice="const"') && html.includes('data-choice="cfg"'));
+  assert.ok(html.includes('class="gate-comment"'));
+  assert.ok(html.includes('data-act="approve"') && html.includes('data-act="changes"'));
+  assert.ok(html.includes('Parent &lt;p&gt;'));
+  assert.ok(!html.includes('data-expand-open'), 'no 拡大 button of the panel');
+  // 1-2 lines of the request, not the third, not the heading marker.
+  assert.ok(html.includes('Heading A request &lt;b&gt;bold&lt;/b&gt; for the timer.'));
+  assert.ok(!html.includes('Third line'));
+  assert.ok(html.includes('data-aide-row="s/41"') && html.includes('ターミナルを見る'));
+  assert.ok(html.includes('data-aide-park') && html.includes('data-aide-expand'));
+  assert.ok(html.includes('一覧へ戻る') && html.includes('data-aide-waits'), 'a way back to the list from a live gate');
+  assert.ok(html.includes('拡大 → 依頼と計画'));
+  assert.ok(html.includes('+here'));
+});
+
+test('a gate that is not a plan says 拡大で開く, and one with no request falls back to its problem, then its title', () => {
+  const view = (g, task) => gatePart({ gate: () => ({ g, task, nwo: 'acme/widget', board: 's' }) });
+  assert.ok(view({ ...GATE, kind: 'diff' }, TASK).includes('拡大で開く'));
+  assert.ok(view(GATE, null).includes('Slow &lt;back&gt;'));
+  assert.ok(view({ ...GATE, problem: '' }, null).includes('Design &lt;review&gt;'));
+  assert.ok(!view(GATE, null).includes('data-aide-park'), 'no task, nothing to park');
+});
+
+test('a gate part says it is loading, failed, or no longer waiting, each in its own way', () => {
+  const loading = gatePart({ gate: () => null });
+  assert.ok(loading.includes('読み込み中…') && !loading.includes('data-aide-gate'));
+  const failed = gatePart({ gate: () => ({ error: 'boom <x>', nwo: 'acme/widget', rowKey: 's/41' }) });
+  assert.ok(failed.includes('boom &lt;x&gt;') && failed.includes('ターミナルを見る') && failed.includes('data-aide-row="s/41"'));
+  const gone = gatePart({ gate: () => ({ gone: true, nwo: 'acme/widget' }) });
+  assert.ok(gone.includes('判断待ちの一覧へ') && gone.includes('data-aide-waits') && !gone.includes('data-act='));
+  assert.ok(gatePart({ gate: () => ({ g: { ...GATE, wait: false }, task: TASK }) }).includes('data-aide-waits'));
+  assert.ok(run('aidePartHtml')({ id: 'x', kind: 'gate', ref: null }, true, {}).includes('読み込み中…'));
+});
+
+test('the waits part groups by repository then parent, puts those with no parent last, and lists what finished', () => {
+  const waits = [
+    wait('b/1', 10, { title: 'First <t>', kind: 'plan', parent: null }),
+    wait('b/2', 20, { title: 'Second', kind: 'question', parent: 'p40' }),
+    wait('b/3', 30, { title: 'Third', kind: 'diff', parent: 'p41', nwo: 'other/repo' }),
+    wait('b/4', 40, { title: 'Fourth', kind: 'plan', parent: 'p40' }),
+  ];
+  const html = run('aidePartHtml')({ id: 'page-waits', kind: 'waits', ref: null }, true, {
+    waits, finished: [{ entryId: 'e1', nwo: 'acme/widget', kind: 'done', since: 5, title: 'Done <d>' }, { entryId: 'e2', nwo: 'acme/widget', kind: 'failed', since: 6, title: 'Bad' }],
+    parentTitle: (nwo, key) => (key === 'p40' ? 'Parent <40>' : ''), repoName: x => x.split('/')[1], rowKey: id => (id === 'e1' ? 's/e1' : null),
+    focusOf: w => (w.key === 'b/2' ? { state: 'ok', focus: 'Decide **this** first\nand more' } : { state: 'ok', focus: '' }),
+  });
+  assert.ok(html.indexOf('widget') < html.indexOf('>repo<'));
+  // Within acme/widget: the parent with a title first (oldest wait is the parentless one, but it goes last).
+  assert.ok(html.indexOf('Parent &lt;40&gt;') < html.indexOf('親なし'));
+  assert.ok(html.indexOf('data-aide-open-gate="b/2"') < html.indexOf('data-aide-open-gate="b/4"'));
+  assert.ok(html.indexOf('data-aide-open-gate="b/4"') < html.indexOf('data-aide-open-gate="b/1"'));
+  assert.ok(html.includes('>p41<'), 'a parent with no title shows its key');
+  assert.ok(html.includes('First &lt;t&gt;') && html.includes('Done &lt;d&gt;') && !html.includes('<d>'));
+  assert.ok(html.includes('Decide this first') && !html.includes('and more'));
+  assert.equal((html.match(/data-aide-open-gate="/g) || []).length, 4);
+  assert.ok(html.includes('離れている間に終わったこと'));
+  assert.equal((html.match(/ターミナルを見る/g) || []).length, 1);
+  assert.ok(html.includes('失敗') && html.includes('完了'));
+  assert.ok(run('aidePartHtml')({ id: 'w', kind: 'waits' }, true, {}).includes('判断待ちはありません'));
+});
+
+test('a wait says apart whether its question is still being read, could not be read, is gone or was never written', () => {
+  const states = { 'b/1': { state: 'loading' }, 'b/2': { state: 'error', error: 'x' }, 'b/3': { state: 'gone' }, 'b/4': { state: 'ok', focus: '' }, 'b/5': { state: 'ok', focus: 'Ask <this>' } };
+  const waits = Object.keys(states).map((k, i) => wait(k, i, { title: k }));
+  const html = run('aidePartHtml')({ id: 'w', kind: 'waits' }, true, { waits, focusOf: w => states[w.key] });
+  for (const text of ['読み込み中…', '確認内容を読み込めませんでした', 'もう待っていないようです', '確認内容は書かれていません', 'Ask &lt;this&gt;']) assert.ok(html.includes(text), text);
+  assert.equal((html.match(/aide-wait-focus/g) || []).length, 5);
+});
+
+test('what a decision sends is the typed comment, else the picked choice draft, else the words of a close', () => {
+  const g = { choices: [{ id: 'a', comment: 'draft A' }, { id: 'b' }] };
+  const sent = run('sentComment');
+  assert.equal(sent(g, 'choice', 'a', 'typed'), 'typed');
+  assert.equal(sent(g, 'choice', 'a', ''), 'draft A');
+  assert.equal(sent(g, 'choice', 'b', ''), '');
+  assert.equal(sent(g, 'approve', undefined, ''), '');
+  assert.equal(sent(g, 'close', undefined, ''), 'タブで解決済み');
+  assert.equal(sent(g, 'close', undefined, 'why'), 'why');
+});
+
+/* answerGate: the one place an answer leaves the page, which must work with no board `state` to look in. */
+const decideSrc = fs.readFileSync(path.join(__dirname, '..', 'decide.js'), 'utf8');
+const fnSrc = name => {
+  const m = decideSrc.match(new RegExp(`^(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm'));
+  assert.ok(m, name);
+  return m[0];
+};
+
+function answerWorld() {
+  const posts = [];
+  const notes = [];
+  const c = vm.createContext({
+    get state() { throw new Error('answerGate must not read state'); },
+    posts, notes, gateAnswered(g, key) { notes.push(['answered', key]); },
+    gateKey: g => `${g._slug}/${g.id}`, baseOf: x => x._base, baseName: x => x, handedNote: () => '',
+    note: (...a) => notes.push(a), boardApi: async (base, url, o) => { posts.push([base, url, JSON.parse(o.body)]); return {}; },
+  });
+  vm.runInContext([decideSrc.match(/^const sentComment = [\s\S]*?;\n/m)[0], fnSrc('outboxNote'), fnSrc('answerGate'), fnSrc('closeGateOf')].join('\n'), c);
+  return { c, posts, notes };
+}
+const AGATE = { id: 'g1', wait: true, worktree: '/w', _slug: 'acme-1', _base: '/b/acme-1', choices: [{ id: 'const', comment: 'draft A' }, { id: 'cfg' }] };
+
+test("answerGate posts to the gate's own board without looking at `state`, and a choice with a draft sends it when nothing was typed", async () => {
+  const w = answerWorld();
+  w.c.g = AGATE;
+  assert.equal(await vm.runInContext(`answerGate(g, 'approve', undefined, 'typed')`, w.c), true);
+  assert.deepEqual(plain(w.posts[0]), ['/b/acme-1', '/api/gates/g1', { decision: 'approve', comment: 'typed' }]);
+  await vm.runInContext(`answerGate(g, 'choice', 'const', '')`, w.c);
+  assert.equal(w.posts[1][2].comment, 'draft A');
+  assert.equal(w.posts[1][2].choice, 'const');
+  await vm.runInContext(`answerGate(g, 'choice', 'const', 'mine')`, w.c);
+  assert.equal(w.posts[2][2].comment, 'mine');
+  await vm.runInContext(`answerGate(g, 'choice', 'cfg', '')`, w.c);
+  assert.equal(w.posts[3][2].comment, '');
+  assert.ok(w.notes.some(n => n[0] === 'answered' && n[1] === 'acme-1/g1'));
+  assert.equal(await vm.runInContext(`closeGateOf(g, 'why')`, w.c), true);
+  assert.deepEqual(plain(w.posts[4]), ['/b/acme-1', '/api/gates/g1', { decision: 'close', comment: 'why' }]);
+});
+
+test('answerGate sends nothing for a record sent back with no reason, and says false when the board refuses', async () => {
+  const w = answerWorld();
+  w.c.record = { ...AGATE, wait: false };
+  assert.equal(await vm.runInContext(`answerGate(record, 'changes', undefined, '')`, w.c), false);
+  assert.equal(w.posts.length, 0);
+  w.c.boardApi = async () => { throw new Error('refused'); };
+  w.c.g = AGATE;
+  assert.equal(await vm.runInContext(`answerGate(g, 'approve', undefined, '')`, w.c), false);
+  assert.equal(await vm.runInContext(`closeGateOf(g, '')`, w.c), false);
+});
+
+test('a finished entry with no task is named by the list, not by its raw ref', () => {
+  const judged = new Map([['s/session:worker-x', { entry: { nwo: 'a/b', ref: 'session:worker-x', task: null, isHub: false }, live: [{ kind: 'done', since: 1 }] }],
+    ['s/7', { entry: { nwo: 'a/b', ref: '7', task: { id: '7', title: 'Task seven' }, isHub: false }, live: [{ kind: 'failed', since: 2 }] }]]);
+  const got = run('aideFinished')(judged, id => (id === 's/session:worker-x' ? 'worker x (feature)' : ''));
+  assert.deepEqual(got.map(f => f.title), ['Task seven', 'worker x (feature)']);
+  // Without a namer the ref is all there is.
+  assert.equal(run('aideFinished')(judged).find(f => f.entryId === 's/session:worker-x').title, 'session:worker-x');
+});
+
+test('a part of a gate that is gone still names its gate in the folded head', () => {
+  const head = got => run('aidePartHtml')(part('s', 'g1'), false, { gate: () => got }).match(/aide-part-title">([^<]*)</)[1];
+  assert.equal(head({ gone: true, title: 'Design <review>' }), 'Design &lt;review&gt;');
+  assert.equal(head({ gone: true }), 'g1');
+  assert.equal(head({ error: 'x' }), 'g1');
 });

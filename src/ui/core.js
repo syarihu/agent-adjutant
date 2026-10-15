@@ -277,7 +277,7 @@ const titlePendingPill = task => task.titlePending
 
 /* Missing before the first poll, when no button has been drawn yet: read as configured so a
    state without the key never dims them. */
-const ideReady = () => state.ideConfigured !== false;
+const ideReady = () => stateNow().ideConfigured !== false;
 const ideTitle = () => ideReady() ? 'IDEでworktreeを開く' : 'エディタが未設定です（押すと設定方法を表示します）';
 
 /* Whether this page shows desktop notifications for waits and gates. Sent with every request, so that the server rings its

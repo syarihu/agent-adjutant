@@ -1,8 +1,9 @@
 /* ── 副官: the pure half of the aide's pane (src/ui/aide.js draws and wires it) ───────────────────
    What the pane holds when nothing is selected in 「いまの仕事」: the aide's terminal on the left and, on the right, the display
    area. These functions read what the server and the work document say and return markup or text, touching neither the page
-   nor the network, so `src/ui/tests/aide-display.test.js` runs them under `node --test`. Loaded after util.js (`esc`, `kindOf`)
-   and before my-work.js.
+   nor the network, so `src/ui/tests/aide-display.test.js` runs them under `node --test`. Loaded after util.js (`esc`, `kindOf`),
+   decide.js (the choices and buttons of a gate) and pr-diff.js (`prParseDiff`), and before my-work.js. What a renderer needs
+   from the page (a gate's content, its away block, a draft being typed) comes in as `ctx`, never from a global that holds state.
 
    The display area draws one state, whoever produced it. The aide fills it with its adjutant_show tool and the resident serves it
    at GET /api/aide/display (src/board/aide/display.rs):
@@ -54,6 +55,24 @@ function aideDisplayWithWaits(display, waits) {
   };
 }
 
+/* A part the page made itself (a gate opened from the list of waits, the next wait after an answer) goes on top of the parts
+   the server holds. `local` is `{ part, serverTop, topic }`: `serverTop` is the id of the server's newest part when it was made
+   (null when there was none), and it stands only while the server's newest part is still that one. The aide showing something
+   new is the aide having the floor again, so the page's part gives way to it. */
+const aideLocalHolds = (display, local) => !!local?.part && (aideDisplayOf(display).parts[0]?.id ?? null) === (local.serverTop ?? null);
+
+function aideDisplayFollowed(display, local) {
+  const d = aideDisplayOf(display);
+  if (!aideLocalHolds(d, local)) return d;
+  // With nothing on show the topic is the page's, so that the list of waits does not take the place of the part.
+  return { ...d, topic: d.topic || local.topic || { key: 'page', label: '判断待ち' }, parts: [local.part, ...d.parts] };
+}
+
+/* The parts the page makes itself. */
+const aideGatePart = (board, id) => ({ id: `page-gate:${board}/${id}`, kind: 'gate', ref: { board, id }, topic: 'page', shownAt: null, by: 'board' });
+const aideWaitsPart = () => ({ id: 'page-waits', kind: 'waits', ref: null, topic: 'page', shownAt: null, by: 'board' });
+const AIDE_WAITS_TOPIC = { key: 'waits', label: '判断待ちの一覧' };
+
 /* kind -> render(part, ctx) -> { icon, label, where, title, body, cls }. `body` is html the renderer has escaped itself;
    the others are text, escaped here. */
 const AIDE_PARTS = new Map();
@@ -103,18 +122,60 @@ function aideDisplayHtml(display, { news = null, ctx = {} } = {}) {
 /* ── what waits on the person ── */
 
 /* The open gates of the work document, oldest first. `entries` is `workEntries(doc, isGateDone)`, which leaves out the ones
-   answered on this page. A task that is parked is set aside on purpose, so its gate is not a wait. */
+   answered on this page. A task that is parked is set aside on purpose, so its gate is not a wait. `id` is the gate's ref as
+   `gateRef` names it (`<board>/<gate id>`), `board` its board's slug and `gateId` its own id; `entryId` is the entry the gate
+   is on and `parent` the key of its task's parent. */
 function aideWaits(entries) {
   const out = [];
   for (const e of entries || []) {
     if ((e.items || []).some(i => i.kind === 'parked')) continue;
     for (const g of e.gates || []) {
-      out.push({ key: g.key, kind: g.gate, since: g.since, nwo: e.nwo, title: e.task?.title || e.gateTitle || g.title || e.ref, taskId: e.task?.id || null });
+      const cut = String(g.key).lastIndexOf('/');
+      out.push({ key: g.key, id: g.key, board: String(g.key).slice(0, Math.max(cut, 0)), gateId: String(g.key).slice(cut + 1), entryId: e.id,
+        parent: e.task?.parent || null, kind: g.gate, since: g.since, nwo: e.nwo, title: e.task?.title || e.gateTitle || g.title || e.ref, taskId: e.task?.id || null });
     }
   }
   // A gate with no time is last, not first: nothing says it has waited.
   const at = w => (Number.isFinite(w.since) ? w.since : Infinity);
   return out.sort((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1));
+}
+
+/* The wait to show after `done` (`{ key, nwo, parent, taskId }`, the one just answered) is dealt with: the oldest of `waits`
+   (oldest first) in the same repository and the same parent, or with no parent the same task. Never `done` itself. */
+function aideNextWait(waits, done) {
+  if (!done) return null;
+  const same = w => w.nwo === done.nwo && (done.parent ? w.parent === done.parent : !w.parent && !!done.taskId && w.taskId === done.taskId);
+  return (waits || []).find(w => w.key !== done.key && same(w)) || null;
+}
+
+/* Entries whose latest news is that they finished or failed, newest first: what the person was not there for. A hub does not
+   finish. `judged` is `workJudge()`'s map (entry id -> { entry, live }); `titleOf(entryId)` names an entry with no task as the list does. */
+function aideFinished(judged, titleOf = () => '') {
+  const out = [];
+  for (const [id, j] of judged || []) {
+    const e = j?.entry;
+    if (!e || e.isHub) continue;
+    const item = (j.live || []).find(i => i.kind === 'done' || i.kind === 'failed');
+    if (!item) continue;
+    out.push({ entryId: id, nwo: e.nwo, kind: item.kind, since: item.since, taskId: e.task?.id || null, title: e.task?.title || titleOf(id) || e.gateTitle || e.ref });
+  }
+  const at = f => (Number.isFinite(f.since) ? f.since : -Infinity);
+  return out.sort((a, b) => at(b) - at(a));
+}
+
+/* A few lines of a gate's diff as evidence for what it asks: the first hunk of each file a finding names (`location` is
+   `path:line`), else the first hunk of the diff. At most `max` lines, headers included, drawn as the panel draws a diff. */
+function aideEvidence(diff, findings, max = 12) {
+  const files = prParseDiff(diff).filter(f => f.hunks.length);
+  if (!files.length) return '';
+  const named = (findings || []).map(f => String(f?.location ?? '').replace(/:\d+(?:-\d+)?$/, '')).filter(Boolean);
+  const picked = files.filter(f => named.some(n => n === f.path || n.endsWith(`/${f.path}`) || f.path.endsWith(`/${n}`)));
+  const lines = [];
+  for (const f of picked.length ? picked : files.slice(0, 1)) {
+    const h = f.hunks[0];
+    lines.push(`+++ ${f.path}`, h.header, ...h.lines.map(l => (l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : l.kind === 'ctx' ? ' ' : '') + l.text));
+  }
+  return renderDiff(lines.slice(0, max).join('\n'));
 }
 
 const aidePinSub = waits => (waits.length ? `判断待ち ${waits.length} · 次: ${kindOf(waits[0].kind)[0]} ${waits[0].title}` : '待ちはありません');
@@ -172,3 +233,123 @@ function aideHeadHtml(view, { resetting = false, now = Date.now() / 1000 } = {})
     + `<span class="m3-pill ${st.pill}">${esc(st.word)}</span>${bar}`
     + `<button type="button" class="btn-m3-text aide-reset" data-aide-reset title="${esc(title)}"${off ? ' disabled' : ''}>${aideIcon('restart_alt')}<span>リセット</span></button>`;
 }
+
+/* ── the parts: gate and waits ── */
+
+const AIDE_PLAIN_MAX = 140;
+/* The first lines of a text as one short plain line: `lines` of them, cut at `max` characters. */
+function aidePlainLine(text, lines = 2, max = AIDE_PLAIN_MAX) {
+  const t = mdPlain(text).split('\n').map(l => l.trim()).filter(Boolean).slice(0, lines).join(' ');
+  return [...t].length > max ? `${[...t].slice(0, max).join('')}…` : t;
+}
+
+/* What the task is, in a line or two: its request, else what the gate says is wrong, else the gate's title. */
+const aideTaskLine = (g, task) => aidePlainLine(task?.body) || aidePlainLine(g.problem) || String(g.title || '');
+
+const aideSection = (title, body) => `<div class="aide-gate-sec"><div class="aide-gate-sec-title">${esc(title)}</div>${body}</div>`;
+
+/* The way to the session the gate came from, and the way out when the gate cannot be shown. */
+const aideGateTermHtml = got => (got.rowKey ? aideTermButtonHtml(got.rowKey) : '');
+
+const aideGateNoteHtml = (text, got, ref) => `<div class="aide-gate" data-aide-gate="${esc(ref)}"><div class="tp-muted">${esc(text)}</div>`
+  + `<div class="aide-gate-actions">${aideGateTermHtml(got || {})}</div></div>`;
+
+/* The body of a gate waiting on the person: what it is, what happened, what is asked, what is unsure, the evidence, the actions.
+   The choices, the buttons and the comment box are all inside `data-aide-gate`, so a click finds its gate there. */
+function aideGateBodyHtml(got, ref, ctx) {
+  const { g, task } = got;
+  const draft = ctx.draft ? ctx.draft(ref) : '';
+  const waiting = g.wait !== false;
+  const parts = [];
+  if (got.parentTitle) parts.push(`<div class="aide-gate-parent">${aideIcon('account_tree')}<span>${esc(got.parentTitle)}</span></div>`);
+  parts.push(aideSection('このタスク', `<p class="aide-gate-task">${esc(aideTaskLine(g, task))}</p>`));
+  if (got.away) parts.push(aideSection('前回見てから', got.away));
+  const ask = g.focus ? `<div class="aide-gate-focus">${md(g.focus)}</div>` : '<div class="tp-muted">確認してほしい点は書かれていません</div>';
+  const buttons = (g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('');
+  parts.push(aideSection('決めること', `${ask}${choicesHtml(g, waiting, { expand: false })}`
+    + `<textarea class="gate-comment" aria-label="コメント" placeholder="修正指示や質問があれば入力してください（選んだ案に下書きがあるときは、空欄ならそれを送ります）...">${esc(draft)}</textarea>`
+    + `<div class="decide aide-gate-decide">${buttons}</div>`));
+  if (g.unsure) parts.push(aideSection('迷っていること', `<div class="aide-gate-unsure">${md(g.unsure)}</div>`));
+  const evidence = aideEvidence(g.diff, g.findings);
+  if (evidence) parts.push(aideSection('根拠', `<div class="diff aide-gate-diff">${evidence}</div>`));
+  const target = g.kind === 'plan' ? 'request' : 'gate';
+  const tid = task?.id || g.task || '';
+  const here = `data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(tid)}"`;
+  parts.push(`<div class="aide-gate-actions">`
+    + (tid ? `<button type="button" class="aide-link" data-aide-expand ${here} data-aide-target="${esc(target)}" data-aide-gate-ref="${esc(ref)}">${aideIcon('open_in_full')}<span>${g.kind === 'plan' ? '拡大 → 依頼と計画' : '拡大で開く'}</span></button>` : '')
+    + aideGateTermHtml(got)
+    + `<button type="button" class="aide-link" data-aide-waits>${aideIcon('list')}<span>一覧へ戻る</span></button>`
+    + (task ? `<button type="button" class="aide-link" data-aide-park ${here}>${aideIcon('schedule')}<span>置く</span></button>` : '')
+    + (waiting ? `<button type="button" class="aide-link aide-gate-close" data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします">${aideIcon('done_all')}<span>解決済みとして閉じる</span></button>` : '')
+    + '</div>');
+  return `<div class="aide-gate" data-aide-gate="${esc(ref)}">${parts.join('')}</div>`;
+}
+
+/* `ctx.gate(ref)` is `{ g, task, entry, rowKey, away, parentTitle, board, nwo, error, gone }`, or null while the board's content is
+   being read. `away` is the timeline of 「離れていた間に」 as markup, `rowKey` the key of the session's row in the list. */
+registerAidePart('gate', (part, ctx) => {
+  const ref = part.ref ? `${part.ref.board}/${part.ref.id}` : '';
+  const got = ctx.gate && ref ? ctx.gate(ref) : null;
+  const base = { icon: 'pending_actions', label: '判断待ち', where: got?.nwo || '', title: '', cls: 'wait' };
+  if (!got) return { ...base, body: '<div class="tp-muted">読み込み中…</div>' };
+  if (got.error) return { ...base, title: got.title || part.ref?.id || '', body: aideGateNoteHtml(`この判断待ちを読めませんでした: ${got.error}`, got, ref) };
+  if (got.gone || !got.g || got.g.wait === false) {
+    return { ...base, title: got.title || part.ref?.id || '', body: `<div class="tp-muted">この判断待ちは、もう待っていません（答えたか、閉じられました）</div>`
+      + '<div class="aide-gate-actions"><button type="button" class="aide-link" data-aide-waits>' + `${aideIcon('list')}<span>判断待ちの一覧へ</span></button></div>` };
+  }
+  const { g, task } = got;
+  const waited = stampSecs(g.openedAt) != null ? ` · ${ago(g.openedAt)}から待ち` : '';
+  return { ...base, label: kindOf(g.kind)[0], where: `${got.nwo || ''}${waited}`, title: task?.title || g.title || '', body: aideGateBodyHtml(got, ref, ctx) };
+});
+
+/* The first line of what a gate asks, for the list of waits. */
+const aideFocusLine = focus => aidePlainLine(focus, 1, 100);
+
+/* The waits grouped by repository, then by parent (those with none last), in the order of the oldest wait of each. */
+function aideWaitGroups(waits, parentTitle) {
+  const repos = new Map();
+  for (const w of waits) {
+    if (!repos.has(w.nwo)) repos.set(w.nwo, new Map());
+    const parents = repos.get(w.nwo);
+    const key = w.parent || '';
+    if (!parents.has(key)) parents.set(key, []);
+    parents.get(key).push(w);
+  }
+  return [...repos].map(([nwo, parents]) => ({
+    nwo,
+    parents: [...parents].sort(([a], [b]) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0))
+      .map(([key, list]) => ({ key, title: key ? parentTitle(nwo, key) || key : '親なし', waits: list })),
+  }));
+}
+
+/* `ctx.waits` the waits (`aideWaits`), `ctx.finished` the finished ones (`aideFinished`), `ctx.parentTitle(nwo, key)`,
+   `ctx.repoName(nwo)`, `ctx.focusOf(wait)` `{ state: 'loading' | 'error' | 'gone' | 'ok', focus?, error? }` of the gate on its board, `ctx.rowKey(entryId)`. */
+registerAidePart('waits', (part, ctx) => {
+  const waits = ctx.waits || [];
+  const finished = ctx.finished || [];
+  const repoName = ctx.repoName || (x => x);
+  const waitHtml = w => {
+    const f = ctx.focusOf ? ctx.focusOf(w) : null;
+    const said = !f ? '' : f.state === 'loading' ? '読み込み中…' : f.state === 'error' ? '確認内容を読み込めませんでした'
+      : f.state === 'gone' ? 'もう待っていないようです' : aideFocusLine(f.focus) || '確認内容は書かれていません';
+    const focus = said;
+    const since = Number.isFinite(w.since) ? `<span class="aide-wait-when">${esc(sinceLabel(w.since))}から</span>` : '';
+    return `<li><button type="button" class="aide-wait" data-aide-open-gate="${esc(w.key)}"><span class="aide-wait-kind">${esc(kindOf(w.kind)[0])}</span>`
+      + `<span class="aide-wait-title">${esc(w.title)}</span>${since}${focus ? `<span class="aide-wait-focus">${esc(focus)}</span>` : ''}</button></li>`;
+  };
+  const groups = aideWaitGroups(waits, ctx.parentTitle || (() => ''));
+  const list = groups.length
+    ? groups.map(r => `<div class="aide-waits-repo"><div class="aide-waits-repo-name">${esc(repoName(r.nwo))}</div>`
+      + r.parents.map(p => `<div class="aide-waits-parent"><div class="aide-waits-parent-title">${aideIcon('account_tree')}<span>${esc(p.title)}</span></div><ul class="aide-waits-list">${p.waits.map(waitHtml).join('')}</ul></div>`).join('')
+      + '</div>').join('')
+    : '<div class="tp-muted">判断待ちはありません</div>';
+  const done = finished.length
+    ? `<div class="aide-waits-done"><div class="aide-gate-sec-title">離れている間に終わったこと</div><ul class="aide-waits-list">${finished.map(f => {
+      const term = ctx.rowKey && ctx.rowKey(f.entryId) ? aideTermButtonHtml(ctx.rowKey(f.entryId)) : '';
+      const when = Number.isFinite(f.since) ? `<span class="aide-wait-when">${esc(sinceLabel(f.since))}</span>` : '';
+      return `<li class="aide-finished"><span class="aide-wait-kind${f.kind === 'failed' ? ' bad' : ''}">${f.kind === 'failed' ? '失敗' : '完了'}</span>`
+        + `<span class="aide-wait-title">${esc(f.title)}</span><span class="aide-wait-repo">${esc(repoName(f.nwo))}</span>${when}${term}</li>`;
+    }).join('')}</ul></div>`
+    : '';
+  return { icon: 'pending_actions', label: '判断待ち', where: waits.length ? `${waits.length} 件` : '', title: '判断待ちの一覧', cls: 'wait', body: `${list}${done}` };
+});

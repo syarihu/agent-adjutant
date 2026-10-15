@@ -11,12 +11,6 @@ function gateByRef(ref) {
     || (ref && !String(ref).includes('/') ? gates.find(g => g.id === ref) : undefined);
 }
 
-const renderDiff = d => esc(d).split('\n').map(l => {
-  const cls = l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@') ? 'h'
-            : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : '';
-  return `<div class="${cls}">${l || ' '}</div>`;
-}).join('');
-
 /* What was answered in this page, kept until it is reloaded: key → { at }. Not in
    the counts or on the 人 board, which go by what the boards still list, so an answer that a poll
    already on its way does not know yet does not bring the gate back. */
@@ -37,7 +31,7 @@ function gateAnswered(g, key) {
 
 /* The task a gate belongs to; with several boards, the one on the gate's own. */
 function taskOfGate(g) {
-  return (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
+  return (stateNow().tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
 }
 
 /* Each button names its decision in `data-act`; `bindDecide` finds the gate it belongs to from
@@ -159,7 +153,7 @@ function decideHtml(g) {
 
 /* The gate's task, found by the id it names, else by the worktree it was opened in. */
 function taskForGate(g) {
-  return taskOfGate(g) || (state.tasks || []).find(t => t.worktree && t.worktree === g.worktree && (!g._slug || t._slug === g._slug));
+  return taskOfGate(g) || (stateNow().tasks || []).find(t => t.worktree && t.worktree === g.worktree && (!g._slug || t._slug === g._slug));
 }
 
 /* What it takes to answer: the buttons the gate's options name, a comment box, 話す. */
@@ -189,13 +183,15 @@ function gateDockHtml(g) {
 }
 
 /* The box at the top of a gate being judged: what it is, how long it has waited, why it stopped. */
-/* `opts.focus` false leaves out the 確認してほしい点 the box carries, for a page that has it as a card of its own. */
+/* `opts.focus` false leaves out the 確認してほしい点 the box carries, for a page that has it as a card of its own; `opts.expand` false
+   leaves out the 拡大 button, for a page that is not the panel (the aide's display area). */
 function gateWaitHeadHtml(g, opts = {}) {
   const record = g.wait === false;
   const [label] = kindOf(g.kind);
   const why = g.problem || g.why || '';
-  return `<div class="m3-card-attention-box rv-wait"${expandAttrs('wait', g)}>
-    ${expandBtnHtml(`${label}・確認待ち`)}
+  const expand = opts.expand !== false;
+  return `<div class="m3-card-attention-box rv-wait"${expand ? expandAttrs('wait', g) : ''}>
+    ${expand ? expandBtnHtml(`${label}・確認待ち`) : ''}
     <div class="rv-wait-head">
       <span class="material-symbols-outlined" style="font-size:18px;" aria-hidden="true">${record ? 'history' : 'pending_actions'}</span>
       <span>【${esc(label)}】${record ? '記録 — worker は止まらずに進んだ' : 'あなたの判定待ち'}</span>
@@ -320,11 +316,13 @@ function bindDecide(root) {
 }
 
 /* A gate's designs side by side. Only an open gate can still be answered with one; once
-   answered, the one picked is marked instead. */
-function choicesHtml(g, pickable) {
+   answered, the one picked is marked instead. A choice with a draft shows it: it is what pressing the choice sends when nothing
+   was typed. `opts.expand` false leaves out the 拡大 button, for a page that is not the panel. */
+function choicesHtml(g, pickable, opts = {}) {
   if (!g.choices?.length) return '';
-  return `<div class="panel"${expandAttrs('choices', g)}${pickable ? ` data-gate="${esc(gateRef(g))}"` : ''}>
-    ${expandBtnHtml('AI からの提案・選択肢')}
+  const expand = opts.expand !== false;
+  return `<div class="panel"${expand ? expandAttrs('choices', g) : ''}${pickable ? ` data-gate="${esc(gateRef(g))}"` : ''}>
+    ${expand ? expandBtnHtml('AI からの提案・選択肢') : ''}
     <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
       <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>
       <span>AI からの提案・選択肢</span>
@@ -339,6 +337,7 @@ function choicesHtml(g, pickable) {
         <h4 style="margin:0;font-size:14px;font-weight:700;">${esc(c.label)}</h4>
         ${c.why ? `<p class="why" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0;">${esc(c.why)}</p>` : ''}
         <ul style="padding-left:18px;font-size:12px;line-height:1.6;margin:0;">${(c.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        ${pickable && String(c.comment ?? '').trim() ? `<div class="choice-draft" style="font-size:12px;margin:0;padding:6px 10px;border-radius:var(--md-shape-corner-sm);background:var(--md-sys-color-surface-container-low);color:var(--md-sys-color-on-surface-variant);"><b>送るコメント（何も書かなければ）:</b> ${esc(c.comment)}</div>` : ''}
         ${pickable ? `<button class="m3-btn-pick pick" data-choice="${esc(c.id)}"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>この案で進める</span></button>` : ''}
       </div>`).join('') + `</div></div>`;
 }
@@ -475,14 +474,19 @@ function outboxNote(done, data) {
                                                                        : ' → worker は停止中のため、回答は outbox で保持されます');
 }
 
-async function answer(decision, choice, id, commentOverride = null) {
-  const g = gateByRef(id);
-  if (!g) return false;
-  const box = commentBox(id);
-  const comment = commentOverride !== null ? commentOverride : box?.value.trim();
+/* What a decision sends as its comment: what was typed; else the draft of the choice picked; for a close, else the words a close
+   carries. Everything that records or shows what was sent (the answer, the dialog's copy of it) reads it here. */
+const sentComment = (g, decision, choice, comment) => String(comment ?? '').trim()
+  || (decision === 'choice' ? String((g.choices || []).find(c => c.id === choice)?.comment ?? '').trim() : decision === 'close' ? 'タブで解決済み' : '') || '';
+
+/* Send a decision for `g` and note it: the one place an answer leaves the page, for the panel (`answer`) and for the aide's display
+   area, which has no `state` of the board to look the gate up in. `comment` is what the person typed; a choice that has a draft
+   sends it when nothing was typed. True when the answer went. */
+async function answerGate(g, decision, choice, comment) {
+  const text = sentComment(g, decision, choice, comment);
   // Sending back something the worker has moved past, without saying what is wrong, gives it
   // nothing to act on.
-  if (g.wait === false && !comment) {
+  if (g.wait === false && !text) {
     note(`adj gate answer --id ${g.id} --decision changes`, true, '差し戻す理由をコメントに書いてください');
     return false;
   }
@@ -490,24 +494,34 @@ async function answer(decision, choice, id, commentOverride = null) {
   const key = gateKey(g);
   try {
     const data = await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
-      method: 'POST', body: JSON.stringify({ decision, choice, comment }),
+      method: 'POST', body: JSON.stringify({ decision, choice, comment: text }),
     });
     // The hub opened this gate, and its answer goes to the hub's inbox instead.
     const toHub = g.answeredByHub;
     note(line, false, toHub
       ? 'hub の受信箱に送信' + handedNote({ present: data.present, woken: data.woken })
       : outboxNote(`${baseName(g.worktree)} の outbox に追記`, data));
-    // A record stays, with this answer appended, so it stays in view to show that it went.
-    if (g.wait === false && box) box.value = '';
-    else gateAnswered(g, key);
-    dropGate(g);
-    await refresh(true);
-    refreshBoards();
+    // A record stays, with this answer appended; `gateAnswered` leaves it be.
+    gateAnswered(g, key);
     return true;
   } catch (e) {
     note(line, true, e.message);
     return false;
   }
+}
+
+async function answer(decision, choice, id, commentOverride = null) {
+  const g = gateByRef(id);
+  if (!g) return false;
+  const box = commentBox(id);
+  const comment = commentOverride !== null ? commentOverride : box?.value.trim();
+  if (!await answerGate(g, decision, choice, comment)) return false;
+  // A record stays in view to show that the answer went.
+  if (g.wait === false && box) box.value = '';
+  dropGate(g);
+  await refresh(true);
+  refreshBoards();
+  return true;
 }
 
 /* The escape hatch from "見せて決める" to "話して決める". The gate stays open on purpose:
@@ -524,21 +538,26 @@ function talk(id) {
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
-async function closeGate(id) {
-  const g = gateByRef(id);
-  if (!g) return false;
-  const comment = commentBox(id)?.value.trim();
+/* Close `g` as resolved, with no message to the worker: for the panel (`closeGate`) and the aide's display area. True when it went. */
+async function closeGateOf(g, comment) {
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
   const key = gateKey(g);
   try {
     await boardApi(baseOf(g), `/api/gates/${encodeURIComponent(g.id)}`, {
-      method: 'POST', body: JSON.stringify({ decision: 'close', comment: comment || 'タブで解決済み' }),
+      method: 'POST', body: JSON.stringify({ decision: 'close', comment: sentComment(g, 'close', undefined, comment) }),
     });
     note(line, false, '解決済みとしてアーカイブしました（worker への outbox 配信なし）');
     gateAnswered(g, key);
-    dropGate(g);
-    await refresh(true);
-    refreshBoards();
     return true;
   } catch (e) { note(line, true, e.message); return false; }
+}
+
+async function closeGate(id) {
+  const g = gateByRef(id);
+  if (!g) return false;
+  if (!await closeGateOf(g, commentBox(id)?.value.trim())) return false;
+  dropGate(g);
+  await refresh(true);
+  refreshBoards();
+  return true;
 }
