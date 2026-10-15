@@ -124,7 +124,9 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
         let properties = &tool["inputSchema"]["properties"];
         // `adjutant_work`'s `repo` only narrows a machine-wide document to one repository; it
         // addresses no hub.
-        if properties.get("repo").is_none() || tool["name"] == "adjutant_work" {
+        if properties.get("repo").is_none()
+            || ["adjutant_work", "adjutant_reviews"].contains(&tool["name"].as_str().unwrap_or(""))
+        {
             continue;
         }
         assert!(
@@ -573,6 +575,7 @@ fn the_aide_is_allowed_without_asking_no_tool_that_writes_but_the_display() {
             "adjutant_config",
             "adjutant_gate_read",
             "adjutant_hub_status",
+            "adjutant_reviews",
             "adjutant_show",
             "adjutant_skill",
             "adjutant_work",
@@ -819,6 +822,33 @@ fn showing_a_read_through_and_a_pr_by_reference_writes_nothing_but_the_display_s
         .collect();
     changed.sort();
     assert_eq!(changed, ["aide-display.json", "aide-display.lock"]);
+}
+
+#[test]
+fn the_review_requests_are_shown_with_no_reference_and_the_tool_is_one_the_aide_may_run() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let shown = call_tool("adjutant_show", &json!({"kind": "reviews"})).unwrap();
+    assert_eq!(
+        shown["topic"],
+        json!({"key": "reviews", "label": "レビュー依頼"})
+    );
+    assert_eq!(shown["parts"][0]["kind"], "reviews");
+    assert_eq!(shown["parts"][0]["ref"], Value::Null);
+    let _ = &sandbox;
+    let listed = call("tools/list", json!({}));
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(names.contains(&"adjutant_reviews"));
+    assert!(
+        crate::kernel::runner::AIDE_TOOLS
+            .iter()
+            .any(|t| t.ends_with("adjutant_reviews"))
+    );
 }
 
 #[test]

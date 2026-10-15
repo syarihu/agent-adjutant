@@ -1540,6 +1540,32 @@ test("a task's PR is the one a part names only when the task's current PR is tha
   assert.strictEqual(same(null, 'acme/widget#7', 'acme/widget'), false);
 });
 
+test('a review request with a read-through opens it in the area, and one without opens the PR in 「AI 下読み」', () => {
+  const log = [];
+  const recs = { 'a/x#1': { id: 'a/x#1', repo: 'A/X', number: 1, ai: { sha: 's' } }, 'a/x#2': { id: 'a/x#2', repo: 'A/X', number: 2 } };
+  const c = vm.createContext({
+    othersById: id => recs[id] || null, aideReadPart: pr => ({ id: `page-read:${pr}` }), aideSetLocal: (p, t) => log.push(['local', p.id, t.label]),
+    refreshAide: f => log.push(['refresh', f]), aideOpenRead: d => log.push(['open', d.aidePr, d.aideBoard]),
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aideOpenReview'), c);
+  const open = id => { c.id = id; vm.runInContext('aideOpenReview(id)', c); };
+  open('a/x#1');
+  open('a/x#2');
+  open('c/z#3');
+  assert.deepStrictEqual(log, [['local', 'page-read:a/x#1', 'A/X · PR #1'], ['refresh', true], ['open', 'a/x#2', ''], ['open', 'c/z#3', '']]);
+});
+
+test("the review requests part reads the page's own list, and says loading or the failure while there is none", () => {
+  const c = vm.createContext({ others: { doc: null, error: null }, othersRecords: () => c.others.doc.records, othersMarks: () => ({ m: 1 }), othersNowEst: () => 42 });
+  vm.runInContext(fnSrc(aideSrc, 'aideReviewsView'), c);
+  const view = () => JSON.parse(JSON.stringify(vm.runInContext('aideReviewsView()', c)));
+  assert.deepStrictEqual(view(), { state: 'loading' });
+  c.others.error = 'boom';
+  assert.deepStrictEqual(view(), { state: 'error', error: 'boom' });
+  c.others.doc = { records: [{ id: 'a/x#1' }] };
+  assert.deepStrictEqual(view(), { state: 'ok', records: [{ id: 'a/x#1' }], marks: { m: 1 }, nowSecs: 42, refreshError: 'boom' });
+});
+
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
   const log = [];
   let top = 'page-gate:b/g1';

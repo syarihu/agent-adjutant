@@ -11,6 +11,7 @@ pub(super) mod hub_status;
 pub(super) mod outbox;
 pub(super) mod pending;
 pub(super) mod refresh;
+pub(super) mod reviews;
 pub(super) mod send;
 pub(super) mod show;
 pub(super) mod skill;
@@ -116,6 +117,11 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_show",
         definition: show::definition,
         call: show::call,
+    },
+    Tool {
+        name: "adjutant_reviews",
+        definition: reviews::definition,
+        call: reviews::call,
     },
 ];
 

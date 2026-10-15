@@ -203,6 +203,8 @@ async function loadAideBoards(force = false) {
 
 /* The task documents first (they say which PR a task is of), then the PRs the parts and those documents name. */
 async function loadAideRecords(force = false) {
+  // The list of 「AI 下読み」 is the page's own (`others`), read on its own round; a reviews part asks for it when it is not at hand.
+  if (aideShown().parts.some(p => p.kind === 'reviews') && (force || !others.doc || !aideIsFresh(others.fetchedMs, false))) refreshOthers();
   const tasks = [...aideWanted().taskAis.values()].filter(t => !aideIsFresh(aide.taskAis.get(`${t.board}/${t.task}`)?.at, force));
   await Promise.all(tasks.map(loadAideTaskAi));
   // Fresh is not enough when the PR was read for a part that wanted less (a `pr` part reads the record only): what this one needs is read.
@@ -468,6 +470,12 @@ function aideDiffView(ref) {
   return { state: 'ok', file: aideDiffFile(parsed.files, ref.path), res: null, read: null, board: ref.board, taskId: g.task || '', gateRef, refreshError: b.error };
 }
 
+/* `ctx.reviews()`: the list of 「AI 下読み」 the page already reads (`others`), as the review requests part draws it. */
+function aideReviewsView() {
+  if (!others.doc) return others.error ? { state: 'error', error: others.error } : { state: 'loading' };
+  return { state: 'ok', records: othersRecords(), marks: othersMarks(), nowSecs: othersNowEst(), refreshError: others.error };
+}
+
 function aideCtx() {
   const waits = aideCurrentWaits();
   // What each wait is called, kept for when its gate is gone.
@@ -484,6 +492,7 @@ function aideCtx() {
     prFacts: aidePrFacts,
     session: aideSessionView,
     diffOf: aideDiffView,
+    reviews: aideReviewsView,
     rowKey: rowKeyOf,
     draft: ref => aide.drafts.get(ref) || '',
     parentTitle: aideParentTitle,
@@ -880,8 +889,19 @@ function aideOpenRead(d) {
   go({ board: 'all', view: 'work', task: PR_REF + id, pane: 'detail' });
 }
 
+/* A row of the review requests: its read-through in the area when it has one (as a wait opens its gate), else the PR in 「AI 下読み」. */
+function aideOpenReview(id) {
+  const rec = othersById(id);
+  if (rec?.ai?.sha) {
+    aideSetLocal(aideReadPart(id), { key: 'page', label: `${rec.repo} · PR #${rec.number}` });
+    return refreshAide(true);
+  }
+  aideOpenRead({ aidePr: id, aideBoard: '', aideTask: '' });
+}
+
 wk('aide-display').addEventListener('click', e => {
   let b;
+  if ((b = e.target.closest('[data-aide-open-review]'))) return aideOpenReview(b.dataset.aideOpenReview);
   if ((b = e.target.closest('[data-aide-open-read], [data-aide-ask-reader]:not([disabled])'))) return aideOpenRead(b.dataset);
   if ((b = e.target.closest('[data-aide-open-gate]'))) return aideOpenGate(b.dataset.aideOpenGate);
   if (e.target.closest('[data-aide-waits]')) return aideBackToWaits();

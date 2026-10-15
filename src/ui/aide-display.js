@@ -74,6 +74,8 @@ function aideDisplayFollowed(display, local) {
 
 /* The parts the page makes itself. */
 const aideGatePart = (board, id) => ({ id: `page-gate:${board}/${id}`, kind: 'gate', ref: { board, id }, topic: 'page', shownAt: null, by: 'board' });
+/* A read-through opened from a row of the review requests, as a wait row opens its gate. */
+const aideReadPart = pr => ({ id: `page-read:${pr}`, kind: 'read', ref: { board: '', id: '', pr }, topic: 'page', shownAt: null, by: 'board' });
 const aideWaitsPart = () => ({ id: 'page-waits', kind: 'waits', ref: null, topic: 'page', shownAt: null, by: 'board' });
 const AIDE_WAITS_TOPIC = { key: 'waits', label: '判断待ちの一覧' };
 
@@ -765,4 +767,30 @@ registerAidePart('diff', (part, ctx) => {
     ? aideLinkBtn(`data-aide-open-read data-aide-pr="${esc(ref.pr)}" data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(got.taskId || '')}"`, 'menu_book', 'AI 下読みを開く')
     : got.taskId ? aideLinkBtn(`data-aide-expand data-aide-board="${esc(got.board || '')}" data-aide-task="${esc(got.taskId)}" data-aide-target="gate" data-aide-gate-ref="${esc(got.gateRef || '')}"`, 'open_in_full', '拡大で開く') : '';
   return { ...base, body: `<div class="aide-diff">${aideStaleNote(got.refreshError)}${body}${act ? `<div class="aide-gate-actions">${act}</div>` : ''}</div>` };
+});
+
+/* ── reviews: the code reviews the person is asked to do ── */
+
+/* `ctx.reviews()` is `{ state: 'loading' | 'error' | 'ok', error?, records, marks, nowSecs, refreshError }`: the records of 「AI 下読み」 that wait on
+   the person (the page's own list, read from the resident's records), the read marks of this browser and the server's clock. A row is a
+   button: with a read-through it opens it in the area, else the PR in 「AI 下読み」. */
+registerAidePart('reviews', (part, ctx) => {
+  const got = ctx.reviews ? ctx.reviews() : null;
+  const base = { icon: 'rate_review', label: 'レビュー依頼', where: '', title: 'AI 下読みの一覧', cls: 'wait' };
+  if (!got || got.state === 'loading') return { ...base, body: aideNote('読み込み中…') };
+  if (got.state === 'error') return { ...base, body: aideNote(`レビュー依頼を読めませんでした: ${got.error}`) };
+  const waiting = (got.records || []).filter(r => OTHERS_LIVE.includes(r.state));
+  const stale = aideStaleNote(got.refreshError);
+  if (!waiting.length) return { ...base, body: `${stale}${aideNote('レビュー依頼はありません')}` };
+  const row = r => {
+    const flags = [othersSeenClass(r, got.marks?.[r.id] || {}) === 'new' ? '新着' : '', r.rerequest ? '頼み直し' : ''].filter(Boolean).join('・') || '依頼';
+    const ai = othersAiView(r, got.records, got.nowSecs);
+    const read = ai.kind === 'none' ? 'AI 下読みはまだです' : ai.text;
+    return `<li><button type="button" class="aide-wait" data-aide-open-review="${esc(r.id)}"><span class="aide-wait-kind">${esc(flags)}</span>`
+      + `<span class="aide-wait-title">${esc(`#${r.number} ${r.title}`)}</span><span class="aide-wait-when">${esc(r.author ? `@${r.author}` : '')}</span>`
+      + `<span class="aide-wait-focus">${esc(read)}</span></button></li>`;
+  };
+  const groups = othersGroups(waiting, '', '', got.nowSecs);
+  const body = groups.map(g => `<div class="aide-waits-repo"><div class="aide-waits-repo-name">${esc(g.label)}</div><ul class="aide-waits-list">${g.rows.map(row).join('')}</ul></div>`).join('');
+  return { ...base, where: `${waiting.length} 件`, body: `${stale}${body}` };
 });

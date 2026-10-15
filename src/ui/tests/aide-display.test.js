@@ -825,3 +825,40 @@ test('two gate diffs shown together are each parsed once, however the redraws al
   for (let i = 0; i < 6; i++) parse(`${DIFF}\n# ${i}`);
   assert.notStrictEqual(parse(DIFF), a);
 });
+
+const REVREC = (id, repo, extra = {}) => ({ id, repo, number: Number(id.split('#')[1]), title: `T ${id} <t>`, author: 'alice', state: 'requested', requestedAt: '20261001T000000Z',
+  events: { requested: '20261001T000000Z' }, ...extra });
+
+test('the review requests are grouped by repository with their title, author, new or asked again, and where the 下読み stands', () => {
+  const records = [
+    REVREC('b/y#2', 'B/Y', { rerequest: true, ai: { status: 'ready', sha: 's', counts: { attention: 1, check: 2 } } }),
+    REVREC('a/x#9', 'A/X', { requestedAt: '20261003T000000Z' }),
+    REVREC('a/x#1', 'A/X', { author: 'bob' }),
+    REVREC('a/x#5', 'A/X', { state: 'waiting-on-author' }),
+    REVREC('a/x#6', 'A/X', { state: 'done' }),
+  ];
+  const out = html('reviews', null, { reviews: () => ({ state: 'ok', records, marks: { 'a/x#1': { read: 1e12 } }, nowSecs: 1e10 }) });
+  assert.ok(out.indexOf('A/X') < out.indexOf('B/Y'));
+  assert.equal((out.match(/data-aide-open-review="/g) || []).length, 3, 'only what waits on the person');
+  assert.ok(out.includes('data-aide-open-review="a/x#1"') && !out.includes('a/x#5') && !out.includes('a/x#6'));
+  assert.ok(out.indexOf('a/x#1') < out.indexOf('a/x#9'), 'the oldest request first');
+  assert.ok(out.includes('T a/x#1 &lt;t&gt;') && !out.includes('<t>') && out.includes('@bob'));
+  assert.ok(out.includes('頼み直し') && out.includes('下読み済み · 要注意 1 · 確認 2') && out.includes('AI 下読みはまだです'));
+  // Never marked read, with an event after: new; marked read after the event: not new.
+  const marks = { 'a/x#9': { read: 0 } };
+  const fresh = html('reviews', null, { reviews: () => ({ state: 'ok', records: [records[1]], marks, nowSecs: 1e10 }) });
+  assert.ok(fresh.includes('新着'));
+  assert.ok(!html('reviews', null, { reviews: () => ({ state: 'ok', records: [records[1]], marks: { 'a/x#9': { read: 1e12 } }, nowSecs: 1e10 }) }).includes('新着'));
+  assert.ok(out.includes('3 件'));
+});
+
+test('the review requests part says empty, loading and failed, and when its last read failed', () => {
+  const say = got => html('reviews', null, { reviews: () => got });
+  assert.ok(say({ state: 'ok', records: [] }).includes('レビュー依頼はありません'));
+  assert.ok(say({ state: 'ok', records: [REVREC('a/x#1', 'A/X', { state: 'done' })] }).includes('レビュー依頼はありません'));
+  assert.ok(say({ state: 'loading' }).includes('読み込み中…'));
+  assert.ok(html('reviews', null, {}).includes('読み込み中…'));
+  assert.ok(say({ state: 'error', error: 'boom <x>' }).includes('boom &lt;x&gt;'));
+  assert.ok(say({ state: 'ok', records: [], refreshError: 'boom' }).includes('最新の読み込みに失敗しました: boom'));
+  assert.deepEqual(plain(run('aideReadPart')('a/b#1')).ref, { board: '', id: '', pr: 'a/b#1' });
+});

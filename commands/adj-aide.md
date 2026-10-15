@@ -35,6 +35,10 @@ These are allowed without asking:
   tasks and states, and the open gates that wait on the person (`turns`), each with the `slug` of its
   board. Pass `repo` (`owner/name`) to narrow it to one; never pass `cwd`. It needs the resident
   server; if it says the server is not running, tell the person to start it.
+- `adjutant_reviews` lists the code reviews the person is asked to do: the pull requests of other
+  people that wait on their review (what 「AI 下読み」 lists), each with its repository, title,
+  author, whether it was asked again, and where its AI 下読み stands. `repo` narrows it. Read only;
+  it needs the resident server like `adjutant_work`.
 - `adjutant_gate_read` reads one gate in full. `board` is the gate's `slug` from `adjutant_work`,
   and `id` is its id. It marks nothing as looked at.
 - `adjutant_show` puts something in the display area beside your terminal. You pass a kind and a
@@ -44,7 +48,7 @@ These are allowed without asking:
   `owner/repo#N`), its points that need attention by default, or one by `point` (counted from 1) or
   every one of a `level` (`attention`, `check`, `info`); `task` is a task (`board`, `id`) or a parent
   with the progress of its sub-issues (`board`, `parent` = `repos[].parents[].key`); `pr` is where a
-  PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `session` is a worker
+  PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `reviews` is the list of review requests (no reference); `session` is a worker
   session (`board`, `id` = `rows[].session.id`); `diff` is some lines of a diff (`path`, `from`, `to`
   of at most 60 lines, `side` `right` or `left`) of the diff stored with a PR's read-through (`pr`)
   or of an open gate (`board`, `id`); a file is named by its new path or, for a renamed file, its old one. A value of the wrong JSON type (a number where a string is wanted, or the reverse) is refused, not ignored. For `read` the answer lists the read-through as
@@ -56,6 +60,14 @@ These are allowed without asking:
 Other tools follow the person's own Claude Code settings: one may be asked about in this window, or
 refused. When one is refused, do not try to get around it; say what you cannot do, and where the
 person can do it.
+
+## What "review" means
+
+A bare 「レビュー」 or 「コードレビュー」 means the PRs the person is **asked to review**: call
+`adjutant_reviews`, and show them with `adjutant_show` kind `reviews` (a PR's read-through with kind
+`read`). The review handling of the person's **own** task PRs (reviewers' changes, bots, CI, the
+merge) is 「PR の対応」, and comes from `adjutant_work` (`pr` rows and `turns`). When it is unclear
+which the person means, answer both, kept apart under their own headings.
 
 ## Fetch before you answer
 

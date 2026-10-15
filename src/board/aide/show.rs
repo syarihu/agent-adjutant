@@ -16,6 +16,9 @@ pub const PARTS_KEPT: usize = 20;
 /// `src/ui/aide-display.js`), so the two stay one topic.
 const WAITS_KEY: &str = "waits";
 const WAITS_LABEL: &str = "判断待ちの一覧";
+/// The topic of the list of review requests (`aideDisplayWithWaits`'s sibling on the page has none: it is shown only when asked for).
+const REVIEWS_KEY: &str = "reviews";
+const REVIEWS_LABEL: &str = "レビュー依頼";
 
 /// What the aide asks to have shown: a kind and a reference, never content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +27,8 @@ pub enum ShowRequest {
     Gate { board: String, id: String },
     /// Everything that waits on the person.
     Waits,
+    /// The review requests of other people's PRs, the list of 「AI 下読み」.
+    Reviews,
     /// The read-through of a PR, all of what it says to look at or some of it.
     Read { pr: String, pick: Pick },
     /// A task, or a parent with the progress of its sub-issues.
@@ -163,6 +168,9 @@ fn resolve(
     };
     match request {
         ShowRequest::Waits => {}
+        ShowRequest::Reviews => {
+            (out.topic, out.kind) = (Topic::new(REVIEWS_KEY, REVIEWS_LABEL), "reviews");
+        }
         ShowRequest::Gate { board, id } => {
             let (topic, reference) = gate_topic(root, &board, &id)?;
             (out.topic, out.kind, out.reference) = (topic, "gate", Some(reference));
@@ -1572,5 +1580,27 @@ diff --git a/old.rs b/new.rs\nsimilarity index 90%\nrename from old.rs\nrename t
             "{diff}diff --git a/next.rs b/next.rs\n--- a/next.rs\n+++ b/next.rs\n@@ -1 +1 @@\n-a\n+b\n"
         );
         assert!(diff_names_file(&two, "next.rs"));
+    }
+
+    #[test]
+    fn the_review_requests_are_a_topic_of_their_own_with_no_reference() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let root = sandbox.state();
+        let shown = show_with(&root, ShowRequest::Reviews, no_work).unwrap();
+        assert_eq!(
+            shown.display.topic,
+            Some(Topic::new("reviews", "レビュー依頼"))
+        );
+        let part = &shown.display.parts[0];
+        assert_eq!(
+            (part.kind.as_str(), part.reference.is_none()),
+            ("reviews", true)
+        );
+        // Another topic clears it, and showing it again moves the same part to the top.
+        let waits = show_with(&root, ShowRequest::Waits, no_work).unwrap();
+        assert!(waits.cleared);
+        assert_eq!(waits.display.earlier[0].key, "reviews");
+        let again = show_with(&root, ShowRequest::Reviews, no_work).unwrap();
+        assert_eq!(again.display.parts.len(), 1);
     }
 }
