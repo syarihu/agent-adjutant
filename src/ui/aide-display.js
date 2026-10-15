@@ -171,12 +171,25 @@ function aideFinished(judged, titleOf = () => '') {
    `path:line`), else the first hunk of the diff. At most `max` lines in all, drawn as the diff view draws them (without its
    buttons). With the PR's read-through `read` the reader's annotations are under their lines, anchored in this diff.
    `{ html, annotated }`: whether an annotation was drawn is what the part says in its heading. */
+/* A gate's diff parsed once (the last one asked for), and its annotations anchored once for a read-through, not at every redraw. */
+let aideParsedLast = { diff: null, files: [] };
+function aideParsedGateDiff(diff) {
+  if (aideParsedLast.diff !== diff) aideParsedLast = { diff, files: prParseDiff(diff).filter(f => f.hunks.length) };
+  return aideParsedLast.files;
+}
+const AIDE_RESOLVED = new WeakMap();
+function aideResolved(files, read) {
+  let byRead = AIDE_RESOLVED.get(files);
+  if (!byRead) AIDE_RESOLVED.set(files, byRead = new WeakMap());
+  if (!byRead.has(read)) byRead.set(read, prDiffResolve(files, read));
+  return byRead.get(read);
+}
 function aideEvidenceParts(diff, findings, read = null, max = 12) {
-  const files = prParseDiff(diff).filter(f => f.hunks.length);
+  const files = aideParsedGateDiff(diff);
   if (!files.length) return { html: '', annotated: false };
   const named = (findings || []).map(f => String(f?.location ?? '').replace(/:\d+(?:-\d+)?$/, '')).filter(Boolean);
   const picked = files.filter(f => named.some(n => n === f.path || n.endsWith(`/${f.path}`) || f.path.endsWith(`/${n}`)));
-  const res = read?.annotations?.length ? prDiffResolve(files, read) : null;
+  const res = read?.annotations?.length ? aideResolved(files, read) : null;
   let left = max;
   let annotated = false;
   const html = [];
@@ -401,21 +414,40 @@ function aideReadPick(read, ref) {
 
 /* A point's line with three lines of the diff either side of it, within its hunk, and the reader's annotations under them. */
 const AIDE_POINT_CONTEXT = 3;
-function aidePointExcerptHtml(p, diff, resolved, read) {
+/* Where each point's line is in the parsed diff, found once for a (diff, read-through) and kept with them: a redraw every two seconds
+   must not scan a diff of megabytes again for each point. `{ file, k }` per point index, `null` for a point with no line in the diff. */
+const AIDE_POINT_PLACES = new WeakMap();
+function aidePointPlaces(files, read) {
+  let byRead = AIDE_POINT_PLACES.get(files);
+  if (!byRead) AIDE_POINT_PLACES.set(files, byRead = new WeakMap());
+  let places = byRead.get(read);
+  if (!places) {
+    const byPath = new Map(files.map(f => [f.path, f]));
+    places = (read.points || []).map(p => {
+      const file = byPath.get(p.path);
+      const k = file && p.line ? prDiffFindLine(file, p.line) : null;
+      return k == null ? null : { file, k };
+    });
+    byRead.set(read, places);
+  }
+  return places;
+}
+
+function aidePointExcerptHtml(p, i, diff, resolved, read) {
   if (!diff || diff.state !== 'ok') return diff?.state === 'loading' ? aideNote('差分を読み込み中…') : '';
-  const file = diff.files.find(f => f.path === p.path);
-  const k = file && p.line ? prDiffFindLine(file, p.line) : null;
-  if (k == null) return '';
+  const place = aidePointPlaces(diff.files, read)[i];
+  if (!place) return '';
+  const { file, k } = place;
   const h = file.all[k].h;
   const ks = [];
   for (let i = Math.max(0, k - AIDE_POINT_CONTEXT); i <= Math.min(file.all.length - 1, k + AIDE_POINT_CONTEXT); i++) if (file.all[i].h === h) ks.push(i);
   return `<div class="aide-excerpt">${prDiffExcerptHtml(file, ks, resolved?.files.get(file.path) || null, read)}</div>`;
 }
 
-function aidePointHtml(p, diff, resolved, read) {
+function aidePointHtml(p, i, diff, resolved, read) {
   const lv = PR_LEVEL[p.level] ? p.level : 'info';
   return `<li class="pr-point pr-lv-${lv} aide-point"><div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[p.level] || p.level)}</span>${prLoc(p.path, p.line)}</div>`
-    + `<div class="pr-point-title">${esc(p.title)}</div><div class="pr-point-why">${esc(p.why)}</div>${aidePointExcerptHtml(p, diff, resolved, read)}</li>`;
+    + `<div class="pr-point-title">${esc(p.title)}</div><div class="pr-point-why">${esc(p.why)}</div>${aidePointExcerptHtml(p, i, diff, resolved, read)}</li>`;
 }
 
 /* `ctx.pr(prId)` is `{ state: 'loading' | 'error' | 'none' | 'ok', error?, rec, read, diff: { state, files } }`: the record (or null),
@@ -441,7 +473,7 @@ registerAidePart('read', (part, ctx) => {
     const { shown, rest } = aideReadPick(read, part.ref);
     const resolved = diff?.state === 'ok' ? diff.resolved || (read.annotations?.length ? prDiffResolve(diff.files, read) : null) : null;
     const points = read.points || [];
-    if (shown.length) parts.push(aideSection('見るポイント', `<ul class="pr-points aide-points">${shown.map(i => aidePointHtml(points[i], diff, resolved, read)).join('')}</ul>`));
+    if (shown.length) parts.push(aideSection('見るポイント', `<ul class="pr-points aide-points">${shown.map(i => aidePointHtml(points[i], i, diff, resolved, read)).join('')}</ul>`));
     else parts.push(aideSection('見るポイント', aideNote(points.length ? 'この指定に当たるポイントはありません' : 'この下読みには、見るポイントがありません')));
     if (rest.length) {
       const items = rest.map(i => `<li class="pr-point pr-lv-${PR_LEVEL[points[i].level] ? points[i].level : 'info'}"><div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[points[i].level] || points[i].level)}</span>${prLoc(points[i].path, points[i].line)}</div><div class="pr-point-title">${esc(points[i].title)}</div></li>`);
@@ -466,7 +498,9 @@ function aideTaskNext(task, gates) {
   if (task.status === 'done' || task.status === 'cancelled') return 'このタスクは終わっています';
   if (WORK_PR_NOW[task.prTurn]) return `あなたの番: ${WORK_PR_NOW[task.prTurn]}`;
   if (AIDE_PR_WAIT[task.prTurn]) return AIDE_PR_WAIT[task.prTurn];
-  return task.status === 'queued' ? 'worker の着手待ちです' : 'worker が作業中です';
+  // By the status the record says: nothing is on it before a worker is, and once its PR is out it waits on the PR.
+  const by = { backlog: 'まだ hub に渡していません（着手されていません）', queued: 'hub が着手するのを待っています', dispatched: 'worker が作業中です', pr: 'PR の結果待ちです' };
+  return by[task.status] || '';
 }
 
 /* The plan of a task in a line: `plan` is `{ title, state: 'decided' | 'waiting', at, text }` (`at` a stamp). */
@@ -499,6 +533,8 @@ function aideChildTurn(child, waits, task, hasRow) {
   if (child.progress === 'merged' || child.progress === 'done') return '';
   if (task?.prTurn === 'unrequested' || task?.prTurn === 'other-reviewer') return 'レビュアー';
   if (task?.prTurn === 'checks') return 'bot・CI';
+  // A task not handed over, or handed to the hub and not picked up, has no worker yet.
+  if (['backlog', 'queued'].includes(task?.status) && child.progress !== 'working' && child.progress !== 'pr') return 'hub（着手待ち）';
   if (child.progress === 'working' || child.progress === 'pr' || hasRow || task) return 'worker';
   return 'hub（着手待ち）';
 }
@@ -518,11 +554,14 @@ function aideParentBuckets(children, waitsByChild, tasksByChild, rowsByChild, to
 }
 
 /* 「次に起きること」 of a parent: its oldest wait, else the first child not started in stack order, else that it is done. */
-function aideParentNext(items, waits) {
+function aideParentNext(items, waits, total = 0) {
   const wait = (waits || [])[0];
   if (wait) return `あなたの判断待ち: ${wait.title}`;
   const next = (items || []).find(i => i.bucket === 'not-started');
   if (next) return `次に着手: ${next.title}`;
+  // The ones the tracker counts and the board has no record of are not started, as the bar draws them.
+  const unrecorded = Math.max((total || 0) - (items || []).length, 0);
+  if (unrecorded) return `次に着手: まだ記録のない子 ${unrecorded} 件`;
   if ((items || []).length && items.every(i => i.bucket === 'merged')) return 'すべてマージ済み';
   if ((items || []).length && items.every(i => i.bucket === 'merged' || i.bucket === 'done')) return 'すべて終わっています（マージされていないものがあります）';
   return 'worker が進めています';

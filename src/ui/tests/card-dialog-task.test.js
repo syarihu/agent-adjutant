@@ -1512,6 +1512,19 @@ test("a diff part finds a file by its new path, or by the old one of a renamed f
   assert.strictEqual(find('none.rs'), null);
 });
 
+test('what no part on show names is let go: its task documents, PRs and gate diffs', () => {
+  const c = vm.createContext({
+    aide: { taskAis: new Map([['b/keep', {}], ['b/drop', {}]]), prs: new Map([['o/r#1', {}], ['o/r#2', {}]]), gateDiffs: new Map([['b/g1', {}], ['b/g2', {}]]) },
+    aideWanted: () => ({ taskAis: new Map([['b/keep', {}]]), prs: new Map([['o/r#1', {}]]) }),
+    aideShown: () => ({ parts: [{ kind: 'diff', ref: { board: 'b', id: 'g1' } }, { kind: 'diff', ref: { pr: 'o/r#1' } }, { kind: 'pr', ref: { board: 'b', id: 'x' } }] }),
+  });
+  vm.runInContext(fnSrc(aideSrc, 'aidePrune'), c);
+  vm.runInContext('aidePrune()', c);
+  assert.deepStrictEqual([...c.aide.taskAis.keys()], ['b/keep']);
+  assert.deepStrictEqual([...c.aide.prs.keys()], ['o/r#1']);
+  assert.deepStrictEqual([...c.aide.gateDiffs.keys()], ['b/g1']);
+});
+
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
   const log = [];
   let top = 'page-gate:b/g1';

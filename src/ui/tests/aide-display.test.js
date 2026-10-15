@@ -734,3 +734,37 @@ test('a parent says when the last read of the work document failed', () => {
   const out = html('task', { board: 's', parent: 'k' }, { parent: () => ({ p: { title: 'P' }, children: [], counts: { merged: 0, done: 0, waiting: 0, working: 0, notStarted: 0 }, total: 0, next: 'n', refreshError: 'boom' }) });
   assert.ok(out.includes('最新の読み込みに失敗しました: boom'));
 });
+
+test('a parent with children the tracker counts and the board does not record is not called all merged', () => {
+  const merged = [{ bucket: 'merged', title: 'A' }, { bucket: 'merged', title: 'B' }];
+  assert.equal(run('aideParentNext')(merged, [], 2), 'すべてマージ済み');
+  assert.equal(run('aideParentNext')(merged, [], 5), '次に着手: まだ記録のない子 3 件');
+  assert.equal(run('aideParentNext')([...merged, { bucket: 'not-started', title: 'C' }], [], 5), '次に着手: C');
+});
+
+test('a task not handed over, or queued at the hub, is not said to have a worker', () => {
+  const next = status => run('aideTaskNext')({ id: '1', status }, []);
+  assert.ok(next('backlog').includes('まだ hub に渡していません') && !next('backlog').includes('worker'));
+  assert.ok(next('queued').includes('hub が着手するのを待っています'));
+  assert.equal(next('dispatched'), 'worker が作業中です');
+  assert.equal(next('pr'), 'PR の結果待ちです');
+  const turn = (progress, task) => run('aideChildTurn')({ progress }, [], task, false);
+  assert.equal(turn('not-started', { status: 'backlog' }), 'hub（着手待ち）');
+  assert.equal(turn('not-started', { status: 'queued' }), 'hub（着手待ち）');
+  assert.equal(turn('working', { status: 'dispatched' }), 'worker');
+  assert.equal(turn('pr', { status: 'pr', prTurn: 'unrequested' }), 'レビュアー');
+});
+
+test('where the points are in the diff is found once for a diff and a read-through, and the evidence of a gate is parsed once', () => {
+  const files = DIFF_FILES();
+  const read = { points: [{ path: 'src/b.rs', line: 6 }, { path: 'src/a.rs' }, { path: 'nowhere.rs', line: 1 }] };
+  const first = run('aidePointPlaces');
+  const got = first(files, read);
+  assert.equal(got[0].k, 2);
+  assert.equal(got[1], null);
+  assert.equal(got[2], null);
+  assert.strictEqual(first(files, read), got, 'the same array is given back, not found again');
+  assert.notStrictEqual(first(files, { points: read.points }), got);
+  const parse = run('aideParsedGateDiff');
+  assert.strictEqual(parse(DIFF), parse(DIFF));
+});

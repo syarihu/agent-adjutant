@@ -203,6 +203,19 @@ async function loadAideRecords(force = false) {
   // Fresh is not enough when the PR was read for a part that wanted less (a `pr` part reads the record only): what this one needs is read.
   const prs = [...aideWanted().prs].filter(([id, what]) => !aideIsFresh(aide.prs.get(id)?.at, force) || !aideHasWanted(aide.prs.get(id), what));
   await Promise.all(prs.map(([id, what]) => loadAidePr(id, what)));
+  aidePrune();
+}
+
+/* What no part on show names any more is let go, so that the diffs and documents of the topics before do not pile up. The task documents go
+   first, since the PRs a gate's annotations need are found through them. A read still on its way puts its entry back, and the next round
+   lets it go again; the sequence numbers are kept, so an old answer is still told from a new one. */
+function aidePrune() {
+  const wanted = aideWanted();
+  for (const k of [...aide.taskAis.keys()]) if (!wanted.taskAis.has(k)) aide.taskAis.delete(k);
+  const prs = aideWanted().prs;
+  for (const id of [...aide.prs.keys()]) if (!prs.has(id)) aide.prs.delete(id);
+  const gates = new Set(aideShown().parts.filter(p => p.kind === 'diff' && p.ref?.board).map(p => `${p.ref.board}/${p.ref.id}`));
+  for (const k of [...aide.gateDiffs.keys()]) if (!gates.has(k)) aide.gateDiffs.delete(k);
 }
 
 async function loadAideTaskAi({ board, task }) {
@@ -349,7 +362,7 @@ function aideParentView(board, key) {
   const rowsBy = new Map();
   for (const c of p.children || []) { const r = listed.find(x => x.raw === `${repo.nwo}/${c.hub}` && x.task?.id === c.id); if (r) rowsBy.set(aideChildKey(c), r.key); }
   const { items, counts, total } = aideParentBuckets(p.children || [], waitsBy, tasks, rowsBy, p.total);
-  return { p, children: items, counts, total, next: aideParentNext(items, waits), nwo: repo.nwo, refreshError: work.error };
+  return { p, children: items, counts, total, next: aideParentNext(items, waits, total), nwo: repo.nwo, refreshError: work.error };
 }
 
 /* What `ctx.session(board, id)` says: the row of the list the session is, or one made of what the document lists when the list leaves it out. */
