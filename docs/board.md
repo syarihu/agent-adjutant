@@ -1,0 +1,181 @@
+English | [日本語](board.ja.md)
+
+# Web Board and Resident Server
+
+agent-adjutant provides a web board to monitor tasks, manage sessions, inspect diffs, and answer agent gates across repositories.
+
+---
+
+## Overview and Serving Modes
+
+The board can be served in two ways:
+
+1. **Resident server (`adj server start`) [Recommended]**:
+   A single background server process per state directory that serves all repositories at `/b/<slug>/` and provides a unified dashboard at `/`.
+2. **Repository hub board (`adjutant serve` or automatic `hubServe`)**:
+   Served directly by a repository's hub MCP server for the duration of that hub's lifetime (defaults to port 4577 or the next free port). Only displays tasks and workers for that specific repository.
+
+### Resident Server Management
+
+```bash
+adj server start [--port <port>] [--foreground] [--no-open]
+adj server status [--json]
+adj server stop
+adj server restart [--port <port>] [--open]
+```
+
+- **Port allocation**: Defaults to `127.0.0.1:4577`, or any free port if 4577 is occupied.
+- **Switching repositories**: The unified page `/` provides a sidebar listing all repositories and parent-task hubs. Selecting "すべて" displays tasks across all boards.
+- **Automatic reconnection**: Existing browser tabs automatically reconnect if the port remains unchanged after `adj server restart`.
+- **Security & Tokens**: Bound strictly to `127.0.0.1`. Mutating actions require a token stored in `~/.local/state/adjutant/dashboard-token` (passed in URL query / `Origin` header).
+
+### Keeping the Resident Server Running with launchd (macOS)
+
+To start the resident server automatically across logins, create a LaunchAgent at `~/Library/LaunchAgents/adj.server.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>adj.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/adj</string>
+    <string>server</string>
+    <string>start</string>
+    <string>--foreground</string>
+    <string>--no-open</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
+```
+
+- Load: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/adj.server.plist`
+- Unload: `launchctl bootout gui/$(id -u)/adj.server`
+- Restart: `launchctl kickstart -k gui/$(id -u)/adj.server` (Do not run `adj server restart` under `KeepAlive`, as it can race with launchd).
+
+---
+
+## Views
+
+The sidebar offers two primary views: **ボード (Board)** and **いまの仕事 (Work under way)**.
+
+### 1. いまの仕事 (Work Under Way: `?view=work`)
+
+A unified 3-column operational view across all repositories:
+- **Left Column**: The list of active sessions, hubs, gates, and review requests.
+- **Middle Column**: The embedded tmux terminal of the currently selected session or hub.
+- **Right Column**: The task detail panel, aide pane, or AI review summary.
+
+#### Grouping Options
+Tasks in 「いまの仕事」 can be grouped by:
+- **親 Issue (Parent Issue)** [Default]: Organizes by Owner → Repository → Parent Issue → Task. Hubs and unparented tasks appear at the top.
+- **状態 (Status)**: Grouped into 新着 (New), 実行中 (Running), and そのほか (Others).
+
+#### 新着 (New / Attention Required)
+Holds items waiting for your action:
+- A newly opened gate
+- A session waiting on a permission prompt (`waiting`) or user question (`AskUserQuestion`)
+- A completed turn with no gate open
+- A failed session
+- A PR requiring your attention (changes requested, CI failed, approved, closed without merging)
+
+Items leave 新着 when acted upon (answering the gate, typing in the terminal, or clicking `done` / `done_all`).
+
+#### 離れていた間に (While You Were Away)
+Shows a summary block at the top of a task panel detailing events that occurred since you last interacted with or viewed that row (e.g. phase transitions, gates opened, permission waits, turn completions).
+
+#### Parking a Task (タスクを置く)
+Temporarily set aside a task while waiting on external feedback (e.g. PdM, designer, external review, or merge timing):
+- CLI: `adj task park --id <id> --reason pdm|design|review|merge-timing|other [--text <text>]`
+- CLI: `adj task unpark --id <id>`
+- UI: Click "置く" in the task summary.
+Parked tasks do not appear in 新着 and do not ring desktop notifications.
+
+### 2. AI 下読み (AI Pre-reading / PR Review Assistant)
+
+Switches the left list to review requests from other people across repositories:
+- PR metadata: size (S / M / L), diff overview, CI status, reviewer turn.
+- Pre-read breakdown: Reading order, key review points, structural breakdown (specs/logic, UI, docs, tests, resources).
+- Draft comments: Edit review drafts directly within the board and push them in batch to your pending review on GitHub via "N 件を pending review に積む".
+- Oversized PRs (>1,500 lines changed in a single file) offer "分割案" (split proposal) to suggest splitting the PR before reading.
+
+#### Code-Review Hub and Readers
+- Start review hub: `adj hub --review` (or click "hub を起動" on the review hub row).
+- Request a read: `adj review request --pr <URL|owner/repo#N>` (or click on the PR row).
+- Concurrent readers: Up to 3 run concurrently in isolated temporary directories without mutating repository state.
+
+### 3. 副官 (The Aide)
+
+An interactive assistant session (shown when no specific task is selected in 「いまの仕事」):
+- Start/reset via `POST /api/aide/open` or clicking "副官に聞く".
+- Runs Claude Code in `<state>/aide` using your own global configuration, augmented with read-only tools, `adjutant_show`, and two action tools: `adjutant_request` (delegates work requests to a hub) and `adjutant_gate_answer` (answers gates on your behalf).
+- **Display Area (`adjutant_show`)**: The aide can render gates, wait lists, PR pre-reads, diff snippets, active requests (`request`), and task statuses directly into the adjacent display pane.
+- **Answering gates through the aide**: Clicking 「副官に答えを伝える」 on a waiting gate or 「この判断」 pre-fills `[gate <board>/<id>] ` in the prompt. The aide reads your instruction (e.g. 「B で」), previews the proposed decision, and answers the gate once you confirm.
+
+---
+
+## Task Panel & Gates
+
+Clicking any task card opens its detail panel:
+
+### Panel Tabs
+1. **タスクサマリ (Task Summary)**: Issue and PR references, active gates, phase progress, problem description, goal, and worktree info.
+2. **ターミナル (Terminal)**: Live embedded terminal for the worker session (requires `terminal.preset: "tmux"`).
+3. **コードレビュー (Code Review)**: Review rounds, findings, diffs, and verification records.
+4. **動作確認 (Verification)**: Verification commands, manual check checklists, and results.
+5. **経過 (History)**: Chronological log of past gates, decisions, and phase updates.
+
+### Gates
+
+Gates represent explicit decision points where an agent stops and waits for human input:
+- **Frame structure**: What to look at, what was already decided, and where agent confidence is uncertain.
+- **Gate Types**:
+  - `plan`: Approval of implementation plan, problem statement, and goals.
+  - `diff`: Code review rounds and findings.
+  - `verify`: Verification commands and manual test checks.
+  - `dispatch`: Task confirmation prior to worker launch.
+- **Answering**: Choose an option (Approve, Revise, etc.), add optional comments, or answer directly in the session terminal (`adj gate close --terminal`).
+- **Server status detection**: `adj gate open` checks whether a board server is active (`server: up` / `server: down`). If no server is running, the agent falls back to asking directly in its terminal.
+
+---
+
+## Card Placement & GitHub Sync
+
+Cards automatically advance across board columns based on worker phases and GitHub PR states:
+
+| PR State | Whose Turn | Board Column |
+| --- | --- | --- |
+| Draft | Worker | In Progress (Agents) |
+| Ready, assigned to other reviewers | Other reviewer | Agents column (レビュー待ち（他の人）) |
+| Waiting on review bots or CI | Bots / CI | Agents column (bot・CI 待ち) |
+| Changes requested | You | PR Review (修正の依頼あり) |
+| Approved | You (to merge) | PR Review (マージ待ち) |
+| Failing CI | You | PR Review (CI 失敗) |
+| Merged | Nobody | Done |
+| Closed without merge | You (decision) | PR Review (閉じられた) |
+
+The resident server polls GitHub notification events (`GET /notifications`) with `If-Modified-Since` and queries updated PRs in single GraphQL batches. Cards refresh every 5 minutes as a fallback. Manual refresh is available via `adjutant task refresh` or clicking "PR確認".
+
+---
+
+## Working with Sessions
+
+### Sessions without a Task
+You can start a freeform worker session without pre-creating an issue or task:
+- UI: Click "タスクなしのセッションを始める…" on the hub panel.
+- API: `POST /api/sessions` with `{"instruction": "...", "worktreeName": "..."}`.
+- Later link to a task via `POST /api/sessions/<id>/link`.
+
+### Session Lifecycle Actions
+From the terminal action bar or API:
+- **Resume (`POST /api/sessions/<id>/resume`)**: Reopen a stopped worker in its existing worktree.
+- **Restart (`POST /api/sessions/<id>/restart`)**: Recycle the worker window while preserving session context.
+- **Open in External Terminal (`POST /api/sessions/<id>/open`)**: Attach to the tmux session using your native terminal (e.g. iTerm2 via `tmux -CC attach`).
+- **Clean Up (`POST /api/sessions/<id>/cleanup`)**: Remove the worktree and local branch if changes are fully committed and pushed. Requires confirmation (`force: true` with directory name) if untracked/uncommitted changes exist.
