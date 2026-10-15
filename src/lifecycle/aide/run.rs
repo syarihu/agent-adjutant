@@ -1,7 +1,6 @@
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
-use crate::infra::agent::Agent;
 use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, HUB_ENV, STATE_DIR_ENV};
 use crate::infra::fs::read_json;
 use crate::infra::paths::{exe_path_absolute, home_dir};
@@ -10,7 +9,6 @@ use crate::kernel::config::resolve_config;
 use crate::kernel::identity::AIDE_CONFIG_KEY;
 use crate::kernel::runner::{aide_command, aide_mcp_config, names_adjutant_server};
 use crate::lifecycle::agent_command;
-use crate::lifecycle::review::reader_env;
 use crate::registry::{self, clear_aide_if, note_aide, valid_session_id};
 
 use super::{aide_home, write_aide_settings};
@@ -108,8 +106,8 @@ pub(crate) fn claude_json_path(
 
 /// The environment the aide's agent gets: the person's `agentEnv`, without a hub (the aide has
 /// none, and every tool would then default to it) and with the state directory set to `state`,
-/// absolute, because the aide's directory is no checkout to find it from. Claude Code gets its
-/// fullscreen UI for the reason the reader does.
+/// absolute, because the aide's directory is no checkout to find it from. Nothing else is forced:
+/// the person's own settings load, so their own `tui` setting applies.
 pub(crate) fn aide_env(agent_env: Vec<(String, String)>, state: &Path) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = agent_env
         .into_iter()
@@ -120,7 +118,7 @@ pub(crate) fn aide_env(agent_env: Vec<(String, String)>, state: &Path) -> Vec<(S
         STATE_DIR_ENV.to_string(),
         state.to_string_lossy().to_string(),
     ));
-    reader_env(env, Agent::Claude)
+    env
 }
 
 #[cfg(test)]
@@ -151,7 +149,7 @@ mod tests {
             env.iter()
                 .filter(|(k, _)| k == "CLAUDE_CODE_NO_FLICKER")
                 .count(),
-            1
+            0
         );
     }
 
