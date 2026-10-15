@@ -535,9 +535,10 @@ fn every_mcp_tool_the_aide_may_use_exists() {
 }
 
 #[test]
-fn the_aide_may_use_no_tool_that_writes() {
-    // A tool that sends to a hub is added to the aide on purpose, by its own change, which
-    // relaxes this test with it.
+fn the_aide_is_allowed_without_asking_no_tool_that_writes() {
+    // `AIDE_TOOLS` is what the aide may use without a prompt, on top of the person's own
+    // permissions. A tool that writes or sends runs unasked once it is on this list, so it is
+    // added by its own change, which relaxes this test with it.
     for off in [
         "adjutant_send",
         "adjutant_tell",

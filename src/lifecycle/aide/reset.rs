@@ -30,8 +30,9 @@ pub enum ResetRefused {
 }
 
 /// Replace the aide with a fresh one: stop the one that runs, then open another. A turn in
-/// progress is cut short on purpose. The aide holds nothing it cannot fetch again and its tools
-/// cannot write, and a reset is also the way out of one that is stuck.
+/// progress is cut short on purpose. The aide holds nothing it cannot fetch again (a reset
+/// mid-turn cuts off what it was doing for the person, who pressed reset), and a reset is also
+/// the way out of one that is stuck.
 pub fn reset_aide(root: &Path) -> Result<AideReset, ResetRefused> {
     let settings = resolve_config(AIDE_CONFIG_KEY)
         .map_err(ResetRefused::StopFailed)?
