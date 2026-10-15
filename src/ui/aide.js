@@ -204,7 +204,10 @@ async function loadAideBoards(force = false) {
 /* The task documents first (they say which PR a task is of), then the PRs the parts and those documents name. */
 async function loadAideRecords(force = false) {
   // The list of 「AI 下読み」 is the page's own (`others`), read on its own round; a reviews part asks for it when it is not at hand.
-  if (aideShown().parts.some(p => p.kind === 'reviews') && (force || !others.doc || !aideIsFresh(others.fetchedMs, false))) refreshOthers();
+  if (aideShown().parts.some(p => p.kind === 'reviews') && (force || !others.doc || !aideIsFresh(others.fetchedMs, false))) {
+    // The aide is drawn again when the read is done, or the part sits on what it had: nothing else draws it for `others`.
+    Promise.resolve(refreshOthers()).then(() => renderAide());
+  }
   const tasks = [...aideWanted().taskAis.values()].filter(t => !aideIsFresh(aide.taskAis.get(`${t.board}/${t.task}`)?.at, force));
   await Promise.all(tasks.map(loadAideTaskAi));
   // Fresh is not enough when the PR was read for a part that wanted less (a `pr` part reads the record only): what this one needs is read.
@@ -473,7 +476,11 @@ function aideDiffView(ref) {
 /* `ctx.reviews()`: the list of 「AI 下読み」 the page already reads (`others`), as the review requests part draws it. */
 function aideReviewsView() {
   if (!others.doc) return others.error ? { state: 'error', error: others.error } : { state: 'loading' };
-  return { state: 'ok', records: othersRecords(), marks: othersMarks(), nowSecs: othersNowEst(), refreshError: others.error };
+  const sync = others.doc.lastSync;
+  const nowSecs = othersNowEst();
+  // As the list says it: when the last sync was, or that there was none, and what it could not do. A list never synced is no list of nothing.
+  const sync1 = { words: othersSyncWords(sync, nowSecs, false), never: stampSecs(sync?.at) == null, stale: othersStale(sync, nowSecs), notes: othersNotes(sync) };
+  return { state: 'ok', records: othersRecords(), marks: othersMarks(), nowSecs, refreshError: others.error, sync: sync1 };
 }
 
 function aideCtx() {
@@ -813,6 +820,11 @@ function aideSetLocal(part, topic) {
   renderAide();
 }
 
+function aideBackToReviews() {
+  aideSetLocal(aideReviewsPart(), AIDE_REVIEWS_TOPIC);
+  refreshAide(true);
+}
+
 function aideBackToWaits() {
   aideSetLocal(aideWaitsPart(), AIDE_WAITS_TOPIC);
   refreshAide(true);
@@ -905,6 +917,7 @@ wk('aide-display').addEventListener('click', e => {
   if ((b = e.target.closest('[data-aide-open-read], [data-aide-ask-reader]:not([disabled])'))) return aideOpenRead(b.dataset);
   if ((b = e.target.closest('[data-aide-open-gate]'))) return aideOpenGate(b.dataset.aideOpenGate);
   if (e.target.closest('[data-aide-waits]')) return aideBackToWaits();
+  if (e.target.closest('[data-aide-reviews]')) return aideBackToReviews();
   if ((b = e.target.closest('[data-aide-park]'))) return aidePark(b.dataset.aideBoard, b.dataset.aideTask);
   if ((b = e.target.closest('[data-aide-expand]'))) {
     // Part of the task's 「拡大」 dialog (card-dialog.js); until it is there the button says so.

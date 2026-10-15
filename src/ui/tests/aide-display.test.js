@@ -862,3 +862,23 @@ test('the review requests part says empty, loading and failed, and when its last
   assert.ok(say({ state: 'ok', records: [], refreshError: 'boom' }).includes('最新の読み込みに失敗しました: boom'));
   assert.deepEqual(plain(run('aideReadPart')('a/b#1')).ref, { board: '', id: '', pr: 'a/b#1' });
 });
+
+test('the review requests part says how the list was synced, and never reads an unsynced list as no requests', () => {
+  const say = (records, sync) => html('reviews', null, { reviews: () => ({ state: 'ok', records, nowSecs: 1e10, sync }) });
+  const never = say([], { words: 'まだ同期していません', never: true, stale: false, notes: [] });
+  assert.ok(never.includes('まだ同期していません') && never.includes('同期するまで、レビュー依頼があるかは分かりません') && !never.includes('レビュー依頼はありません'));
+  const old = say([REVREC('a/x#1', 'A/X')], { words: '同期・最終同期: 2時間前', never: false, stale: true, notes: [{ alert: true, text: '前回の同期に失敗しました: <e>' }, { text: '一部を読めませんでした' }] });
+  assert.ok(old.includes('同期・最終同期: 2時間前') && old.includes('aide-sync warn') && old.includes('前回の同期に失敗しました: &lt;e&gt;') && old.includes('一部を読めませんでした'));
+  assert.ok(old.includes('data-aide-open-review'));
+  assert.ok(say([], { words: '同期・最終同期: たった今', never: false, stale: false, notes: [] }).includes('レビュー依頼はありません'));
+});
+
+test('a read part opened from the review requests has the way back to the list, and one the aide showed does not', () => {
+  const ctx = { pr: () => ({ state: 'none', rec: REC }) };
+  const local = run('aidePartHtml')({ ...run('aideReadPart')('a/b#1') }, true, ctx);
+  assert.ok(local.includes('data-aide-reviews') && local.includes('一覧へ戻る'));
+  assert.ok(!html('read', { pr: 'a/b#1' }, ctx).includes('data-aide-reviews'));
+  const part = plain(run('aideReviewsPart')());
+  assert.deepEqual([part.kind, part.ref, part.by], ['reviews', null, 'board']);
+  assert.equal(run('AIDE_REVIEWS_TOPIC').key, 'reviews');
+});

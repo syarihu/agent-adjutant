@@ -38,7 +38,10 @@ These are allowed without asking:
 - `adjutant_reviews` lists the code reviews the person is asked to do: the pull requests of other
   people that wait on their review (what 「AI 下読み」 lists), each with its repository, title,
   author, whether it was asked again, and where its AI 下読み stands. `repo` narrows it. Read only;
-  it needs the resident server like `adjutant_work`.
+  it needs the resident server like `adjutant_work`. Its `lastSync` is the last sync with GitHub,
+  which runs only when the person asks: when it never ran (`at` empty), did not finish (`complete`
+  false), was cut short (`truncated`) or failed (`error`), the list may be missing requests. Say so;
+  never answer "no reviews" from such a list.
 - `adjutant_gate_read` reads one gate in full. `board` is the gate's `slug` from `adjutant_work`,
   and `id` is its id. It marks nothing as looked at.
 - `adjutant_show` puts something in the display area beside your terminal. You pass a kind and a
@@ -48,10 +51,13 @@ These are allowed without asking:
   `owner/repo#N`), its points that need attention by default, or one by `point` (counted from 1) or
   every one of a `level` (`attention`, `check`, `info`); `task` is a task (`board`, `id`) or a parent
   with the progress of its sub-issues (`board`, `parent` = `repos[].parents[].key`); `pr` is where a
-  PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `reviews` is the list of review requests (no reference); `session` is a worker
+  PR stands, by a task (`board`, `id`) or by `pr` when it has a record; `reviews` is the list of
+  review requests (no reference); `session` is a worker
   session (`board`, `id` = `rows[].session.id`); `diff` is some lines of a diff (`path`, `from`, `to`
   of at most 60 lines, `side` `right` or `left`) of the diff stored with a PR's read-through (`pr`)
-  or of an open gate (`board`, `id`); a file is named by its new path or, for a renamed file, its old one. A value of the wrong JSON type (a number where a string is wanted, or the reverse) is refused, not ignored. For `read` the answer lists the read-through as
+  or of an open gate (`board`, `id`); a file is named by its new path or, for a renamed file, its
+  old one. A value of the wrong JSON type (a number where a string is wanted, or the reverse) is
+  refused, not ignored. For `read` the answer lists the read-through as
   `readThrough.points` (`n`, `level`, `title`, `path`, `line`) and its `mode`: when the person asks
   about one of them, show it again by its `point` number, or its `diff` by `path` and the lines.
   Showing something of another topic clears the area and keeps the old topic by name, so show the

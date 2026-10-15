@@ -827,7 +827,7 @@ fn showing_a_read_through_and_a_pr_by_reference_writes_nothing_but_the_display_s
 #[test]
 fn the_review_requests_are_shown_with_no_reference_and_the_tool_is_one_the_aide_may_run() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    let sandbox = crate::testing::Sandbox::empty();
+    let _sandbox = crate::testing::Sandbox::empty();
     let shown = call_tool("adjutant_show", &json!({"kind": "reviews"})).unwrap();
     assert_eq!(
         shown["topic"],
@@ -835,7 +835,6 @@ fn the_review_requests_are_shown_with_no_reference_and_the_tool_is_one_the_aide_
     );
     assert_eq!(shown["parts"][0]["kind"], "reviews");
     assert_eq!(shown["parts"][0]["ref"], Value::Null);
-    let _ = &sandbox;
     let listed = call("tools/list", json!({}));
     let names: Vec<&str> = listed["result"]["tools"]
         .as_array()

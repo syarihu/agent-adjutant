@@ -76,6 +76,8 @@ function aideDisplayFollowed(display, local) {
 const aideGatePart = (board, id) => ({ id: `page-gate:${board}/${id}`, kind: 'gate', ref: { board, id }, topic: 'page', shownAt: null, by: 'board' });
 /* A read-through opened from a row of the review requests, as a wait row opens its gate. */
 const aideReadPart = pr => ({ id: `page-read:${pr}`, kind: 'read', ref: { board: '', id: '', pr }, topic: 'page', shownAt: null, by: 'board' });
+const aideReviewsPart = () => ({ id: 'page-reviews', kind: 'reviews', ref: null, topic: 'page', shownAt: null, by: 'board' });
+const AIDE_REVIEWS_TOPIC = { key: 'reviews', label: 'レビュー依頼' };
 const aideWaitsPart = () => ({ id: 'page-waits', kind: 'waits', ref: null, topic: 'page', shownAt: null, by: 'board' });
 const AIDE_WAITS_TOPIC = { key: 'waits', label: '判断待ちの一覧' };
 
@@ -462,6 +464,13 @@ function aidePointHtml(p, i, diff, resolved, read) {
 /* `ctx.pr(prId)` is `{ state: 'loading' | 'error' | 'none' | 'ok', error?, rec, read, diff: { state, files } }`: the record (or null),
    the stored read-through and the parsed stored diff. The buttons carry the PR and, for a task's PR, its board and task. */
 registerAidePart('read', (part, ctx) => {
+  const shown = aideReadBody(part, ctx);
+  // Opened from a row of the review requests: the way back to the list, as a gate has to the list of waits.
+  const back = String(part.id).startsWith('page-read:') ? `<div class="aide-gate-actions">${aideLinkBtn('data-aide-reviews', 'list', '一覧へ戻る')}</div>` : '';
+  return back ? { ...shown, body: shown.body + back } : shown;
+});
+
+function aideReadBody(part, ctx) {
   const id = part.ref?.pr || '';
   const got = ctx.pr && id ? ctx.pr(id) : null;
   const rec = got?.rec || null;
@@ -494,7 +503,7 @@ registerAidePart('read', (part, ctx) => {
   parts.push(`<div class="aide-gate-actions">${aideLinkBtn(`data-aide-open-read ${attrs}`, 'open_in_full', 'AI 下読みを開く')}`
     + `${aideLinkBtn(`data-aide-ask-reader ${attrs}`, 'chat', '読み手に聞く', prReaderOpen(rec) ? '' : PR_ASK_OFF_WHY)}</div>`);
   return { ...base, body: `<div class="aide-read">${parts.join('')}</div>` };
-});
+}
 
 /* ── task and parent ── */
 
@@ -780,8 +789,13 @@ registerAidePart('reviews', (part, ctx) => {
   if (!got || got.state === 'loading') return { ...base, body: aideNote('読み込み中…') };
   if (got.state === 'error') return { ...base, body: aideNote(`レビュー依頼を読めませんでした: ${got.error}`) };
   const waiting = (got.records || []).filter(r => OTHERS_LIVE.includes(r.state));
-  const stale = aideStaleNote(got.refreshError);
-  if (!waiting.length) return { ...base, body: `${stale}${aideNote('レビュー依頼はありません')}` };
+  // When the list was last synced with GitHub (the person asks for a sync), and what it could not do: without it a list that was never
+  // synced, or only in part, would read as no review requests.
+  const sy = got.sync;
+  const syncHtml = !sy ? '' : `<div class="tp-muted aide-sync${sy.stale || sy.never ? ' warn' : ''}">${esc(sy.never ? 'まだ同期していません（同期するまで、レビュー依頼は出ません）' : sy.words)}</div>`
+    + (sy.notes || []).map(n => `<div class="tp-muted aide-sync${n.alert ? ' warn' : ''}">${esc(n.text)}</div>`).join('');
+  const stale = aideStaleNote(got.refreshError) + syncHtml;
+  if (!waiting.length) return { ...base, body: `${stale}${aideNote(sy?.never ? '同期するまで、レビュー依頼があるかは分かりません' : 'レビュー依頼はありません')}` };
   const row = r => {
     const flags = [othersSeenClass(r, got.marks?.[r.id] || {}) === 'new' ? '新着' : '', r.rerequest ? '頼み直し' : ''].filter(Boolean).join('・') || '依頼';
     const ai = othersAiView(r, got.records, got.nowSecs);

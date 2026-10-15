@@ -1555,15 +1555,37 @@ test('a review request with a read-through opens it in the area, and one without
   assert.deepStrictEqual(log, [['local', 'page-read:a/x#1', 'A/X · PR #1'], ['refresh', true], ['open', 'a/x#2', ''], ['open', 'c/z#3', '']]);
 });
 
-test("the review requests part reads the page's own list, and says loading or the failure while there is none", () => {
-  const c = vm.createContext({ others: { doc: null, error: null }, othersRecords: () => c.others.doc.records, othersMarks: () => ({ m: 1 }), othersNowEst: () => 42 });
+test("the review requests part reads the page's own list with how it was synced, and says loading or the failure while there is none", () => {
+  const c = vm.createContext({
+    others: { doc: null, error: null }, othersRecords: () => c.others.doc.records, othersMarks: () => ({ m: 1 }), othersNowEst: () => 42,
+    stampSecs: x => (x ? 1 : null), othersSyncWords: (s, now) => `words ${now}`, othersStale: () => true, othersNotes: s => [{ text: `notes ${s?.at}` }],
+  });
   vm.runInContext(fnSrc(aideSrc, 'aideReviewsView'), c);
   const view = () => JSON.parse(JSON.stringify(vm.runInContext('aideReviewsView()', c)));
   assert.deepStrictEqual(view(), { state: 'loading' });
   c.others.error = 'boom';
   assert.deepStrictEqual(view(), { state: 'error', error: 'boom' });
-  c.others.doc = { records: [{ id: 'a/x#1' }] };
-  assert.deepStrictEqual(view(), { state: 'ok', records: [{ id: 'a/x#1' }], marks: { m: 1 }, nowSecs: 42, refreshError: 'boom' });
+  c.others.doc = { records: [{ id: 'a/x#1' }], lastSync: { at: 'S' } };
+  assert.deepStrictEqual(view(), { state: 'ok', records: [{ id: 'a/x#1' }], marks: { m: 1 }, nowSecs: 42, refreshError: 'boom',
+    sync: { words: 'words 42', never: false, stale: true, notes: [{ text: 'notes S' }] } });
+  c.others.doc.lastSync = null;
+  assert.strictEqual(view().sync.never, true);
+});
+
+test('a shown review requests part reads the list again and draws the aide when the read is done', async () => {
+  const log = [];
+  let done;
+  const c = vm.createContext({
+    others: { doc: null, fetchedMs: 0 }, aideShown: () => ({ parts: [{ kind: 'reviews' }] }), aideWanted: () => ({ taskAis: new Map(), prs: new Map() }),
+    aideIsFresh: () => false, aideHasWanted: () => true, loadAideTaskAi() {}, loadAidePr() {}, aide: { taskAis: new Map(), prs: new Map() }, aidePrune() {}, renderAide: () => log.push('render'),
+    refreshOthers: () => new Promise(res => { done = res; log.push('read'); }),
+  });
+  vm.runInContext(fnSrc(aideSrc, 'loadAideRecords'), c);
+  await vm.runInContext('loadAideRecords(false)', c);
+  assert.deepStrictEqual(log, ['read']);
+  done();
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepStrictEqual(log, ['read', 'render']);
 });
 
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {
