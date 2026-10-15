@@ -4,10 +4,13 @@
    nor the network, so `src/ui/tests/aide-display.test.js` runs them under `node --test`. Loaded after util.js (`esc`, `kindOf`)
    and before my-work.js.
 
-   The display area draws one state, whoever produced it:
+   The display area draws one state, whoever produced it. The aide fills it with its adjutant_show tool and the resident serves it
+   at GET /api/aide/display (src/board/aide/display.rs):
      { topic: { key, label } | null,
-       parts: [{ id, kind, ref, topic, shownAt }],   // every part of `topic`, newest first
+       parts: [{ id, kind, ref, topic, shownAt }],   // every part of `topic`, newest first; the server adds `by`
        earlier: [{ key, label }] }                   // the topics before it, newest first
+   `ref` is `{ board, id }` for a gate and null for the list of waits; `topic` is the key of the topic and `shownAt` epoch
+   seconds, which a part this page makes itself has no use for (null).
    A part is drawn by the renderer its `kind` was registered with (`registerAidePart`); a kind with none is said not to be
    drawable yet, so a part a newer server sends never breaks the pane. */
 
@@ -34,6 +37,20 @@ function aideDisplayOf(raw) {
     topic: r.topic && typeof r.topic === 'object' ? topicOf(r.topic) : null,
     parts: list(r.parts).map(p => ({ ...p, id: String(p.id ?? ''), kind: String(p.kind ?? '') })),
     earlier: list(r.earlier).map(topicOf),
+  };
+}
+
+/* While the aide has shown nothing, the display area holds the list of what waits on the person, so it is never empty when
+   something does wait. It is made here and not pushed by the server: a topic the server wrote would be one the aide's next
+   part clears. As soon as the aide shows anything, its state is drawn as it is. The label is the one the server gives the same
+   topic (WAITS_LABEL in src/board/aide/show.rs). */
+function aideDisplayWithWaits(display, waits) {
+  const d = aideDisplayOf(display);
+  if (d.topic || !(waits || []).length) return d;
+  return {
+    topic: { key: 'waits', label: '判断待ちの一覧' },
+    parts: [{ id: 'board-waits', kind: 'waits', ref: null, topic: 'waits', shownAt: null, by: 'board' }],
+    earlier: d.earlier,
   };
 }
 

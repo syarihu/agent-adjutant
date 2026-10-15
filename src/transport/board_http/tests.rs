@@ -1739,6 +1739,42 @@ mod others_drafts {
     }
 
     #[test]
+    fn the_display_is_empty_until_the_aide_shows_something_and_then_says_what_it_showed() {
+        let sandbox = crate::testing::Sandbox::new("{}");
+        let r = resident(&sandbox.state());
+        let (status, body) = call(&r, "GET", "/api/aide/display");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["topic"], Value::Null);
+        assert_eq!(body["parts"], json!([]));
+        assert_eq!(body["earlier"], json!([]));
+        assert!(!sandbox.state().join("aide-display.json").exists());
+
+        crate::board::aide::show(&sandbox.state(), crate::board::aide::ShowRequest::Waits).unwrap();
+        let (status, body) = call(&r, "GET", "/api/aide/display");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["topic"]["key"], "waits");
+        assert_eq!(body["parts"][0]["kind"], "waits");
+        assert_eq!(body["parts"][0]["ref"], Value::Null);
+        assert_eq!(body["parts"][0]["topic"], "waits");
+    }
+
+    #[test]
+    fn a_display_file_that_cannot_be_read_is_an_error_not_an_empty_area() {
+        let sandbox = crate::testing::Sandbox::new("{}");
+        std::fs::create_dir_all(sandbox.state()).unwrap();
+        std::fs::write(sandbox.state().join("aide-display.json"), "garbage").unwrap();
+        let r = resident(&sandbox.state());
+        let (status, body) = call(&r, "GET", "/api/aide/display");
+        assert_eq!(status, 500, "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("aide-display.json")
+        );
+    }
+
+    #[test]
     fn opening_or_resetting_the_aide_without_tmux_is_refused_before_anything_happens() {
         let sandbox =
             crate::testing::Sandbox::new(r#"{"defaults":{"terminal":{"preset":"iterm2"}}}"#);

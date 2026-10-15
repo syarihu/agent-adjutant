@@ -122,7 +122,9 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
     let listed = call("tools/list", json!({}));
     for tool in listed["result"]["tools"].as_array().unwrap() {
         let properties = &tool["inputSchema"]["properties"];
-        if properties.get("repo").is_none() {
+        // `adjutant_work`'s `repo` only narrows a machine-wide document to one repository; it
+        // addresses no hub.
+        if properties.get("repo").is_none() || tool["name"] == "adjutant_work" {
             continue;
         }
         assert!(
@@ -535,10 +537,12 @@ fn every_mcp_tool_the_aide_may_use_exists() {
 }
 
 #[test]
-fn the_aide_is_allowed_without_asking_no_tool_that_writes() {
+fn the_aide_is_allowed_without_asking_no_tool_that_writes_but_the_display() {
     // `AIDE_TOOLS` is what the aide may use without a prompt, on top of the person's own
     // permissions. A tool that writes or sends runs unasked once it is on this list, so it is
-    // added by its own change, which relaxes this test with it.
+    // added by its own change, which relaxes this test with it. `adjutant_show` is the one that
+    // writes, and only the aide's display state (see
+    // `the_aide_s_tools_write_nothing_but_the_display_state`).
     for off in [
         "adjutant_send",
         "adjutant_tell",
@@ -555,4 +559,181 @@ fn the_aide_is_allowed_without_asking_no_tool_that_writes() {
             "{off} is on the aide's list"
         );
     }
+    // The tools of this server on the list are exactly these: one added without a change to this
+    // test is a tool nobody decided the aide may run unasked.
+    let prefix = format!("mcp__{}__", crate::kernel::runner::MCP_SERVER_NAME);
+    let mut on: Vec<&str> = crate::kernel::runner::AIDE_TOOLS
+        .iter()
+        .filter_map(|t| t.strip_prefix(&prefix))
+        .collect();
+    on.sort();
+    assert_eq!(
+        on,
+        [
+            "adjutant_config",
+            "adjutant_gate_read",
+            "adjutant_hub_status",
+            "adjutant_show",
+            "adjutant_skill",
+            "adjutant_work",
+        ]
+    );
+}
+
+/// Every file under `dir` with its contents, by path relative to it.
+fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(base: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, out);
+            } else {
+                let name = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                out.insert(name, std::fs::read(&path).unwrap_or_default());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// A board of `acme/widget` with one open gate on a task that has a parent. Hold the sandbox.
+fn a_board_with_a_gate(sandbox: &crate::testing::Sandbox) -> (tempfile::TempDir, String) {
+    let main = tempfile::tempdir().unwrap();
+    let slug = crate::kernel::identity::slug_for("acme/widget", None);
+    let repo = crate::kernel::identity::RepoInfo {
+        main: main.path().to_string_lossy().to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: slug.clone(),
+        hub_name: format!("adjutant-{slug}"),
+        nwo_source: "dirname",
+    };
+    crate::registry::note_board(&sandbox.state(), &repo);
+    let tasks = crate::task::dir(&sandbox.state(), &slug);
+    std::fs::create_dir_all(&tasks).unwrap();
+    let task = json!({
+        "id": "t1", "kind": "start", "title": "Add a timer", "doneWhen": "pr",
+        "autoStart": true, "status": "queued",
+        "parent": "https://github.com/acme/widget/issues/40",
+        "createdAt": "20260922T000000Z", "updatedAt": "20260922T000000Z",
+    });
+    std::fs::write(tasks.join("t1.json"), task.to_string()).unwrap();
+    let gates = sandbox.state().join("gates").join(&slug);
+    std::fs::create_dir_all(&gates).unwrap();
+    let gate = json!({
+        "id": "g1", "kind": "plan", "worktree": "/tmp/wt", "task": "t1",
+        "title": "Design review", "facts": ["6 files to touch"],
+        "focus": "How is the TTL held?", "openedAt": "20260922T010000Z",
+    });
+    std::fs::write(gates.join("g1.json"), gate.to_string()).unwrap();
+    (main, slug)
+}
+
+#[test]
+fn work_without_a_resident_says_how_to_start_one() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let before = snapshot(&sandbox.state());
+    for args in [json!({}), json!({"repo": "acme/widget"})] {
+        let err = call_tool("adjutant_work", &args).unwrap_err();
+        assert!(err.contains("adj server start"), "{err}");
+    }
+    assert_eq!(snapshot(&sandbox.state()), before);
+}
+
+#[test]
+fn a_gate_is_read_in_full_by_its_board_and_id() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (_main, slug) = a_board_with_a_gate(&sandbox);
+    let out = call_tool("adjutant_gate_read", &json!({"board": slug, "id": "g1"})).unwrap();
+    assert_eq!(out["board"], slug.as_str());
+    assert_eq!(out["repo"], "acme/widget");
+    assert_eq!(out["gate"]["id"], "g1");
+    assert_eq!(out["gate"]["title"], "Design review");
+    assert_eq!(out["gate"]["facts"], json!(["6 files to touch"]));
+    assert_eq!(out["gate"]["focus"], "How is the TTL held?");
+    for args in [
+        json!({"id": "g1"}),
+        json!({"board": "  ", "id": "g1"}),
+        json!({"board": slug}),
+        json!({"board": slug, "id": ""}),
+        json!({"board": "nope-0000000000000000", "id": "g1"}),
+        json!({"board": slug, "id": "missing"}),
+        json!({"board": slug, "id": "../tasks/t1"}),
+    ] {
+        assert!(call_tool("adjutant_gate_read", &args).is_err(), "{args}");
+    }
+}
+
+#[test]
+fn show_refuses_what_it_cannot_show_before_writing_anything() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (_main, slug) = a_board_with_a_gate(&sandbox);
+    let before = snapshot(&sandbox.state());
+    for (args, why) in [
+        (json!({"kind": "pr"}), "kind must be gate or waits"),
+        (json!({}), "kind must be gate or waits"),
+        (json!({"kind": ""}), "kind must be gate or waits"),
+        (json!({"kind": "gate"}), "needs `board`"),
+        (json!({"kind": "gate", "board": slug}), "needs `id`"),
+        (
+            json!({"kind": "gate", "board": slug, "id": "missing"}),
+            "missing",
+        ),
+        (json!({"kind": "waits", "id": "g1"}), "takes no"),
+    ] {
+        let err = call_tool("adjutant_show", &args).unwrap_err();
+        assert!(err.contains(why), "{args}: {err}");
+    }
+    assert_eq!(snapshot(&sandbox.state()), before);
+}
+
+#[test]
+fn the_aide_s_tools_write_nothing_but_the_display_state() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let sandbox = crate::testing::Sandbox::empty();
+    let (_main, slug) = a_board_with_a_gate(&sandbox);
+    let before = snapshot(&sandbox.state());
+
+    // The read tools leave the state directory as it was.
+    call_tool("adjutant_gate_read", &json!({"board": slug, "id": "g1"})).unwrap();
+    call_tool("adjutant_config", &json!({})).ok();
+    assert!(call_tool("adjutant_work", &json!({})).is_err());
+    assert_eq!(snapshot(&sandbox.state()), before);
+
+    // `adjutant_show` adds the display and its lock, and changes nothing else: not the gate, not
+    // the task, not the address book.
+    let waits = call_tool("adjutant_show", &json!({"kind": "waits"})).unwrap();
+    assert_eq!(waits["topic"]["key"], "waits");
+    assert_eq!(waits["cleared"], false);
+    let gate = call_tool(
+        "adjutant_show",
+        &json!({"kind": "gate", "board": slug, "id": "g1"}),
+    )
+    .unwrap();
+    assert_eq!(gate["cleared"], true);
+    assert_eq!(gate["topic"]["label"], "acme/widget · 親 #40");
+    assert_eq!(gate["earlier"][0]["key"], "waits");
+    assert_eq!(gate["parts"][0]["ref"], json!({"board": slug, "id": "g1"}));
+    let after = snapshot(&sandbox.state());
+    let mut changed: Vec<&String> = after
+        .iter()
+        .filter(|(path, bytes)| before.get(*path) != Some(*bytes))
+        .map(|(path, _)| path)
+        .collect();
+    changed.sort();
+    assert_eq!(changed, ["aide-display.json", "aide-display.lock"]);
+    assert!(before.keys().all(|path| after.contains_key(path)));
 }

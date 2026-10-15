@@ -11,9 +11,9 @@ for (const file of ['util.js', 'aide-display.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 // Functions are on the context's global object, `const`s of a script are only in its scope.
-const { aideEmptyDisplay, aideDisplayOf, registerAidePart, aideDisplayHtml, aidePartHtml, aideWaits, aidePinSub, aidePeekCount,
+const { aideEmptyDisplay, aideDisplayOf, aideDisplayWithWaits, registerAidePart, aideDisplayHtml, aidePartHtml, aideWaits, aidePinSub, aidePeekCount,
   aideAskRowText, aideStateOf, aideNewLineHtml, aideHeadHtml, aideScopeText, aideCleanText, kindOf } = vm.runInContext(
-  `({ aideEmptyDisplay, aideDisplayOf, registerAidePart, aideDisplayHtml, aidePartHtml, aideWaits, aidePinSub, aidePeekCount,
+  `({ aideEmptyDisplay, aideDisplayOf, aideDisplayWithWaits, registerAidePart, aideDisplayHtml, aidePartHtml, aideWaits, aidePinSub, aidePeekCount,
      aideAskRowText, aideStateOf, aideNewLineHtml, aideHeadHtml, aideScopeText, aideCleanText, kindOf })`, ctx);
 
 const count = (html, needle) => html.split(needle).length - 1;
@@ -163,4 +163,53 @@ test('the header offers a reset only for an aide that can be reset, and marks th
   assert.ok(hot.includes('wk-ctx crit') && hot.includes('93%'));
   assert.ok(head({ state: 'running', startable: true, agentSession: { contextPercent: 72 } }).includes('wk-ctx warn'));
   assert.ok(!head({ state: 'running', startable: true }).includes('aide-ctx'));
+});
+
+const SOME_WAITS = [{ key: 'k', kind: 'plan', since: 1, nwo: 'acme/widget', title: 'Timer', taskId: '41' }];
+
+test('while the aide has shown nothing, the waits fill the display area, and the area is empty with none', () => {
+  const filled = aideDisplayWithWaits(aideEmptyDisplay(), SOME_WAITS);
+  assert.deepEqual(filled.topic, { key: 'waits', label: '判断待ちの一覧' });
+  assert.equal(filled.parts.length, 1);
+  assert.equal(filled.parts[0].kind, 'waits');
+  assert.equal(filled.parts[0].shownAt, null);
+  assert.deepEqual(aideDisplayWithWaits(aideEmptyDisplay(), []), aideEmptyDisplay());
+  assert.deepEqual(aideDisplayWithWaits(null, undefined), aideEmptyDisplay());
+});
+
+test('what the aide has shown is drawn as it is, whatever waits', () => {
+  const shown = { topic: { key: 'a', label: 'A' }, parts: [{ id: 'p0', kind: 'gate', ref: { board: 'b', id: 'g' }, topic: 'a', shownAt: 5, by: 'aide' }], earlier: [{ key: 'z', label: 'Z' }] };
+  assert.deepEqual(aideDisplayWithWaits(shown, SOME_WAITS), aideDisplayOf(shown));
+});
+
+test('the earlier topics stay when the waits fill an area with no topic', () => {
+  const filled = aideDisplayWithWaits({ topic: null, parts: [], earlier: [{ key: 'z', label: 'Z' }] }, SOME_WAITS);
+  assert.deepEqual(filled.earlier, [{ key: 'z', label: 'Z' }]);
+});
+
+test('a waits part with no renderer says it cannot be shown yet, and a null shownAt breaks nothing', () => {
+  const html = aideDisplayHtml(aideDisplayWithWaits(aideEmptyDisplay(), SOME_WAITS));
+  assert.ok(html.includes('この部品はまだ表示できません'));
+  assert.ok(html.includes('判断待ちの一覧'));
+  assert.ok(!html.includes('Invalid Date'));
+});
+
+test('a state as the server sends it goes through the page untouched and is drawn', () => {
+  const server = {
+    topic: { key: 'acme/widget#p:acme/widget#40', label: 'acme/widget · 親 #40' },
+    parts: [{ id: 'p1', kind: 'gate', ref: { board: 'acme-widget-0123', id: 'g1' }, topic: 'acme/widget#p:acme/widget#40', shownAt: 1760000000, by: 'aide' },
+      { id: 'p0', kind: 'future-kind', ref: null, topic: 'acme/widget#p:acme/widget#40', shownAt: 1759999999, by: 'aide' }],
+    earlier: [{ key: 'waits', label: '判断待ちの一覧' }],
+    seq: 2,
+  };
+  const d = aideDisplayOf(server);
+  assert.deepEqual(d.parts[0].ref, { board: 'acme-widget-0123', id: 'g1' });
+  assert.equal(d.parts[0].shownAt, 1760000000);
+  assert.equal(d.parts[0].by, 'aide');
+  const html = aideDisplayHtml(server);
+  assert.ok(html.includes('data-aide-part="p1"') && html.includes('data-aide-part="p0"'));
+  assert.ok(html.includes('前の話題 1'));
+  assert.ok(html.includes('この部品はまだ表示できません'));
+  const nulled = aideDisplayHtml({ ...server, parts: server.parts.map(p => ({ ...p, shownAt: null })) });
+  assert.ok(!nulled.includes('Invalid Date'));
 });
