@@ -101,7 +101,7 @@ input=$(cat); printf '%s' "$input" | /absolute/path/to/adj hook claude --status-
 
 描画はこれまでどおり `"$input"` から行います。`adj hook claude --status-line` は何も出力せず、起動できれば常に exit 0 で終わります（バイナリが無いときは `|| true` が受け止めます）。記録するのは既に行があるセッションの `model`・`contextPercent`・`rateLimits` だけで（`adj agent-sessions --json` で見られます）、値が変わったときに書き込み、変わらなければ書き込みは多くても1分に1回です。ステータスラインの `PATH` に `adj` があるとは限らないので、絶対パス（`command -v adj` の出力）で書いてください。他の言語のスクリプトなら、受け取った標準入力をそのままこのコマンドの標準入力に渡します。
 
-エージェント側（`adjutant mcp`）：10個のツールと6つのプロンプトを提供します。
+エージェント側（`adjutant mcp`）：13個のツールと6つのプロンプトを提供します。
 
 - **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスクの着手から完了引き渡しまで）、`adj-report`（作業中に発見したバグを hub に報告）、`adj-review-hub`・`adj-reviewer`・`adj-aide`（コードレビュー hub、PR の読み手、副官）。Claude Code では `/mcp__adjutant__adj-hub` のように呼び出せます。
 - **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、そして副官が盤面を読むための `adjutant_work`（リポジトリをまたいだ「いまの仕事」）、`adjutant_gate_read`（gate 1件を全文）、`adjutant_show`（gate や判断待ちの一覧を副官の表示領域に出す）。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。エージェントに応じた形式（Claude Code の `AskUserQuestion` や Antigravity の `ask_question` など）に自動調整されます（`--agent` または `agent` 引数で指定も可能）。

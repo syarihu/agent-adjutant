@@ -177,35 +177,51 @@ fn apply(
     now: i64,
 ) -> bool {
     let mut cleared = false;
+    // A topic already stored keeps the keys a newer binary put in it; only the label is the
+    // latest wording.
+    let named = |mut stored: Topic| {
+        stored.label = topic.label.clone();
+        stored
+    };
     if display.topic.as_ref().is_some_and(|t| t.key == topic.key) {
-        // The same topic: the label is the latest wording of it.
-        display.topic = Some(topic.clone());
+        display.topic = display.topic.take().map(named);
     } else {
         if let Some(previous) = display.topic.take() {
             display.earlier.retain(|t| t.key != previous.key);
             display.earlier.insert(0, previous);
         }
-        display.earlier.retain(|t| t.key != topic.key);
+        let back = display.earlier.iter().position(|t| t.key == topic.key);
+        let current = match back {
+            Some(i) => named(display.earlier.remove(i)),
+            None => topic.clone(),
+        };
         display.earlier.truncate(EARLIER_KEPT);
         cleared = !display.parts.is_empty();
         display.parts.clear();
-        display.topic = Some(topic.clone());
+        display.topic = Some(current);
     }
-    display
+    // The same thing shown again is the same part moved to the top, with what it carried.
+    let mut part = match display
         .parts
-        .retain(|p| !(p.kind == kind && same_ref(&p.reference, &reference)));
-    display.parts.insert(
-        0,
-        AidePart {
-            id: format!("p{}", display.seq),
+        .iter()
+        .position(|p| p.kind == kind && same_ref(&p.reference, &reference))
+    {
+        Some(i) => display.parts.remove(i),
+        None => AidePart {
+            id: String::new(),
             kind: kind.to_string(),
             reference,
-            topic: topic.key,
+            topic: String::new(),
             shown_at: now,
-            by: "aide".to_string(),
+            by: String::new(),
             extra: Map::new(),
         },
-    );
+    };
+    part.id = format!("p{}", display.seq);
+    part.topic = topic.key;
+    part.shown_at = now;
+    part.by = "aide".to_string();
+    display.parts.insert(0, part);
     display.seq += 1;
     display.parts.truncate(PARTS_KEPT);
     cleared
@@ -578,5 +594,33 @@ mod tests {
             Err("config".to_string())
         });
         assert_eq!(broken.unwrap_err(), "config");
+    }
+
+    #[test]
+    fn showing_again_keeps_what_a_newer_binary_put_in_the_topic_and_the_part() {
+        let mut d: AideDisplay = serde_json::from_value(json!({
+            "topic": {"key": "a", "label": "old", "tx": 1},
+            "parts": [{"id": "p0", "kind": "gate", "ref": {"board": "b", "id": "g", "rx": 2},
+                       "topic": "a", "shownAt": 1, "by": "x", "px": 3}],
+            "earlier": [{"key": "z", "label": "Z", "ex": 4}],
+            "seq": 1,
+        }))
+        .unwrap();
+        on_show(&mut d, "a", "g2", 2);
+        on_show(&mut d, "a", "g", 3);
+        assert_eq!(d.topic.as_ref().unwrap().extra["tx"], 1);
+        assert_eq!(d.parts.len(), 2);
+        assert_eq!(d.parts[0].id, "p2");
+        assert_eq!(d.parts[0].shown_at, 3);
+        assert_eq!(d.parts[0].by, "aide");
+        assert_eq!(d.parts[0].extra["px"], 3);
+        assert_eq!(d.parts[0].reference.as_ref().unwrap().extra["rx"], 2);
+        // Away to the earlier topic and back, and into `earlier` and out again.
+        on_show(&mut d, "z", "g", 4);
+        assert_eq!(d.topic.as_ref().unwrap().extra["ex"], 4);
+        assert_eq!(d.earlier[0].extra["tx"], 1);
+        on_show(&mut d, "a", "g", 5);
+        assert_eq!(d.topic.as_ref().unwrap().extra["tx"], 1);
+        assert_eq!(d.earlier[0].extra["ex"], 4);
     }
 }
