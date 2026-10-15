@@ -183,7 +183,7 @@ function aidePlaceholderHtml() {
   }
   if (v && aide.error) lines.push(muted(`副官の状態を読めませんでした: ${aide.error}`));
   if (aide.pendingAsk) {
-    lines.push(muted(`副官が動き出したら、次を送ります: 「${aide.pendingAsk}」`),
+    lines.push(muted(`副官の手が空いたら、次を送ります: 「${aide.pendingAsk}」`),
       '<button type="button" class="btn-m3-text" data-aide-ask-cancel>取り消す</button>');
   }
   return lines.join('');
@@ -275,11 +275,11 @@ function aideAsk(text) {
 }
 
 /* Only once the agent has been heard from: its hooks run after the folder-trust question, so an Enter queued before that
-   could never answer it. */
+   could never answer it. Nor while it waits on the person (a permission or a question): the Enter would pick an answer. */
 function aideFlushAsk() {
   const v = aide.view;
   const handle = aideTerm.term;
-  if (!aide.pendingAsk || v?.state !== 'running' || !v.agentSession || !handle || aideTerm.ended != null) return;
+  if (!aide.pendingAsk || v?.state !== 'running' || !v.agentSession || v.agentSession.status === 'waiting' || !handle || aideTerm.ended != null) return;
   if (!handle.type(aide.pendingAsk)) return;
   aide.pendingAsk = null;
   // Enter in a chunk of its own: the prompt takes text that arrives with a line break as a paste and keeps the break in it.
@@ -291,7 +291,7 @@ function aideFlushAsk() {
 /* A row of the list, opened from the aide, with the way back. The one entry for what shows a session (「ターミナルを見る」). */
 function aideOpenRow(key) {
   const { rows, turns } = workListRows();
-  const r = [...rows, ...turns].find(x => x.key === key);
+  const r = [...rows, ...turns].find(x => x.key === key) || work.hubsByKey?.get(key);
   if (!r) return note('ターミナルを見る', true, 'その仕事は、いまの一覧にありません');
   aide.from = { board: r.board, ref: r.ref, title: aideRowTitle(r) };
   selectWorkRow(r);

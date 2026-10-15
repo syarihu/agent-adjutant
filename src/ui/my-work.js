@@ -1329,7 +1329,8 @@ wk('wk-list').addEventListener('click', e => {
   if (e.target.closest('[data-wk-aide-all]')) return aideAsk(AIDE_ASK_ALL);
   if ((b = e.target.closest('[data-wk-aide]'))) {
     const { rows, turns } = workListRows();
-    const r = [...rows, ...turns].find(x => x.id === b.dataset.wkAide);
+    // A hub in 新着 is a chip, not one of the rows.
+    const r = [...rows, ...turns, ...(work.hubsByKey?.values() || [])].find(x => x.id === b.dataset.wkAide);
     if (!r) return;
     const gate = (r.live || []).find(i => i.kind === 'gate');
     return aideAsk(aideAskRowText({ nwo: r.nwo, title: aideRowTitle(r), taskId: r.task?.id, kindLabel: gate ? kindOf(gate.gate)[0] : '' }));

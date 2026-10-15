@@ -9,11 +9,11 @@
 .aide-head-main { min-width: 0; }
 .aide-title { margin: 0; font-size: 15px; }
 .aide-sub { font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
-.aide-reset { margin-left: auto; }
+.aide-reset { margin-left: auto; white-space: nowrap; }
 .aide-ava { flex: none; width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 .aide-ava .material-symbols-outlined { font-size: 18px; font-variation-settings: 'FILL' 1; }
-.aide-ctx { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
+.aide-ctx { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
 
 /* The terminal is the narrower side, with a floor it is still usable at; below that the display area goes under it. */
 .aide-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(380px, 2fr) minmax(0, 3fr); }
@@ -23,6 +23,9 @@
 }
 .aide-talk { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--md-sys-color-outline-variant); }
 .aide-term-host { flex: 1; min-height: 0; }
+/* Until a terminal is mounted, what the placeholder says sits at the top rather than under an empty box. */
+.aide-term-host:empty { display: none; }
+.aide-term-host:empty + .aide-term-ph { flex: 1; }
 .aide-term-ph { flex: none; padding: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .aide-term-ph:empty, .aide-term-ph[hidden] { display: none; }
 .aide-scope { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px 10px; font-size: 11.5px; border-top: 1px solid var(--md-sys-color-outline-variant); }
