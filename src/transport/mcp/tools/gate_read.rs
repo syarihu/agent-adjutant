@@ -21,8 +21,11 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let board = text_param(args, "board").ok_or("a gate is found by its board: pass `board`")?;
     let id = text_param(args, "id").ok_or("a gate needs an id")?;
     let root = crate::registry::state_root(None);
-    // The board first: `gate::get` builds a path from the slug, and only a board the address
-    // book knows is one.
+    // The board first: `address_of` and `gate::get` build paths from the slug, and only a board
+    // the address book knows is one.
+    if !crate::task::is_plain_id(board) {
+        return Err(format!("no such board: {board}"));
+    }
     let address = crate::registry::address_of(&root, board)
         .ok_or_else(|| format!("no such board: {board}"))?;
     if !crate::task::is_plain_id(id) {

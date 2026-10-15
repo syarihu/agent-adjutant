@@ -669,6 +669,7 @@ fn a_gate_is_read_in_full_by_its_board_and_id() {
         json!({"board": slug}),
         json!({"board": slug, "id": ""}),
         json!({"board": "nope-0000000000000000", "id": "g1"}),
+        json!({"board": "../boards/x", "id": "g1"}),
         json!({"board": slug, "id": "missing"}),
         json!({"board": slug, "id": "../tasks/t1"}),
     ] {

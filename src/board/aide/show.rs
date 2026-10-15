@@ -77,6 +77,10 @@ pub fn show(root: &Path, request: ShowRequest) -> Result<Shown, String> {
 /// The topic a gate belongs to, and the reference a part of it carries. Refuses a gate that
 /// cannot be read.
 fn gate_topic(root: &Path, board: &str, id: &str) -> Result<(Topic, PartRef), String> {
+    // `address_of` builds a path from the slug.
+    if !task::is_plain_id(board) {
+        return Err(format!("no such board: {board}"));
+    }
     let address = crate::registry::address_of(root, board)
         .ok_or_else(|| format!("no such board: {board}"))?;
     if !task::is_plain_id(id) {
@@ -480,6 +484,7 @@ mod tests {
         };
         for (board, id) in [
             ("nope-0000000000000000", "g1"),
+            ("../boards/x", "g1"),
             (slug.as_str(), "missing"),
             (slug.as_str(), "../tasks/t1"),
             (slug.as_str(), ""),
