@@ -547,10 +547,11 @@ fn header_paths(rest: &str) -> Option<(String, String)> {
         return Some((strip(a), strip(b)));
     }
     // A path with a space in it: the same path on both sides, else split at the last ` b/`.
+    // A byte index into text that may hold any character: `get` says no for one that is not on a boundary.
     let same = rest.strip_prefix("a/").and_then(|r| {
         let half = r.len().checked_sub(2)? / 2;
-        (r.len() % 2 == 1 && r[half..].starts_with(" b/") && r[..half] == r[half + 3..])
-            .then(|| r[..half].to_string())
+        let (left, right) = (r.get(..half)?, r.get(half..)?);
+        (r.len() % 2 == 1 && right.strip_prefix(" b/") == Some(left)).then(|| left.to_string())
     });
     if let Some(p) = same {
         return Some((p.clone(), p));
@@ -1518,5 +1519,22 @@ diff --git a/old.rs b/new.rs\nsimilarity index 90%\nrename from old.rs\nrename t
         assert!(!diff_names_file(quoted, "other.rs"));
         assert!(!diff_names_file(FILE_DIFF, "src/a.rs.bak"));
         assert!(diff_names_file(FILE_DIFF, "src/a.rs"));
+    }
+
+    #[test]
+    fn a_header_with_a_multibyte_path_is_read_without_panicking() {
+        for header in [
+            "diff --git a/x b/日本語\n",
+            "diff --git a/日本語 b/x\n",
+            "diff --git a/日 b/日\n",
+            "diff --git a/あ い b/あ い\n",
+            "diff --git a/😀 b/😀😀\n",
+        ] {
+            let _ = diff_names_file(header, "x");
+        }
+        assert!(diff_names_file("diff --git a/日 b/日\nx\n", "日"));
+        assert!(diff_names_file("diff --git a/あ い b/あ い\nx\n", "あ い"));
+        assert!(diff_names_file("diff --git a/x b/日本語\n", "日本語"));
+        assert!(!diff_names_file("diff --git a/x b/日本語\n", "y"));
     }
 }

@@ -1449,15 +1449,19 @@ test('a PR is read as its record, then its read-through, then its diff parsed on
 });
 
 test('a PR read for a part that wanted less is read again for one that wants more, whatever its age, and a failed re-read is said', () => {
-  const c = vm.createContext({ aide: { prs: new Map() } });
-  vm.runInContext(cut(aideSrc, /^const aideHasWanted = [^\n]*;/m) + '\n' + fnSrc(aideSrc, 'aidePrView'), c);
+  const c = vm.createContext({ aide: { prs: new Map() }, prReadKey: rec => rec.sha });
+  vm.runInContext(cut(aideSrc, /^const aideHasWanted = [\s\S]*?\n\};/m) + '\n' + fnSrc(aideSrc, 'aidePrView'), c);
   const has = (e, what) => { c.e = e; c.what = what; return vm.runInContext('aideHasWanted(e, what)', c); };
-  const record = { settled: true, rec: {}, read: undefined, diff: { state: 'loading', files: [] } };
+  const record = { settled: true, rec: { sha: 'B' }, read: undefined, diff: { state: 'loading', files: [] }, readKey: 'B', diffKey: 'B' };
   assert.strictEqual(has(record, {}), true);
   assert.strictEqual(has(record, { read: true, diff: true }), false, 'a record-only entry has no read-through');
   assert.strictEqual(has({ ...record, read: null }, { read: true, diff: true }), true, 'a PR with no read-through has no diff to fetch either');
   assert.strictEqual(has({ ...record, read: {} }, { read: true, diff: true }), false, 'a read-through without its diff');
   assert.strictEqual(has({ ...record, read: {}, diff: { state: 'ok', files: [] } }, { read: true, diff: true }), true);
+  // The record was read again at another head: what is held is of the old one.
+  assert.strictEqual(has({ ...record, read: {}, readKey: 'A', diff: { state: 'ok', files: [] } }, { read: true }), false);
+  assert.strictEqual(has({ ...record, read: {}, diff: { state: 'ok', files: [] }, diffKey: 'A' }, { read: true, diff: true }), false);
+  assert.strictEqual(has({ ...record, read: {}, readKey: 'A' }, {}), true, 'a part that wants neither does not care');
   assert.strictEqual(has(undefined, {}), false);
   // A failed re-read keeps the content and says why; with no content it is an error, not "none".
   c.aide.prs.set('a', { settled: true, rec: { id: 'a' }, read: { sha: 's' }, diff: { state: 'ok', files: [] }, resolved: null, error: 'boom' });
@@ -1465,6 +1469,25 @@ test('a PR read for a part that wanted less is read again for one that wants mor
   const view = id => JSON.parse(JSON.stringify((c.id = id, vm.runInContext('aidePrView(id)', c))));
   assert.deepStrictEqual([view('a').state, view('a').refreshError], ['ok', 'boom']);
   assert.deepStrictEqual([view('b').state, view('b').error], ['error', 'boom']);
+});
+
+test('a task document that comes back after a newer one is dropped, and a failed read keeps the last one with its error', async () => {
+  const pending = [];
+  const c = vm.createContext({ aide: { taskAis: new Map(), taskSeq: {}, taskApplied: {} }, Date, renderAide() {}, boardApi: () => new Promise((res, rej) => pending.push([res, rej])) });
+  vm.runInContext(fnSrc(aideSrc, 'loadAideTaskAi'), c);
+  const load = () => vm.runInContext("loadAideTaskAi({ board: 'b', task: 't' })", c);
+  const first = load();
+  const second = load();
+  pending[1][0]({ pr: 'new', record: null });
+  await second;
+  pending[0][0]({ pr: 'old', record: null });
+  await first;
+  assert.strictEqual(c.aide.taskAis.get('b/t').pr, 'new');
+  const third = load();
+  pending[2][1](new Error('boom'));
+  await third;
+  const kept = c.aide.taskAis.get('b/t');
+  assert.deepStrictEqual([kept.pr, kept.error], ['new', 'boom']);
 });
 
 test('after an answer the next wait is shown only while the part answered is still the top one', () => {

@@ -454,21 +454,27 @@ const PRD_EXCERPT_ROWS = 80;
 /* The lines numbered `from` to `to` on `side` (right: the added and context lines by their new number, left: the removed and
    context lines by their old one), and every line between the first and the last of them, removed ones among them: `{ ks, hunks }`
    (`ks` are the lines' places, `hunks` the hunks they are in), or null when no line of the file is in the range. Past `PRD_EXCERPT_ROWS`
-   rows the lines asked for are kept and the others fill what room is left, in order; `prDiffExcerptHtml` says where lines were left out. */
+   rows the lines asked for are kept and the others fill what room is left, from the start of each gap; `prDiffExcerptHtml` says where lines were left out. */
 function prDiffExcerpt(file, { from, to, side = 'right' }) {
   const left = side === 'left';
   const no = l => (left ? (l.kind === 'del' || l.kind === 'ctx' ? l.old : null) : (l.kind === 'add' || l.kind === 'ctx' ? l.new : null));
   const picked = (file?.all || []).filter(l => l.kind !== 'meta' && no(l) != null && no(l) >= from && no(l) <= to);
   if (!picked.length) return null;
-  let ks = [];
-  for (let k = picked[0].k; k <= picked[picked.length - 1].k; k++) ks.push(k);
-  if (ks.length > PRD_EXCERPT_ROWS) {
-    const asked = new Set(picked.map(l => l.k));
-    if (asked.size >= PRD_EXCERPT_ROWS) ks = picked.slice(0, PRD_EXCERPT_ROWS).map(l => l.k);
-    else {
-      let room = PRD_EXCERPT_ROWS - asked.size;
-      ks = ks.filter(k => asked.has(k) || room-- > 0);
-    }
+  // The picks, and between two of them the lines that lie there: taken from the start of each gap while there is room, so that
+  // what is built never grows with a gap.
+  let ks;
+  if (picked.length >= PRD_EXCERPT_ROWS) ks = picked.slice(0, PRD_EXCERPT_ROWS).map(l => l.k);
+  else {
+    ks = [];
+    let room = PRD_EXCERPT_ROWS - picked.length;
+    picked.forEach((l, i) => {
+      if (i) {
+        const take = Math.min(l.k - picked[i - 1].k - 1, room);
+        for (let k = picked[i - 1].k + 1; k <= picked[i - 1].k + take; k++) ks.push(k);
+        room -= take;
+      }
+      ks.push(l.k);
+    });
   }
   return { ks, hunks: new Set(ks.map(k => file.all[k].h)) };
 }

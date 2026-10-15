@@ -480,11 +480,13 @@ function aidePlanLine(plan) {
 /* The bucket of a child of a parent, the numbers of the bar, and what each child waits on. `children` are the parent's (`{ id, hub,
    title, progress }`), `waitsByChild` the open waits (`aideWaits`) and `tasksByChild` the work document's task of each child
    (`{ prTurn, waitsOnPerson, ... }`), both by `hub/id`. A child the tracker counts and the board does not list is not started. */
-const AIDE_BUCKET_WORD = { merged: 'マージ済み', waiting: 'あなた待ち', working: '進行中', 'not-started': '未着手' };
+const AIDE_BUCKET_WORD = { merged: 'マージ済み', done: '完了', waiting: 'あなた待ち', working: '進行中', 'not-started': '未着手' };
 const AIDE_PERSON_TURNS = ['changes', 'merge', 'ci-failed', 'closed'];
 const aideChildKey = c => `${c.hub}/${c.id}`;
 function aideChildBucket(child, waits, task) {
-  if (child.progress === 'merged' || child.progress === 'done') return 'merged';
+  // `done` is a task that finished with no merged PR: counted apart from `merged`, as the server keeps them apart.
+  if (child.progress === 'merged') return 'merged';
+  if (child.progress === 'done') return 'done';
   if ((waits || []).length || task?.waitsOnPerson || AIDE_PERSON_TURNS.includes(task?.prTurn)) return 'waiting';
   if (child.progress === 'pr' || child.progress === 'working') return 'working';
   return 'not-started';
@@ -501,7 +503,7 @@ function aideChildTurn(child, waits, task, hasRow) {
   return 'hub（着手待ち）';
 }
 function aideParentBuckets(children, waitsByChild, tasksByChild, rowsByChild, total = 0) {
-  const counts = { merged: 0, waiting: 0, working: 0, notStarted: 0 };
+  const counts = { merged: 0, done: 0, waiting: 0, working: 0, notStarted: 0 };
   const items = (children || []).map(c => {
     const waits = waitsByChild?.get(aideChildKey(c)) || [];
     const task = tasksByChild?.get(aideChildKey(c)) || null;
@@ -522,6 +524,7 @@ function aideParentNext(items, waits) {
   const next = (items || []).find(i => i.bucket === 'not-started');
   if (next) return `次に着手: ${next.title}`;
   if ((items || []).length && items.every(i => i.bucket === 'merged')) return 'すべてマージ済み';
+  if ((items || []).length && items.every(i => i.bucket === 'merged' || i.bucket === 'done')) return 'すべて終わっています（マージされていないものがあります）';
   return 'worker が進めています';
 }
 
@@ -549,7 +552,7 @@ registerAidePart('task', (part, ctx) => {
       return `<li class="aide-child ${esc(c.bucket)}"><span class="aide-child-title">${esc(c.title)}</span><span class="aide-child-bucket">${esc(AIDE_BUCKET_WORD[c.bucket])}</span>`
         + `${c.turn ? `<span class="aide-child-turn">${esc(c.turn)}</span>` : ''}${open}</li>`;
     }).join('');
-    const body = aideSection('進み具合', `<div class="aide-bar-row">${aideBarHtml(children, total)}<span>${esc(`マージ ${counts.merged} / あなた待ち ${counts.waiting} / 進行中 ${counts.working} / 未着手 ${counts.notStarted}（全 ${total}）`)}</span></div>`)
+    const body = aideSection('進み具合', `<div class="aide-bar-row">${aideBarHtml(children, total)}<span>${esc(`マージ ${counts.merged} / ${counts.done ? `完了 ${counts.done} / ` : ''}あなた待ち ${counts.waiting} / 進行中 ${counts.working} / 未着手 ${counts.notStarted}（全 ${total}）`)}</span></div>`)
       + (children.length ? aideSection('子タスク', `<ul class="aide-children">${list}</ul>`) : '')
       + aideSection('次に起きること', `<p class="aide-gate-task">${esc(got.next || '')}</p>`)
       + (httpUrl(p?.url) ? `<div class="aide-gate-actions"><a class="aide-link" href="${esc(httpUrl(p.url))}" target="_blank" rel="noopener noreferrer">${aideIcon('open_in_new')}<span>GitHub で開く</span></a></div>` : '');
@@ -674,7 +677,7 @@ registerAidePart('session', (part, ctx) => {
   if (s.waiting) rows.push(prKv('判断待ち', esc(`${kindOf(s.waiting.kind)[0]}（あなたの判定待ち）`)));
   const said = a.lastMessage
     ? `<details class="aide-more"><summary>最後のメッセージ${fns.said(a.lastMessage) ? ` — ${esc(fns.said(a.lastMessage))}` : ''}</summary><div class="aide-said">${md(a.lastMessage)}</div></details>` : '';
-  return { ...base, where: got.nwo || '', title: task?.title || fns.title?.(r) || ref.id, body: `<div class="aide-session"><div class="tp-kvs">${rows.join('')}</div>${said}`
+  return { ...base, where: got.nwo || '', title: task?.title || fns.title?.(r) || ref.id, body: `<div class="aide-session">${aideStaleNote(got.refreshError)}<div class="tp-kvs">${rows.join('')}</div>${said}`
     + `<div class="aide-gate-actions">${r.key ? aideTermButtonHtml(r.key) : ''}</div></div>` };
 });
 

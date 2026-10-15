@@ -29,6 +29,8 @@ const aide = {
   local: null,       // { part, serverTop, topic }: the part this page put on top of the aide's (aideDisplayFollowed); page memory only
   prs: new Map(),    // PR id -> { rec, read, diff, resolved, settled, error, at, recKey, readKey, diffKey }: what the parts that name a PR read of it (records only)
   taskAis: new Map(), // `board/task` -> { pr, record, at, error }: a task's PR and the record of it, as `GET /api/tasks/<id>/ai` says
+  taskSeq: {},       // `board/task` -> reads of its document sent so far; and the newest applied
+  taskApplied: {},
   prSeq: {},         // PR id -> reads of it sent so far; and, as boardSeq is, the newest applied
   prApplied: {},
   gateDiffs: new Map(), // gate ref -> { diff, files }: a gate's diff parsed once, not at every redraw
@@ -152,7 +154,12 @@ function aideWanted() {
 }
 
 /* Whether the entry of a PR holds what `what` asks for: the read-through when wanted (`undefined` is never fetched), the diff when wanted. */
-const aideHasWanted = (e, what) => !!e && e.settled && (!what.read || e.read !== undefined) && (!what.diff || !e.read || e.diff.state !== 'loading');
+const aideHasWanted = (e, what) => {
+  if (!e || !e.settled) return false;
+  // What it holds must be of the record's current head: a record read again at another head makes an old read-through or diff stale.
+  const key = e.rec ? prReadKey(e.rec) : 'no-record';
+  return (!what.read || (e.read !== undefined && e.readKey === key)) && (!what.diff || !e.read || (e.diff.state !== 'loading' && e.diffKey === key));
+};
 
 /* Whether something read at `at` is recent enough not to be read again. */
 const aideIsFresh = (at, force) => !force && at != null && Date.now() - at < AIDE_BOARD_FRESH_MS;
@@ -200,10 +207,19 @@ async function loadAideRecords(force = false) {
 
 async function loadAideTaskAi({ board, task }) {
   const key = `${board}/${task}`;
+  const n = aide.taskSeq[key] = (aide.taskSeq[key] || 0) + 1;
+  // As the boards' and PRs' reads are: one sent before a newer one was applied must not replace it.
+  const current = () => {
+    if (n < (aide.taskApplied[key] || 0)) return false;
+    aide.taskApplied[key] = n;
+    return true;
+  };
   try {
     const doc = await boardApi(`/b/${board}`, `/api/tasks/${encodeURIComponent(task)}/ai`);
+    if (!current()) return;
     aide.taskAis.set(key, { pr: doc.pr || null, record: doc.record || null, at: Date.now(), error: null });
   } catch (e) {
+    if (!current()) return;
     // What was read stays: a failed read is not an answer that there is no PR.
     aide.taskAis.set(key, { ...(aide.taskAis.get(key) || { pr: null, record: null }), at: Date.now(), error: e.message });
   }
@@ -278,7 +294,9 @@ function aideGateView(ref, rowKeyOf) {
   if (g.title) aide.gateTitles.set(ref, g.title);
   const task = (b.data.tasks || []).find(t => t.id === g.task) || null;
   const m = entry && !entry.isHub && work.doc ? workAwayModel(entry, workMarks(entry.nwo)[entry.id], [], workServerNow()) : null;
-  return { ...known, g, task, refreshError: b.error, read: aideTaskRead(board, g.task), away: m ? workAwayHtml(m, workServerNow(), false) : '',
+  const ai = g.task ? aide.taskAis.get(`${board}/${g.task}`) : null;
+  const prEntry = ai?.pr && ai.record?.ai?.sha ? aide.prs.get(ai.pr) : null;
+  return { ...known, g, task, refreshError: b.error || ai?.error || prEntry?.error || null, read: aideTaskRead(board, g.task), away: m ? workAwayHtml(m, workServerNow(), false) : '',
     parentTitle: entry?.task?.parent ? aideParentTitle(entry.nwo, entry.task.parent) || entry.task.parent : '' };
 }
 
@@ -350,7 +368,7 @@ function aideSessionView(board, id) {
     phaseMinutes: x => (x.s.phaseAt != null && x.data.now != null ? minutesSince(x.s.phaseAt, x.data.now) : null),
     title: x => sessionLabel(x.s, false, x.data).text,
   };
-  return { r, fns, nwo: repo.nwo, stuckAfter: Number(aide.boards[board]?.data?.stuckAfterMinutes) || 0 };
+  return { r, fns, nwo: repo.nwo, stuckAfter: Number(aide.boards[board]?.data?.stuckAfterMinutes) || 0, refreshError: aideBoardError(board) };
 }
 
 /* `ctx.pr(id)`: the record, read-through and parsed diff of a PR the parts name. */

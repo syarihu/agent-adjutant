@@ -392,3 +392,12 @@ test('an excerpt with a huge removal between two added lines keeps the lines ask
   // A range with no gap is not marked.
   assert.ok(!ctx.prDiffExcerptHtml(f, [0, 1, 2], null, null).includes('行省略'));
 });
+
+test('an excerpt over a span of hundreds of thousands of lines is built from the picks and the start of each gap, not from the span', () => {
+  const all = [{ kind: 'add', new: 1, old: null, text: 'a', h: 0, k: 0 }];
+  for (let i = 1; i <= 300000; i++) all.push({ kind: 'del', new: null, old: i, text: 'd', h: 0, k: i });
+  all.push({ kind: 'add', new: 2, old: null, text: 'b', h: 0, k: 300001 });
+  const got = ctx.prDiffExcerpt({ all, hunks: [{ header: '@@' }] }, { from: 1, to: 2 });
+  assert.equal(got.ks.length, 80);
+  assert.deepEqual([got.ks[0], got.ks[1], got.ks[78], got.ks[79]], [0, 1, 78, 300001]);
+});

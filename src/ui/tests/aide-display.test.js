@@ -571,7 +571,7 @@ test('a parent sorts its children into merged, waiting on you, in progress and n
   const rows = new Map([['h/4', 's/h/4']]);
   const got = plain(run('aideParentBuckets')(CHILDREN, waitsBy, tasks, rows, 7));
   assert.deepEqual(got.items.map(i => i.bucket), ['merged', 'waiting', 'waiting', 'working', 'not-started']);
-  assert.deepEqual(got.counts, { merged: 1, waiting: 2, working: 1, notStarted: 3 });
+  assert.deepEqual(got.counts, { merged: 1, done: 0, waiting: 2, working: 1, notStarted: 3 });
   assert.equal(got.total, 7);
   assert.deepEqual(got.items.map(i => i.turn), ['', `あなた（${run('kindOf')('diff')[0]}）`, 'あなた（修正の依頼が来ています）', 'bot・CI', 'hub（着手待ち）']);
   assert.equal(got.items[1].waitKey, 'h/g2');
@@ -712,4 +712,20 @@ test('a part whose last read failed says so over what it still shows, and says n
   assert.ok(has(html('task', { board: 's', id: '41' }, { task: () => ({ task: TCARD, plan: null, gates: [], refreshError: err }) })));
   assert.ok(has(gatePart({ gate: () => ({ g: GATE, task: TASK, nwo: 'a/b', board: 's', refreshError: err }) })));
   assert.ok(!html('read', { pr: 'a/b#1' }, { pr: () => ({ state: 'ok', rec: REC, read: READ, diff }) }).includes('最新の読み込みに失敗'));
+});
+
+test('a child that finished with no merged PR is done, not merged, and a parent is not said to be all merged while one is only done', () => {
+  const kids = [{ id: '1', hub: 'h', title: 'A', progress: 'merged' }, { id: '2', hub: 'h', title: 'B', progress: 'done' }];
+  const got = plain(run('aideParentBuckets')(kids, new Map(), new Map(), new Map(), 2));
+  assert.deepEqual(got.items.map(i => i.bucket), ['merged', 'done']);
+  assert.deepEqual(got.counts, { merged: 1, done: 1, waiting: 0, working: 0, notStarted: 0 });
+  assert.equal(run('aideParentNext')(got.items, []), 'すべて終わっています（マージされていないものがあります）');
+  assert.equal(run('aideParentNext')([got.items[0]], []), 'すべてマージ済み');
+  const out = html('task', { board: 's', parent: 'k' }, { parent: () => ({ p: { title: 'P' }, children: got.items, counts: got.counts, total: 2, next: 'n' }) });
+  assert.ok(out.includes('マージ 1 / 完了 1 / あなた待ち 0') && out.includes('<i class="done"') && out.includes('完了'));
+});
+
+test('the session part says when the last read of its board failed', () => {
+  const out = html('session', { board: 's', id: 'a' }, { session: () => ({ r: SROW(), fns: FNS, nwo: 'a/b', stuckAfter: 0, refreshError: 'boom' }) });
+  assert.ok(out.includes('最新の読み込みに失敗しました: boom'));
 });
