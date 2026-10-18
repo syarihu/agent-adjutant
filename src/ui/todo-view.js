@@ -105,13 +105,14 @@ function todoSetHtml(slot, el, html) {
 const todoCtxOf = g => ({ ...questionCtxFor(g), key: gateKey(g) });
 
 /* Why the list cannot be trusted to be whole, as a line: a read that failed is not an empty list. */
-const todoWorkNote = () => !work.doc ? (work.error ? `読み込めませんでした: ${work.error}` : '読み込み中…') : '';
-const todoOthersNote = () => others.error ? `<p class="todo-hint">レビュー依頼を読めませんでした: ${esc(others.error)}</p>` : '';
+const todoStatus = () => todoNotes({ workDoc: work.doc, workError: work.error, othersDoc: others.doc, othersError: others.error });
+const todoNotesHtml = notes => notes.map(n => `<p class="todo-hint todo-note">${esc(n)}</p>`).join('');
 
 function todoListOf(items, sel) {
   // Nothing has been read yet, or the read failed: not the same as nothing waiting.
-  if (!work.doc) return `<p class="todo-hint">${esc(todoWorkNote())}</p>`;
-  return todoOthersNote() + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, sel, now: Date.now() / 1000, records: othersRecords() });
+  const st = todoStatus();
+  if (st.blocked) return todoNotesHtml([st.blocked]);
+  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, sel, now: Date.now() / 1000, records: othersRecords(), emptyOk: st.emptyOk });
 }
 
 function todoDrawBadge(items) {
@@ -136,15 +137,16 @@ function todoPrCardHtml(rec) {
   const sub = [rec.repo, rec.author ? `@${rec.author}` : '', othersRequestedLabel(rec, now)].filter(Boolean).map(x => `<span class="qc-where">${esc(x)}</span>`).join('');
   return `<article class="qc todo-article" data-todo-pr="${esc(rec.id)}"><header class="qd-head"><div class="qd-head-main">`
     + `<div class="qd-sub"><span class="qc-kind"><i class="todo-pr-dot"></i>レビュー依頼</span>${sub}</div><h2 class="qd-title">#${esc(rec.number)} ${esc(rec.title)}</h2></div></header>`
-    + `<div class="qd-body"><section class="qc-stage"><h3><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>AI 下読み</span></h3><p class="todo-stage">${esc(stage)}</p></section></div>`
+    + `<div class="qd-body">${todoNotesHtml(todoStatus().notes)}<section class="qc-stage"><h3><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>AI 下読み</span></h3><p class="todo-stage">${esc(stage)}</p></section></div>`
     + `<footer class="qd-foot"><div class="decide qc-decide"><button type="button" class="btn-m3-primary" data-todo-pr-open="${esc(rec.id)}">レビューの画面で開く</button>`
     + `<span class="qc-spacer"></span>${url ? `<a class="qc-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>GitHub で開く</span></a>` : ''}</div></footer></article>`;
 }
 
 function todoEmptyCardHtml(items) {
-  if (!work.doc) return `<div class="todo-card-empty"><p class="todo-hint">${esc(todoWorkNote())}</p></div>`;
+  const st = todoStatus();
+  if (st.blocked) return `<div class="todo-card-empty">${todoNotesHtml([st.blocked])}</div>`;
   const hint = items.quick.length ? '左の確認は、その場で押せます。' : 'worker が何か聞いてきたら、ここに出ます。';
-  return `<div class="todo-card-empty">${todoOthersNote()}<p class="todo-empty">あなたの番はありません</p><p class="todo-hint">${esc(hint)}</p></div>`;
+  return `<div class="todo-card-empty">${todoNotesHtml(st.notes)}${st.emptyOk ? `<p class="todo-empty">あなたの番はありません</p><p class="todo-hint">${esc(hint)}</p>` : ''}</div>`;
 }
 
 /* The gate's card: the head when it changed, the body that scrolls when it changed and nothing in it has the focus (keeping where it was
@@ -152,6 +154,9 @@ function todoEmptyCardHtml(items) {
 function todoDrawGateCard(el, key, g) {
   const ctx = todoCtxOf(g);
   const c = questionCardHtml(g, { ...ctx, draft: questionDrafts.get(key) || '' });
+  // The cached card stays, with why it may be old.
+  const why = todoBoardError(key);
+  if (why) c.head += `<p class="todo-note">${esc(`このボードの最新を読めませんでした: ${why}`)}</p>`;
   const shown = todo.card?.key === key && el.querySelector('article[data-qc-gate]');
   if (!shown) {
     todo.html.card = null;

@@ -49,11 +49,25 @@ function todoPickSelection(sel, before, after) {
 
 const todoWaited = (since, now) => (Number.isFinite(since) ? `${agoLabel(minutesSince(since, now))}から待ち` : '待ち');
 
+/* What the three sources (the work document, the review records, a board's state) say about whether the list can be trusted, one rule
+   for all: an error with no data is the error and no list (`blocked`, or for the records only, no claim that nothing waits: `emptyOk`);
+   an error with old data keeps the data and adds a line. `blocked` is the one line to show instead of the list, `notes` the lines over it. */
+function todoNotes({ workDoc, workError, othersDoc, othersError }) {
+  if (!workDoc) return { blocked: workError ? `読み込めませんでした: ${workError}` : '読み込み中…', notes: [], emptyOk: false };
+  const notes = [];
+  if (workError) notes.push(`最新を読めませんでした: ${workError}`);
+  if (!othersDoc) notes.push(othersError ? `レビュー依頼を読めませんでした: ${othersError}` : 'レビュー依頼を読み込み中…');
+  else if (othersError) notes.push(`レビュー依頼の最新を読めませんでした: ${othersError}`);
+  return { blocked: null, notes, emptyOk: !!othersDoc };
+}
+
 /* A quick question as its row, with where it is from. Until the board it is on has been read there is no question to show, and no button. */
 function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = null) {
   const from = `<div class="todo-from">${esc(item.nwo)} · ${esc(todoWaited(item.since, now))}</div>`;
   if (!g) return `<div class="todo-quick todo-pending" data-todo-key="${esc(item.key)}"><div class="qc-quick"><b class="qc-quick-text">${esc(item.title)}</b><span class="todo-loading">${error ? esc(`このボードを読めませんでした: ${error}`) : '読み込み中…'}</span></div>${from}</div>`;
-  return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key })}<div class="todo-task">${esc(item.title)}</div>${from}</div>`;
+  // The cached question stays (the server refuses an answer to one that no longer waits), with why it may be old.
+  const stale = error ? `<div class="todo-note">${esc(`このボードの最新を読めませんでした: ${error}`)}</div>` : '';
+  return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key })}<div class="todo-task">${esc(item.title)}</div>${stale}${from}</div>`;
 }
 
 /* A gate to read as a button that selects it: what kind, which task, what is asked (the worker's own words, else the kind's fixed question). */
@@ -80,9 +94,10 @@ function todoPrRowHtml(rec, sel, now = Date.now() / 1000, records = []) {
 
 /* The whole list: the quick rows, then (only when there is something to read) a separator, the gates to read and the pull requests.
    `gateOf(key)` is the gate once its board has been read, `errorOf(key)` why that read failed, `ctxOf(g)` the card's context, `sel` the selected key. */
-function todoListHtml(items, { gateOf = () => null, errorOf = () => null, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, records = [] } = {}) {
-  if (!items.count) return '<p class="todo-empty">あなたの番はありません</p>';
-  const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now, g ? null : errorOf(w.key)); }).join('');
+function todoListHtml(items, { gateOf = () => null, errorOf = () => null, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, records = [], emptyOk = true } = {}) {
+  // Nothing waiting is only said when every source was read.
+  if (!items.count) return emptyOk ? '<p class="todo-empty">あなたの番はありません</p>' : '';
+  const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now, errorOf(w.key)); }).join('');
   const heavy = items.read.length + items.prs.length > 0;
   return quick
     + (heavy && items.quick.length ? '<h3 class="todo-sep">読んで決める</h3>' : heavy ? '<h3 class="todo-sep first">読んで決める</h3>' : '')

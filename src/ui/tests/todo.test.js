@@ -25,8 +25,8 @@ run([
 ].join('\n'), 'decide.js');
 run(read('question-card.js'), 'question-card.js');
 run(read('todo.js'), 'todo.js');
-const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, TODO_READ_ORDER } = vm.runInContext(
-  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, TODO_READ_ORDER })', ctx);
+const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, TODO_READ_ORDER } = vm.runInContext(
+  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, TODO_READ_ORDER })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -154,4 +154,26 @@ test('the selection stays, moves to the one that took its place, or starts on th
   assert.equal(todoPickSelection(null, [], ['a', 'b']), 'a');
   assert.equal(todoPickSelection('x', ['a'], ['a', 'b']), 'a');
   assert.equal(todoPickSelection('a', ['a'], []), null);
+});
+
+test('an error with no data is the error, and an error with old data is the data with a line', () => {
+  const ok = { workDoc: {}, othersDoc: {} };
+  assert.deepEqual(todoNotes({ ...ok }), { blocked: null, notes: [], emptyOk: true });
+  assert.equal(todoNotes({ workDoc: null, workError: 'down' }).blocked, '読み込めませんでした: down');
+  assert.equal(todoNotes({ workDoc: null }).blocked, '読み込み中…');
+  assert.deepEqual(todoNotes({ ...ok, workError: 'down' }).notes, ['最新を読めませんでした: down']);
+  const noOthers = todoNotes({ workDoc: {}, othersDoc: null, othersError: 'nope' });
+  assert.deepEqual(noOthers.notes, ['レビュー依頼を読めませんでした: nope']);
+  assert.equal(noOthers.emptyOk, false);
+  assert.deepEqual(todoNotes({ ...ok, othersError: 'nope' }).notes, ['レビュー依頼の最新を読めませんでした: nope']);
+});
+
+test('nothing waiting is claimed only when every source was read, and a cached quick row says its board is stale', () => {
+  const none = todoItems({ doc: doc(), records: [] });
+  assert.equal(todoListHtml(none, { emptyOk: false }), '');
+  const it = todoItems({ doc: doc([repo('acme/widget', [turn('t1', [gate('g1', 'question', 1, { quick: true })])])]), records: [] });
+  const g = { id: 'g1', kind: 'question', title: 'Which?', _slug: 'b1', choices: [{ id: 'a', label: 'Yes' }] };
+  const html = todoListHtml(it, { gateOf: () => g, errorOf: () => 'HTTP 500', now: T0 });
+  assert.ok(html.includes('data-choice="a"'));
+  assert.ok(html.includes('このボードの最新を読めませんでした: HTTP 500'));
 });

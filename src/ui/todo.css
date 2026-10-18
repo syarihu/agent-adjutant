@@ -23,6 +23,8 @@ body.view-todo #crumbs { visibility: hidden; }
 .todo-task { padding: 2px 10px 0; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 /* The popover is short: a long question is cut at two lines there (the list and the card show it whole). */
 .todo-pop .qc-quick-text { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.todo-note { color: var(--md-sys-color-error); }
+.todo-quick > .todo-note { padding: 2px 10px 0; font-size: 11.5px; }
 .todo-loading { color: var(--md-sys-color-on-surface-variant); }
 
 /* What is read first: a button to a row, the selected one lit. */
