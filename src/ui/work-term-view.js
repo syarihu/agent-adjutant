@@ -36,7 +36,12 @@ function drawWorkAsk(html) {
   }
   workAskHeld = false;
   const arriving = !workTermPart.ask && !!html;
+  // A redraw replaces the button that was pressed: the focus goes back to the fold button of the same question.
+  const foldKey = el.contains(document.activeElement) ? document.activeElement.closest?.('[data-wk-fold]')?.dataset.wkFold : null;
   setWorkTermPart('ask', el, html);
+  if (foldKey != null && !el.contains(document.activeElement)) {
+    [...el.querySelectorAll('[data-wk-fold]')].find(b => b.dataset.wkFold === foldKey)?.focus();
+  }
   if (arriving) {
     el.classList.remove('slide');
     void el.offsetWidth;
@@ -65,6 +70,8 @@ function renderWorkTermOverlays({ own, task, hub, reading }) {
     ctxOf: questionCtxOf, keyOf: gateKey, hub: !!hub, folded: workAskFolded, draftOf: key => questionDrafts.get(key) || '',
   }));
   drawWorkFabs(own, hub, reading);
+  // Only the count is announced: the questions themselves are read where they are, and a redraw must not read the form out again.
+  setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : '');
 }
 
 workAskEl().addEventListener('click', e => {
@@ -229,6 +236,8 @@ async function workSend(layerEl, withEnter) {
   }
   const buttons = [...layerEl.querySelectorAll('.qd-foot button')].filter(x => !x.disabled);
   buttons.forEach(x => { x.disabled = true; });
+  // Read-only while it goes: what is typed meanwhile would be kept as a draft of text that was sent.
+  box.readOnly = true;
   workSending = true;
   let done = false;
   try {
@@ -242,14 +251,23 @@ async function workSend(layerEl, withEnter) {
       if (workTerm.term !== term || !term.enter()) note('ターミナルに送る', true, '貼り付けは済みましたが、Enter を送れませんでした。ターミナルで押してください');
     }
     done = true;
+  } catch (err) {
+    // A throw from the terminal: nothing is known to have gone in unless `sent` says so, and the draft stays otherwise.
+    note('ターミナルに送る', true, `${err?.message || err}${target.sent ? '' : '。下書きは残してあります'}`);
+    done = target.sent;
   } finally {
     workSending = false;
+    box.readOnly = false;
     if (!done) buttons.forEach(x => { if (x.isConnected) x.disabled = false; });
   }
   dialogStack.closeAll();
   // Only put in: the person reads it in the input box and presses Enter.
   if (!withEnter && workTerm.term === term) term.focus();
 }
+
+/* `workSend` from a listener: a failure is said, not left as an unhandled rejection. */
+const workSendSafely = (layer, withEnter) => workSend(layer, withEnter)
+  .catch(err => note('ターミナルに送る', true, `${err?.message || err}。下書きは残してあります`));
 
 const workSendLayer = e => {
   const layer = e.target.closest?.('.qd-layer');
@@ -258,18 +276,18 @@ const workSendLayer = e => {
 questionDialogEl().addEventListener('click', e => {
   const layer = workSendLayer(e);
   const b = layer && e.target.closest('[data-wk-send]');
-  if (b && !b.disabled) workSend(layer, b.dataset.wkSend === 'send' && layer.querySelector('[data-wk-send-enter]').checked);
+  if (b && !b.disabled) workSendSafely(layer, b.dataset.wkSend === 'send' && layer.querySelector('[data-wk-send-enter]').checked);
 });
 questionDialogEl().addEventListener('keydown', e => {
   const layer = workSendLayer(e);
   // An Enter that confirms IME composition sends nothing (keyCode 229 where compositionend came first).
   if (!layer || !e.target.matches('.wk-send-text') || !(e.metaKey || e.ctrlKey) || e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
   e.preventDefault();
-  workSend(layer, layer.querySelector('[data-wk-send-enter]').checked);
+  workSendSafely(layer, layer.querySelector('[data-wk-send-enter]').checked);
 });
 questionDialogEl().addEventListener('input', e => {
   const layer = workSendLayer(e);
-  if (!layer || !e.target.matches('.wk-send-text') || !workSendTarget) return;
+  if (!layer || !e.target.matches('.wk-send-text') || !workSendTarget || workSendTarget.sent) return;
   if (e.target.value) workSendDrafts.set(workSendTarget.draftKey, e.target.value); else workSendDrafts.delete(workSendTarget.draftKey);
 });
 questionDialogEl().addEventListener('change', e => {
@@ -281,7 +299,14 @@ questionDialogEl().addEventListener('change', e => {
 /* ── a hub's detail ── */
 
 /* The hub's panel, which the work view does not have a column for: the same detail, in a dialog. */
-const workHubInfoHtml = (h, s) => (h.titleState ? `<div class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, hubPanelWakeBase(h))}${hubTitleWhyHtml(h)}</div>` : '')
+/* The banner that names the gate a hub is waiting on and opens it, when that gate is not one of the lines over the terminal (it has a
+   task card, or is on another board): the panel's own rule (`sessJudgeOf`). */
+function workHubWaitingHtml(h, s) {
+  const open = hubOther(h) ? [] : sessGatesOf(s).filter(g => !taskOfGate(g));
+  return s.waiting && !open.some(g => g.id === s.waiting.id) ? sessGateHtml(s) : '';
+}
+
+const workHubInfoHtml = (h, s) => workHubWaitingHtml(h, s) + (h.titleState ? `<div class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, hubPanelWakeBase(h))}${hubTitleWhyHtml(h)}</div>` : '')
   // The button that expands a card is the panel's own; nothing in a dialog answers it.
   + hubDetailHtml(h, s).replace(/<button[^>]*data-expand-open[\s\S]*?<\/button>/g, '');
 
@@ -338,7 +363,9 @@ questionDialogEl().addEventListener('click', e => {
   if (!hub) return note('hub の詳細', true, 'この hub は一覧にありません');
   const b = e.target.closest('[data-tp-hub]');
   const act = b && !b.disabled ? b.dataset.tpHub : '';
-  if (WORK_HUB_OPENS_DIALOG.includes(act)) dialogStack.closeAll();
+  // The gate's own place is in the page behind the dialog.
+  if (e.target.closest('[data-tp-sess-gate]')) dialogStack.closeAll();
+  else if (WORK_HUB_OPENS_DIALOG.includes(act)) dialogStack.closeAll();
   // A hub started from here is connected to once its window exists (syncTermSlot).
   else if (act === 'start') workTerm.reconnect = true;
   const idle = e.target.closest('[data-tp-worktree]');
