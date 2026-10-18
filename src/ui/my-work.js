@@ -258,6 +258,7 @@ function renderWorkBadge() {
   renderDocTitle();
   // What waits in the other organisations is the switch's badge.
   renderOrgSwitch();
+  renderWorkTools();
 }
 
 /* The row the person leaves: `left` is written for 離れていた間に; the row is not read by it. Called when the address moves off it, when the view does, and when the
@@ -675,7 +676,7 @@ function workParentMeta(p) {
 function workRequestsHtml(c) {
   const n = Number(c.hub?.requestsUnseen) || 0;
   if (!n) return '';
-  const newest = (c.hub.inbox || []).find(m => m.kind === 'request' && !m.seen);
+  const newest = (c.hub.inbox || []).find(m => m.kind === 'request' && !m.seen && m.counted);
   const subject = newest ? `: 「${esc(String(newest.subject || '').split('\n')[0])}」` : '';
   return `<span class="wk-line wk-inbox-req"><span class="material-symbols-outlined" aria-hidden="true">mark_email_unread</span>未読の依頼 ${n}${subject}</span>`;
 }
@@ -1304,6 +1305,12 @@ function workTrackParks() {
   }
 }
 
+/* The actions on new rows (ask about all, read all, 「処理したら次へ」) are there while something is new in the tasks' list. */
+function renderWorkTools() {
+  const tools = wk('wk-list-tools');
+  if (tools) tools.hidden = prefs.workTab === 'others' || workNewCount() === 0;
+}
+
 /* The switch between the two lists: which is pressed, which is shown, and what belongs to one only (the request button and the
    filter are the tasks'; the dot is the other's). */
 function renderWorkTabs() {
@@ -1313,7 +1320,7 @@ function renderWorkTabs() {
   wk('ov-scroll').hidden = !others;
   // What belongs to the tasks' list only: the place to ask for a task, the filter and the actions on new rows.
   wk('wk-ask').hidden = others;
-  wk('wk-list-tools').hidden = others;
+  renderWorkTools();
   renderOthersStaleDot();
 }
 

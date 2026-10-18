@@ -1108,9 +1108,12 @@ fn unread_requests_are_counted_over_the_whole_inbox() {
     let read_one = sent(&root, "dashboard", "request", "already read");
     sent(&root, "dashboard", "request", "still waiting");
     sent(&root, "w", "notice", "plain notice");
+    // The hub's own copy of a request is not waiting on it, so it is in neither count.
+    sent(&root, "adjutant-acme-widget", "request", "its own");
     read(&root, "acme-widget", &read_one).unwrap();
     let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     assert_eq!(hubs[0].requests_unseen, 1);
+    assert!(hubs[0].requests_unseen <= hubs[0].unseen);
 
     // The listing keeps the newest 20; a request older than all of them is still counted.
     let inbox = inbox_dir(&root, "acme-widget");

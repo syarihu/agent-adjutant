@@ -738,9 +738,9 @@ test('a hub says how many requests it has not read, with the newest one\'s subje
   const hub = (extra, st = 'stopped', more = {}) => ({ ...hubItem({ unseen: 1, ...extra }), st, ...more });
   assert.strictEqual(run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 0 }) }), '');
   assert.strictEqual(run('workRequestsHtml(c)', { c: hub({}) }), '');
-  const inbox = [{ kind: 'report', seen: false, subject: 'a report' }, { kind: 'request', seen: false, subject: 'newest <b>' }, { kind: 'request', seen: false, subject: 'older' }, { kind: 'request', seen: true, subject: 'read' }];
+  const inbox = [{ kind: 'report', seen: false, counted: true, subject: 'a report' }, { kind: 'request', seen: false, counted: false, subject: 'the hub\'s own' }, { kind: 'request', seen: false, counted: true, subject: 'newest <b>' }, { kind: 'request', seen: false, counted: true, subject: 'older' }, { kind: 'request', seen: true, subject: 'read' }];
   const line = run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 2, inbox }) });
-  assert.ok(line.includes('未読の依頼 2') && line.includes('「newest <b>」') && !line.includes('older') && !line.includes('a report'));
+  assert.ok(line.includes('未読の依頼 2') && line.includes('「newest <b>」') && !line.includes('older') && !line.includes('a report') && !line.includes('own'));
   // The listed inbox keeps only the newest few, so the count can be more than it names.
   const far = run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 3, inbox: [{ kind: 'report', seen: false, subject: 's' }] }) });
   assert.ok(far.includes('未読の依頼 3') && !far.includes('「'));
