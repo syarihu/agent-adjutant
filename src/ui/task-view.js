@@ -179,6 +179,24 @@ function unsureCardHtml(g) {
   return `<div class="panel"${expandAttrs('unsure', g)}>${expandBtnHtml('迷っていること')}<h3><span class="material-symbols-outlined" style="font-size:18px;">help</span><span>迷っていること</span></h3><div class="body">${md(g.unsure)}</div></div>`;
 }
 
+/* A plan's steps in the order the worker gave them, a line of detail under each. */
+function stepsCardHtml(g) {
+  if (!g.steps?.length) return '';
+  return `<div class="panel"${expandAttrs('steps', g)}>${expandBtnHtml('計画の手順')}<h3><span class="material-symbols-outlined" style="font-size:18px;">format_list_numbered</span><span>計画の手順</span></h3><ol class="steps">${g.steps.map(x => `<li>${esc(x.text)}${x.detail ? `<div class="step-detail">${esc(x.detail)}</div>` : ''}</li>`).join('')}</ol></div>`;
+}
+
+/* What the worker found (`stage` found, the default) or planned (`plan`), a block under each heading it picked. `stage` left out
+   draws both; a stage this page does not know reads as found, so a newer binary's gate still shows. */
+function sectionsCardsHtml(g, stage) {
+  const panel = (of, title, icon) => {
+    const items = (g.sections || []).filter(x => (x.stage === 'plan' ? 'plan' : 'found') === of);
+    if (!items.length) return '';
+    return `<div class="panel"${expandAttrs('sections', g)}>${expandBtnHtml(title)}<h3><span class="material-symbols-outlined" style="font-size:18px;">${icon}</span><span>${title}</span></h3>` +
+      items.map(x => `<h4 class="sec-heading">${esc(x.heading)}</h4><div class="body">${md(x.body)}</div>`).join('') + `</div>`;
+  };
+  return (stage === 'plan' ? '' : panel('found', '調べたこと', 'manage_search')) + (stage === 'found' ? '' : panel('plan', '計画', 'checklist'));
+}
+
 /* The worker's report on a gate. */
 function reportCardHtml(g) {
   if (!g.body) return '';
@@ -485,6 +503,7 @@ function planGateCardsHtml(plan) {
   if (!plan) return '';
   let h = '';
   if (plan.facts?.length) h += `<div class="panel"${expandAttrs('facts', plan)}>${expandBtnHtml('事実')}<h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+  h += sectionsCardsHtml(plan, 'found') + stepsCardHtml(plan) + sectionsCardsHtml(plan, 'plan');
   h += reportCardHtml(plan);
   h += choicesHtml(plan, isWaiting(plan));
   if (plan.unsure) h += `<div class="panel"${expandAttrs('unsure', plan)}>${expandBtnHtml('迷っていること')}<h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
@@ -553,7 +572,7 @@ function reviewTab(task, all, pick) {
   // that, above the rounds, the findings and the diff it can be checked against. A record's
   // send-back stays at the end, after what it would be sent back about.
   const waiting = isWaiting(g);
-  let h = gateHeadHtml(g, all) + framesHtml(g) + (waiting ? actHtml(g) : '') + reviewPanels(g);
+  let h = gateHeadHtml(g, all) + framesHtml(g) + sectionsCardsHtml(g) + (waiting ? actHtml(g) : '') + reviewPanels(g);
   h += reportCardHtml(g) + filesTableHtml(g);
   if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   h += diffCardHtml(g);
@@ -570,7 +589,7 @@ function checkTab(task, all, pick) {
       <span class="mono2">${esc(g.worktree)}</span>
       <span style="color:var(--ink-2)">— 確認後、下のボタンで判定してください</span></div>`;
   }
-  h += framesHtml(g) + checkPanels(g) + reportCardHtml(g);
+  h += framesHtml(g) + sectionsCardsHtml(g) + checkPanels(g) + reportCardHtml(g);
   if (g.run) h += `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary>決定事項</summary><div class="body">${md(g.decided)}</div></details></div>`;
   return h + actHtml(g);
@@ -582,7 +601,7 @@ function gateDetailHtml(g, all) {
   let h = `<div class="panel" style="border-color:var(--accent)"><div style="display:flex;gap:8px;align-items:center">` +
     `<span class="tag"><span class="dot" style="background:${esc(kindOf(g.kind)[1])}"></span>${esc(kindOf(g.kind)[0])}</span>` +
     `<span style="flex:1"></span><button type="button" class="iconbtn" data-unpick>閉じる</button></div></div>`;
-  h += gateHeadHtml(g, all) + framesHtml(g) + choicesHtml(g, isWaiting(g)) + reviewPanels(g) + checkPanels(g);
+  h += gateHeadHtml(g, all) + framesHtml(g) + sectionsCardsHtml(g) + stepsCardHtml(g) + choicesHtml(g, isWaiting(g)) + reviewPanels(g) + checkPanels(g);
   if (g.body) h += `<div class="panel"${expandAttrs('report', g)}>${expandBtnHtml('報告')}<h3>報告</h3><div class="body">${md(g.body)}</div></div>`;
   if (g.run) h += `<div class="panel"${expandAttrs('run', g)}>${expandBtnHtml('動かし方')}<h3>動かし方</h3><div class="diff"><div>${esc(g.run).split('\n').join('</div><div>')}</div></div></div>`;
   if (g.decided) h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(g.decided)}</div></div>`;

@@ -501,6 +501,9 @@ function cardDialogTaskGroups(task, all) {
       card(k('head'), '止まっている理由', gateWaitHeadHtml(g, { focus: false }), { wide: true, expand: at('wait', g) }),
       card(k('facts'), '事実', factsCardHtml(g), { expand: at('facts', g) }),
       card(k('focus'), '確認してほしい点', focusCardHtml(g), { expand: at('focus', g) }),
+      card(k('sections'), '調べたこと', sectionsCardsHtml(g), { wide: true, expand: at('sections', g) }),
+      // A plan's steps are in the plan group.
+      g.kind === 'plan' ? null : card(k('steps'), '計画の手順', stepsCardHtml(g), { expand: at('steps', g) }),
       card(k('unsure'), '迷っていること', unsureCardHtml(g), { expand: at('unsure', g) }),
       card(k('report'), '報告', reportCardHtml(g), { expand: at('report', g) }),
       card(k('choices'), '選択肢', choicesHtml(g, true), { wide: true, expand: at('choices', g) }),
@@ -523,6 +526,7 @@ function cardDialogTaskGroups(task, all) {
     ...(gR.wait === false ? [
       card('review:facts', '事実', factsCardHtml(gR), { expand: at('facts', gR) }),
       card('review:focus', '確認してほしい点', focusCardHtml(gR), { expand: at('focus', gR) }),
+      card('review:sections', '調べたこと', sectionsCardsHtml(gR), { wide: true, expand: at('sections', gR) }),
       card('review:unsure', '迷っていること', unsureCardHtml(gR), { expand: at('unsure', gR) }),
       card('review:report', '報告', reportCardHtml(gR), { expand: at('report', gR) }),
     ] : []),
@@ -538,6 +542,7 @@ function cardDialogTaskGroups(task, all) {
       ? `<div class="panel"${expandAttrs('request')}>${expandBtnHtml('依頼内容')}<h3>依頼内容</h3><div class="body">${md(task.body)}</div></div>` : '', { expand: ['request', null] }),
     card('plan:goal', 'ゴール', goalCardHtml(task, plan), { expand: ['goal', plan?.goal ? gateRef(plan) : null] }),
     card('plan:head', '計画', planHeadCardHtml(plan, all.filter(g => g.kind === 'plan'), { chips: false, focus: false }), { expand: at('plan', plan) }),
+    card('plan:steps', '計画の手順', plan ? stepsCardHtml(plan) : '', { expand: at('steps', plan) }),
     card('plan:decided', '決定事項', plan ? decidedHtml(plan) : '', { expand: at('decided', plan) }),
   ];
 
@@ -545,7 +550,10 @@ function cardDialogTaskGroups(task, all) {
   const answered = all.filter(g => !isWaiting(g, data) && g.wait !== false).map(g => {
     const part = (html, wide = false) => html ? `<div class="cd-part${wide ? ' cd-wide' : ''}">${html}</div>` : '';
     const parts = [
-      part(factsCardHtml(g)), part(focusCardHtml(g)), part(unsureCardHtml(g)), part(reportCardHtml(g)),
+      part(factsCardHtml(g)), part(focusCardHtml(g)), part(sectionsCardsHtml(g), true),
+      // The plan shown in the plan group has its steps there.
+      part(g === plan ? '' : stepsCardHtml(g)),
+      part(unsureCardHtml(g)), part(reportCardHtml(g)),
       part(choicesHtml(g, false), true),
       ...(g.kind === 'verify' ? [part(commandsCardHtml(g), true), part(manualCardHtml(g)), part(runHtml(g))]
         : g.kind === 'diff' && g !== gR ? [part(roundsCardHtml(g), true), part(findingsCardHtml(g), true), part(filesTableHtml(g), true), part(diffCardHtml(g), true)] : []),

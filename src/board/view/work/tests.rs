@@ -423,3 +423,17 @@ fn a_gate_of_a_parent_task_hub_is_a_turn_of_that_hubs_board_and_task() {
     );
     assert_eq!(repo.turns[1].gates[0].slug, FEATURE);
 }
+
+#[test]
+fn a_quick_gate_says_so_in_the_list_and_another_says_nothing() {
+    let mut c = carried(REPO);
+    let mut quick = gate_card("g1", None, true);
+    quick.gate.quick = true;
+    c.gates = vec![quick, gate_card("g2", None, true)];
+    let repo = repo_of("acme/widget".to_string(), vec![c]);
+    let gates = &repo.turns[0].gates;
+    assert!(gates[0].quick && !gates[1].quick);
+    let json = serde_json::to_value(gates).unwrap();
+    assert_eq!(json[0]["quick"], true);
+    assert!(json[1].get("quick").is_none(), "{json}");
+}
