@@ -4,13 +4,13 @@
 
 <img alt="agent-adjutant-logo" src="docs/images/agent-adjutant-logo.png" />
 
-> 英語版が正本 ([README.md](README.md))
-
 コーディングエージェントのためのタスク hub を、1つのバイナリで。
 
 ![agent-adjutant デモ](docs/images/demo.ja.gif)
 
-`adjutant` はリポジトリの「副官」として、タスクを worker に割り振り、その報告を受け取ります。hub がタスクを選定して worktree を作成し、指示書を用意して別タブで worker を起動します。worker が作業中に関係のないバグを見つけた場合は、自ら修正や Issue 起票を行わずに hub へ差し戻します。これら一連のワークフローは手順書（プロンプト）としてバイナリに同梱されています。
+`adjutant` はリポジトリの「副官」として、タスクを worker に割り振り、その報告を受け取ります。hub がタスクを選定して worktree を作成し、指示書を用意して別タブで worker を起動します。worker が作業中に関係のないバグを見つけた場合は、自ら修正や Issue 起票を行わずに hub へ差し戻します。これら一連のワークフローは手順書（プロンプト）としてバイナリに同梱されており、MCP 経由でエージェントへ配信されます。
+
+---
 
 ## なぜプロンプトを配信するバイナリなのか
 
@@ -18,9 +18,11 @@
 
 また、hub 名の解決や設定の読み込み、タブ操作、メッセージの受け渡しといった機械的な処理も、以前は複数の手順書に重複して記載されていました。これらを CLI コマンドとして切り出し、手順書からはそのコマンドを呼び出す構成に整理しています。
 
+---
+
 ## インストール
 
-Homebrew の場合:
+### Homebrew
 
 ```bash
 brew install syarihu/tap/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
@@ -29,458 +31,157 @@ adjutant install-mcp --target agy       # Antigravity (agy) に MCP サーバー
 adjutant install-mcp --target json      # 他のクライアント向けに設定用 JSON を出力
 ```
 
-Cargo の場合:
+### Cargo
 
 ```bash
-cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
+cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と `adj` の両方が入ります
 # またはローカルチェックアウトから:
-#   cargo install --path .    （`make install` でも可。`make restart` は `adj server` の再起動、`make reinstall` は両方を行います）
-# または cargo install を使わない場合:
-#   cargo build --release && cp target/release/adjutant target/release/adj ~/bin/
+#   cargo install --path .（`make install` でも可。`make restart` は `adj server` の再起動、`make reinstall` は両方を行います）
 ```
 
-`install-mcp` は `--target claude-code`（既定）で `claude mcp add`、`--target agy` で `agy mcp add` を直接実行して登録します。他のクライアントを使う場合は `--target json` で設定 JSON を出力して手動登録できます。
+> [!IMPORTANT]
+> **登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
 
-**登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
+### グローバルフックの設定
 
-**adjutant が起動していないセッション。** adjutant が起動した Claude Code の hub や worker には、起動時にフックが渡されます。Antigravity のセッションはまだ状態を報告できません（[#520](https://github.com/syarihu/agent-adjutant/issues/520)）。自分で起動した Claude Code のセッションや、Codex のセッション（adjutant が起動したものを含む）も `adjutant agent-sessions` やボードの「いまの仕事」に出したい場合は、同じフックを Claude Code のユーザー設定（Codex は hooks ファイル）に追加します。
+adjutant が起動した Claude Code の hub や worker には起動時に自動でフックが渡されます。自分で起動した Claude Code セッションや Codex のセッションも `adjutant agent-sessions` やボードの「いまの仕事」に反映させるには、次のコマンドでフックを登録します。
 
 ```bash
-adjutant setup claude            # ~/.claude/settings.json（$CLAUDE_CONFIG_DIR 指定時は $CLAUDE_CONFIG_DIR/settings.json）に adjutant のフックを追加する
-adjutant setup claude --remove   # 追加したものだけを取り除く
-adjutant setup codex             # Codex も同様に ~/.codex/hooks.json（$CODEX_HOME 指定時は $CODEX_HOME/hooks.json）へ追加する。新しいフックは Codex が信頼確認を求める
-adjutant setup codex --remove    # Codex の分も同様に取り除く
+adjutant setup claude            # ~/.claude/settings.json にフックを追加
+adjutant setup claude --remove   # 追加したフックのみを削除
+adjutant setup codex             # ~/.codex/hooks.json にフックを追加
+adjutant setup codex --remove    # 追加したフックのみを削除
 ```
 
-自分で書いたフックはそのままにして、その隣に追記します。`--remove` が取り除くのは `… hook <agent> --global` を実行するエントリだけで、`adj` のパスが何であっても対象です。`adj` を移動・アップグレードしたら再実行すると、新しいパスに書き換わります。実行したバイナリのパスがそのまま記録されるため、`cargo run` やビルドディレクトリではなく、インストール済みの `adjutant` から実行してください。ファイルは整形され、キーは並べ替えられて書き戻されます。
+> **短縮名について**: `adj` は `adjutant` のエイリアスです。どちらのバイナリを実行しても同じ動作になります。
 
-**`adj` は `adjutant` の短縮名です。** どちらを実行しても同じように動作します。`adj work` から起動された worker タブも `adj worker` として立ち上がります。
+---
 
-## 2つのモード
+## クイックスタート
 
-シェル側（エージェント起動前のランチャーやフック、手順書内の `Bash` ステップ向け。すべて `adj` でも実行可能）：
+1. **常駐ダッシュボードサーバーを起動する**:
+   ```bash
+   adj server start
+   ```
+   統合 Web ボードが `http://127.0.0.1:4577` で立ち上がります。
+
+2. **リポジトリの hub を起動する**:
+   リポジトリのメインチェックアウトで次のコマンドを実行します。
+   ```bash
+   adj hub
+   ```
+   hub が起動し、タスクの監視や worker への作業割り振りを担当する対話セッションが始まります。
+
+3. **タスクを worker に割り振る**:
+   ボードの新規タスク入力欄、または CLI から直接指示します。
+   ```bash
+   adj work --worktree feature-auth --title "OAuth2 ログインの実装"
+   ```
+   新しいターミナルタブ（または tmux のバックグラウンドウィンドウ）が開き、専用の worktree で worker が実装を開始します。
+
+4. **ボードで確認待ち（gate）に回答する**:
+   worker が実装計画、差分レビュー、動作確認などで人間の判断を必要とすると、**gate** が開きます。Web ボード（`http://127.0.0.1:4577`）上で内容を確認し、回答することで worker は次の工程に進みます。
+
+---
+
+## 基本概念
+
+### Hub と Worker
+- **Hub**: メインチェックアウトで動作します。受信箱の監視、タスクの優先度判断、独立した worktree の作成、worker への指示出しを担当します。
+- **Worker**: タスク専用の git worktree で動作します。一連のフェーズ（`plan` → `implement` → `self-review` → `verify` → `pr`）に沿って実装を進め、人間の判断が必要な箇所で gate を開きます。
+
+### Gate（判断待ちの仕組み）
+エージェントが誰も見ていない端末タブで待たされるのを防ぐため、判断が必要なポイントで構造化された **gate** を作成してターンを終了します。
+- 確認すべきポイント（計画書、コード差分、検証結果）
+- すでに合意された決定事項
+- エージェント自身が迷っている点や判断が必要な選択肢
+
+gate には Web ボードから直接回答できるほか、worker のターミナル上（`adj gate close --terminal`）や CLI からも回答できます。
+
+---
+
+## コマンド・ツールリファレンス
+
+### CLI コマンド（`adj` / `adjutant`）
 
 | コマンド | 説明 |
 | --- | --- |
-| `adjutant hub [--tab] [--resume\|--new] [--no-dashboard\|--dashboard]` | このリポジトリの hub をメインチェックアウトで1つ起動。前回のセッションが `hubAutoResumeHours` 以内に終了していれば再開する（`--tab` は今のタブが hub になるのではなく、新しいタブを開いてそこで起動。`--resume` は終了からの時間に関係なく前回のセッションを再開し、`--new` は時間内でも新しく起動する。`--no-dashboard` は起動時の一覧収集を省略し、`--dashboard` は逆に収集させる。どちらも `startupDashboard` より優先） |
-| `adjutant hub-name [--json]` | hub のセッション名（報告先のアドレス）を出力 |
-| `adjutant config` | このリポジトリ向けに解決された設定を JSON で出力 |
-| `adjutant pending [--json\|--read N\|--ack N\|--path]` | hub 宛ての未処理メッセージを一覧・確認 |
-| `adjutant send --subject … --body …` | hub にメッセージを送信（本文は stdin 可） |
-| `adjutant work --worktree … (--title … \| --task <id> \| --resume)` | 新しいタブを開いて worker を起動（`--task` はタスクレコードのタイトルでタブを名乗る。Issue 由来のタイトルをコマンド行にクォートして書かずに済む。`--resume` はその worktree に保存されたセッションを再開）。`maxWorkers` の数だけ worker が動いていると、何も起動せずに終了コード 3 で返る |
-| `adjutant worker --worktree … [--resume]` | 自身を worker として起動（`work` のタブ内で実行されるコマンド。worktree の中で `--resume` を付けると保存されたセッションを再開） |
-| `adjutant tell --worktree … --subject …` | 指定 worktree の worker にメッセージを送信 |
-| `adjutant outbox [--clear]` | hub から現在の worker 宛てに届いたメッセージを確認 |
-| `adjutant spawn --cwd … -- cmd …` | 新しいタブを開いてコマンドを実行 |
-| `adjutant focus [--worktree …]` | 実行中の hub タブ（`--worktree` ならその worktree の worker のタブ）をアクティブにする（なければ exit 1） |
-| `adjutant phase [--set …]` | worker が今どの工程にいるかを書く（`plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` / `report`）。`--set` 無しなら今の工程を表示 |
-| `adjutant review-engine [--json]` | worker 用。このセルフレビューのラウンドで差分を読むエンジンを返す（`reviewEngine`、`auto` なら Claude のレート制限（status line のリレーが埋めるエージェントセッション台帳、なければレート制限キャッシュ）と `PATH` 上の `codex` で決める）。ユーザーに伝える一文も返す |
-| `adjutant agent-sessions [--json]` | 各エージェントセッションのフックが最後に伝えた状態（idle・running・権限プロンプト待ちの waiting・done・failed）、実行中のサブエージェント、最後に報告したツール、最後のターンの終わりに言った内容を一覧する。プロセスが終わったセッションは出さない |
-| `adjutant setup claude\|codex [--remove]` | adjutant のフックを Claude Code のユーザー設定または Codex の hooks ファイルに追加し、adjutant が起動していないセッションも `agent-sessions` に出す（[インストール](#インストール)参照） |
-| `adjutant close --worktree …` | 指定 worktree の worker が座っているタブを閉じる（閉じられなければ exit 1） |
-| `adjutant ide --worktree …` | worktree を設定されたエディタで開く |
-| `adjutant title --title …` | 現在のタブの名前を設定（hub 自身も使用） |
-| `adjutant notify --message …` | 人間にデスクトップ通知を送る |
-| `adjutant worktree-path --name … [--unique]` | タスク用 worktree のブランチ名・パスと、作成コマンドを打つメインチェックアウトを出力（`--unique`: パスもブランチも空いている最初の `name`、`name-2`、`name-3`… を選び、`name` として返す） |
-| `adjutant task fetch-issue --id …` | タスクの GitHub Issue を読み直し、タイトルと本文をレコードの `issueSnapshot` に保存する。`task add` / `task update` は、タスクが着手済み（dispatched か pr）になったとき、または Issue が変わったときに同じ読み取りをする。タイトルは256文字、本文は16 KiB まで。板は表示のたびに GitHub へ問い合わせず、「再取得」を押したときだけ読み直す。`task add` や `POST /api/tasks` で Issue URL があり内容が空のときは、サーバーがレコード作成時にこの読み取りをしてタイトルを最初から表示する（GitHub の Issue URL でなければ従来どおり内容が必要。GitHub の Issue で `gh` が読めない場合は、仮タイトル `owner/repo#N` と `titlePending: true` で残し、最初に読めたときに置き換える）。`--take-title` を付けると、タスクにすでにタイトルがあっても Issue のタイトルをタスクのタイトルにする |
-| `adjutant task update --id … --parent URL` | タスクの親タスクを設定する（`''` で消す）。URL か、hub が URL に直すキー。`task add --parent` で付け忘れた記録や、間違って書いた記録をこれで直す。`task brief --parent` はその 1 回の brief だけの上書きで、記録は変えない |
-| `adjutant task add --needs-reading --body -` | 本文が人の言葉だけの依頼を作る（板のフォームが送るもの）。hub が本文を読み、残りを補い、着手前に gate で確認する。サーバーは `autoStart` を false にし、Issue も読まない |
-| `adjutant task update --id … --kind … --done-when … --stop-at … --issue-url … --worktree-name … --title - --read` | hub が依頼を読んだ結果を記録に書く。`--issue-url` と `--worktree-name` は `''` で消す。`--title -` は標準入力から読み、空にはできない。`--read` は「hub の読み取りを人が gate で確認した」ことを表し、`needsReading` の印を外す（記録が着手できる状態でなければ断る。承認の答えは `--read --auto-start true` を 1 回で書く）。URL・worktree 名・`--base` は引用して使えるものだけを受け付け、それ以外は何も書く前に断る |
-| `adjutant task park --id … --reason pdm\|design\|review\|merge-timing\|other [--text …]` | タスクを意図して置く。誰かの返事や、マージのタイミングを待っているときに使う。`--reason other` には `--text` が必要で、`--text -` は標準入力から読む。完了・キャンセル済みのタスクは断る。同じ理由と文で繰り返しても置き始めた時刻は変わらない |
-| `adjutant task unpark --id …` | 置くのをやめる。置いていないタスクには何もしない |
-| `adjutant task brief --id … --worktree … --base … [--language …]` | worker の `.claude/task-brief.md` を、タスクのレコードと設定から書く。`--language` は人が読む言語で、設定に `language` が無いときに使われる。`--id` を省くと、タスクのないセッションの brief になる（指示文は標準入力から）。既にあれば上書きする |
-| `adjutant jules start\|show\|findings\|relay` | タスクの承認済みの計画を Jules に渡す。渡した session の状態を確認する。レビュー指摘を Jules に回す（[Jules に実装を渡す](#jules-に実装を渡す)を参照） |
-| `adjutant hub-stop` | このリポジトリの hub 実行記録をクリア |
-| `adjutant hub-close --hub KEY` | 親タスクの hub を閉じる（この hub に報告する checkout が残っていないときだけ）。実行記録を消し、ボードの一覧から外す。プロセスは止めないので、hub 自身から、または動いていない hub に対して使い、動いている hub を外から閉じようとすると断る。保存済みのセッション・タスク・gate・受信箱は残る |
+| `adj hub [--tab] [--resume\|--new]` | このリポジトリの hub を起動（`--resume` で前回の会話を再開、`--tab` で別タブ起動） |
+| `adj work --worktree … (--title … \| --task <id> \| --resume)` | 新しいタブまたはウィンドウを開き、指定 worktree で worker を起動 |
+| `adj worker --worktree … [--resume]` | worktree 内で自身を worker として実行（`work` の内部で使用） |
+| `adj server start\|stop\|status\|restart` | 全リポジトリを横断する常駐ボードサーバーの管理 |
+| `adj focus [--worktree …]` | hub または worker のターミナルタブを前面に表示 |
+| `adj phase [--set …]` | worker の現在の進捗フェーズの確認・更新 |
+| `adj gate open\|list\|show\|answer\|close` | 人間への判断待ち（gate）の作成・一覧・回答・クローズ |
+| `adj task add\|list\|show\|update\|refresh\|park\|unpark` | タスクレコードの管理、GitHub Issue / PR との状態同期 |
+| `adj agent-sessions [--json]` | 各エージェントセッションの稼働状態、ツール実行、トークン使用量を一覧表示 |
+| `adj send --subject … --body …` | リポジトリ hub の受信箱へメッセージを送信 |
+| `adj tell --worktree … --subject …` | 特定 worker の outbox へメッセージを送信 |
+| `adj close --worktree …` | worker のターミナルタブを終了 |
+| `adj ide --worktree …` | worktree を設定されたエディタで開く |
 
-**`agent-sessions` にモデル・コンテキスト使用率・レート制限を載せる。** Claude Code はこれらをステータスラインにしか渡さないため、ステータスラインから流さない限り adjutant には届きません。adjutant はステータスラインを入れません（入れるとあなたのものを置き換えてしまうため）。代わりに、自分のステータスラインのスクリプトに1行足してください。シェルスクリプトなら、標準入力をいったん変数に受けてから渡します：
+### MCP ツールとプロンプト
 
-```sh
-input=$(cat); printf '%s' "$input" | /absolute/path/to/adj hook claude --status-line 2>/dev/null || true
-```
+エージェント環境（`adjutant mcp`）内では、以下のプロンプトとツールが提供されます。
 
-描画はこれまでどおり `"$input"` から行います。`adj hook claude --status-line` は何も出力せず、起動できれば常に exit 0 で終わります（バイナリが無いときは `|| true` が受け止めます）。記録するのは既に行があるセッションの `model`・`contextPercent`・`rateLimits` だけで（`adj agent-sessions --json` で見られます）、値が変わったときに書き込み、変わらなければ書き込みは多くても1分に1回です。ステータスラインの `PATH` に `adj` があるとは限らないので、絶対パス（`command -v adj` の出力）で書いてください。他の言語のスクリプトなら、受け取った標準入力をそのままこのコマンドの標準入力に渡します。
+- **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスク着手〜完了）、`adj-report`（作業中のバグ報告）、`adj-review-hub`、`adj-reviewer`、`adj-aide`。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_show`、`adjutant_request`、`adjutant_gate_answer`。
 
-エージェント側（`adjutant mcp`）：16個のツールと6つのプロンプトを提供します。
-
-- **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスクの着手から完了引き渡しまで）、`adj-report`（作業中に発見したバグを hub に報告）、`adj-review-hub`・`adj-reviewer`・`adj-aide`（コードレビュー hub、PR の読み手、副官）。Claude Code では `/mcp__adjutant__adj-hub` のように呼び出せます。
-- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、そして副官が盤面を読むための `adjutant_work`（リポジトリをまたいだ「いまの仕事」）、`adjutant_gate_read`（gate 1件を全文）、`adjutant_reviews`（「AI 下読み」の一覧、つまりあなたのレビューを待っている他の人の PR）、`adjutant_show`（gate・判断待ちの一覧・AI 下読み・タスクや親・PR・セッション・依頼・差分の数行・レビュー依頼の一覧を、参照だけで副官の表示領域に出す）、そして副官が送るための `adjutant_request`（板の「依頼」フォームと同じく、hub に仕事の依頼を渡す）と `adjutant_gate_answer`（板のボタンと同じく gate に答える）。`adjutant_skill` は、プロンプト機能に未対応のエージェントでも同じ手順書を取得できるように用意されています。エージェントに応じた形式（Claude Code の `AskUserQuestion` や Antigravity の `ask_question` など）に自動調整されます（`--agent` または `agent` 引数で指定も可能）。
-
-名前の使い分けとして、人間が入力する CLI コマンドやプロンプトは短く（`adj`, `adj-…`）、システムが参照する MCP サーバー名やツール名は長めに（`adjutant`, `adjutant_…`）揃えています。
-
-リポジトリ固有の情報を扱うコマンドは `--repo owner/name` を受け取ります。省略した場合は、カレントディレクトリ（worktree 含む）の git origin リモートからリポジトリを自動判定します。
-
-1つのリポジトリに hub を複数立てられます。`--hub <id>` はそのどれを指すかを表します。動くのは宛先（セッション名・受信箱・レコード）だけで、設定は変わりません。設定は引き続き `owner/name` で引かれるので、登録済みリポジトリの2つめの hub でも taskSources / issueKeys / verify はそのまま使えます。`--hub` を付けなければ、これまでと同じアドレスのリポジトリ自身の hub になります。ただし `adj work` が開いた worktree の中でだけは、hub を**指す**コマンドがその worktree のレコードから識別子を読みます。何かを**起こす**側（`hub` / `work` / `worker`）は読みません。worktree の中から立てた hub も、タブが開かれた worktree に登録する worker も、他人のレコードを読むことになるからです。
-
-識別子を毎回書き直す必要はありません。`adj hub --hub <id>` はエージェントを起動するコマンドラインに `ADJUTANT_HUB` を載せるので、そのエージェントが叩く `adj` も MCP ツールも自分自身の hub を指します。`adj work` は開いた worktree に識別子を書き込むので、worker は宛先を書かずに送っても自分を出した hub に届きます。
-
-`adj worker` も、登録した識別子をエージェントのコマンドラインに載せます。その前に、引き継いだ `ADJUTANT_HUB` は環境から外します。tmux のように環境を引き継ぐ terminal テンプレートでは、タブを開いた hub の識別子がエージェントに渡り、worktree のレコードより優先されてしまうからです。
-
-ただし動いている worker 自身が打つコマンド（エージェント、そのエージェントの MCP サーバー、その下のシェル）は、`ADJUTANT_HUB` が別の値でも、worktree の worker レコードから hub を読みます。レコードに hub が無ければリポジトリ自身の hub です。ボードでタスクに紐づけて worker の hub を移しても、エージェントを起動し直さずに済むのはこのためです。それ以外のコマンドは従来どおりの優先順位なので、worker の worktree の中でコマンドを打つ hub は、これまでどおり自分自身を指します。
-
-`agentEnv` には `ADJUTANT_HUB` を書けます。これは既定値の扱いで、`--hub` も環境変数も無いときに `hub` / `work` / `worker` がこの値を使い、リポジトリ自身の hub ではなくその hub を立てます。起動したコマンドとエージェントが同じ hub を指すようにするためです。`--hub` や引き継いだ `ADJUTANT_HUB` があればそちらが優先され、エージェントのコマンドラインでも設定の値を置き換えます。このキーを足す前に、そのリポジトリで動いている hub は止めてください。足したあとは、素の `adj hub` が設定の hub を探して立て、`adj work` も新しい worker をその hub の下に登録します。hub を指すコマンド（`send` / `pending` / `hub-stop` / `hub-close` など）は `agentEnv` を読まないので、hub 自身のシェル以外から打つときは `--hub` か `ADJUTANT_HUB` で指定してください。
-
-`--no-dashboard` / `--dashboard` も同じ経路を通ります。これらは同じコマンドラインに `ADJUTANT_STARTUP_DASHBOARD` として載り、`adjutant config` が解決の時点で織り込むため、`settings.startupDashboard` を読む手順書には設定ファイルの値ではなく**その hub が起動したときのフラグ**が見えます。ただし `--tab` のときはこの変数が出てきません。ターミナルに渡せるのはコマンドラインだけなので、フラグは新しいタブで走る `adjutant hub` にそのまま転送され、**環境を組み立てるのはそちらの `adjutant hub`** になります。最終的な結果は同じで、1プロセス遅れるだけです（2つの経路の dry run の出力が違って見えるのはこのためです）。
-
-### 再起動後の再開
-
-エージェントのアップデートやクラッシュで hub や worker が終了することがあります。hub は終了から `hubAutoResumeHours`（既定は3時間）以内なら、`adj hub` を打つだけで前回の会話に戻ります。それを過ぎていれば空の会話で起動するので、朝の1枚目はまっさらになります。時間に関係なく再開したいときは `--resume` を、時間内でも新しく立てたいときは `--new` を付けます。
-
-```bash
-adj hub --resume                  # このリポジトリの hub（リポジトリ内のどこからでも）
-adj hub --resume --hub ALPHA-233  # 親タスクの hub（識別子は推測しないので明示する）
-adj worker --resume               # worktree の中で実行すると、そこで作業していた worker
-```
-
-ボードの「セッションを再起動」（動いている hub と worker の、端末の上のバーのボタンと、hub のパネルの「操作」）は、今の会話のまま止めて起動し直します。新しい Claude Code に切り替えたいときなどに使います。確認のあと、hub なら `adj hub --resume`（親タスクの hub は `--hub KEY` 付き）、worker なら `adj worker --resume --worktree …` で開き直します。確認待ちの gate があるとき、直近 1 分以内に出力があるとき、状態不明のときは、途中の処理が中断される旨を確認で警告します（gate の記録は残ります）。会話が保存されていない、tmux でない、resume ランナーが `{sessionId}` を受けないなど、起動し直せないときはボタンが押せず、理由を示します。再起動の間は「再起動しています…」と出て、そのセッションの起動・停止・リセット・閉じる・再開のボタンは新しいプロセスが現れるまで押せません。止められなかったときは何も起動せず、記録も会話も残ります。
-
-ボードの「hub をリセット」（hub の行のボタンと、hub のパネル、hub の端末の上のバーの先頭のボタン）は `--new` と同じことをします。確認のあと、hub が動いていれば止め、新しい会話で起動し直します。前の会話は消えませんが再開もされず、以後 `adj hub --resume` で戻るのは新しい会話です（会話を記録しない runner では戻り先がなくなります）。受信箱、タスクと gate の記録、動いている worker はそのまま残ります。
-
-`{sessionId}` を含むランナー（既定のランナーは `--session-id {sessionId}` として含んでいます）で新しく起動するときは、セッション ID を作ってエージェントに渡し、保存します。再開するときは新しく作らず、保存済みの ID を使います。`{sessionId}` を含まないランナーで新しく起動したときは ID を作らず、前の起動が保存した ID を消します。これで2つ前の起動の会話が開かれることはありません。ID はレコードとは別の場所に保存します。hub の分は state ディレクトリの `sessions/` に、worker の分は worktree の `.claude/adjutant-session.json` に置きます。`hub-stop` や `close` はレコードを消しますが、この ID は残ります。`--resume` はその ID を `hubResumeRunner` / `agentResumeRunner`（既定は Claude Code の `--resume`）で開き直します。二重起動の防止は通常の起動と同じ仕組みで行い、再開したエージェントには止まっていた間に届いた受信箱・outbox を確認するよう伝えます。
-
-親タスクの hub は、hub の実行記録か、その hub のキーを指す checkout（worker の記録か保存済みセッションがそのキーを名指ししている worktree）があるあいだ一覧に出ます。止まっていて checkout が残っていないものや、保存済みのセッションだけが残っているものは、もう一覧に出ません。checkout が残っていない親タスクの hub は `adjutant hub-close --hub KEY`（ボードでは「閉じる」）で閉じられます。ボードの「閉じる」は、動いている hub を止めたうえで一覧から外します。`adjutant hub-close` はプロセスを止めないので、hub 自身から打つか、動いていない hub に対して使います。動いている hub を外から閉じようとすると断ります。保存済みのセッション・タスク・gate・受信箱は残るので、`adj hub --hub KEY --resume` で引き継げます。リポジトリ自身の hub は止めることしかできません。
-
-hub の終了時刻は、hub の下で動く MCP サーバーが記録します。`adj hub` はセッションを記録する起動（`{sessionId}` を含むランナーでの起動と、再開）のときだけ、`exec` するコマンドラインに `ADJUTANT_HUB_SESSION` を載せます。エージェントが起動する `adjutant mcp` がそれを引き継ぎます。`{sessionId}` を含まないランナーで新しく起動した hub にはこの変数が付かないので、MCP サーバーが動いていても終了時刻は記録されません。MCP サーバーは1分ごとと、エージェントがパイプを閉じたときに、セッションが生きていたことを `sessions/<slug>.alive` に書きます。保存したセッションとは別のファイルにしているのは、古い hub の最後の書き込みが新しい hub の保存を上書きしないようにするためです。MCP サーバーはマシン上のすべてのセッションで動きますが、書き込むのはこの変数を持つものだけです。`adj worker` はエージェントを起動する前にこの変数を外します。hub の下に MCP サーバーが無い場合は終了時刻が分からないので、推測せずに新しく起動します。`hubRunner` を独自に設定していて `hubResumeRunner` を設定していない場合も同じです。組み込みの再開コマンドで開くと独自の runner で足した指定が抜けるので、`--resume` を付けたときだけ再開します。
-
-worker は `--resume` を付けたときだけ再開します。`adj work` は hub が新しい指示書を渡す経路なので、そこで古い会話に戻ると指示書が埋もれてしまいます。
-
-再開した worker は、保存しておいた「自分を出した hub」の下に戻ります。`--resume` を打ったタブが別の hub の `ADJUTANT_HUB` を引き継いでいても、保存された値を優先します。保存されたセッションが無い hub を再開しようとすると、そのリポジトリで再開できる hub の一覧を表示します。`{sessionId}` を含まないランナーで起動したセッションは再開できません。ただしエラーになるのは `--resume` を付けたときだけです。
-
-MCP の `instructions` は約5行の最小限に抑えています。1500行を超える詳細な手順書は、hub や worker が必要になったタイミングでオンデマンドに取得するため、常時コンテキストを圧迫しません。
-
-## 権限
-
-MCP 経由で配信される手順書からは、個別ツールの許可リスト（`allowed-tools`）を指定できません。
-
-そのため、**hub も worker も既定では自動実行モード（unattended）で起動します**。worker のビルドや hub の受信箱監視が確認ダイアログで止まるのを防ぐためです。ただし、Issue の起票確認やタスクの着手確認など、人による判断が必要なチェックポイント（`AskUserQuestion`）は手順書側で維持されます。スキップされるのは `gh issue view` などの日常的なコマンド実行確認です。
-
-都度確認を挟みたい場合は、設定で `hubRunner` と `hubResumeRunner` を変更してください：
-
-```jsonc
-"hubRunner": "claude -n {name} --session-id {sessionId} {prompt}",
-"hubResumeRunner": "claude -n {name} --resume {sessionId} {prompt}"
-```
-
-その場合、hub が停止しないよう `~/.claude/settings.json` で必要なツールを事前に許可しておく必要があります：
-
-```jsonc
-"permissions": { "allow": [
-  "Bash(adj:*)", "Bash(adjutant:*)",
-  "Bash(git:*)", "Bash(gh:*)",
-  "Bash(cat:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(mv:*)", "Bash(cp:*)",
-  "Bash(sed:*)", "Bash(awk:*)", "Bash(printf:*)", "Bash(date:*)", "Bash(ps:*)",
-  "Bash(basename:*)", "Bash(open:*)", "Bash(which:*)",
-  "Bash(proctor:*)", "Bash(lk:*)", "Bash(codex:*)",
-  "mcp__adjutant__adjutant_config", "mcp__adjutant__adjutant_hub_status",
-  "mcp__adjutant__adjutant_send", "mcp__adjutant__adjutant_pending",
-  "mcp__adjutant__adjutant_tell", "mcp__adjutant__adjutant_outbox",
-  "mcp__adjutant__adjutant_gate_open", "mcp__adjutant__adjutant_gate_close",
-  "mcp__adjutant__adjutant_refresh", "mcp__adjutant__adjutant_skill"
-]}
-```
-
-hub はメインチェックアウトで動作します。手順書によってメイン側での直接実装は禁止され、作業は必ず worktree 上の worker に委任されますが、これは手順書による制約であり、OS レベルのサンドボックスではない点に留意してください。
+---
 
 ## 設定
 
-設定ファイルは `~/.config/adjutant/config.json` です（`$XDG_CONFIG_HOME` および `ADJUTANT_CONFIG` に対応）。詳細は **`config.example.json`** を参照してください。`//` で始まるキーはスキーマ説明用で、実行時に自動で除去されます。
+設定ファイルは `~/.config/adjutant/config.json` です（`$XDG_CONFIG_HOME` および `$ADJUTANT_CONFIG` に対応）。各項目の詳細は [`config.example.json`](config.example.json) を参照してください。
 
-設定は「リポジトリ固有エントリ > `defaults` > トップレベル > 組み込みの既定値」の順に優先されます。設定内容に不備があってもエラー終了はせず、`warnings` を含んだ上で hub が警告を通知します。
+### 主な設定項目
 
-各設定項目はコマンドテンプレートになっており、プレースホルダは**シェルクォートされた状態で**展開されます。テンプレート側でプレースホルダを引用符で囲まないでください：
-
-| キー | プレースホルダ | 既定値 |
+| キー | 既定値 | 説明 |
 | --- | --- | --- |
-| `terminal.spawn` | `{cwd}` `{title}` `{command}` | iTerm2 |
-| `terminal.focus` | `{pid}` `{tty}` `{title}` | iTerm2 |
-| `terminal.attach` | `{socket}` `{session}` `{window}` | iTerm2 で `tmux -CC attach`（iTerm2 のある Mac のみ。ボードからセッションを開く用で、それ以外ではボードがこのキーを名指しして断る） |
-| `terminal.close` | `{pid}` `{tty}` `{title}` | iTerm2（`false` でタブを一切閉じない。その場合 `adjutant close` は何もせず exit 1） |
-| `terminal.title` | `{title}` | tty への OSC エスケープシーケンス（`spawn` が開く全タブにも適用） |
-| `wake` | `{pid}` `{tty}` `{subject}` `{line}` | iTerm2 の `write text` で対象セッションに入力 |
-| `hubWake` / `workerWake` | 同上 | `wake` を方向別に上書き |
-| `agentRunner` | `{sessionId}` `{prompt}` `{worktree}` `{title}` `{settings}` | `claude --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
-| `hubRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --permission-mode auto {settings} {prompt}` |
-| `reviewerRunner` | `{name}` `{sessionId}` `{prompt}` `{settings}` | `claude -n {name} --session-id {sessionId} --setting-sources '' --strict-mcp-config --allowedTools 'Read(./**),Grep(./**),Glob(./**),Edit(./read-through.json),Bash(adj review context:*),Bash(adj review submit:*),Bash(adj review fail:*),Bash(adj review say:*),Bash(adj skill:*)' --permission-mode dontAsk {settings} {prompt}` |
-| | | *PR の読み手（「AI 下読み」）を起動します。既定は読むだけに絞ります。`--allowedTools` は、あなたの Claude 設定や MCP サーバーがもともと許しているものに足すだけなので、`--setting-sources ''` と `--strict-mcp-config` でその 2 つを外します（読み手は設定ファイルも MCP サーバーも持たず、`adj skill` と `adj review say` をコマンドラインから使います）。そのうえで `dontAsk` により、許可リストにないものは確認されずに拒否されます。`gh` もありません。自分で `reviewerRunner` を書くときは、この 2 つのフラグを残してください。残さないと、読み手はあなたの設定が許すものすべてを使えます。書いてよい 1 ファイルを `Edit(...)` で書くのは、Claude のファイル規則が `Edit(path)` にしか一致せず、`Edit` 規則が Write も含むためです。パターンが一致するには `adj` が PATH 上にある必要があります。別のエージェントを読むだけに絞るのは `adj-reviewer` の手順だけです* |
-| `agentResumeRunner` | `agentRunner` と同じ | `claude --resume {sessionId} --permission-mode auto {settings} {prompt}` |
-| `hubResumeRunner` | `hubRunner` と同じ | `claude -n {name} --resume {sessionId} --permission-mode auto {settings} {prompt}` |
-| | | *`{settings}` は `--settings <file>` になり、セッションに渡す adjutant のフックを書いたファイルを指す。テンプレートに書かなければ `claude` の直後に足される（テンプレート自身が `--settings` を渡している場合を除く）。クォートしないこと。これを知らない古いバイナリがあるので、設定を共有するバイナリがすべて知っているときだけ手で書くこと* |
-| `notification` | `{title}` `{message}` `{nwo}` | `terminal-notifier`（未インストールなら `osascript`） |
-| `ide` | `{worktree}` | なし（手順書内でユーザーに確認） |
-| `worktreePattern` | `{repo}` `{branch}` `{name}` | `.claude/worktrees/{name}` |
-| `hubAutoResumeHours` | なし（数値。`0` で無効） | `3`（この時間以内に終了した hub は `adj hub` で自動的に再開する） |
-| `stuckAfterMinutes` | なし（数値。`0` で無効） | `120`（worker が同じ工程にこの分数とどまると板のカードを赤くする。worker が止まっているカードはこの値に関係なく赤くなる。ただし PR を出したあとのカードは worker のタブが閉じても赤くしない。PR が review bot を待っている間（`pr-bots`）は、PR が人の番でない限りエージェント側の列に待ちバッジ無しで置く。修正の依頼・承認済み・CI 失敗・マージされずに閉じられたときは `pr-bots` でも人待ちになる。Jules のタスクも Jules が作業中でなければ同じ PR の状態に従う。それ以外は PR の状態で決まり、修正の依頼・承認済み・CI 失敗・マージされずに閉じられたときは人待ちで、他の人のレビュー待ちや bot・CI 待ちのときは人待ちにならない） |
-| `julesKey` | なし（Jules の API キーを出力するコマンド） | macOS のキーチェーン項目 `jules-api`（`false` にすると Jules に渡せなくなる） |
-| `maxWorkers` | なし（1以上の整数） | 制限なし（チェックアウトごとに数える。gate で待っている worker と起動中の worker は枠を使い、止まった worker は使わない） |
-| `language` | なし（言語名またはタグ。例: `ja`） | なし（hub は話しかけられた言語を使う。板に出る agent の文章（gate・質問・計画・メモ・報告・タスクの要約）はこの言語で書く。コミット・PR 本文・Issue・コードはリポジトリの流儀に従い、トラッカー由来のテキストはそのまま） |
-| `startupDashboard` | なし（`true` / `false`） | `true`（`false` にすると hub が起動時に一覧を集めなくなる。人が「一覧」と言ったときの収集は止まらない） |
-| `hubServe` | なし（`true` / `false`） | `true`（hub の MCP サーバーがその hub の板を hub と同じ寿命で立てる。`127.0.0.1:4577` が空いていればそこ、埋まっていれば空いている port。URL は `adjutant_config` の `board` に入る。手で立てた板が既に動いていればそのままにする。`false` にすると板は `adj serve` で手で立てる） |
+| `terminal.preset` | なし（macOS は iTerm2） | `"tmux"` を指定すると組み込み tmux バックエンドが有効化されます |
+| `agentRunner` | `claude ...` | worker エージェントを起動するコマンドテンプレート |
+| `hubRunner` | `claude ...` | リポジトリ hub を起動するコマンドテンプレート |
+| `reviewerRunner` | `claude ...` | PR の読み手（AI 下読み）を起動するコマンドテンプレート |
+| `notification` | `terminal-notifier` / `osascript` | デスクトップ通知のコマンドテンプレート |
+| `maxWorkers` | 制限なし | チェックアウトごとの同時稼働 worker の上限数 |
+| `hubAutoResumeHours` | `3` | `adj hub` 実行時に前回の会話を自動再開する有効時間（時間単位） |
+| `stuckAfterMinutes` | `120` | worker が同一フェーズにとどまっている場合にカードを赤色表示するまでの分数 |
+| `language` | なし | gate やメモ、要約にエージェントが使用する言語（例: `"ja"`） |
 
-キーを省略した場合は既定値が使われ、`false` を指定した場合はその機能が無効化されます。ただしコマンドではない設定は別の値を取ります。`startupDashboard` と `hubServe` は `true` / `false` で、`hubAutoResumeHours` は数値です。`hubAutoResumeHours` を無効にするには `0` を指定します。`false` を指定すると `warnings` に報告され、既定値が使われます。`maxWorkers` は整数で、それ以外の値は `warnings` に報告されて制限なしになります。`language` は単なる文字列で、空白だけの値は未設定として扱われます。`terminal` や `wake` 系はキー単位でマージされるため、必要な項目だけを上書きできます。
+tmux との連携やカスタムランナーテンプレート、環境変数の解決順序については、[設定とランタイム詳細](docs/configuration.ja.md) を参照してください。
 
-`{pid}` と `{tty}` は OS 側から見たセッションの名前（プロセスIDと、そのセッションが載っている端末デバイス `ttys004`）であって、**ターミナル自身の pane / window の id ではありません**。そのため `focus` / `close` / `wake` のテンプレートは、動く前にその id を自分で引き当てる必要があります。`{pid}` を pane id を期待する引数（`--pane-id` など）に渡すと別の番号空間を指すことになり、その番号を持っていた無関係な pane に対して動作します。id 解決を行うラッパースクリプトを指定してください。`close` を「実行できたら成功」とみなさないのも同じ理由です。テンプレートは終了コードだけで判断されるため、adjutant は close 後に**その worker が実際に居なくなったこと**を確認してから記録を消し、居たままなら exit 1 を返します。
+---
 
-### 通知の詳細設定
-組み込みの通知は `terminal-notifier` があればそれを使い、無ければ `osascript` にフォールバックします。この優先順位には理由があります。コマンドラインの `osascript` が出した通知は macOS が**スクリプトエディタ**からのものとして扱うため、通知バナーの送り主が意図しないアプリになり、クリックしても空のスクリプトエディタが起動するだけで、呼び出し元のセッションには戻れません。[`terminal-notifier`](https://github.com/julienXX/terminal-notifier)（`brew install terminal-notifier`）が入っている場合、組み込みの通知は次のコマンドになります：
+## 権限（自動実行モード）
 
-```jsonc
-"terminal-notifier -title {title} -message {message} -sound Glass -activate com.googlecode.iterm2"
-```
+MCP 経由で配信される手順書ではツールの個別許可リストを指定できません。そのため、**hub も worker も既定では自動実行モード（`--permission-mode auto`）で起動します**。これにより、ビルドやバックグラウンド確認がダイアログで停止するのを防ぎます。
 
-これでクリック時にターミナルが前面に出ます。さらに `{nwo}` を使うと、タブ単位まで狙えます。`{nwo}` はそのメッセージが属するリポジトリで、`--repo` が受け取るのと同じ値です（`owner/name`、ただし使える remote が無いチェックアウトではそのディレクトリ名になります）。クリック時に `adj focus --repo {nwo}` を実行する通知コマンドにすれば、**そのリポジトリの hub タブそのもの**が前面に出ます。ただしテンプレート内にクォートで囲んだコマンドを入れ子にするのは避け、スクリプトを用意してそれを指定してください（理由は後述の wake の注意点と同じで、置換される値が自身のクォートを伴って展開されるためです）。なお `adjutant notify` をリポジトリ外で実行した場合 `{nwo}` は空になり、その旨が標準エラー出力に出ます。
+実装計画の承認や Issue 起票、差分レビューなどの重要ポイントは、手順書内の gate や `AskUserQuestion` によって安全に確認されます。日常的なコマンドに対しても確認を要求したい場合は、`--permission-mode auto` を外したランナーを設定し、`~/.claude/settings.json` で必要なツールを事前許可してください。
 
-macOS 以外には組み込みの通知手段がなく、通知できないことはエラーではなく無音として扱われます。そのため Linux で hub を動かす場合はこのキーの設定が必要です（例: `"notify-send {title} {message}"`）。逆にターミナルのサイドバーや tmux のステータス行など、セッションを監視する仕組みが別にある場合は、バナーを二重に出さず `false` で無効化してください。
+---
 
-`notification` は、worker や hub が許可確認や質問で数秒待たされていて、そのターミナルがボードで開かれていないときにも鳴ります。メッセージにはどのセッションが何を待っているかが入り（`worker-x is waiting: Bash: make`。質問のときは `worker-x is asking: <質問>`）、1回の待ちにつき1回だけです。ゲートが開いたときにも鳴り（`worker-x opened a plan gate: <タイトル>`）、1つのゲートにつき1回です。サーバーの起動時にすでに開いていたゲートでは鳴りません。どちらも通知の経路は1つだけです。ボードのページが通知を許可して開いていて、確認待ちがオンのあいだ（直近90秒以内にページがポーリングしていれば）は、ページ自身のデスクトップ通知だけが出て `notification` は鳴りません。押すと「いまの仕事」でそのタスクが開きます（常駐サーバーのページの場合。ボードを単独で出しているときは一覧がないので、そのセッションのターミナルが開きます）。そのようなページが開いていなければ `notification` が鳴ります。ページに任せた待ちは、ページが閉じたりスリープしたりしてもまだセッションが待っていれば、そのときに `notification` が鳴るので、通知が遅れることはあっても無くなることはありません。`send` と `tell` は変わらず `notification` を鳴らします。ページが通知する種類（確認待ち・完了・失敗・レビュー依頼。既定は確認待ちと失敗とレビュー依頼）は、ページのベルのボタンから開く通知の設定で選び、ブラウザに保存されます。確認待ちをオフにすると、約90秒以内に待ちとゲートは `notification` に戻ります。通知するページが開いているあいだは、ページが通知しない待ち（置いているタスク、表示中のタブで開いている行）も `notification` は鳴らしません。
+## ドキュメント一覧
 
-テンプレートが実際にどのコマンドへ展開されるかは `adjutant notify --message … --dry-run` で確認できます（実際の送信は行われません）。
+詳細な機能ガイドは [`docs/`](docs/) 配下に用意されています。
 
-### wake の詳細設定
-`wake`（セッションへの入力通知）は、「ターミナルにどう入力するか」と「エージェントに何を伝えるか」に分かれています。そのため、`hubWake` / `workerWake` ではオブジェクト形式で個別に上書きできます：
+- [**Web ボードと常駐サーバー**](docs/board.ja.md) ([English](docs/board.md)): ボードの各ビュー、「いまの仕事」、AI 下読み（PR レビュー支援）、副官、REST API、launchd による常駐化設定。
+- [**Jules へのタスク委譲**](docs/jules.ja.md) ([English](docs/jules.md)): Google Jules へのタスク割り当て、サブエージェントによる設計書作成、レビュー指摘の自動転送。
+- [**設定とランタイム詳細**](docs/configuration.ja.md) ([English](docs/configuration.md)): tmux 連携の詳細、wake の仕組み、ランナーテンプレート、セッションのライフサイクル管理。
+- [**アーキテクチャとレイヤ構成**](docs/architecture.md): クレートの内部モジュール構成、レイヤ規則、状態保存の仕組み。
+- [**レビューチェックリスト**](docs/review-checklist.md): セルフレビューおよび自動コードレビューで確認すべき観点一覧。
 
-```jsonc
-"wake": "wake-tab {tty} {line}",                  // ターミナル側の操作
-"workerWake": { "line": "check `adj outbox`" }     // エージェント側の入力文言
-```
-
-- **wake の Enter**: 自前の `wake` テンプレートでは、`{line}` の入力と Enter を別々に送ってください。行と改行をまとめて送ると、エージェントの入力欄が貼り付けとして扱い、改行が送信にならずに入力欄に残ることがあります。
-- **複数コマンドの実行**: `sh -c '…'` で囲むとクォートの二重展開で壊れる可能性があるため、シェルスクリプトを用意してそれを呼び出してください。
-- **カレントディレクトリ**: `spawn` テンプレートに `{cwd}` が含まれている場合はそのコマンド自身でディレクトリ移動を行うものとみなし、含まれていない場合は先頭に `cd` が付与されます。
-- **タブ名**: 新規タブの名前はターミナル API ではなく、タブ内で実行されるシェルが `adjutant title` を呼ぶことで設定されます。
-- **環境変数**: `agentEnv` で、hub および worker の起動時に渡す環境変数を設定できます。別プロファイルでエージェントを動かしたい場合に便利です。そのリポジトリの PR を読む AI 下読みにも同じ値が渡され、`ADJUTANT_HUB` はコードレビュー hub、`ADJUTANT_STATE_DIR` は絶対パスの状態ディレクトリで上書きされます。
-
-## Jules に実装を渡す
-
-タスクの実装を worker ではなく [Jules](https://jules.google) に任せることもできます。その場合 worker のセッションは起動しません。hub が読むためだけの detached な worktree を作り、サブエージェントにそこで計画を書かせます。強いモデルが必要なのは設計のほうだからです。人が plan gate で計画を承認すると、hub がそれを Jules の session に渡し、worktree を削除します。実装、パッチのセルフレビュー、PR の作成は Jules が行います。
-
-どちらに実装させるかはタスクレコードに持たせます。`adjutant task add --executor jules`（または `task update --executor jules`）で指定します。Jules に渡すのは hub が実行する次のコマンドです。
-
-```bash
-adj jules start --id <task> --prompt-file design.md
-```
-
-このリポジトリを対象に、ファイルの中身を prompt として session を作ります。起点のブランチはタスクに記録した base（`adj task update --base`）で、コマンド行で `--base` を渡すとそちらを使います。PR は自動で作らせ、計画は確認なしで承認させます（人がすでに承認しているため）。作った session の id はタスクの `julesSession` に書き込みます。`adj jules show --id <task>` で、session の状態、jules.google.com のページ、PR ができていればその URL を確認できます。1つのタスクを渡せるのは1回だけで、`julesSession` を消すまで2つ目の session は作れません。
-
-API キーはエージェントから読めない場所に置きます。`adj config` はすべての設定を出力し、エージェントはそれを読むので、`julesKey` にはキーそのものではなく、キーを出力するコマンドを書きます。組み込みの既定値は macOS のキーチェーン項目 `jules-api` を読みます。次のコマンドで一度だけ登録してください。キーはコマンド行に書かず、表示されるプロンプトで入力します。
-
-```bash
-security add-generic-password -s jules-api -a "$USER" -w
-```
-
-キーは `curl` に stdin で渡します（引数にすると `ps` で読めてしまうため）。エラーを含め、出力する文字列からはキーを取り除きます。macOS 以外では、キーを保管している場所から読み出して出力するコマンドを `julesKey` に指定してください。
-
-板では、このカードに worker の代わりに session の状態（待機中・作業中・完了・失敗）が表示され、session のページへのリンクになります。このタスクには worker を起動しないので、worker がいなくても赤くしません。session が失敗したときだけ赤くします。状態は板のページが開いている間だけ、進行中とレビュー中のカードについて、1つの session あたり最大45秒に1回問い合わせます。問い合わせはページの応答とは別のスレッドで行うため、API の応答が遅くても板は遅くならず、表示が少し古くなるだけです。PR ができた session を初めて見たとき、板はその PR をタスクに書き込み、カードをレビュー中に移し、hub に `jules-pr` メッセージ（タスクと PR）を送ります。Jules はコメントに対応するたびに完了し直しますが、そのころにはタスクに PR が入っているので、送るのは1回だけです。誰が実装するかは依頼から hub が読み取って gate で確認します（`adj task add --executor` でも指定できます）。
-
-その先は手順書が進めます。Jules に渡すタスクでは、`adj-hub` が計画用のサブエージェントに Jules 向けの設計書を書かせます。変えるファイルをすべて挙げ、それぞれ何をどう変えるか、触らないもの、足すテストまで書きます。受け取る側のモデルが弱いので、要約ではなく判断を済ませた設計書にします。サブエージェントが返すのはファイルのパスと1行だけなので、常駐する hub の文脈に計画は溜まりません。hub は `adj gate open --body-file` と `"openedBy": "hub"` で plan gate を開きます。板にはファイルがそのまま表示され、回答は誰も読まない outbox ではなく hub の受信箱に届きます。承認されたら hub がそのファイルで `adj jules start` を実行して worktree を削除し、`changes` なら同じサブエージェントに直させます。計画を見て worker に実装させることになったら、hub が worktree にブランチを作って worker を起動し、worker は計画し直さずに承認済みの計画から実装します。`jules-pr` メッセージが届くと、`adj-hub` は PR の説明の書き直しを軽いモデルのサブエージェントに任せます。材料は設計書（`adj jules show --json` の `prompt`）、Jules が書いた本文、変更ファイルの一覧で、リポジトリの書き方に合わせて書き直します。CodeRabbit の要約ブロックと、Jules の session へのリンク行はそのまま残します。
-
-レビュー指摘は、人が選んで本人の名前で Jules に回します。Jules は起動した本人のコメントには対応しますが、ほかの bot のスレッドには入らないため、レビュー bot の指摘はそのままでは届きません。レビュー中の Jules タスクのタスクパネルにある「レビュー指摘を Jules に回す」で、Jules と本人以外（レビュー bot、Copilot、ほかの人）が書いた各スレッドの最初のコメントを一覧し、チェックしたものを1つのコメントにまとめて `gh` で PR に投稿します。`gh` は本人としてログインしているので、本人のコメントになります。Jules は自分の PR へのコメントをメンションなしで読むので、メンションは付けません。`reviewBots` は worker が待つレビューを指定する設定なので、ここでは使いません。各指摘には、コメントにエージェント向けのプロンプトがあれば太字の見出しとそのプロンプトを、無ければ隠しコメントと折りたたみ部分を除いた本文を載せます。プロンプトに毎回入る定型の段落（bot の CLI を実行するよう促す段落など）は除きます。回したコメントの id はタスクの `relayed` に残し、同じコメントを2回回さないようにします。Jules はほかのアカウントのコメントを無視するので、`gh` は session を起動したアカウント（`adj jules start` がタスクの `julesBy` に記録する）でログインしている必要があります。違うアカウントからの転送は断ります。シェルからは `adj jules findings --id <task>` と `adj jules relay --id <task> --comment <id>` で同じことができます。一覧に出るのは行へのコメントだけで、レビュー本文に書かれた指摘は対象外です。
-
-レビューは hub が仕分けて、人は承認するだけにできます。板は、開いている間、レビュー中の Jules タスクの PR も見ます。Jules と本人以外のコメントが届いていて Jules が作業中でなければ、hub に `jules-review` メッセージでそのコメントを知らせます。hub はサブエージェントに、各コメントを PR のコード（ブランチはチェックアウトしない）と照らして、まだ当てはまるか、本当に直す場所はどこかを判断させます。レビュー bot は差分のある行にしかコメントできないので、指摘の場所と直す場所がずれることがあるためです。そのうえで、回す指摘と各指摘への補足、外した指摘とその理由を `relay` の gate に出します。承認すると `adj jules relay --plan-file` で、補足を各指摘の下に付けて投稿します。`changes` なら hub がコメントのとおりに直してから回し、`reject` なら回しません。板がこれを行うのは1つの PR につき2回まで（タスクの `relayRounds`）で、それを超えたらタスクパネルの手動の転送を使います。
-
-事前に、対象リポジトリへ Jules の GitHub App を入れておく必要があります。Jules から見えないリポジトリは API が受け付けません。
-
-## 両者はどうやって連絡を取り合うか
-
-### アドレス体系（hub 名）
-宛先アドレスとなる hub 名は、両セッションともに `adjutant hub-name` で自動算出します。リポジトリの `owner/name` を正規化した文字列と、小文字化ハッシュの組み合わせで構成され、リポジトリ間での受信箱の衝突を防ぎます。手動で組み立てず、必ずコマンドから取得してください。
-
-### メッセージ配送の仕組み
-- **worker → hub**:
-  - `adjutant send`（または `adjutant_send` ツール）が `~/.local/state/adjutant/inbox/<slug>/` にファイルを書き込み、`adjutant pending` が読み出します。
-  - hub が停止中でもメッセージは保持されます。
-  - hub の生存確認は、記録された PID への `kill -0` およびプロセス引数の照合で行われます。
-  - すべてのメッセージに `worktree:` ヘッダが付きます。送信元が実際に居た worktree の絶対パスを（本文への手書きではなく）導出したもので、hub が `done` 依頼などを処理するときの宛先になります。git が worktree を特定できない場合はヘッダごと省略され、このヘッダが無い既存のメッセージもそのまま読めます。
-- **hub → worker**:
-  - 宛先はセッションではなく worktree です。`adjutant tell` が `{worktree}/.claude/adjutant-outbox.md` に追記し、`adjutant outbox` が読み出します。
-  - worker 起動時に `adjutant worker` ランチャーが自身の PID を記録し、そのプロセス上でエージェントを `exec` することで、`workerWake` による入力通知を可能にしています。
-
-### wake（起こす処理）と通知
-ファイル書き込みだけではエージェントが気づかないため、相手が起動中の場合は **`hubWake`** / **`workerWake`**（既定では iTerm2 へのキー入力）を実行して受信箱の確認を促します。
-- `send` は常にデスクトップ通知（`notification`）を発火します。
-- `tell` は worker を wake できなかった場合のみデスクトップ通知を発火します（wake できた場合は worker が自律して読むため）。
-- wake 処理はベストエフォートであり、失敗してもメッセージ送信自体は成功します。
-- tmux では、組み込みの wake はエージェントの画面が空の入力欄のときだけ入力します。質問が出ているときや人が入力の途中のときは何も入力せず、代わりに人に通知します。セッションに `adj agent-sessions` の行があるときは、端末を問わず、行が `running`（最後のイベントから10分以内に限る）または `waiting` の間は wake を保留し、最大5秒保留したのちあきらめます。tmux では、そのうえで入力前に画面も読みます。
-
-これらをテンプレート経由で抽象化しているため、ターミナルやエージェントの種類を問わず柔軟に連携できます。
-
-### tmux バックエンド（`terminal.preset: "tmux"`）
-
-設定に `"terminal": { "preset": "tmux" }` を指定すると、tmux を標準バックエンドとして利用できます。
-
-- **デタッチウィンドウ起動**: worker をバックグラウンドウィンドウ（`tmux new-window -d`）として起動するため、現在の作業画面のフォーカスを奪いません。コマンドはまず自分で対象ディレクトリへ `cd` します（tmux サーバー自身のディレクトリが削除されていることがあるため）。対象セッションが存在しない場合は自動で初期セッションを `$HOME` から作成します。worker のウィンドウは hub と同じ方法（プレースホルダのウィンドウを作り、`respawn-pane` で差し替える）で起動し、約3秒間見守ります。起動直後に終了した worker は、`adj work` が「起動した」と伝える代わりに、画面に出ていた内容つきでエラーとして報告し、スロットも返します。それより後に落ちた worker は起動済みのままの扱いで、`spawn` テンプレートや iTerm2 では見守る手段がないため、`adj work` がその旨を表示します。
-- **PID/TTYからペインへの自動解決**: プロセスツリーと TTY を探索して tmux ペインを特定するため、手書きのラッパースクリプトなしで wake や focus、close が動きます。
-- **入力通知（wake）**: 組み込みの wake は、先にペインを読み（`tmux capture-pane`）、エージェント（組み込みの runner か `claude` の runner なら Claude Code、`agy` の runner なら agy）が空の入力欄で待っているときだけ入力します。`tmux send-keys -l` でリテラル文字列を送信し、その行が入力欄に入ったことを確かめてから、少し遅れて Enter を押します。質問・許可確認・メニューが出ているとき、人が入力の途中のとき、画面を判別できないときは何も入力せず、`send` / `tell` の返答（`wakeNote`）に理由が出て、wake できなかった場合と同じく人に通知します。ターン実行中は最大5秒待ちます。`wake` テンプレート、iTerm2、それ以外の自前 runner は、画面を見ずにそのまま入力します。セッションに `adj agent-sessions` の行があるときは、端末を問わず、行が `running`（最後のイベントから10分以内に限る）または `waiting` の間は wake を保留し、最大5秒保留したのちあきらめます。tmux では、そのうえで入力前に画面も読みます。Enter を押す前に、入力欄にあるのが入力した行だけであることも確かめます。
-- **フォーカスと終了**: `adj focus` でウィンドウとペインを選択し、`adj close` で worker のウィンドウを片付けます（`tmux kill-window`）。組み込みのフォーカス・終了・wake は、セッションを起動したときに記録した端末（iTerm2 か tmux とそのソケット）でセッションに届くので、`preset` を切り替えても、それより前に起動したセッションに届かなくなることはありません。記録の無い古いセッションと、`spawn` テンプレートで tmux の外に起動したセッションは、今の `preset` に従います。
-- **アタッチ**: `tmux attach -t adjutant` や `tmux -CC attach -t adjutant`（iTerm2 連携）、`ttyd` 等でいつでもセッションに接続できます。
-- **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）で tmux セッションの状態確認や操作を直接行えます。
-  - `adj tmux wake --pid <pid> [--line <line>] [--agent claude|agy|generic] [--dry-run]`: `--agent claude` / `agy` ではペインを先に読みます。既定の `generic` は画面を見ずに入力します。
-- **環境変数**: `$ADJUTANT_TMUX_SESSION`（既定のセッション名 `"adjutant"` を上書き）および `$ADJUTANT_TMUX_SOCKET`（`tmux -L <socket>` でソケットを指定）に対応しています。
-
-### 常駐サーバーの操作
-
-`adj server start` はリポジトリごとの hub とは別に、全リポジトリのボードを 1 プロセスで配る常駐サーバーを起動します（既定は `127.0.0.1:4577`、使われていれば空きポートに回ります）。`adj server status` で稼働状況を確認し（`--json` あり、止まっていれば exit 1）、`adj server stop` で止めます。`adj server restart` は止めて、最大 5 秒待ってから同じポートで起動し直します（`--port` で変更、`--open` でボードを開く）。動いていなければ起動します。hub と worker には触れず、開いているボードのタブは、ポートが同じなら自動で再接続します。再起動後のサーバーは restart を実行したバイナリなので、`make reinstall`（`cargo install --path .` のあとに restart）でインストールした新しい版に入れ替わります。`make install` と `make restart` はそれぞれ片方だけを行います。launchd の `KeepAlive` 配下では `adj server restart` を使わないでください。launchd 自身の再起動と競合し、監視外のサーバーがもう 1 つ残ることがあります。代わりに `launchctl kickstart -k gui/$(id -u)/adj.server` を使います。
-
-### ボードから端末を開く
-
-常駐サーバー（`adj server start`）の `/` は、全リポジトリのボードをその場で切り替える 1 枚のページです。左のサイドバーの上端には「ボード」と「いまの仕事」の切り替えがあり、「ボード」にはリポジトリごとの行があり、その下に親タスクの hub が並びます。各行に hub の稼働状態と作業中の worker の数が出ます。サイドバーで数を持つのは「いまの仕事」タブの新着だけです。「すべて」は全ボードをまとめて表示します。リポジトリのボードには、親タスクの hub のタスクも親のキー付きのカードとして出ます。押すとその hub のボードへ移り、常駐サーバーがなければ表示だけで操作はできません。親タスクの hub のボードには、その hub 自身のタスクだけが出ます。「いまの仕事」（下の段落）は、全ボードの動いている仕事を、gate とセッションも含めて 1 つにまとめた画面です。開いている画面のボードとビューはアドレスに入るので、戻る・進むやアドレスの貼り付けで同じ画面に戻れます。hub の操作はサイドバーにはほとんどなく、hub のパネルにあります（停止中の hub の行には「起動」だけが出ます。動いている hub の行にはマウスを重ねると、hub を開く端末アイコンが出ます）。
-
-常駐サーバー（`adj server start`）のボードで、セッションの tmux ウィンドウは「いまの仕事」（下記）の中央の列と、タスクや hub のパネルの「ターミナル」タブ（下の「タスクパネル」を参照）に出ます。ボードの hub は「いまの仕事」の行として出て、hub のパネルには、プロセスのない worktree が「動いていない worktree（N）」のカードで畳んであります。セッションのない worktree と、終わったセッションがここに入り（リポジトリの hub のカードはボード全体を、所属する hub ごとにまとめて並べます）、押すとそれぞれが 1 つのセッションとして開いて、再開・「IDE で開く」・「パスをコピー」・「片付ける…」が使えます。ボタンや端末は、`terminal.preset: "tmux"` で動いていて生きているセッションにだけ出ます。別のセッションに切り替えても、ビューを離れても、切り離すだけで、ウィンドウもその中のエージェントも止まりません。ボードは専用のクライアントとしてアタッチするため、ウィンドウの大きさは tmux の `window-size` オプションに従います。既定は `latest` で、最後に操作したクライアントの大きさになります。タイトルの下のタブはエージェントと人の 2 つで、セッションのタブはありません。以前の「セッション」タブのアドレス（`?view=sessions[&task=<ref>]`、`&session=<id>`、`#session/<id>`、`#sessions`）は、同じボードとタスクの「いまの仕事」を開き、何も指していなければ一覧を開きます。ターミナルはパネルのどのタブでも中央の列にあります。
-
-サイドバーの切り替えの「いまの仕事」タブ（`?view=work`。常駐サーバーのみ）は、全リポジトリの動いている仕事を 3 列で見る 1 枚のビューです。左のサイドバーに一覧、中央にターミナル、右にタスクパネルが並びます。一覧の見出しの行は「タスク」（ここで説明する一覧）と「AI 下読み」（後述）の切り替えで、それぞれに新着の数が付きます。「タスク」は 2 通りにまとめられ、行の右端のアイコンの先のメニューで選びます（アイコンは使っているまとめ方を表し、メニューは「タスク」のときだけ出ます）。「親 Issue」（既定）はオーナー（`owner/name` のスラッシュより前）、リポジトリ、親 Issue、タスクの順で、親のないタスクは、そのリポジトリの hub のグループに入ります（親 Issue より上、リポジトリの先頭に出ます）。オーナーの見出しはオーナーが 1 つでも出し、オーナーは名前順（大文字小文字は区別しません）で、オーナーのないリポジトリは最後の「オーナーなし」に入ります。「状態」は「新着」「実行中」「そのほか」の順の箱で、箱の中はリポジトリごとで、見出しは `owner/name`、名前順（大文字小文字は区別しません）です（空の箱は出しません）。一覧に出るのは動いている仕事だけで、行になるのはタスクのある worker のセッションとタスクのないセッションです。hub が動いておらず、動いているセッションもなく、あなたを待っているものもないリポジトリは、一覧に出ません。それが変われば自然に戻り、ボードと hub のパネルの「動いていない worktree」には全部出たままです。「状態」でも同じで、開いている行のリポジトリと、読めなかったリポジトリは出したままにします。hub も行で、worker の行と同じもの（状態アイコン、エージェントとモデルとコンテキスト使用率、最後に言ったこと、サブエージェント）に加えて、受信箱の未確認（「受信箱 未確認 N」）と確認済み（「確認済み M」）の件数が、0 でないときだけ出ます。押すとその hub が開き、止まっていれば「hub を起動」が出ます。リポジトリの hub は、親のないタスクのグループの先頭の行です。そのグループの名前は「hub ・」に hub の状態（作業中・待機中・エラー・状態不明・動いていない）を続けたもので、未確認があればその件数も出て、リポジトリの先頭に出ます。親タスクの hub は、動かしている親のグループの先頭の行です。自分のグループがない親タスクの hub は、リポジトリの hub の次の行に、キー付き（`hub #9`）で出ます。「状態」では、hub はリポジトリのグループの先頭の行で、状態で入る箱が決まります（新着なら新着（既読つき）、そうでなければ動いているときは実行中、それ以外はそのほか）。hub しかないリポジトリは、その hub が動いているか、あなたを待っているものがあるあいだだけ見出しが出ます。グループの件数には hub を数えません。折りたたんだ見出しには、動かしている hub がチップ（hub のアイコンと「hub」と状態、あなたを待っているものがあるときは手のアイコンと件数）で出て、その下の hub があなたを待っている件数もまとめて出ます。動いているのに台帳に行がなく状態が分からないセッションは、「状態不明」の印をつけて実行中に入ります。worker がもういないタスクは、あなたを待っているもの（下記）がある間だけ出ます。親の見出しには、子 1 つにつき 1 区切りの進捗バー（マージ済み・完了・PR あり・作業中・未着手）、「N / M マージ」、積み上げた系列なら「stack」が出ます。各グループはカードで囲まれ、入れ子が深いほど一段濃くなります。見出しは折りたため、折りたたむと状態ごとの行数が出ます。1 行には、状態アイコン、エージェントとモデルとコンテキスト使用率、タイトル、PR 番号とブランチと状態が変わってからの時間、サブエージェント、差分、許可を求める内容、実行中のツール、gate が待っているときの「設計レビュー · あなたの判定待ち」のような行が出ます。gate が開いた後に worker が先へ進んでいるとき（動いている、許可を求めている、エラーで止まっている。ターミナルで答えた場合など）は、行はその状態を先に言い、gate の行は「設計レビュー · あなたの判定待ち（答えないまま進行中）」になります。gate は開いたままで、答えられます。レート制限は一覧の下にあります。中央は選んだセッションのターミナルで、タブの陰には隠れません（親を選ぶと、それを動かしている hub のターミナルです）。右は選んだ行のボードのタスクパネルで、ターミナルのタブはありません（「ターミナルで話す」は中央のターミナルにキーボードを移します）。報告の文章を載せたカードは「拡大」で大きなダイアログに開けます（下の「タスクパネル」を参照）。親のときは、進み具合、基点ブランチから積んだ順の stack、「次を着手させる」「子タスクを足す」を出す概要になります。アドレスは、何も選んでいなければ `/?view=work`、行を選んでいれば `/b/<slug>/?view=work&task=<ref>&pane=<タブ>` で、`<ref>` はタスク ID、`hub:<id>`、`session:<id>`、`gate:<ボード>/<id>`（タスクのカードがない gate。下記）、`parent:<key>` のいずれかです。タスクパネルとサイドバーの幅は縁をドラッグして変えられ（矢印キーでも変えられ、ダブルクリックで元に戻ります）、このブラウザに保存されます。サイドバーの幅は「ボード」と「いまの仕事」で共通です。「いまの仕事」では、中央の上の行の左端のボタンでサイドバーを隠したり出したりでき（選んでいるものによらず使えます）、その選択はこのブラウザに保存されます。隠している間は、ボタンに新着の数が付きます。一覧は `GET /api/work` で、常駐サーバーだけが返します（単独のボードは 404）。`{now, rateLimits, repos}` で、リポジトリは `{nwo, carrier, hubs, parents, rows, hubSessions, turns, error?}` です。`parents` はボードのもの（下の `/api/state` を参照）を担当ボード間で重複なく並べたもの、`rows` は worker のセッションとリポジトリの hub を `{board, session, task?}` で並べたもの（`board` はその行を開くボードの slug、`task` は `{id, title, status, parent?, pr?, prState?, prTurn?, waitsOnPerson, gateAnsweredAt?, prTurnAt?, parked?}`。`parked` は `{reason, text?, since}` で、完了したタスクには付きません）、`hubSessions` は親タスク hub のセッション、`turns` は行があってもなくても人を待っているもので、PR があなたの番のタスクと、置いているタスクと、人を待つ開いた gate のまとまりを `{board, task?, gates}` で並べます（`gates` は `{id, kind, title?, openedAt, slug, task?}`。記録するだけの gate は含めません）。`gateAnsweredAt` と `prTurnAt` は UTC のスタンプで、そのタスクの gate に最後に答えた時刻と、PR の番が最後に変わった時刻です。セッションの `agentSession.lastPromptAt` は、あなたが最後にそのセッションへ入力した時刻です。
-
-自分にレビューを頼んできた PR は、タスクとは別に1件ずつ記録します。対象は、adj がボードを持つオーナーのリポジトリです。`POST /api/others/sync`（常駐サーバーのみ）が GitHub から読み取ります。読むのは、自分を直接指名している開いた PR と、終わっていない記録すべて（終わっていても読み手が開いたままの記録を含む）で、後者は番号を指定して読みます。同期は頼まれたときだけ動き、起動時や定期的には動きません。`GET /api/others` は `{now, lastSync, records, hub}` を返します。各記録には、PR のタイトル、作者、ブランチ、head の SHA、ファイルごとの差分の大きさ、CI、レビュアー、自分の最後のレビューとその後に push されたコミット数、そこから導いた `state`（`requested`・`ai-reading`・`ai-ready`・`pushed`・`waiting-on-author`・`done`）が入ります。終わってから1日たった記録は、次の同期で消えます（読み手が開いたままの記録は、閉じるまで残ります）。各キーの意味は [docs/architecture.md](docs/architecture.md#prs-others-asked-you-to-review) にあります。
-
-「AI 下読み」は、切り替えのもう一方で、この記録の一覧です。リポジトリごとのグループ（adj がボードを持たないリポジトリには印が付きます）に、依頼が古い順、終わったものは最後に並び、「同期」と最後に同期した時刻、リポジトリで絞り込むチップと、AI 下読みの進み具合（すべて・下読み済み・下読み中・未。件数つき）で絞り込むチップが付き、各行にも同じ印が付きます。行には PR のタイトル、番号、作者、`+追加 -削除`、ファイル数、大きさ（変更行が 200 未満なら S、1000 未満なら M、それ以上は L）、依頼からの時間と、状態の 1 行が出ます（ボタンはその行の右端に付き、収まらなければ文が折り返されて、最後の行の右端に残ります）。行を選ぶと、タスクと同じように PR が開きます。中央に下読み（タブは「下読み」「差分」「下書き」）、右のパネルに読み手のターミナル（AI 下読みが始まったあと。差分のことを聞けます。読み手がいないときはパネルがそう言い、「下読みを閉じる」もあります）が出ます。「GitHub で開く」と、全体を読むための「拡大」は中央の上端にあります。アドレスにも入るので（`/?view=work&task=pr:<owner/repo#N>`、3 つ目のタブは `&pane=drafts`）、リンクで開けます。「差分」タブ（と「拡大」の差分のグループ）には、読み手が読んだ差分の全体が出ます。パスだけで決めた 5 つのタブ（仕様・ロジック、UI、ドキュメント、テスト、リソース。変更行に占める割合つき）に分かれ、ファイルは下読みの読む順に並び、注釈は該当の行の下に付きます（初めはすべて開いていて、ボタン 1 つでたためます）。行の「＋」でその行への下書きを始められ、見るポイントと読む順からは該当の行やファイルへ飛べます。丸ごと削除したファイルと 1500 行を超えるファイルは、閉じた状態で始まります。そこで書く下書きのコメントは、ブラウザではなく adj のサーバーに保存するので、再読み込みしても別のブラウザでも残ります。その下の「N 件を pending review に積む」で、PR 上のあなたの pending review に積めます（すでにあればそこに足します）。下書きは行コメント、全体のコメントは本文になります。pending review はあなたにしか見えず、仕上げて送信するのは GitHub です。adj は review を送信せず、承認も変更依頼もしません。積んだ下書きは一覧に残り、編集はできず、コピーはできます。変更が大きすぎて読めない PR（1 ファイルの変更が 1500 行を超えるもの。丸ごと削除したファイルと lock・スナップショット・生成ファイルは数えず、PR の合計も数えません）は「レビュー対象外」になります。行には大きすぎるファイルが出て、「AI 下読み」の代わりに「分割案」が出ます。これは worker に、ファイルの構成と hunk の見出しだけから、レビューしやすい PR への分け方を下書きしてもらうものです（差分の行は読みません）。分割案は全体のコメントとして下書きに入り、そこで編集・コピーでき、pending review に積めます。「下読み」タブには、上限を超えたファイルと「分割を提案する」「それでも AI 下読み」（PR 全体をそのまま読みます）が出ます。依頼、頼み直し、下読みの完了、push のどれかが、あなたが「既読」にした（または AI 下読みを始めた、下書きを pending review に積んだ）時刻より後なら、その行は新着です。作者の対応待ちと終わった PR は新着になりません。新着の行があるあいだ、一覧の上の帯に `done_all` の「新着をすべて既読にする」が出て、リポジトリと AI 下読みの絞り込みで隠れている行も含め、新着の行をまとめて既読にします。同期のボタンは「同期・最終同期: ○時間前」と読めます（まだなら「まだ同期していません」）。最後の同期から 30 分より長くたつと、ボタンが目立つ色になり、切り替えの「AI 下読み」に点が付きます。同期でレビューの依頼か頼み直しが届くと、デスクトップ通知が 1 回鳴ります（複数なら「レビュー依頼 N 件」）。push だけでは鳴りません。コードレビュー hub の行は、AI 下読みが使えるかどうかを言い、使えないあいだも同期と一覧は使えます。既読の印はこのブラウザ（`adj.seenOthers`）に持ちます。hub の手順は、これらの PR をターミナルに並べず、この一覧を案内します。
-
-**コードレビュー hub と読み手。** 「AI 下読み」は、どのリポジトリにも属さない hub が作ります。`adj hub --review`（`--hub @review` と同じで、`--repo` とは併用できません）でどのディレクトリからでも起動でき、作業ディレクトリは `<state>/review` です。行の「hub を起動」（`POST /api/others/hub/start`。`terminal.preset: "tmux"` のみ）でも起動できます。動いているときは、行の「hub を止める」（`POST /api/others/hub/stop`。確認のあとで tmux のペインを閉じます）で止められます。PR の記録・下読み・順番待ちは残り、動いている読み手はそのまま動き続けます（順番待ちは、hub をもう一度起動すると始まります）。タスクの「AI 下読み」タブは、hub が止まっていることをタブの中で言い、そこから「hub を起動」できます。「ボード」には出ません。下読みは、行のボタン（`POST /api/others/ai`、本文は `{"id": "owner/repo#N"}`。レビュー対象外の PR の分割案は `"mode": "split"` を足します。hub が止まっていれば 409 `hub-stopped` で、何も積みません）か `adj review request --pr <URL|owner/repo#N>`（分割案は `--split`）で頼みます。PR を持つタスクは、同じ記録と同じ順番待ちで、その PR も下読みできます。`adj review request --task <id>`（タスクのリポジトリの外からは `--repo` か `--hub` を付けます）か `POST /b/<slug>/api/tasks/<id>/ai`（本文の `{"mode"}` は省略できます）で頼み、同じパスへの `GET` は `{pr, record, hub}` を返します。3 つの場所を分け合い、コードレビュー hub が動いている必要があり（止まっていれば 409 `hub-stopped`）、あなたへのレビュー依頼でもない限り「AI 下読み」の一覧には出ません。PR に新しい push があっても下読みは残り（「下読みし直す」）、PR がマージまたはクローズされるか、タスクが終わると（その PR があなたへのレビュー依頼でもあるときを除く）読み手が閉じ、下読みはタスクについて残ります。「いまの仕事」では、PR のあるタスクに、中央の上に「AI 下読み」タブが付きます。読み手の下読みが中央、読み手が右のパネルに並び、「worker への指示」では下書きがタスクの worker への指示になります。「N 件を worker に渡す」は、まだ渡していない指示を、タスクの待っている差分または動作確認の確認に `changes` で答えるか、なければ最新の差分の記録に差し戻しとして渡します（メッセージには、下読みから来た指示だと分かる見出しが付きます。`POST /b/<slug>/api/tasks/<id>/hand`）。タスクの PR に pending review は出しません。同期が下読みを頼むことはありません（ただし、同期が読み手を閉じて場所が空けば、順番待ちの次の下読みが始まることはあります）。同時に動く読み手は最大 3 つで、残りは頼んだ順に待ちます。読み手は 1 つずつ専用のウィンドウで、空のディレクトリで動き、チェックアウトも `gh` もありません。`adj review context --pr <id> --out .` が差分、本文、コミットメッセージ、レビューコメントを隣に書き出し（読み取りだけのリクエストで、変更はしません）、読み手は `adj review submit --pr <id> --file read-through.json` で JSON を 1 つ渡します。保存の前にスキーマで検査します（読み手が終えられないときは `adj review fail --pr <id> --why <理由>` で伝えます。hub への連絡は `adj review say` だけで、ほかの hub には届きません。その下読みは失敗になり、場所が空いて、もう一度頼めます。`running` のまま 30 分たった下読みは、古い読み手がいなくなった（または止められた。tmux のウィンドウを閉じます）あとで、新しい依頼が引き継ぎます。止められないときや生死が分からないときは、そのまま動いている扱いです）。読み手は push もコメントもレビューもできません。Claude では既定の `reviewerRunner` がそれを守らせます。別のエージェントでは `adj-reviewer` 手順の決まりだけなので、制限する `reviewerRunner` を設定してください。読み手は、下読みを渡したあとも動いたままです。ボードの「下読みを閉じる」（`POST /api/others/reader/close`、本文は `{"id": "owner/repo#N"}`。開いている読み手がなければ 409 `no-reader`）か、同期や PR のポーリングでその PR がマージまたはクローズされたと分かったとき、読み手が下読みしているタスクが終わったとき（完了・キャンセル・削除。その PR があなたへのレビュー依頼でもあるときはタスクが終わっても閉じません。worker のセッションを閉じただけでは閉じません）に閉じます。閉じても下読みと下書きは残り、`running` だった下読みは失敗になって、もう一度頼めます。`GET /api/others/read?id=<owner/repo#N>` が保存済みの下読みを、`GET /api/others/diff?id=<owner/repo#N>` が読み手の読んだ差分（`{id, sha, bytes, diff}`）を返します。差分は下読みと同じ head のものとして一緒に保存され、一緒に消えます。変更がなければ `diff` は `""`、8 MiB を超えると大きさだけを持つ `null` です。PR の head が変わると、下読みは残り、前の head で作ったものとして表示されます（「下読みし直す」）。勝手にやり直すことはありません。スキーマとキューの規則は [docs/architecture.md](docs/architecture.md#the-read-through) にあります。
-
-**副官。** 副官は、どのリポジトリにも属さない、このマシンに1つだけのセッションです。hub ではなく、いま何が起きているかを尋ねるための窓です。`POST /api/aide/open` で起動します（「いまの仕事」で何も選んでいないときに出る副官のペインが、「副官」の行・「副官を起動」・「副官に聞く」を押したときに呼びます。ペインを表示しただけでは起動しません。`terminal.preset: "tmux"` のみで、そうでなければ 409 `not-startable`）、状態は `GET /api/aide` で読めます。「リセット」（`POST /api/aide/reset`）は、ターンの途中でも新しいものに入れ替えます。リセットを押すことがそれを求めることだからです。副官は再開せず新しく始めます。取り直せないものを何も持たないからです。`<state>/aide` で、あなたが自分で開くセッションと同じく、あなたの Claude Code 設定（設定ファイル・指示・MCP サーバー・権限モードとルール）で動きます。許可の確認はペインで答えます。その上に adj は自分の MCP サーバー（設定に `adjutant` がなければ）、hook、専用のステータスライン（その窓ではあなたのものと置き換わります）を足し、読むだけのツールと、表示領域に出すものだけを書く `adjutant_show` を確認なしで許可します。送る2つのツール `adjutant_request` と `adjutant_gate_answer` は含みません。あなた自身の権限ルールで確認され、副官も送る内容を見せて、チャットであなたが yes と言ってから送ります。PR を無人で読む AI 下読みとは違い、副官は、目の前であなたが言ったことだけをするもので、あなた自身の権限ルールの下で動きます。adj の設定の `defaults` か `repos["@aide"]` の項目、つまり `terminal` と `agentEnv` などは引き続き効きます。Claude Code はそのディレクトリを信頼するか1度だけ尋ねるので、最初に開いたときにペインで答えてください。詳しくは [docs/architecture.md](docs/architecture.md#the-aide) にあります。
-
-**副官の表示領域。** 副官のペインには、ターミナルの横に、副官が `adjutant_show` で出したものを置く表示領域があります。何も出ていないときは、あなたの判断待ちの一覧が入ります。`gate` の部品は判断メモです。gate の種類・リポジトリ・タスク・待たせている時間に続けて、タスクが何か、前回見てから起きたこと（タスクのパネルと同じ「離れていた間に」）、何を聞かれているか（`focus`、結果つきの選択肢、おすすめ印）、worker が迷っていること、根拠として差分の数行を出します。答えはタスクのパネルと同じ `POST /api/gates/<id>` で、部品の上から返せます。副官は起こさず、表示領域の状態にも何も書きません。「処理したら次へ」がオンなら、答えたあとに同じ親の次の判断待ちを出します。待っている gate の「副官に答えを伝える」と、プロンプトの上の「この判断」チップは、`[gate <board>/<id>] ` を入力欄に打ちます（送りはしません）。続けて「B で」と書くと、副官はその gate への答えと読み、送る内容（リポジトリ・タスク・種類・選択肢・コメント・受け取る側）を見せて、あなたが yes と言ってから、ボタンと同じ経路で答えます。`waits` の部品は、判断待ちをリポジトリと親ごとに、聞かれていることと一緒に並べ、その下に離れている間に終わったものを出します。待ちを押すとその `gate` の部品が開きます。部品の「拡大」で、タスクを選択せずに大きなダイアログで開けます。選択肢には下書きの `comment` を付けられ（`adjutant_gate_open`）、その選択肢を押したときは、自分でコメントを書いていればそれを、書いていなければ下書きを送ります。
-
-`reviews`（参照なし）はレビュー依頼の一覧です。あなたのレビューを待っている他の人の PR を、リポジトリごとに、作者・新着か頼み直しか・AI 下読みの進み具合と並べます。行を押すと、下読みがあればその下読みを表示領域に、なければ「AI 下読み」でその PR を開きます。このほかに5種類あり、どれも参照で指定し、記録から描きます（GitHub には聞きません）。`read` は PR の AI 下読みです。この PR がすること（3行）、要注意のポイント（副官が `point` 番号で指すか、`level` で絞ったもの）とその行のコード・読み手の注釈、残りのポイントの折りたたみ、下読みを開くボタンと読み手に聞くボタンを出します。`task` はタスクの計画と次に起きること、または親について、子の進み具合の帯（マージ済み・マージされずに完了・あなた待ち・進行中・未着手）、子ごとの誰の番か、次に起きることです。`pr` は、PR が誰の番か、レビュー bot、CI、記録の上で承認済み・CI 成功か、そうでないなら何が邪魔か（コンフリクトは記録になく、部品が GitHub で確認するよう言います）、大きさ、読んだかを出します。`session` は worker セッションの状態・エージェント・最後のメッセージと、止まっていないかです。`request` は副官が hub に渡した依頼（`adjutant_request`）で、送った内容、送り先の hub（動いていなければそう書きます）、どこまで進んだか（送信済み・hub の読み取りがあなたの確認待ち・起票済み・worker 着手・PR・着手できず）をタスクの記録から出し、判断・hub・worker のターミナルへのボタンが付きます。`diff` は差分の最大60行で（描くのは最大80行で、省いた行数を行で示します）、PR の保存済みの差分（読み手の注釈つき）か、開いている gate の差分です。gate のタスクの PR に AI 下読みがあれば、gate の「根拠」の行にも読み手の注釈が付きます（記録がいまある head のものだけです）。最新の読み込みに失敗した部品は、まだ出している内容の上にそう書き、`adjutant_show` は型の違うオプションを断ります。
-
-「新着」には、あなたを待っていて、始まってからまだ見ていないものが入ります。gate が開いた、許可や質問で待っている、worker のターンが gate なしで終わった、セッションが失敗した、PR があなたの番になった（修正の依頼・CI の失敗・承認済み・マージされずに閉じた）、のいずれかで、動いているものがないタスクにも専用の行が出ます。行には、求めている内容か、なければエージェントが最後に言ったことが出ます。「新着」の行は、待っていたことが終わる（gate に答える、許可待ちが消える、セッションに入力する、PR の番が動く）か新しいものに置き換わるか、あなたが既読にするまで残ります。既読にするのは行の `done`「既読にする」か見出しの `done_all` です。行を開いて離れただけでは既読になりません。完了・失敗の行を既読にすると、その終わった項目は一覧から外れます。ほかに動いているものも待っているものもないタスクは一覧から消え、ほかに動いているものがないリポジトリも一覧から外れます。それ以外の新着から外れた行は、状態のとおり「状態」の箱と「親 Issue」の木に出たままです。手を出すのは、gate に答える（ボード、hub、CLI のどこからでも）ことと、セッションのターミナルに入力する（ボードの外でも）ことで、後者は台帳の `lastPromptAt` から分かります。adjutant がセッションを起こすために打つ文は数えませんが、`wake` / `workerWake` / `hubWake` を自分で書いて別の文を打たせると、あなたの入力と区別できないため、入力として数えます。ボードのタスクパネルでタスクを開いただけでは数えず、ブラウザのタブを切り替えても離れたことにはなりません。「親 Issue」では「新着」が木の上に帯として並び（タスクのセッションの行は木にも残ります。新着の hub の行は帯に出て、グループにも残ります）、「状態」では最初の箱です。「新着」に戻るのは、やることが変わったときだけです。gate が開く、許可や質問が来る、worker がターンを gate なしで終える、セッションが失敗する、PR がまたあなたの番になる、まだ開いているものがある行の置くのをやめる（`adj task unpark`）、のいずれかで、工程が進む、ツールを使う、サブエージェント、PR がチェック待ちになる、では戻りません。ボタンは 2 つで、新着の行の `done` はその行を既読にし、「新着」の見出しの `done_all` は新着をすべて既読にします。サイドバーの「いまの仕事」タブの数は 2 つの一覧の新着の行数の合計で、ほかのビューを開いている間も 10 秒ごとに更新されます。サイドバーで数を持つのはこれだけで、常駐サーバーではページのタイトルの先頭の数にもなります（単独のボードはあなたを待っているものの数を出します）。「新着」の見出しのチェックボックス「処理したら次へ」（既定でオン。ブラウザごとに保存）は、開いている行の gate に答えるか閉じると、一覧の順で次の新着の行を開きます（続きがなければ残っている先頭、何も残っていなければそのままです）。既読の印はサーバーの時計での時刻で、このブラウザのローカルストレージ（`adj.seenWork.<owner/repo>`）に持つので、別のブラウザでは空から始まり、このブラウザの別のタブには追従します。
-
-「離れていた間に」は、「いまの仕事」でタスクまたはタスクのないセッションを開くと、そのタスクサマリの先頭に出るブロックです。最後にあなたがしたこと（答えた gate、差し戻した記録、ターミナルで打った文、置いたこと）、いつ離れたか、それから何があったか、いま何を待っているかを言います。「それから」は、その行を離れた時刻と最後に手を出した時刻の遅いほうからで、一度も開かず手も出していない行には何も出ません。数えるのは、工程が進んだ、gate が開いた（質問は質問として）、許可待ち、ターンが終わった・失敗した、PR の番が変わった、です。PR とセッションの状態は最新の変化しか分からないので、その 1 件だけが出ます。離れている間に開いて答えた gate は、最後にしたことにだけ出ます。一覧の各行の `+N` はこの件数で、行を開くと消えます。開いている行のパネルには、その訪問中に起きたことは出しません。親の概要には子の出来事を、子ごとのその子自身の時刻で、子のタイトルを付けて出し、子が何を待っているかを数えます。親を開いても既読の印は書きません。
-
-タスクを置く（park）こともできます。PdM やデザイナーの返事、エンジニアのレビュー、マージのタイミングなど、意図して待っているタスクに理由を付けて置きます。`adj task park --id … --reason pdm|design|review|merge-timing|other [--text …]` のほか、タスクパネルの「タスクサマリ」と、gate の答えの隣（タスクパネルと gate 自身のパネル）の「置く」から、理由とひとことを入れる 1 つのダイアログを開いて置けます（「その他」はひとことが必須です）。置いたタスクは「新着」に入らないのでサイドバーの数にも数えませんが、ほかに待っているものがなくても（worker のいない draft PR など）状態のとおり一覧に残ります（ほかに待っているものがなければ「そのほか」と親の下に出ます）。行には「置いている — PdM の確認待ち」とひとこと、いつからかが出ます。置いたタスクの gate は開いたままで、いつも通り答えられ、gate の枠と gate 自身のパネルには「置いている — …」の行と「置くのをやめる」が出て、「いまの仕事」の gate の行にも置いていると出ます。「置くのをやめる」（または `adj task unpark`）で、まだ開いているものがある行は「新着」に戻ります。完了・キャンセルしたタスクは置けず（断ります）、完了にした（PR のマージを含む）ときは置いたことも消えます。GitHub のレビュー依頼は何も置きません。ボードは `POST /api/tasks/<id>` に `{"parked": {"reason": "pdm", "text": "…"}}`（`{"parked": null}` で戻す）を送り、hub は頼まれたときに CLI の動詞を実行します。レコードには `parked`（`{reason, text?, since}`）が残り、古いバイナリもこのキーを保ちます。置くことと戻すことがどちらもこのブラウザのタブが開いていない間に起きたときは見えず、行は自動では「新着」に戻りません。
-
-カードを押すと、そのタスク 1 件のパネルがサイドバーの隣に開きます。別のカードを押すと表示が切り替わります。見出しにはタスクのキー、元のボード、状態、タイトルがあり、「カードへ」、配置の 3 ボタン、閉じるボタンが並びます。中は「タスクサマリ」「ターミナル」「コードレビュー」「動作確認」「経過」の 5 タブです。「タスクサマリ」には上から、Issue と PR（それぞれ番号とタイトル（長いタイトルは折り返します）。PR には状態、CI、レビューの状況も出ます。PR がまだなければその旨が出ます）、開いている gate とその操作（コメントのいらない判断は 1 クリック、それ以外は「判定画面を開く」で、gate を判定するタブが開きます）、工程、「概要」（問題・ゴール・指示・計画とその判定パネル・worktree とブランチ（「IDE」付き））、詳細（その中の「親タスク」の行には、親が GitHub のサブ Issue と記録のどちらから来たか、子のうちマージ済みの数、積まれた中での位置、記録が別の親を指しているときはその旨が出ます。「子タスクを足す」は、その親を示した新規タスクのフォームを開きます（依頼はその親つきで送られ、hub が子として起票します））、記録が出ます。「コードレビュー」「動作確認」「経過」には gate の報告・差分・確認・経過が出て、判定パネルもそこにあります。見出しの「拡大」と、報告・計画・指摘・差分のような報告の文章を載せたカードの「拡大」を押すと、そのタスクの全部を 1 本のスクロールで読める大きなダイアログが開きます（コードブロックや表も広く出ます）。左には目次があり、判断待ちの gate、セルフレビューと指摘、差分、依頼と計画、回答済みの gate、経過、詳細の順に並びます。カードは 1 枚ずつ縦に並びます。回答済みの gate は 1 つずつ全幅のまとまりで、上に見出し（種類とタイトル、どう答えたか、いつ答えたか、答えの内容）が付き、中の部品も 1 つずつ縦に並びます。カードのボタンならそのカードの位置で、見出しのボタンなら判断待ちの最初の gate（なければ先頭）で開きます。判断待ちの gate があると、右に答える列が出ます（窓が狭いと列は下の帯になります）。列には 1 度に 1 つの gate の操作だけが出て、見出しにどの gate に答えるかを書き、判断待ちが 2 つ以上なら切り替えのボタンが並び、「この gate へ」でその gate のカードへ移れます。開いたカードの gate が待っていればその gate、そうでなければ判断待ちの最初の gate から始まり、スクロールして別の判断待ちの gate の欄に入ると、列もそちらに切り替わります（手で切り替えたあとは、同じ欄を読んでいるあいだはそのままです）。コメントは gate ごとに残り、切り替えても消えません。どの判断待ちの gate も、カードの選択肢から選べます（選ぶと、列がその gate に切り替わってから答えます）。答えが送れてもダイアログは閉じず、答えた gate には答えの印が付いて「回答済み」に移り、次の判断待ちの gate へ進みます。もう無ければ「判断待ちはもうありません」と出して、列を外します。「ターミナルで話す」は、ダイアログを閉じてから移ります。Escape か × で閉じるとパネルに戻り、フォーカスも元のボタンに戻ります（答えに失敗したときは下書きごと開いたままです）。開いているあいだはパネルの更新に追従し、変わったことはすぐに出ます。変わったカードと目次の項目には、そのカードがスクロールで見えるまで「更新」の印が付き、見出しの下には何が変わったかを短く知らせる欄が出て（「見る」でそこへ移れます）、数秒で消えます。開いているあいだに gate が開けば判断待ちに加わり（目次の項目と列の切り替えに印が付きます）、ほかで答えられた gate は回答済みの印が付きます。コメントを打っているあいだは描き直さず、入力欄からフォーカスが外れてから描き直し、打った文字は残ります。タスクがパネルからなくなったら、読めるまま操作を外して、その旨を出して開いたままにします。hub・セッション・タスクのない gate のカードは、これまでどおりそのカードだけを答える操作つきで開き、答えが送れると閉じます。ボードのパネル自体が大きなダイアログで開いているあいだも、見出しのボタンは出ます（カードのボタンは出ません）。カードの gate や記録、通知からの入口は、パネルの該当タブをダイアログで開きます（保存した置き場所は変わりません）。開いている gate を判定するタブには点が付きます。カードの上端にも Issue と PR の番号が並び、どちらを押しても GitHub で開きます。PR は状態（オープン・下書き・マージ済み）で色が変わります。PR の状態・CI・レビューの状況は、ページではなく、常駐サーバーの PR の自動確認と PR の確認（「PR確認」、`adj task refresh`）が読むので、直近に読んだ時点のものです。自動確認は GitHub の通知（`participating=true`）を `If-Modified-Since` 付きで尋ね、変わったときだけカードの持つ PR を 1 回の GraphQL で読みます。通知を既読にはしません。マージされた PR のカードは完了に移り、マージされずに閉じられた PR は人の判断に回して取り消しはしません。「ターミナル」はそのタスクのセッションを内蔵ターミナルで開き、再開・閉じる・自分の端末で開くためのバーが付きます。セッションが入力待ちのあいだは「入力待ち」と表示し、セッションがなければ押せません。カードの本体は「タスクサマリ」を、カードの「ターミナル」ボタンと、質問の「ターミナルで答える」は「ターミナル」を開きます。パネルは右（既定）か左のサイドバーに置くか、大きなダイアログ（↗「ダイアログで開く」）で開けます。ダイアログは覚えておくモードで、オンのあいだは開くパネルがすべてダイアログになり、閉じるボタンと外を押すことはモードを変えずにパネルを閉じるだけです（Escape では閉じません。ターミナルの中の Escape はエージェントに届きます）。左右のサイドバーのボタンを押すとサイドバーに戻ります。置く側・モード・幅はブラウザごとに保存します。左に置いているあいだはサイドバーがアイコンだけのレールになり（「ボード」タブだけです。「いまの仕事」タブのサイドバーは一覧のままで、幅 1400px 以下ではタスクパネルとターミナルの幅を残すため窓幅の 30%（サイドバーの最小幅は下回りません）まで狭まり、1024px 以下ではその最小幅に固定し、720px 以下では一覧がターミナルの上に載ります）、狭い窓ではパネルがボードに重なります。配置を変えても置き場所が変わるだけでターミナルは作り直さないので、接続もスクロールバックも保たれます。開いているタスクとタブはアドレスに入る（`task=<id>`、`pane=term` / `review` / `check` / `history`。「タスクサマリ」は既定）ので、戻る・進むや貼ったリンクで同じタスクとタブが開きます。
-
-Vimium のように、ページより先にキーを受け取るブラウザ拡張機能は、セッションのターミナルから Escape（と Ctrl+[）を取ってしまい、エージェントに届かなくなります。ターミナルのフォーカスがどこにも移らず外れたときは、ボードが一度だけその旨を出します。その拡張機能でボードの URL を除外してください。Vimium なら「Excluded URLs and keys」に `http://127.0.0.1:*/*` のようなルールを、pass keys を空にして追加します（pass keys だけを書いたルールでは Escape を取られたままです）。
-
-あなたを待つ gate は、どこで出会っても、パネルで判定します。タスクがボードにあれば、そのタスクのパネルの、gate の種類のタブです（カードの gate のチップ、「判定画面を開く」、「いまの仕事」の行、通知のどれもそこで開きます）。タスクのカードがない gate（hub が着手・起票・質問の確認のために開いた gate や、タスクがもうないもの）は、専用のパネルで開きます（`task=gate:<ボード>/<id>`。単独のボードは `gate:<id>` で、gate のチップと「判定画面を開く」がそこを開きます）。同じ画面は、その gate を待っている hub のパネルと、タスクのないセッションのパネルの中にも出ます。タスクがあれば Issue と PR の行、何が待っているか、gate の種類ごとに読むもの（計画や質問、差分と指摘、動作確認のチェック）、gate の選択肢に応じたボタン、コメント欄、「ターミナルで話す」（「いまの仕事」では中央のターミナル）、「解決済みとして閉じる」が 1 本の縦並びで出ます。待っている gate が複数あれば先頭を出し、残りはその下に並べます。答えた gate は件数や「人」のボードから直ちに消え、すでに送ってあった古いポーリングでも戻りません。gate の一覧は「いまの仕事」の「新着」の帯だけで、「処理したら次へ」もそこを進みます。以前の一覧のアドレス `/review` と `/review?item=<ボード>/<id>`、`#gate/<id>` は、常駐サーバーでは「いまの仕事」を開き（一覧が届いたら、その gate の行か gate のパネルを開きます）、単独のボードではエージェントのボードを、その gate のパネルを開いた状態で開きます。単独のボードには仕事の一覧がなく、したがって gate の一覧もありません。そこでは「人」のボードのチップと「判定画面を開く」で判定し、許可や質問で待っているセッションはカードの印と通知にだけ出ます。
-
-許可の確認や質問で 5 秒待たされている hub と worker は、gate が止めていなければ、「いまの仕事」のその行の「新着」の項目（許可待ちまたは質問への回答待ち）になります。答えるのはパネルではなくそのターミナル（その行の中央の列）です。セッションが待つのをやめると「新着」から消えます。
-
-hub も同じパネルで開きます。入口は 3 つあります。表示しているボードのタイトルの右にある「hub」ボタン、サイドバーでボードの行にマウスを重ねると出る端末アイコン（アイコンだけのレールでは出ないので、タイトルのボタンを使います）、「いまの仕事」の hub の行です（ターミナルは中央の列です）。ボードでは「ターミナル」が開き、hub 自身のセッションです。「詳細」には hub の状態、作業中の worker、あなたの確認待ち、待ちキュー、受信箱が出ます（受信箱と待ちキューは新しいものから数件で、残りは「ほか N 件」です。待ちキューのタスクを押すとそのタスクのパネルが開きます）。hub への操作もここにあります。「着手を促す」（worker の枠が空いていれば待ちの先頭を着手させます。タイトルバーからは外れ、ここにあります）、「再同期」、「hub を止める」（役目を終えた親タスクの hub は「hub を閉じる」）、「hub をリセット…」、「タスクなしのセッションを始める…」、リポジトリの hub では「親タスクの hub を起動…」です（下の「セッションを始める・紐づける」を参照）。hub がまだ起動していない依頼は「起動を依頼中」のカードに出て、hub が待っている gate は先頭で判定できます。止まっている hub は「ターミナル」が押せず、「詳細」に「hub を起動」が出ます。tmux の外で動いている hub も「ターミナル」は押せませんが、「詳細」は使えます。別のボードの hub はそのボードの数字でその場に開き、「ボードへ」で移れます。hub はアドレスに `task=hub:<id>` として入ります。
-
-端末の上のバーに、選んだセッションへの操作が並びます。止まった worker の再開、動いている worker を閉じる、hub の起動と停止、自分の端末で開く、そしてメニューから hub のリセット（新しい会話で起動し直す。タスクパネルの hub の端末の上のバーでは先頭のボタンにも出ます）・IDE で開く・パスをコピー・片付ける、です。片付けは worktree とローカルのブランチを削除します（リモートのブランチには触りません）。未コミットの変更や追跡されていないファイル、どのリモートにもないコミットがあると、失われるので断ります。強制するには worktree の名前を打ち直します。gate の確認待ちがあるセッションには、その gate が出て、そこで答えられます（上の「gate の判定」を参照）。答えはその gate を出した hub のボードに届きます。動いていないセッションでは、端末の上にパネルが出て、このページが最後に見た画面と、再開（hub なら起動、または「hub をリセット」で新しい会話で起動）のボタンを示します。
-
-worker の端末で答えたゲートは、worker が `adj gate close --terminal --comment "<決めたこと>"` で閉じます。閉じ忘れても、同じ worker が次のフェーズへ進むか次のゲートを開いた時点でボードが閉じ、「ターミナルで答えた」として表示します。hub が開いたゲートをこの方法で閉じることはありません。
-
-新規タスクのフォームは、やってほしいことを自分の言葉で書く 1 つのテキストボックスです。送るのはその文章、ボタンの状態、`needsReading: true`（「子タスクを足す」から開いたときは、その親も）だけです。レコードはすぐでき、タイトルは文章の 1 行目です。サーバーは `autoStart` を false にして止めておき（`adjutant task next` は選ばず、`dispatch` gate が要るタスクとして並べます）、Issue も読みません。hub が受け取る依頼は `## Read first   yes` で始まり、その下の行はレコードの既定値で、答えではありません。hub は文章を読みます。Issue の URL・番号・キー、分岐元のブランチ、親の Issue は推測せず解決し、Issue のタイトルがタスクのタイトルになります（`task fetch-issue --take-title`、別のトラッカーなら `task update --title -`）。種類・完了条件・止める所・実装者・worktree 名は、リポジトリの既定値を使って推測します。hub はその結果を記録に書き（印はそのままです）、読み取ったこと・推測したこと・まだ決まっていないことをつけた `dispatch` gate を必ず開きます。承認する、示された 1 点を選ぶ、コメントで直す、のどれかで答えるまで、着手も起票も作成もしません。`## Read first` の無い依頼（フォームの変更前に渡されたもの、`task add`、古い項目を `/api/tasks` に送る呼び出し）は従来どおりに進みます。
-
-### タスクなしのセッション
-
-worker は普通タスクから始まり、ボードはタスクと worker を worktree で結ぶので、タスクのない worker にはカードがありません。`POST /api/sessions` は、それでも hub に worker を立ててもらうための API です。`{"instruction": "…", "hub": "<hubs[].id>", "worktreeName": "…", "agent": "…"}` を送ります。項目はすべて任意です。`hub` を省くとこのボードの hub になります。名前はタスクと同じ規則で検査し、省くと指示文の先頭の英数字4語を小文字にして `-` でつないだものになり、英数字が無ければ `session-YYYYMMDD-HHMM`（UTC。開始ダイアログはローカル時刻で同じ形を提案します）になります。指示が無いとき、worker はタブであいさつして待ちます（メッセージの `## Instruction` は `-`）。`agent` を渡す場合は `agentRunner` が起動するもの（`state.sessionStart.agent`）と同じでなければなりません。返り値には `{handed, hubStarted, worktreeName, hubStartError?}` に加えて、依頼を受けた `hub`（`hubs[].id`）と `message`（受信箱のファイル名。`hubs[].inbox[].name` と同じ）が入ります。依頼はその hub の受信箱に `session` メッセージとして入り、hub が動いておらず常駐サーバーが起動できるときは、hub のタブも開きます。空きを待つレコードが無いので、worker の空きが無いときは依頼を断ります。hub は空いている最初の `name`、`name-2`… で worktree を作り（`worktree-path --unique`）、指示文を brief に入れて worker を起動します。タスクのレコードは作りません。
-
-`POST /api/sessions/<id>/link` は、そのセッションに後からタスクを持たせます。既存のタスクは `{"task": "<id>"}`、新しいタスクは `{"newTask": {…}}`（`POST /api/tasks` と同じ項目）で、`hub` も任意で渡せます。`newTask.kind: "file-and-start"` にすると、新しいタスクの Issue を起票するよう hub にも頼みます。タスクが載った hub に `file-issue` メッセージを送り、返り値には `fileIssue`（`{handed, message}`。セッションの依頼と同じ形）と、止まっている hub を常駐サーバーが起動しようとした結果の `hubStarted` / `hubStartError` が加わります。hub に伝えられなかったときは `fileIssueError` を返し、紐づけは取り消さずに worker へ `[issue <id>] not filed` と知らせます。既存の `task` に `file-and-start` を付けると断ります。セッションの所属先の hub はタスクに従います。そのタスクのディレクトリを持つ hub が所属先になるので、親タスクの hub のボードにあるタスクなら worker はその hub へ移り、リポジトリのボードのタスクならリポジトリ自身の hub へ戻ります。親タスクの hub の下で作った新しいタスクは、その親の子になります。タスクは worktree を持って `dispatched`（`pr` ならそのまま）になり、worker のレコードにはタスクと、フェーズが無ければ `implement` が入り、worker には outbox に `[linked <id>]` で知らせ、質問のときと同じく起こします。任意の `phase`（`adjutant phase` が受け取る8つのうちの1つ）を渡すと、レコードにフェーズが既にあっても、そのフェーズを入れます。一覧に無い値は、何も書く前に断ります。まだ起動していないセッション、終了したセッション（動いている worker が無い）、すでに別のタスクを持つセッション、完了済みのタスク、Jules のタスク、別の動いている worker が持っているタスクは断ります。
-
-### セッションを見分ける情報
-
-`GET /api/state` の `sessions[]` には、種類だけでなく、開かずに見分けるための情報が入ります。どれも2秒ごとのポーリングで、すでに手元にあるものから読みます。tmux のソケットごとに `tmux list-panes` と `tmux list-clients` を1回ずつと、ゲートのディレクトリだけです。
-
-- `lastActivityAt`: セッションのウィンドウの tmux の `window_activity`（エポック秒）。tmux で動いていない、またはウィンドウが一覧に無いときは出しません。
-- `lastLine`（`GET /api/state?lines=1` のときだけ（ページはもう送りません）。ボード画面は `lines=hub` を送り、hub のペインだけを読みます）: セッションのペインが入力ボックスの上に出している最後の1行（200文字まで）。tmux で動いているセッションごとに `tmux capture-pane` を1回実行しますが、ウィンドウに動きがあり、かつ前回の読み取りから5秒以上たったときだけです。忙しいエージェントがあってもポーリングが重くなりません。tmux の外のセッションと、何も書かれていないペインでは出しません。`sessions=0` のときは常に出しません。
-- `attached`: そのウィンドウにアタッチしているクライアントの数。ボード自身のブラウザ端末（`adjboard-*`）は数えません（ボードが人のために開いた端末 `adjterm-*` は人なので数えます）。コントロールモードのクライアント（iTerm2 の `-CC`）はそのセッションの全ウィンドウに、通常のクライアントは表示中のウィンドウに数えます。誰もいなければ `0`、ウィンドウが一覧に無いときは出しません。
-- `waiting`: セッションが待っている、いちばん古い未回答のゲート。`{id, kind, hub, slug, title, openedAt, count}` で、`hub` は `hubs[].id`、`count` は待っているゲートの総数です。worker の分は所属する hub のゲートのディレクトリから読むので、リポジトリのボードでも親タスクの hub の下の worker のゲートが出ます。worker が先へ進んだゲートは除きますが、閉じるのはそのディレクトリを持つボードだけです。hub の分は、hub が人に答えてもらうために開いたゲートです。
-- `phases`: worker が宣言したフェーズを古い順に `[phase, エポック秒]` で並べたもの。worker のレコードに直近64件を保存し、同じタスクのために worker を起動し直したとき、レコードが残っていれば引き継ぎます。stop や後片付けでレコードが消えていれば最初からです。`phases` の無い古いレコードは、今のフェーズだけとして読みます。`phase` と `phaseAt` は今のフェーズのままです。
-- `agentSession`: 動いているセッションのエージェントのフックが最後に伝えた内容で、エージェントセッション台帳（`adjutant agent-sessions`）から読みます。`status`（`idle`、`running`、許可の確認で止まっている `waiting`、`done`、`failed`、または新しい版が書いた語をそのまま）、`pending`、`updatedAt`、`lastEventAt`、`activity` と `request`（先頭の1行を200文字まで）、ステータスラインが伝えていれば `model`（表示名）と `contextPercent`（0〜100、四捨五入）、`subagents`（動いているもの。各要素は `{id, type, startedAt, activity}` で、`activity` は最後に実行したツールの先頭の1行を200文字まで。伝えていない項目は出しません）。`lastMessage` と `lastMessageAt`（エージェントが最後のターンの終わりに言った内容を改行を残したまま1000文字まで、とその時刻。拡大表示は全文を `GET /api/sessions/<id>/message` で読みます。まだ何も言っていなければ出しません）。動いていないセッションや行のない（フックのない）セッションでは出しません。動いていて行のないセッション（台帳を読めず `{error}` になったときや、`status` がページの知らない語のときも）は、作業中でも待機中でもなく「状態不明」と表示します（ウィンドウの動きは状態として読みません。リサイズでも再描画されるためです）。フックが届くのは、adjutant が設定を渡して起動したセッション（ボードからの再起動で開き直せます）か、`adjutant setup claude` / `adjutant setup codex` を実行したあとに起動したセッションです。台帳を一覧できないときは `{error}` になります。`sessionId` は行自身の id です。「いまの仕事」・hub の欄・カードは、許可の確認で `waiting` のセッションを、ゲートが開いていなくても人の待ち（`request` があれば許可待ち、なければ入力待ち。`request` が `AskUserQuestion` なら質問への回答待ち）として表示します。
-- `uncommitted`（`files`、`untracked`、`insertions`、`deletions`、`binary`。下の `/git` と同じ）と `uncommittedError`: worker だけが持ち、ポーリングではなく専用のスレッドで git が読みます。セッションを一覧するポーリングが worktree ごとに読み取りを依頼し、最後に読んだ値を返します。セッションが動いている worktree は10秒後、そうでないものは1分後にまた読み、git の呼び出しごとに3秒の期限があります。最初の読み取りが終わるまでは出さず、読み取りに失敗したときは前回の数を残して `uncommittedError` を付けます。
-- `branchPr`（`{number, url, state}`。`state` は `open`、`draft`、`merged`、`closed`）: タスクのないセッションのブランチの pull request です（タスクのあるセッションのものはカードにあります）。常駐サーバーで、origin が github.com のリポジトリだけです。ポーリングがカードと同じ周回で探し、メモリに保持して、5分ごとに更新します（カードのポーリングが取る通知がそのリポジトリを名指ししたときはそれより早く。通知を取るのは、この常駐サーバーのどこかのカードが PR を持っているあいだだけです）。fork からの pull request はそのブランチのものとして扱わず、複数あれば open のものを、なければ最新のものを採ります。そのブランチの直近の探索が失敗したとき（ログインが無い、レート制限、リポジトリを読めない）は `branchPrError` を付け、前回の探索で見つけた pull request はそのまま残します。`prPoll.error` はこれでは変わりません。
-- `waits`（`/api/state` と `/api/boards` の各要素。空のときは出しません）: 許可の確認や質問で数秒待たされていて、まだ待っているセッションです。各要素は `{agentSessionId, since, session, kind, name, request, quiet}` で（`quiet` は true のときだけ）、ページはこれをそのセッションの行の「新着」の項目にし、1回の待ちにつき1回だけデスクトップ通知を出し（通知を許可したページが開いているあいだ、サーバーは `notification` を鳴らしません。ページはすべてのリクエストに `X-Adjutant-Notify: 1` か `0` を付けます）、通知が押されたら「いまの仕事」で `session` を開きます。`quiet` は通知しない待ちで、ターミナルを開いていた待ちと、サーバーの起動時にすでに待っていた待ちです。
-- `parentIssue`（`tasks` と `hubTasks` のタスクにあり、親がなければ出しません）: そのタスクが子になっている Issue で、`{key, url, number?, title?, source, hub, recordKey?}` です。`hub` はそのタスクを持つ hub の slug（`parents[].children[].hub` と同じ名前）、`recordKey` はレコード自身の `parent` を、Issue を指すときの `key` にしたものです（親がない、またはどのリポジトリか分からないキーのときは出しません）。ページは、これがあって `key` と違うときに記録が違うと表示します。`source` は、GitHub がタスクの Issue をその親のサブ Issue だと言っているとき `tracker`、そうでなければタスクレコード自身の `parent` による `record` です（`ALPHA-233` のようなキーは `issueKeys` で Issue に直し、どのリポジトリかを決められないキーは書かれたまま `number` なしで出します）。トラッカーの答えが優先で、トラッカーがレコードの値を消すことはありません。トラッカーに親がない（まだ読んでいない）ときはレコードの値が使われます。`key` は github.com の Issue なら小文字の `owner/repo#N` で、同じ Issue の書き方違いは 1 つの親になります。常駐サーバーはポーリングの周回で、github.com にあるタスクの Issue の親を GitHub に尋ね、答えをメモリに保持して 10 分たった後の最初のポーリングの周回で（まだ 1 度も読めておらず、直近の読み取りが、その Issue だけでなく周回全体の失敗だったあいだは 2 分たった後の最初の周回で）読み直します（完了・取り消しのタスクはサーバーが動いているあいだ 1 回だけ読みます）。読めなかったときはトラッカーが最後に答えた親をそのまま残します。読んで親が無かったときと、まだ読んでいないときは別の状態ですが、どちらもレコードの値を出します。常駐サーバーでなければレコードだけを使います。レコードの値は `adjutant task update --parent` で直します。
-- `parents`（`/api/state`。どのタスクにも親がなければ出しません）: `tasks` と `hubTasks` の親ごとに、その子をまとめたもので、`key` の順に並びます。`{key, url, number?, title?, children, merged, total, stacked, hub}` です。`hub` は子を動かしている hub の slug で、子を持つ hub の中に親タスク hub があればそれ、なければリポジトリ自身の hub です。子は `{hub, id, title, merged, progress, prTurnAt?, branch?, base?, on?, onHub?}` で、`hub` はその子を持つ hub の slug（id は 1 つの hub の中でしか一意でないため）、`title` はタスクのタイトル、`prTurnAt` は PR の番が最後に変わった時刻（UTC のスタンプ）、`merged` は PR がマージ済みかどうか、`progress` は `merged`（PR がマージ済み）、`done`（タスクが完了していて、マージ済みの PR がない）、`pr`（PR が設定されている、またはタスクが `pr` で、マージ済みでない）、`working`（worker に渡した）、`not-started`（それ以外。取り消したタスクもここ）のいずれか、`branch` はその子の作業があるブランチ、`base` は分岐元（先頭の `origin/` を 1 つ除いたもの）、`on`（と、その兄弟の hub の slug を示す `onHub`）はその子が分岐元にしている兄弟（`base` から先頭の `origin/` を 1 つ除いたものが、兄弟のブランチ（worktree が載っているブランチ、なければ PR の head）と完全に一致するもの）です。`stacked` は `on` を持つ子が 1 つでもあるかどうかで、そのとき子は積まれた順（根が先頭）に並び、残りはキューの順です。`total` は子が持ってきたときは GitHub が数えるサブ Issue の数、なければ一覧にある子の数で、一覧にある子の数を下回ることはありません。`merged` はマージ済みの子の数です。積みが複数あるときは、根のあとにその根から分岐したものが続く形で、積みごとにまとまって並びます（同じ分岐元の子はキューの順）。
-
-`rateLimits`（`/api/state`。セッションを一覧しないときも付きます）は `{accounts, error?}` です。台帳に数値がある Claude のアカウント（config ディレクトリ）ごとに1件、`{agent, configDir, sessionId, lastEventAt, fiveHour, sevenDay}` で、各ウィンドウは `{usedPercent, resetsAt}`（エポック秒。伝えていない項目は出しません）です。数値のある行のうち `lastEventAt` が最も新しいものから取ります。`lastEventAt` はそのセッションからフックが最後に届いた時刻で、数値が描かれた時刻ではないので、どれだけ古くてよいかはページが判断します。台帳を一覧できないときは `error` を返します。
-
-`hubs[].inbox` は、その hub の受信箱で待っているメッセージを新しい順に最大20件、`name`、`subject`、`kind`、`from`、`worktree`、`at`（UTC のスタンプ）、`seen`、`counted`（`unseen` / `seen` の数に入るメッセージかどうか）つきで並べます。`inboxCount` は待っている総数のままです。
-
-メッセージは、本文を読むと（`adjutant_pending action=read`、`adjutant pending --read`）「確認済み」になり、ack するまで待ちのままです。一覧に出しただけでは確認済みにならず、ボードが本文を読むこともありません。`hubs[]` には `unseen`（hub を起こす対象のうち未確認の数）、`seen`（同じく確認済みで未処理の数）、`oldestUnseenAt`（最も古い未確認の `at`。無ければ出しません）も入ります。hub 自身が残した `question` と `needs-user` の控え、ack、notice はどちらにも数えません。読むと受信箱のメッセージの隣に空の `.seen-<name>` ファイルができ、ack で消えます。メッセージより古いマーカーは、同じ名前の以前のメッセージのものとして無視します。
-
-「すべて」以外のボードでは、エージェントのボードの列の上に hub の欄が出ます。1行目は hub のセッション（「いまの仕事」の行と同じ状態と最後の1行）です。`unseen + seen` が 0 を超えるあいだは、2行目に件数、最も古い未確認の経過時間、「hub を起こす」ボタンが出ます。ボタンが送るのが `POST /api/hub/wake` で、いまの設定で hub のタブに起こす行を入力し、受信箱にはメッセージを書きません。返り値は `{present, woken, screen, why?}` で、`woken` は入力したかどうか、`screen` はエージェントの画面が理由で入力しなかったかどうか、`why` は動いている hub に入力しなかったときだけ付く、その理由です（hub が動いていなければ `present` が false で、`why` は付きません）。ボタンが押せるのは `unseen` が 0 を超え、hub が動いているあいだだけで、入力しなかったときは理由をボタンの隣に出します。
-
-同じボタンは、hub のパネルの「受信箱」の末尾（未確認か確認済みのメッセージがあるあいだ。未確認が 0 のときはボードの欄と同じく「未確認のメッセージはありません」で押せません）と、「いまの仕事」の hub の行の隣と折りたたんだ見出しのチップの隣（未確認のメッセージがあるあいだだけ）にも出ます。押せる条件も、入力しなかったときの理由の出し方も同じです。加えて、その hub のボードがこのサーバーにないときは、理由を添えて押せません（起こす操作はその hub 自身のボードに送るためです）。
-
-親タスク hub の `hubs[]` には `titleState` もあり、親 Issue のタイトルがどこまで進んでいるかを表します。`{status, reading, why?, missing?, retryAt?, total?, completed?, readAt?, parentKey?}` です。`status` は `pending`（まだ読んでいない、または読んでいる最中。`reading` で区別します）、`failed`（`why` は `gh` か GitHub の言葉、`retryAt` は次に試す時刻でエポック秒）、`missing`（`missing` は `noKey`、`noIssue`、`notFound`。hub のキーが分からない、キーが Issue を指さない、GitHub にその Issue がない、のいずれか）、`read`（`total` と `completed` はその Issue のサブ Issue の数、`readAt` は UTC のスタンプ。数を読む前に保存したタイトルにはどちらもありません）のいずれかです。バックグラウンドの読み取りが失敗したときは、30 秒後、2 分後、そのあとは 10 分ごとに試し直します。ページはこの値を言葉にして、ボードの hub の欄、hub のパネル、「いまの仕事」の親の見出しの、hub のタイトルのそばに出し、その 1 件の Issue をいま読む再読み込みのボタンを置きます。`POST /api/hub/title`（wake と同じく、その hub 自身のボードだけ）は、ボードの親 Issue を `gh` ですぐ読み、タイトルとサブ Issue の数を `hub-titles/<slug>.json` に保存して、`{title, total, completed, readAt}` を返します。その Issue を読んでいる最中なら `{busy: true}`、読む Issue がなければ `{missing}` で、読み取りに失敗したときは 400 で理由が `error` に入ります。`parents[]` の項目のキーが親タスク hub の Issue と同じなら、`titleHub` にその hub の slug が入り、子のトラッカーの読み取りがタイトルや数を答えていないときは、その hub のものを使います。
-
-`GET /api/sessions/<id>/git` は、ポーリングではなく尋ねられたときだけ、そのセッションの worktree を調べます。`branch`（detached なら null）、`head`、`uncommitted`（HEAD との差の `files`、`untracked`、`insertions`、`deletions`、行数を数えない追跡ファイルの数 `binary`。`untracked` はファイル数ではなくエントリ数で、まるごと新しいディレクトリは1件と数え、未追跡ファイルの行数は `insertions` に入りません。`.claude/` の下に adjutant 自身が書くファイル（`adjutant-*` と `task-brief.md`）は数えません）、`upstream`（設定のとおり）、`unpushed`（`count`、新しい順に20件の `commits`、何と比べたかを示す `against`）、`merged`（`base`、`ref`、`merged`、判定できないときは `reason`）を返します。未 push のコミットは、upstream がそのブランチ自身の対応先（同じブランチ名）のときだけ upstream と比べ、そうでないとき、また upstream が無いときは全リモート（`HEAD --not --remotes`）と比べます。`origin/main` から作った worktree は upstream が `origin/main` になり、それと比べると、マージ後は何も数えられなくなるためです。base はタスクに指定があればそれ、無ければリモートの既定ブランチ（`origin/HEAD`、次に `main`、`master`。リモート追跡ブランチを先に、ローカルを後に）です。fetch はしないので、`unpushed` と `merged` は最後に fetch した時点のものです。squash や rebase でマージした場合、base に残るコミットが worktree のものと別なので、マージ済みとは判定されません。全体で10秒の期限があり、worktree が無ければ断ります。未知のセッション id は `link` と同じく 400 です。
-
-`GET /api/sessions/<id>/message` は、「最後のメッセージ」を拡大したときに、そのセッションのエージェントの最後のメッセージの全文を読みます。ポーリングでは読まず、ポーリングが運ぶのは先頭の1000文字だけです。`{sessionId, at, text, whole}` を返します。`sessionId` はエージェントセッションの id、`at` はメッセージを受け取った時刻（状態の `lastMessageAt`）、`text` はメッセージです。フックは、行が切り詰めたときだけ、全文を行の隣のファイルに5万文字まで（超えたら省略記号付きで切ります）残します。切り詰めた文しか残っていないとき（これが入る前に書かれた行、フックが最後のメッセージを渡さないエージェント、ファイルが無い、または別のメッセージのものだったとき）は `whole` が `false` で、`text` は切り詰めた文です。エージェントセッションのないセッションや、知らないセッション id は、`git` と同じく 400 です。
-
-### セッションへの操作
-
-セッションや hub に対する操作が、ほかに6つあります。どれも常駐サーバーだけが受け付けます。hub が出すボードは、リポジトリ自身のレコードの外に手を伸ばすこれらのルートに 404 を返します。断るときは、ほかの操作と同じく 400 と `{"error": …}` です。
-
-`POST /api/sessions/<id>/resume` は、動いていない worker を `adjutant work --resume` と同じように開き直します。worktree で `adjutant worker --resume` を走らせるタブを開きます。対象は、保存された会話があり、動いても起動中でもない worker だけで、hub を起動するときと同じく `terminal.preset: "tmux"` で `terminal.spawn` を自分で書いていないときに限ります。組み込みの再開コマンドが開き直せるのは Claude の会話だけなので、Claude 以外のエージェントは `agentResumeRunner`（`{sessionId}` を含むもの）が無ければ断ります。worker には hub を渡しません。最後に紐付いた hub へ戻ります（保存されたセッションがそれを覚えています）。`maxWorkers` の数に入り、満杯ならその理由で断ります。返り値は `{resumed, description, hub, hubRunning}` で、`hub` は `hubs[].id` です。
-
-`POST /api/sessions/<id>/open` は、tmux で動いているセッションを、その人自身の端末で開きます。元のセッションと同じ tmux グループに専用のセッション（`adjterm-<pid>-<n>`）を作ってそのウィンドウを表示させるので、ほかのクライアントの表示中のウィンドウは動きません。それを `terminal.attach` に渡します。`{socket}` は tmux のソケット引数（`-L name`、`-S path`、または空）、`{session}` と `{window}` はクォート済みです。コマンドはすぐ返る必要があります。前面に居座るコマンドは、端末を閉じるまでリクエストを待たせます。`terminal.attach` が無いときの既定は、iTerm2 がある Mac で、新しい iTerm2 ウィンドウに `tmux -CC attach` を走らせることです。コントロールモード（`-CC`）を使うのはそのときだけです。それ以外の環境では、ボードがキー名を挙げて断ります。既定の開き方で tmux 3.4 以降なら、最後のクライアントが抜けるとセッションも消えます。`terminal.attach` を自分で書いた場合や、それより古い tmux では、切り離してもセッションは消えず、開くたび・ボード端末を開くたびに走る次の掃除が消します。掃除の対象は、誰もアタッチしておらず作って30秒以上経ったセッションだけなので、30秒以内に接続しなかったアタッチは掃除で消されることがあります。コマンドが失敗したら、そのために作ったセッションは削除します。事前に分かるよう、`state.sessionOpen` が `{available, terminal}` を返します。`terminal` は `"terminal.attach"`、`"iTerm2"`、null のどれかです。返り値は `{opened, description, session, window}` です。
-
-`POST /api/sessions/<id>/cleanup` は、worker の worktree とそのローカルブランチを削除します。動いていれば先に閉じます。`GET /api/sessions/<id>/git` と同じ調べ方で、ボード自身が確かめるので、hub が動いていなくても使えます。未コミットの変更、未追跡のファイル、どのリモートにも無いコミットがある worktree と、調査が失敗または時間切れになった worktree は削除しません。セッションを閉じた後にもう一度調べます（その間に worker がコミットしたかもしれないためです）。無視されているファイル（ビルド成果物、ローカルの環境ファイル）は理由に入らず、worktree と一緒に消えます。その場合の返り値は 200 の `{removed: false, reasons: [{kind, detail}], git}` で、`kind` は `uncommitted`、`untracked`、`unpushed`、`git` のどれかです。エラーではなく 200 なのは、ページがエラーの本文しか拾わず、人が判断に使うのは理由の一覧だからです。それでも削除するときは `{"force": true, "confirm": "<worktree のディレクトリ名>"}` を送ります。名前を打ち返さない `force` は 400 です。何を送っても断るものもあります。メインのチェックアウト、hub、起動中のセッション、worker を止められなかったセッション、キューに入ったタスクが待っている worktree、Jules の計画を書いている最中の worktree です。リモートのブランチには触りません。worktree を消したあとは、ローカルブランチを削除し（hub はマージ済みか空のブランチしか消しませんが、ボードは消します。失敗は報告するだけで、何も戻しません）、hub が片付けるときと同じくリポジトリの `onWorktreeRemove` をメインのチェックアウトで `{worktree}` と `{name}` を埋めて実行して結果を並べ、その worktree の `dispatched` / `pr` のタスクを `done` にします。worker のレコードは worktree の中にあるので、セッションも一緒にボードから消えます。返り値は `{removed, forced, closed, branch: {name, deleted, error?}, tasks, hooks}` です。hub 側の後片付けは変わりません。ボードが消した worktree の依頼を hub があとで受けたときは、何も削除しません。
-
-`POST /api/hubs` に `{"key": "WID-957", "start": "auto"|"resume"|"new"}` を送ると、親タスクのキーの hub を `adjutant hub --hub KEY` と同じように起動します。まだ何もそのキーを指していなくても使えます（`/api/hubs/<id>/start` はボードが一覧に持っている hub にしか使えません）。返り値は `{started, description, hub: {id, slug}}`、すでに動いていれば `{alreadyRunning, pid, hub}` です。hub が `hubs[]` に現れるのは、`adjutant hub` が自分のレコードを書いてからです。`terminal.preset: "tmux"` で `terminal.spawn` を自分で書いていないとき、hub を起動するどの経路（`start`・`reset`・`restart` も）も、開いたウィンドウを約3秒見て、その間に hub が終了したら、hub が出力した内容を付けて 400 で答えます。
-
-`POST /api/hubs/<id>/reset`（常駐サーバーのみ）は、hub が動いていれば止め、`adj hub --tab --new [--hub KEY]` と同じように起動し直すので、新しい hub は新しい会話で始まります。起動が断られる場合（`terminal.preset: "tmux"` でない、キーの分からない親タスクの hub）は、何も止める前に断ります。返り値は `{reset, wasRunning, started, description}`、すでに動いていれば `{reset, wasRunning, alreadyRunning, pid}` です。その間にリセットが起動したのではない hub が立ち上がっていたときは、新しい会話にはなっていないので `reset` は `false` で、先に止めたかどうかは `wasRunning` で分かります。止めたあとで起動できなかったときは、止めたことを伝えるメッセージ付きの 400 です。
-
-`POST /api/hubs/<id>/restart`（常駐サーバーのみ）は、hub が動いていれば止め、`adj hub --tab --resume [--hub KEY]` と同じように、持っていた会話で起動し直します。起動が断られる場合（`terminal.preset: "tmux"` でない、キーの分からない親タスクの hub）、会話が保存されていない場合、`hubResumeRunner` に `{sessionId}` が無い場合、`hubRunner` が自前で `hubResumeRunner` が無い場合（組み込みのランナーが自前のものの代わりに会話を開いてしまいます）は、何も止める前に断ります。10 秒以内に止まらない hub は再起動せず、記録も残します。返り値は `{restarted, wasRunning, started, description}`、すでに動いていれば `{restarted: false, wasRunning, alreadyRunning, pid}` です。止めたあとで起動できなかったときは、止めたことを伝えるメッセージ付きの 400 です。`state.hubResume` は worker の `sessionResume` と同じ `{available, reason}` です。
-
-`POST /api/sessions/<id>/restart` は worker の「セッションを再起動」です。worker のウィンドウを閉じ、`adjutant worker --resume --worktree <worktree>` で同じ会話のまま開き直します。`resume` が断るもの（`terminal.preset: "tmux"` でない、会話が保存されていない、`{sessionId}` の無い resume ランナー、`agentResumeRunner` の無い Claude 以外のエージェント、起動中の worker）に加え、`terminal.close` が `false` のときも、古いウィンドウを閉じられないので、何も閉じる前に断ります。ウィンドウを閉じて 10 秒経っても worker が動いていれば、何も起動せず、記録も残して 400 を返します。閉じたあとで開き直せなかったときは、そのことを伝える 400 で、保存された会話は残るので「再開」が使えます。同じセッションの再起動は同時に 1 つです。返り値は `{restarted, wasRunning, description, hub, hubRunning}` です。
-
-### パネルのセッション
-
-セッションはタスクパネルに、所属するタスクとして、hub として、タスクがなければそのセッション自身として（`task=session:<id>`。タスクに紐づけるとパネルはそのタスクを出し、アドレスも追従します）開きます。
-タスクのある worker では、タスク（キーと Issue へのリンク、親タスク（どこから取ったかと、子のうちマージ済みの数も出ます）、2つのボードでのカードの位置）、聞かれたことと答えたことの直近5件（全履歴へのリンク付き）、時刻つきのフェーズの経過、完了条件と止める所、PR へのリンクとレコードから分かる状態、ブランチ・ベース・worktree とその git の状態、同じ親の子タスク（Backlog の子はパネルから渡せて、hub が止まっていれば先に起動します）、ノート、キャッシュした Issue 本文（再取得つき）を表示します。
-hub では受信箱、待ちキュー、起動した worker と、上の「タスクパネルの hub」のボタンを表示します。タスクのないセッションとセッションのない worktree では、それが何であるかと git の状態、下のボタンを表示します。動いているセッションでは、エージェントのフックが最後に伝えた内容（状態、いつから、使っているツールや許可を求めている内容、サブエージェント）も表示します。
-親タスクの hub の下にあるセッションのタスク・gate・履歴は、その hub 自身のボードから読みます。git の状態はセッションを表示したとき、フェーズやブランチが変わったとき、更新ボタンを押したときに読み、タイマーでは読みません。`state.hubRunner` は設定どおりの hub のコマンドのテンプレートで、プレースホルダーのまま返します。パネルは `{name}` だけを埋め、ほかのプレースホルダーはそのまま表示します。設定したとおりにボードへ表示されるので、秘密情報は書かないでください。
-
-### セッションを始める・紐づける
-
-hub のパネル（「いまの仕事」の hub の行か「hub」ボタンから開きます）の「操作」に 2 つのボタンがあります。どちらも常駐サーバーのボードでだけ使え、そのサーバーが扱っていないボードの hub では使えません。「タスクなしのセッションを始める…」（`state.sessionStart.agent` が空のときも使えません）と、リポジトリの hub だけにある「親タスクの hub を起動…」で、後者は親タスクのキーを尋ねて、その hub をキーで起動します。止まっているリポジトリの hub は、パネルの「hub を起動」（とサイドバーの行の「起動」）で起動します。開始ダイアログでは hub を選び（止まっている hub は依頼を送ったあとに起動します。ダイアログにもそう出ます）、最初の指示は省けます。worktree 名は、名前の欄を触るまで指示から提案します（日付つきの名前はダイアログではローカル時刻、サーバー側の既定は UTC です）。git が受け付けない名前は印が付いて送れず、すでに使われている名前は注記だけです（最終的な名前は hub が決めるため）。選べるエージェントは `agentRunner` が起動するものだけで、worker の空きが無い間は依頼のボタンが押せません。断られた依頼はダイアログと入力を残したまま、理由を出します。hub がセッションを起動するまで、その hub のパネルには「起動を依頼中」のカードが出ます。カードは hub の受信箱から作るので、再読み込みしても残ります。待っている、hub が止まっている（起動ボタン、または起動できなかった理由つき）、hub が依頼を受けたのに約15秒たっても何も起動しなかった（起動できなかった。「閉じる」で消せます）の順に状態が変わります。セッションが現れると、依頼したパネルがまだ開いていれば、「いまの仕事」かボードの上でそれを開きます。最後の操作の結果は、どのビューでもページの上の帯に出ます（「閉じる」で消せます）。
-
-タスクのないセッションには、パネルに「タスクにする…」（タイトル、本文、完了条件、Issue を起票するか、いまのフェーズ）と「既存のタスクに紐づける…」（どの hub のボードからでも、未完了で、Jules 向けでも追加指示でもなく、動いている worker がいないタスク。フェーズも選びます）が出ます。紐づけでセッションが別の hub に移るときと、その hub が止まっているときは、押す前にダイアログが知らせます。
-
-## レイヤ構成
-
-```
-infra      ファイル操作・時計・パス・環境変数・シェル・git と gh の実行、端末の操作とその設定、エージェントの種類、通知、IDE、テンプレート、pty、HTTP、WebSocket
-kernel     設定、リポジトリの識別、worktree の git の状態、手順書とスキルの描画、ランナー、指示書
-registry   Context と宛先の解決、hub と worker の記録、保存した会話、生存確認、worker の枠、ロック、ボードの宛先帳とサーバーの記録
-mail       受信箱、送信箱、配達と起こし、エージェントの画面の読み取り
-task       タスクの記録とその操作、GitHub からの読み取り
-gate       gate の記録とその操作
-jules      Jules のセッション（開始、追跡、レビューコメントの中継）
-others     他の人からレビューを頼まれた PR（記録、同期、そこから導く状態）
-lifecycle  hub と worker の起動・停止・再開・終了・フォーカス・紐づけ
-board      常駐デーモンとサーバー、読み取りモデル、バックグラウンドの処理、ページから行うセッションと hub の操作
-transport  cli・mcp・board_http（入力を読み、操作を呼び、結果を言葉にする）
-```
-
-一覧は下の層から順に並んでいます。各モジュールはこの一覧で上にあるモジュールだけを参照でき、下のモジュールは参照できません。`lib.rs` と `main.rs` は11個すべての上に立つクレートのルートです。モジュール間の依存方向は `scripts/check-layering.sh` で強制され、CI でも検証されます。
-
-各モジュールが持つもの・持ってはいけないもの、層ごとの決まり、変更をどこに置くかは [docs/architecture.md](docs/architecture.md)（英語）にまとめています。
+---
 
 ## 開発
 
 ```bash
-cargo test                    # 単体テスト + CLI テスト
-./scripts/check-layering.sh   # レイヤリング検証
+cargo test                    # 単体テストおよび結合テストの実行
+./scripts/check-layering.sh   # レイヤ境界規則の検証
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
 ```
 
-テストはすべて環境から隔離されています。`ADJUTANT_CONFIG` と `ADJUTANT_STATE_DIR` が一時ディレクトリに向けられるため、ローカルの設定や実行中の hub に影響を与えることはありません。外部プロセスを起動する処理も `--dry-run` 下で実行されます。
-
-## サブエージェントの利用
-
-worker はタスク実行中、環境内に特化サブエージェントが定義されていればそれを活用します：
-
-- **調査**: コードベースの探索や Issue・ドキュメントの読み取りに特化したエージェント（`task-researcher` や、説明に調査・探索・research を含むもの）。見当たらない場合は、組み込みの `Explore` または読み取り専用の指示を付与した `general-purpose` へ自動でフォールバックします。
-- **レビュートリアージ**: PR のレビューコメント取得と分類に特化したエージェント（`review-triage` やトリアージ用）。見当たらない場合は `general-purpose` へフォールバックします。
-- **セルフレビュー**: 差分の独立検証に特化したエージェント（`self-reviewer` やレビュー用）。見当たらない場合は `general-purpose`（または設定された codex）へフォールバックします。
-
-カスタムサブエージェントはエージェントクライアント側（Claude Code の場合は `~/.claude/agents/*.md` など）で定義されます。これらが定義されていないまっさらな環境でも、すべて `general-purpose` でそのまま動作します。
-
-## 任意の連携ツール
-
-[`proctor`](https://github.com/syarihu/agent-proctor)（worktree 規約）や [`lk`](https://github.com/syarihu/local-knowledge-cli)（ローカルナレッジベース）が PATH 上にあれば自動で連携し、なければスキップします。
-
-どちらも必須ではありません。worktree の配置や命名規約は `adjutant worktree-path --name`（ブランチ: `{user}/{name}`、パス: `<main>/.claude/worktrees/{name}`）が同等の形式を標準で提供します。また、リポジトリごとの追加ファイル配置は、本ツールの設定にある `postCreate` フックで対応できます。
-
-3つ目は [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) で、これは組み込みの処理自体が参照する唯一のツールです。インストールされていればクリック先を指定できる通知コマンドを使い、無ければ `osascript`（＝スクリプトエディタ名義の通知）にフォールバックします。
+---
 
 ## ライセンス
 
-MIT — [LICENSE](LICENSE) を参照してください。
-
-ボードの端末には xterm.js とそのアドオン2つ（MIT）を同梱しています。ライセンス表記は `src/ui/vendor/xterm/` にあります。
+MIT — 詳細は [LICENSE](LICENSE) を参照してください。
+ボードの内蔵ターミナルには xterm.js およびそのアドオン（MIT）が含まれています。ライセンス表記は `src/ui/vendor/xterm/` にあります。
