@@ -241,7 +241,7 @@ function todoFollow(force = false) {
 }
 
 // Another organisation was selected: the badge, the popover and the view are of that one.
-onOrgChange(() => todoFollow(true));
+onOrgChange(() => { todoFollow(true); if (todoBoardsWanted()) todoLoadBoards(); });
 
 registerView('todo-view', { render: () => todoFollow() });
 

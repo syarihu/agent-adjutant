@@ -63,6 +63,23 @@ struct Seen {
     icon: Option<OwnerIcon>,
 }
 
+/// Clears `asking` of the owners a read thread did not get to, as it drops.
+struct Unmark<'a> {
+    icons: &'a OwnerIcons,
+    left: Vec<String>,
+}
+
+impl Drop for Unmark<'_> {
+    fn drop(&mut self) {
+        let mut seen = self.icons.seen.lock().unwrap_or_else(|e| e.into_inner());
+        for login in &self.left {
+            if let Some(s) = seen.get_mut(login) {
+                s.asking = false;
+            }
+        }
+    }
+}
+
 impl OwnerIcons {
     /// What is known of each of `logins`, never waiting: one not read yet has only its name.
     pub fn look(&self, logins: &[String]) -> Vec<OwnerIcon> {
@@ -97,10 +114,16 @@ impl OwnerIcons {
         }
         let icons = Arc::clone(self);
         std::thread::spawn(move || {
-            for login in ask {
+            // Whatever is left unread when this ends, even by a panic, is asked about again: nothing stays marked as being read.
+            let mut guard = Unmark {
+                icons: &icons,
+                left: ask,
+            };
+            while let Some(login) = guard.left.first().cloned() {
                 // Not under the lock: `gh` can take its whole deadline.
                 let read = read_owner(&login);
                 icons.record(&login, read, Instant::now());
+                guard.left.remove(0);
             }
         });
     }

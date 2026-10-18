@@ -150,3 +150,21 @@ fn the_read_asks_for_the_users_endpoint_and_a_failed_run_is_an_error() {
     // Nothing is run for a name that is not a login.
     assert!(read_owner_with("a/b", &|_, _| panic!("asked")).is_err());
 }
+
+#[test]
+fn a_read_thread_that_ends_early_leaves_nothing_marked_as_being_read() {
+    let icons = OwnerIcons::default();
+    {
+        let mut seen = icons.seen.lock().unwrap();
+        seen.entry("acme".to_string()).or_default().asking = true;
+        seen.entry("beta".to_string()).or_default().asking = true;
+    }
+    // `acme` was read; the thread died on the way to `beta`.
+    icons.record("acme", Err("x".into()), Instant::now());
+    drop(Unmark {
+        icons: &icons,
+        left: vec!["beta".to_string()],
+    });
+    let seen = icons.seen.lock().unwrap();
+    assert!(!seen["acme"].asking && !seen["beta"].asking);
+}

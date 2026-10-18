@@ -115,5 +115,6 @@ onOrgChange(() => {
   prefs.workRepo = '';
   savePrefs();
   renderOrgSwitch();
+  renderWorkBadge();
   if (view === 'work') renderWorkList();
 });

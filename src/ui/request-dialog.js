@@ -57,9 +57,10 @@ function openRequestDialog({ parent = null, slug = null } = {}) {
   const hubs = requestHubOptions(boards, repo);
   const hub = hubs.find(h => h.slug === first?.slug)?.slug || hubs[0]?.slug || '';
   requestParent = parent;
+  // A child's parent is on one board: where it goes is not for choosing, so the parent URL cannot be sent to another repository's hub.
   const body = `<div class="req-form">
-    <label class="req-field"><span>リポジトリ</span><select data-req-repo>${requestOptionsHtml(repos.map(r => ({ value: r, label: r })), repo)}</select></label>
-    <label class="req-field"><span>hub</span><select data-req-hub>${requestOptionsHtml(hubs.map(h => ({ value: h.slug, label: h.label })), hub)}</select></label>
+    <label class="req-field"><span>リポジトリ</span><select data-req-repo${parent ? ' disabled' : ''}>${requestOptionsHtml(repos.map(r => ({ value: r, label: r })), repo)}</select></label>
+    <label class="req-field"><span>hub</span><select data-req-hub${parent ? ' disabled' : ''}>${requestOptionsHtml(hubs.map(h => ({ value: h.slug, label: h.label })), hub)}</select></label>
     ${parent ? `<p class="req-parent">親タスク: ${esc(parent)}</p>` : ''}
     <textarea class="req-input" data-req-text placeholder="やってほしいこと" aria-label="依頼の内容">${esc(parent ? '' : requestDraft)}</textarea>
     <p class="req-error" role="alert" data-req-error></p>

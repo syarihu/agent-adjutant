@@ -47,6 +47,9 @@ vm.runInContext([
   cut(/^function workTitleToolsHtml[\s\S]*?^}/m),
   cut(/^const WORK_RUNNING = [^\n]*;/m),
   cut(/^const workMerged = [^\n]*;/m),
+  cut(/^const workInShown = [^\n]*;/m),
+  cut(/^function workNewShown[\s\S]*?^}/m),
+  cut(/^function workReadAll\(\)[\s\S]*?^}/m),
   cut(/^const WORK_LISTED = \[[^\]]*\];/m),
   cut(/^function workRows[\s\S]*?^}/m),
   cut(/^function workBetter[\s\S]*?^}/m),
@@ -820,4 +823,22 @@ test('rows of a group keep to the order their tasks were made in, whatever their
   const rows = [mk('d', 'working', null), mk('c', 'waiting', '20261018T000300Z-c', 1), mk('a', 'working', '20261018T000200Z-a', 99), mk('b', 'permission', '20261018T000100Z-b'), mk('e', 'done', null)];
   const sorted = plain(run('rows.sort(workRowOrder)', { rows }));
   assert.deepStrictEqual(sorted.map(r => r.key), ['b', 'a', 'c', 'd', 'e']);
+});
+
+test('what the list as shown counts and reads is the selected organisation\'s (and the repository chosen), not every organisation\'s', () => {
+  const entry = (id, nwo) => [id, { cls: 'new', entry: { id, nwo } }];
+  const judged = new Map([entry('a1', 'acme/x'), entry('a2', 'acme/y'), entry('b1', 'beta/z'), ['d', { cls: null, entry: { id: 'd', nwo: 'acme/x' } }]]);
+  const writes = [];
+  const vars = { work: { doc: {} }, workJudge: () => judged, workServerNow: () => 5, workWriteMarks: (nwo, patches) => writes.push([nwo, patches.map(p => p[0])]),
+    orgScope: () => ({ current: 'acme', known: new Set(['acme', 'beta']) }), orgInScope: (sc, nwo) => nwo.split('/')[0] === sc.current, workRepoChoice: () => '' };
+  Object.assign(ctx, vars);
+  assert.strictEqual(run('workNewShown()'), 2);
+  run('workReadAll()');
+  assert.deepStrictEqual(plain(writes), [['acme/x', ['a1']], ['acme/y', ['a2']]]);
+  // With one repository chosen, only its rows.
+  ctx.workRepoChoice = () => 'acme/y';
+  assert.strictEqual(run('workNewShown()'), 1);
+  // Another organisation's new rows alone leave nothing to read in this list.
+  ctx.orgScope = () => ({ current: 'zeta', known: new Set(['acme', 'beta', 'zeta']) });
+  assert.strictEqual(run('workNewShown()'), 0);
 });

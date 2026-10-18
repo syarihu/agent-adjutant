@@ -238,6 +238,17 @@ function workListRows() {
 }
 
 /* How many rows are new. */
+/* Whether a repository is in the list as shown: the selected organisation's, and the one repository chosen of it. */
+const workInShown = (nwo, scope, choice) => orgInScope(scope, nwo) && (!choice || String(nwo).toLowerCase() === choice);
+
+/* How many rows of the list as shown are new: what the task tab counts and what the actions on new rows are for. */
+function workNewShown() {
+  if (!work.doc) return 0;
+  const scope = orgScope(), choice = workRepoChoice();
+  return [...workJudge().values()].filter(j => j.cls === 'new' && workInShown(j.entry.nwo, scope, choice)).length;
+}
+
+/* How many rows are new, in every organisation (the title and the notifications are the page's, not the list's). */
 const workNewCount = () => work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
 
 /* What the sidebar's tab and the page title count: the new rows of both lists, whichever view is on. */
@@ -248,7 +259,7 @@ function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
   const all = workBadgeCount();
-  const counts = [[el, all], [wk('rail-toggle-count'), all], [wk('wk-tab-count-task'), workNewCount()], [wk('wk-tab-count-others'), othersNewCount()]];
+  const counts = [[el, all], [wk('rail-toggle-count'), all], [wk('wk-tab-count-task'), workNewShown()], [wk('wk-tab-count-others'), othersNewCount()]];
   for (const [box, n] of counts) {
     if (!box) continue;
     box.textContent = n;
@@ -952,6 +963,7 @@ function workNewOrder(items, folded = new Set()) {
 
 function renderWorkList() {
   renderWorkRepoFilter();
+  renderWorkTools();
   drawWorkList();
   renderAidePin();
   // Whatever redrew the list (a fold, the other grouping) must not lose the mark.
@@ -1279,8 +1291,10 @@ function selectWorkParent(key) {
 function workReadAll() {
   const now = workServerNow();
   const byRepo = new Map();
+  const scope = orgScope(), choice = workRepoChoice();
   for (const j of workJudge().values()) {
-    if (j.cls !== 'new') continue;
+    // Only what the list shows: the rows of another organisation were not seen to be read.
+    if (j.cls !== 'new' || !workInShown(j.entry.nwo, scope, choice)) continue;
     byRepo.set(j.entry.nwo, [...(byRepo.get(j.entry.nwo) || []), [j.entry.id, { left: now, read: now }]]);
   }
   for (const [nwo, patches] of byRepo) workWriteMarks(nwo, patches);
@@ -1308,7 +1322,7 @@ function workTrackParks() {
 /* The actions on new rows (ask about all, read all, 「処理したら次へ」) are there while something is new in the tasks' list. */
 function renderWorkTools() {
   const tools = wk('wk-list-tools');
-  if (tools) tools.hidden = prefs.workTab === 'others' || workNewCount() === 0;
+  if (tools) tools.hidden = prefs.workTab === 'others' || workNewShown() === 0;
 }
 
 /* The switch between the two lists: which is pressed, which is shown, and what belongs to one only (the request button and the
@@ -1393,6 +1407,7 @@ wk('wk-list').addEventListener('change', e => {
   if (e.target.matches('#wk-repo-filter')) {
     prefs.workRepo = e.target.value;
     savePrefs();
+    renderWorkBadge();
     return renderWorkList();
   }
   if (!e.target.matches('[data-wk-advance]')) return;
