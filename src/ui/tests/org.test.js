@@ -65,19 +65,13 @@ test('orgList: a repository with no owner is the organisation without a login, l
   assert.strictEqual(list[1].name, 'オーナーなし');
 });
 
-test('orgWaitCounts counts an entry once for a gate, a permission or a PR, and not for what is finished or parked', () => {
+test('orgWaitCounts counts the TODO\'s gates and pull requests in the organisation of their repository', () => {
   const { api } = page();
-  const j = (nwo, ...kinds) => ({ entry: { nwo }, live: kinds.map(kind => ({ kind })) });
-  const counts = plain([...api.orgWaitCounts(new Map([
-    ['1', j('Acme/a', 'gate', 'pr')],
-    ['2', j('acme/b', 'permission')],
-    ['3', j('acme/c', 'done')],
-    ['4', j('acme/d', 'failed')],
-    ['5', j('acme/e', 'parked')],
-    ['6', j('beta/x', 'pr')],
-    ['7', j('beta/y')],
-  ]))]);
-  assert.deepStrictEqual(counts, [['acme', 2], ['beta', 1]]);
+  const counts = plain([...api.orgWaitCounts({
+    quick: [{ nwo: 'Acme/a' }], read: [{ nwo: 'acme/b' }, { nwo: 'beta/x' }], prs: [{ repo: 'beta/y' }, { repo: 'local' }], count: 5,
+  })]);
+  assert.deepStrictEqual(counts, [['acme', 2], ['beta', 2], ['', 1]]);
+  assert.strictEqual(api.orgWaitCounts(null).size, 0);
 });
 
 test('orgIcon finds an owner of the document by login, whatever the case', () => {

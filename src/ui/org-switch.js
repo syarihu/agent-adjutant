@@ -42,7 +42,8 @@ function renderOrgSwitch() {
   }
   const current = currentOrg();
   const now = orgs.find(o => o.login === current) || orgs[0];
-  const counts = work.doc ? orgWaitCounts(workJudge()) : new Map();
+  // What the TODO would list after switching, by organisation: the TODO's own gathering, not narrowed.
+  const counts = work.doc ? orgWaitCounts(todoMine(() => true)) : new Map();
   const others = [...counts].filter(([login]) => login !== now.login).reduce((n, [, v]) => n + v, 0);
   orgEl('org-fallback').hidden = true;
   btn.hidden = false;

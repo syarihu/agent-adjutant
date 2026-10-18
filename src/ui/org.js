@@ -30,15 +30,14 @@ function orgList(boardList, doc) {
     .sort((a, b) => (!a.login) - (!b.login) || byName(a.login, b.login));
 }
 
-/* How many things wait on the person per organisation: the entries with a gate, a permission or a PR still live. `judged`
-   is workJudge()'s map; the result is login -> n. The one place the badge and the menu read, so what counts can change here. */
-function orgWaitCounts(judged) {
+/* How many things wait on the person per organisation, as the TODO counts them: `items` is what the TODO gathered over every
+   organisation (`todoItems`, todo.js: the gates to answer and the pull requests to review), each counted in the organisation of its
+   repository. The result is login -> n. The badge and the menu read this, so what the TODO lists after switching is what they said. */
+function orgWaitCounts(items) {
   const counts = new Map();
-  for (const j of judged.values()) {
-    if (!(j.live || []).some(i => i.kind === 'gate' || i.kind === 'permission' || i.kind === 'pr')) continue;
-    const login = orgOf(j.entry.nwo);
-    counts.set(login, (counts.get(login) || 0) + 1);
-  }
+  const add = nwo => { const login = orgOf(nwo); counts.set(login, (counts.get(login) || 0) + 1); };
+  for (const w of [...(items?.quick || []), ...(items?.read || [])]) add(w.nwo);
+  for (const r of items?.prs || []) add(r.repo);
   return counts;
 }
 
