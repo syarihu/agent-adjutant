@@ -322,16 +322,19 @@ function bindDecide(root) {
 
 /* A gate's designs side by side. Only an open gate can still be answered with one; once
    answered, the one picked is marked instead. A choice with a draft shows it: it is what pressing the choice sends when nothing
-   was typed. `opts.expand` false leaves out the 拡大 button, for a page that is not the panel. */
+   was typed. `opts.expand` false leaves out the 拡大 button, for a page that is not the panel. `opts.bare` leaves out the panel and its
+   heading, for the question card, where the question itself is the heading and the card's root names the gate. */
 function choicesHtml(g, pickable, opts = {}) {
   if (!g.choices?.length) return '';
   const expand = opts.expand !== false;
-  return `<div class="panel"${expand ? expandAttrs('choices', g) : ''}${pickable ? ` data-gate="${esc(gateRef(g))}"` : ''}>
+  const gateAttr = pickable ? ` data-gate="${esc(gateRef(g))}"` : '';
+  const head = opts.bare ? `<div class="qc-choices"${gateAttr}>` : `<div class="panel"${expand ? expandAttrs('choices', g) : ''}${gateAttr}>
     ${expand ? expandBtnHtml('AI からの提案・選択肢') : ''}
     <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
       <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>
       <span>AI からの提案・選択肢</span>
-    </h3>
+    </h3>`;
+  return head + `
     <div class="choices-container choices">` +
     g.choices.map(c => `
       <div class="m3-choice-card choice${c.recommended ? ' recommended rec' : ''}">

@@ -1109,6 +1109,14 @@ function workTermHeadHtml(sel, free = null) {
   return `<div class="wk-term-title">${esc(title)}</div><div class="wk-term-sub">${esc(sub)}</div>`;
 }
 
+/* The questions waiting on the person for a task, a line each under the heading over its terminal: a quick one is answered there, any other
+   opens its card (question-dialog.js). Matched by the task's id and board, never by the worktree. */
+function workTermQuestionsHtml(task) {
+  if (!task) return '';
+  const gates = (state.gates || []).filter(g => g.task === task.id && g.wait !== false && (!task._slug || g._slug === task._slug) && !answeredGates.has(gateKey(g)));
+  return questionStripHtml(gates, questionCtxOf);
+}
+
 /* The terminal of what is selected, in the middle. A session of the board that was selected is the page's
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
@@ -1127,7 +1135,7 @@ function renderWorkTerm() {
   // A task with a PR has a second view, its read-through (task-read-view.js): the worker's terminal is kept behind it.
   const task = isTaskRef(nav.task) ? taskById(nav.task) || null : null;
   const { reading, revealed } = renderTaskReadTabs(task);
-  setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free));
+  setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free) + workTermQuestionsHtml(task));
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
