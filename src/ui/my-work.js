@@ -237,7 +237,6 @@ function workListRows() {
   return { rows, turns, judged };
 }
 
-/* How many rows are new. */
 /* Whether a repository is in the list as shown: the selected organisation's, and the one repository chosen of it. */
 const workInShown = (nwo, scope, choice) => orgInScope(scope, nwo) && (!choice || String(nwo).toLowerCase() === choice);
 
