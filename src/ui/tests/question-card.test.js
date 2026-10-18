@@ -116,6 +116,15 @@ test('a diff card reads the approved plan\'s sections; a quick row keeps the who
   assert.ok(q.includes('first line') && q.includes(' tail'));
 });
 
+test('a diff gate\'s own steps are shown as it marks them, over the approved plan\'s', () => {
+  const approved = { id: 'ap', kind: 'plan', title: 'P', steps: [{ text: 'old step' }], wait: false };
+  const g = { id: 'd4', kind: 'diff', title: 'Diff', wait: true, options: ['approve'], diff: DIFF, focus: 'ok?', steps: [{ text: 'A', done: true }, { text: 'B', done: false }] };
+  const c = card(g, { task: { ...task, approvedPlan: approved }, plan: approved });
+  assert.ok(c.body.includes('>A<') || c.body.includes('A<span'));
+  assert.ok(!c.body.includes('old step') && !c.body.includes('計画は承認済み'));
+  assert.equal(count(c.body, '<span class="qc-chip ok">済</span>'), 1);
+});
+
 test('steps are marked done only where the worker says so once one does; 前に決まっていること needs a choice or a comment', () => {
   const approved = { ...planGate, steps: [{ text: 'a', done: true }, { text: 'b', done: false }], wait: false };
   const g = { id: 'd2', kind: 'diff', title: 'D', wait: true, options: [], focus: 'f' };
