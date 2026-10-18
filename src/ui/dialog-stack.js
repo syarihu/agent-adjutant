@@ -43,7 +43,8 @@ const dialogStack = (() => {
     for (const el of holder().children) el.hidden = el.dataset.qdKey !== top?.key;
     const el = top && layerEl(top.key);
     if (el) {
-      dlg().setAttribute('aria-labelledby', el.querySelector('h2')?.id || '');
+      const h = el.querySelector('h2');
+      if (h) dlg().setAttribute('aria-labelledby', h.id); else dlg().removeAttribute('aria-labelledby');
       el.querySelector('.qd-body')?.focus({ preventScroll: true });
     }
   }
@@ -82,14 +83,17 @@ const dialogStack = (() => {
       if (e.target.closest('[data-qd-back]')) pop();
       else if (e.target.closest('[data-qd-close]')) closeAll();
     });
+    // An IME takes Escape to cancel the conversion (keyCode 229 where compositionend came first): it closes nothing. The key is left
+    // to the IME, and only the `cancel` it may raise is stopped.
+    let imeEscape = false;
     d.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
-      // An IME takes Escape to cancel the conversion (keyCode 229 where compositionend came first): it closes nothing.
-      if (e.isComposing || e.keyCode === 229) return e.preventDefault();
+      if (e.isComposing || e.keyCode === 229) { imeEscape = true; setTimeout(() => { imeEscape = false; }); return; }
       if (core.depth() > 1) { e.preventDefault(); pop(); }
     }, true);
     // Escape in a browser that raises `cancel` without the key first: one level back, and the last level closes with the dialog.
     d.addEventListener('cancel', e => {
+      if (imeEscape) { imeEscape = false; e.preventDefault(); return; }
       if (core.depth() > 1) { e.preventDefault(); pop(); }
     });
     // Closed by the browser rather than by `closeAll`: the same bookkeeping.
@@ -104,12 +108,15 @@ const dialogStack = (() => {
     if (!core.depth()) baseOpener = layer.opener || document.activeElement;
     const back = core.depth() > 0
       ? '<button type="button" class="m3-icon-button qd-back" data-qd-back aria-label="戻る" title="戻る"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span></button>' : '';
-    const head = (layer.head ?? dialogHeadHtml(layer)).replace('<h2 class="qd-title">', `<h2 class="qd-title" id="qd-title-${n}">`);
+    const head = layer.head ?? dialogHeadHtml(layer);
     holder().insertAdjacentHTML('beforeend', `<section class="qd-layer" data-qd-key="${esc(layer.key)}"${layer.gate ? ` data-qc-gate="${esc(layer.gate)}"` : ''}>`
       + `<header class="qd-head">${back}<div class="qd-head-main">${head}</div>`
       + '<button type="button" class="m3-icon-button qd-x" data-qd-close aria-label="閉じる" title="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header>'
       + `<div class="qd-body" tabindex="0" role="region" aria-label="内容">${layer.body}</div>`
       + `${layer.foot ? `<footer class="qd-foot">${layer.foot}</footer>` : ''}</section>`);
+    // The layer's heading names the dialog while it is on top, whatever markup the head was given in.
+    const h = layerEl(layer.key).querySelector('.qd-head h2');
+    if (h) h.id ||= `qd-title-${n}`;
     core.push(layer);
     if (!dlg().open) dlg().showModal();
     showTop();
