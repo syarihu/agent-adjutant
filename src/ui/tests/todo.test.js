@@ -99,6 +99,18 @@ test('a quick row has buttons once its gate is read, and says it is loading befo
   assert.ok(html.includes('data-qc-gate="b1/g1"'));
   assert.ok(html.includes('acme/widget'));
   assert.ok(html.includes('9分前から待ち'));
+  // The task's title is a line of its own, which the shared quick row does not carry.
+  assert.ok(html.includes('<div class="todo-task">Task t1</div>'));
+});
+
+test('a board that could not be read says so in the pending quick row, and the list passes the reason on', () => {
+  const it = todoItems({ doc: doc([repo('acme/widget', [turn('t1', [gate('g1', 'question', 1, { quick: true })])])]), records: [] });
+  const row = todoQuickRowHtml(it.quick[0], null, {}, T0 + 600, 'HTTP 500');
+  assert.ok(row.includes('このボードを読めませんでした: HTTP 500'));
+  assert.ok(!row.includes('読み込み中…'));
+  const list = todoListHtml(it, { errorOf: () => 'HTTP 500', now: T0 });
+  assert.ok(list.includes('このボードを読めませんでした: HTTP 500'));
+  assert.ok(todoListHtml(it, { now: T0 }).includes('読み込み中…'));
 });
 
 test('a row to read falls back to the kind\'s fixed question, and says what the worker asked when it is known', () => {

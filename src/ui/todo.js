@@ -50,10 +50,10 @@ function todoPickSelection(sel, before, after) {
 const todoWaited = (since, now) => (Number.isFinite(since) ? `${agoLabel(minutesSince(since, now))}から待ち` : '待ち');
 
 /* A quick question as its row, with where it is from. Until the board it is on has been read there is no question to show, and no button. */
-function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000) {
+function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = null) {
   const from = `<div class="todo-from">${esc(item.nwo)} · ${esc(todoWaited(item.since, now))}</div>`;
-  if (!g) return `<div class="todo-quick todo-pending" data-todo-key="${esc(item.key)}"><div class="qc-quick"><b class="qc-quick-text">${esc(item.title)}</b><span class="todo-loading">読み込み中…</span></div>${from}</div>`;
-  return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key })}${from}</div>`;
+  if (!g) return `<div class="todo-quick todo-pending" data-todo-key="${esc(item.key)}"><div class="qc-quick"><b class="qc-quick-text">${esc(item.title)}</b><span class="todo-loading">${error ? esc(`このボードを読めませんでした: ${error}`) : '読み込み中…'}</span></div>${from}</div>`;
+  return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key })}<div class="todo-task">${esc(item.title)}</div>${from}</div>`;
 }
 
 /* A gate to read as a button that selects it: what kind, which task, what is asked (the worker's own words, else the kind's fixed question). */
@@ -79,10 +79,10 @@ function todoPrRowHtml(rec, sel, now = Date.now() / 1000, records = []) {
 }
 
 /* The whole list: the quick rows, then (only when there is something to read) a separator, the gates to read and the pull requests.
-   `gateOf(key)` is the gate once its board has been read, `ctxOf(g)` the card's context, `sel` the selected key. */
-function todoListHtml(items, { gateOf = () => null, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, records = [] } = {}) {
+   `gateOf(key)` is the gate once its board has been read, `errorOf(key)` why that read failed, `ctxOf(g)` the card's context, `sel` the selected key. */
+function todoListHtml(items, { gateOf = () => null, errorOf = () => null, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, records = [] } = {}) {
   if (!items.count) return '<p class="todo-empty">あなたの番はありません</p>';
-  const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now); }).join('');
+  const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now, g ? null : errorOf(w.key)); }).join('');
   const heavy = items.read.length + items.prs.length > 0;
   return quick
     + (heavy && items.quick.length ? '<h3 class="todo-sep">読んで決める</h3>' : heavy ? '<h3 class="todo-sep first">読んで決める</h3>' : '')

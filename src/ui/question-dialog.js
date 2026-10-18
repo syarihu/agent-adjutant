@@ -34,6 +34,8 @@ function questionSourceOf(key) {
    from what a source has read of its own board. */
 function questionLive(key) {
   if (answeredGates.has(key)) return null;
+  // The TODO view does not refresh the page's state, so there a source's read of the board is the fresher.
+  if (view === 'todo') return questionSourceOf(key)?.g || (state.gates || []).find(x => gateKey(x) === key) || null;
   return (state.gates || []).find(x => gateKey(x) === key) || questionSourceOf(key)?.g || null;
 }
 
@@ -62,7 +64,7 @@ function questionCtxOf(g) {
 /* `questionCtxOf`, read from the board's own state when the gate is one a source holds and the page's state does not. */
 function questionCtxFor(g) {
   const key = gateKey(g);
-  const src = (state.gates || []).some(x => gateKey(x) === key) ? null : questionSourceOf(key);
+  const src = view !== 'todo' && (state.gates || []).some(x => gateKey(x) === key) ? null : questionSourceOf(key);
   return src ? withViewState(src.data, () => questionCtxOf(g)) : questionCtxOf(g);
 }
 

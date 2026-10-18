@@ -45,6 +45,9 @@ registerQuestionSource(key => {
   return g ? { g, data: todo.boards[todoSlugOf(key)].data } : null;
 });
 
+/* Why the board of `key` could not be read, or null. */
+const todoBoardError = key => todo.boards[todoSlugOf(key)]?.error || null;
+
 /* The boards that have a gate in the list are read, while the list is on screen or about to be. */
 const todoBoardsWanted = () => view === 'todo' || todo.popOpen;
 
@@ -101,10 +104,14 @@ function todoSetHtml(slot, el, html) {
 
 const todoCtxOf = g => ({ ...questionCtxFor(g), key: gateKey(g) });
 
+/* Why the list cannot be trusted to be whole, as a line: a read that failed is not an empty list. */
+const todoWorkNote = () => !work.doc ? (work.error ? `読み込めませんでした: ${work.error}` : '読み込み中…') : '';
+const todoOthersNote = () => others.error ? `<p class="todo-hint">レビュー依頼を読めませんでした: ${esc(others.error)}</p>` : '';
+
 function todoListOf(items, sel) {
-  // Nothing has been read yet: not the same as nothing waiting.
-  if (!work.doc) return '<p class="todo-hint">読み込み中…</p>';
-  return todoListHtml(items, { gateOf: todoGateOf, sel, now: Date.now() / 1000, records: othersRecords() });
+  // Nothing has been read yet, or the read failed: not the same as nothing waiting.
+  if (!work.doc) return `<p class="todo-hint">${esc(todoWorkNote())}</p>`;
+  return todoOthersNote() + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, sel, now: Date.now() / 1000, records: othersRecords() });
 }
 
 function todoDrawBadge(items) {
@@ -135,9 +142,9 @@ function todoPrCardHtml(rec) {
 }
 
 function todoEmptyCardHtml(items) {
-  if (!work.doc) return '<div class="todo-card-empty"><p class="todo-hint">読み込み中…</p></div>';
+  if (!work.doc) return `<div class="todo-card-empty"><p class="todo-hint">${esc(todoWorkNote())}</p></div>`;
   const hint = items.quick.length ? '左の確認は、その場で押せます。' : 'worker が何か聞いてきたら、ここに出ます。';
-  return `<div class="todo-card-empty"><p class="todo-empty">あなたの番はありません</p><p class="todo-hint">${esc(hint)}</p></div>`;
+  return `<div class="todo-card-empty">${todoOthersNote()}<p class="todo-empty">あなたの番はありません</p><p class="todo-hint">${esc(hint)}</p></div>`;
 }
 
 /* The gate's card: the head when it changed, the body that scrolls when it changed and nothing in it has the focus (keeping where it was
@@ -177,7 +184,8 @@ function todoDrawCard(items) {
   const g = todoGateOf(key);
   if (!g) {
     todo.card = null;
-    return todoSetHtml('card', el, '<div class="todo-card-empty"><p class="todo-hint">読み込み中…</p></div>');
+    const why = todoBoardError(key);
+    return todoSetHtml('card', el, `<div class="todo-card-empty"><p class="todo-hint">${why ? esc(`このボードを読めませんでした: ${why}`) : '読み込み中…'}</p></div>`);
   }
   todoDrawGateCard(el, key, g);
 }
