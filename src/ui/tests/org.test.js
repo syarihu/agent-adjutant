@@ -67,11 +67,13 @@ test('orgList: a repository with no owner is the organisation without a login, l
 
 test('orgWaitCounts counts the TODO\'s gates and pull requests in the organisation of their repository', () => {
   const { api } = page();
+  const orgs = [{ login: 'acme' }, { login: 'beta' }, { login: '' }];
   const counts = plain([...api.orgWaitCounts({
-    quick: [{ nwo: 'Acme/a' }], read: [{ nwo: 'acme/b' }, { nwo: 'beta/x' }], prs: [{ repo: 'beta/y' }, { repo: 'local' }], count: 5,
-  })]);
+    quick: [{ nwo: 'Acme/a' }], read: [{ nwo: 'acme/b' }, { nwo: 'beta/x' }], prs: [{ repo: 'beta/y' }, { repo: 'local' }, { repo: 'stranger/z' }], count: 6,
+  }, orgs)]);
+  // An organisation with no registered repository is not counted: the menu has no entry to go to.
   assert.deepStrictEqual(counts, [['acme', 2], ['beta', 2], ['', 1]]);
-  assert.strictEqual(api.orgWaitCounts(null).size, 0);
+  assert.strictEqual(api.orgWaitCounts(null, orgs).size, 0);
 });
 
 test('orgIcon finds an owner of the document by login, whatever the case', () => {

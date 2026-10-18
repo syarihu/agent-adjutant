@@ -404,6 +404,12 @@ test('listed repositories: a running hub keeps it, whatever its state word says'
   }
 });
 
+test('listed repositories: a stopped hub with requests it has not read keeps it, so its row can say so and start it', () => {
+  const hub = { ...lchip(lrA, false), hub: { ...lchip(lrA, false).hub, requestsUnseen: 2 } };
+  assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [hub]]]), ['acme/a']);
+  assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [lchip(lrA, false)]]]), []);
+});
+
 test('listed repositories: a stopped hub with something waiting on the person keeps it', () => {
   assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [lchip(lrA, false, 1)]]]), ['acme/a']);
 });

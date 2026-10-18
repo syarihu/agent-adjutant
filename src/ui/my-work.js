@@ -312,7 +312,7 @@ const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
 /* The repositories 「いまの仕事」 lists: one with something under way (a running session, a running hub) or waiting on the
-   person (新着, a gate, a permission prompt, a parked task or a PR), one with a merged task to clean up, one that could not be read, and the one holding the selection.
+   person (新着, a gate, a permission prompt, a parked task or a PR), one whose hub has requests it has not read (its row says so and starts it), one with a merged task to clean up, one that could not be read, and the one holding the selection.
    An idle one is left out and comes back on its own; its board and the hub panel still list it. */
 function workListedRepos(repos, rows, turns, chipsByRepo, keep = null) {
   const on = new Set();
@@ -321,7 +321,7 @@ function workListedRepos(repos, rows, turns, chipsByRepo, keep = null) {
   const open = r => (r.live || []).some(i => i.kind !== 'done' && i.kind !== 'failed');
   for (const r of [...rows, ...turns]) if (r.cls || WORKS_ON_PERSON(r) || WORK_RUNNING.includes(r.st) || open(r) || workMerged(r)) on.add(r.repo);
   for (const repo of repos) {
-    if (repo.error || repo === keep || (chipsByRepo.get(repo) || []).some(c => c.s.present || c.waits > 0)) on.add(repo);
+    if (repo.error || repo === keep || (chipsByRepo.get(repo) || []).some(c => c.s.present || c.waits > 0 || c.hub?.requestsUnseen > 0)) on.add(repo);
   }
   return on;
 }

@@ -32,10 +32,11 @@ function orgList(boardList, doc) {
 
 /* How many things wait on the person per organisation, as the TODO counts them: `items` is what the TODO gathered over every
    organisation (`todoItems`, todo.js: the gates to answer and the pull requests to review), each counted in the organisation of its
-   repository. The result is login -> n. The badge and the menu read this, so what the TODO lists after switching is what they said. */
-function orgWaitCounts(items) {
+   repository, when that organisation is one of `orgs` (`orgList`). The result is login -> n. The badge and the menu read this, so what the TODO lists after switching is what they said. */
+function orgWaitCounts(items, orgs) {
   const counts = new Map();
-  const add = nwo => { const login = orgOf(nwo); counts.set(login, (counts.get(login) || 0) + 1); };
+  // Only the organisations that can be picked: a count the menu has no entry for would point at nothing.
+  const add = nwo => { const login = orgOf(nwo); if (orgs.some(o => o.login === login)) counts.set(login, (counts.get(login) || 0) + 1); };
   for (const w of [...(items?.quick || []), ...(items?.read || [])]) add(w.nwo);
   for (const r of items?.prs || []) add(r.repo);
   return counts;
@@ -73,6 +74,15 @@ function setCurrentOrg(login) {
 
 /* Call `fn(org, prev)` whenever another organisation is selected. */
 function onOrgChange(fn) { document.addEventListener(ORG_EVENT, e => fn(e.detail.org, e.detail.prev)); }
+
+/* The organisation selected and the ones that can be picked, worked out once for a pass over many repositories. */
+function orgScope() {
+  return { current: currentOrg(), known: new Set(orgList(boards, work.doc).map(o => o.login)) };
+}
+
+/* Whether a repository is in `scope`'s organisation, or in none the page lists (a review requested of the person in a repository
+   that is not registered here): that one is shown under every selection, as nothing could select it. */
+const orgInScope = (scope, nwo) => scope.current == null || !scope.known.has(orgOf(nwo)) || orgOf(nwo) === scope.current;
 
 /* Whether a repository ('owner/name') belongs to the selected organisation. */
 const inCurrentOrg = nwo => !!nwo && orgOf(nwo) === currentOrg();

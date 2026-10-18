@@ -44,22 +44,22 @@ const doc = { now: T0, repos: [
   repo('acme/widget', [turn('t1', [gate('g1')]), turn('t2', [gate('g2', 'diff')])]),
   repo('beta/tool', [turn('t3', [gate('g3')])]),
 ] };
-const records = [rec('acme/widget', 1), rec('beta/tool', 2), rec('beta/tool', 3)];
+const records = [rec('acme/widget', 1), rec('beta/tool', 2), rec('beta/tool', 3), rec('stranger/repo', 4)];
 const boards = [{ slug: 'w', nwo: 'acme/widget', finished: false }, { slug: 't', nwo: 'beta/tool', finished: false }];
 const g = name => vm.runInContext(name, ctx);
-const inScope = nwo => g('todoInScope')(nwo);
+const inScope = nwo => g('todoInScope')()(nwo);
 const mine = scope => plain(g('todoItems')({ doc, records, inScope: scope }));
 
 test('with an organisation selected the TODO lists only its gates and pull requests', () => {
   Object.assign(page, { boards, work: { doc } });
   prefs.org = 'beta';
   const items = mine(inScope);
-  assert.deepStrictEqual([...items.read.map(w => w.nwo), ...items.prs.map(r => r.repo)].sort(), ['beta/tool', 'beta/tool', 'beta/tool']);
-  assert.strictEqual(items.count, 3);
+  assert.deepStrictEqual([...items.read.map(w => w.nwo), ...items.prs.map(r => r.repo)].sort(), ['beta/tool', 'beta/tool', 'beta/tool', 'stranger/repo']);
+  assert.strictEqual(items.count, 4);
   prefs.org = 'acme';
   const acme = mine(inScope);
   assert.deepStrictEqual(acme.read.map(w => w.nwo), ['acme/widget', 'acme/widget']);
-  assert.strictEqual(acme.count, 3);
+  assert.strictEqual(acme.count, 4);
 });
 
 test('while no organisation is known the TODO is not narrowed', () => {
@@ -69,10 +69,23 @@ test('while no organisation is known the TODO is not narrowed', () => {
 
 test('the switch\'s count per organisation is what the TODO lists once that organisation is selected', () => {
   Object.assign(page, { boards, work: { doc } });
-  const counts = plain([...g('orgWaitCounts')(mine(() => true))]);
+  const orgs = g('orgList')(boards, doc);
+  const counts = plain([...g('orgWaitCounts')(mine(() => true), orgs)]);
   assert.deepStrictEqual(counts.sort(), [['acme', 3], ['beta', 3]]);
+  // What the TODO lists under a selection is that organisation's, plus what no organisation here owns (counted in none).
   for (const [login, n] of counts) {
     prefs.org = login;
-    assert.strictEqual(mine(inScope).count, n, login);
+    assert.strictEqual(mine(inScope).count, n + 1, login);
   }
+});
+
+test('an item of an organisation with no registered repository is listed under every selection and counted in no organisation', () => {
+  Object.assign(page, { boards, work: { doc } });
+  const orgs = g('orgList')(boards, doc);
+  assert.ok(!orgs.some(o => o.login === 'stranger'));
+  for (const login of ['acme', 'beta']) {
+    prefs.org = login;
+    assert.ok(mine(inScope).prs.some(r => r.repo === 'stranger/repo'), login);
+  }
+  assert.ok(![...g('orgWaitCounts')(mine(() => true), orgs).keys()].includes('stranger'));
 });
