@@ -19,6 +19,7 @@ const todo = {
   boards: {},      // slug -> { data (the board's state, its lists tagged with the board), at, error }
   boardSeq: {},    // slug -> the number of the last read sent
   boardApplied: {},// slug -> the number of the last read applied
+  seen: {},        // key -> when the page first saw the gate listed by the work document (ms)
   items: null,     // what `todoMine` said at the last round
   keys: [],        // what can be selected, as last drawn
   sel: null,       // the selected key (a gate's, or a pull request's): the page's, not the address's
@@ -41,15 +42,22 @@ function todoGateOf(key) {
   return g && g.wait !== false ? g : null;
 }
 /* The board was read and does not list the gate as waiting: not the same as a board not read yet. */
-const todoGoneOf = key => !!todo.boards[todoSlugOf(key)]?.data && !todoGateOf(key);
+const todoGoneOf = key => todoIsGone(todo.boards[todoSlugOf(key)], todo.seen[key], !!todoGateOf(key));
 registerQuestionSource(key => {
   if (answeredGates.has(key)) return null;
   const g = todoGateOf(key);
-  return g ? { g, data: todo.boards[todoSlugOf(key)].data } : todoGoneOf(key) ? { gone: true } : null;
+  return g ? { g, data: todo.boards[todoSlugOf(key)].data, at: todo.boards[todoSlugOf(key)].at } : todoGoneOf(key) ? { gone: true } : null;
 });
 
 /* Why the board of `key` could not be read, or null. */
 const todoBoardError = key => todo.boards[todoSlugOf(key)]?.error || null;
+
+/* Remember when each gate was first listed, and forget those that are not. */
+function todoNoteListed(items) {
+  const keys = new Set([...items.quick, ...items.read].map(w => w.key));
+  for (const k of keys) todo.seen[k] ??= Date.now();
+  for (const k of Object.keys(todo.seen)) if (!keys.has(k)) delete todo.seen[k];
+}
 
 /* The boards that have a gate in the list are read, while the list is on screen or about to be. */
 const todoBoardsWanted = () => view === 'todo' || todo.popOpen;
@@ -59,10 +67,13 @@ const todoBoardsWanted = () => view === 'todo' || todo.popOpen;
 async function todoLoadBoards(force = false) {
   if (!multiBoard) return;
   const items = todoMine();
-  const slugs = new Set([...items.quick, ...items.read].map(w => w.board));
-  const at = Date.now();
-  const stale = [...slugs].filter(slug => force || !todo.boards[slug] || at - todo.boards[slug].at >= TODO_BOARD_FRESH_MS);
+  todoNoteListed(items);
+  const stale = [...todoSlugsToRead(items, {
+    boards: todo.boards, seen: todo.seen, have: (slug, key) => !!todoGateOf(key), now: Date.now(), freshMs: TODO_BOARD_FRESH_MS, force,
+  })];
   await Promise.all(stale.map(async slug => {
+    // Stamped when asked, not when answered: a read that began before a gate was listed says nothing of it.
+    const sent = Date.now();
     const n = todo.boardSeq[slug] = (todo.boardSeq[slug] || 0) + 1;
     // A read sent before a newer one was applied (or before an answer took a gate off) must not put it back.
     const current = () => {
@@ -75,10 +86,10 @@ async function todoLoadBoards(force = false) {
       if (!current()) return;
       // The lists `mergeStates` (core.js) tags with their board, since the cards match on `_slug`.
       const tagged = Object.fromEntries(['tasks', 'gates', 'waits', 'parents', 'workers', 'hubs'].map(k => [k, (next[k] || []).map(x => ({ ...x, _slug: slug, _base: `/b/${slug}` }))]));
-      todo.boards[slug] = { data: { ...next, ...tagged }, at: Date.now(), error: null };
+      todo.boards[slug] = { data: { ...next, ...tagged }, at: sent, error: null };
     } catch (e) {
       if (!current()) return;
-      todo.boards[slug] = { data: todo.boards[slug]?.data || null, at: Date.now(), error: e.message };
+      todo.boards[slug] = { data: todo.boards[slug]?.data || null, at: sent, error: e.message };
     }
     todoFollow();
   }));
@@ -212,6 +223,7 @@ function todoDrawPop(items) {
 function todoFollow(force = false) {
   if (!multiBoard) return;
   const items = todo.items = todoMine();
+  todoNoteListed(items);
   todoDrawBadge(items);
   if (force) todo.html = { pop: null, list: null, card: null };
   const keys = todoSelectable(items);

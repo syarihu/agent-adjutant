@@ -25,8 +25,8 @@ run([
 ].join('\n'), 'decide.js');
 run(read('question-card.js'), 'question-card.js');
 run(read('todo.js'), 'todo.js');
-const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, quickRowHtml, TODO_READ_ORDER } = vm.runInContext(
-  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, quickRowHtml, TODO_READ_ORDER })', ctx);
+const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER } = vm.runInContext(
+  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -213,4 +213,22 @@ test('a quick row shows the first line of the question only, and the shared row 
   const html = todoQuickRowHtml(it.quick[0], g, {}, T0);
   assert.ok(html.includes('First line') && !html.includes('Second line'));
   assert.ok(quickRowHtml(g, {}).includes('Second line'));
+});
+
+test('a board is read again when it is missing, old, forced, or read before a gate it lacks was first seen', () => {
+  const it = todoItems({ doc: doc([repo('acme/widget', [turn('t1', [gate('g1', 'plan', 1)])])]), records: [] });
+  const base = { boards: { b1: { data: {}, at: 1000 } }, seen: { 'b1/g1': 500 }, have: () => false, now: 2000, freshMs: 10000 };
+  assert.equal(todoSlugsToRead(it, base).size, 0);
+  assert.equal(todoSlugsToRead(it, { ...base, seen: { 'b1/g1': 1500 } }).size, 1);
+  assert.equal(todoSlugsToRead(it, { ...base, have: () => true, seen: { 'b1/g1': 1500 } }).size, 0);
+  assert.equal(todoSlugsToRead(it, { ...base, force: true }).size, 1);
+  assert.equal(todoSlugsToRead(it, { ...base, now: 20000 }).size, 1);
+  assert.equal(todoSlugsToRead(it, { ...base, boards: {} }).size, 1);
+});
+
+test('a gate is gone only by a read newer than when it was first seen listed', () => {
+  assert.equal(todoIsGone({ data: {}, at: 1000 }, 1500, false), false);
+  assert.equal(todoIsGone({ data: {}, at: 2000 }, 1500, false), true);
+  assert.equal(todoIsGone({ data: {}, at: 2000 }, 1500, true), false);
+  assert.equal(todoIsGone({ data: null, at: 2000 }, 1500, false), false);
 });

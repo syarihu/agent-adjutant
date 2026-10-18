@@ -691,8 +691,9 @@ async function refresh(force = false) {
     return;
   }
   if (view === 'work') {
-    refreshWork(force);
-    refreshOthers(force);
+    // The popover over the list follows the documents too.
+    if (todo.popOpen) Promise.all([refreshWork(force), refreshOthers(force)]).then(todoPoll);
+    else { refreshWork(force); refreshOthers(force); }
     // The aide is read only while its pane is on screen: each read runs a process check.
     if (!nav.task) refreshAide(force);
     // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).

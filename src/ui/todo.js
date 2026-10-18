@@ -35,6 +35,21 @@ function todoItems({ doc, records, isDone = () => false, inScope = () => true })
   return { quick, read, prs, count: quick.length + read.length + prs.length };
 }
 
+/* The boards to read now: those of the gates listed, read for the first time, or longer ago than `freshMs`, or before a listed gate
+   they do not hold was first seen (that read may simply predate it); all of them when `force`. `boards[slug]` is `{ data, at }`,
+   `seen[key]` when the page first saw the gate listed (ms), `have(slug, key)` whether the board's data lists the gate. */
+function todoSlugsToRead(items, { boards, seen, have, now, freshMs, force = false }) {
+  const slugs = new Set();
+  for (const w of [...items.quick, ...items.read]) {
+    const b = boards[w.board];
+    if (force || !b || now - b.at >= freshMs || (b.data && !have(w.board, w.key) && b.at <= (seen[w.key] ?? 0))) slugs.add(w.board);
+  }
+  return slugs;
+}
+
+/* A gate is gone when a read of its board that came after the gate was first seen listed does not hold it: an older read says nothing. */
+const todoIsGone = (board, listedAt, held) => !!board?.data && !held && board.at > (listedAt ?? 0);
+
 /* The keys of what is read on the right, in the order the list shows them. */
 const todoSelectable = items => [...items.read.map(w => w.key), ...items.prs.map(todoPrKey)];
 
