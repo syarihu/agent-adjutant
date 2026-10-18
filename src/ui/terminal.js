@@ -145,16 +145,13 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
       return true;
     },
     // Text pasted the way a person's paste is: xterm turns line breaks into CR and wraps the text in
-    // the bracketed-paste markers when the program asked for them, so the program reads it as one
-    // event. False when the socket is not open.
+    // the bracketed-paste markers when the terminal asked for them (under tmux it always does, and tmux
+    // passes them on only to a program that asked). False when the socket is not open.
     paste(text) {
       if (!term || !ws || ws.readyState !== WebSocket.OPEN) return false;
       term.paste(text);
       return true;
     },
-    // Whether the program in the terminal asked for bracketed paste. Without it a pasted line break
-    // is an Enter.
-    bracketed: () => !!term?.modes?.bracketedPasteMode,
     // The Enter key alone.
     enter() { return this.type('\r'); },
     fit: scheduleFit,

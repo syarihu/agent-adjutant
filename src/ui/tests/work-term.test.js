@@ -27,7 +27,7 @@ run(cut(read('session-actions.js'), /^const actionButtonHtml = [^\n]*\n[^\n]*\n[
 run(read('question-card.js'), 'question-card.js');
 run(read('work-term.js'), 'work-term.js');
 const api = vm.runInContext(
-  '({ workSendableText, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
+  '({ workSendableText, workSendBody, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
 
 const keyOf = g => `s/${g.id}`;
 const ctxOf = g => ({ task: null, nwo: 'acme/widget', key: keyOf(g), issue: { number: '', url: '', hasBody: false } });
@@ -82,6 +82,14 @@ test('a hub lists what it waits on that no task card shows', () => {
   const sessGates = [{ id: 'x', wait: true }, { id: 'y', wait: true, task: 't1' }, { id: 'z', wait: true }];
   const got = api.workTermGatesOf({ sessGates, gates: [], taskOfGate: g => (g.task ? { id: g.task } : undefined), answered: new Set(['s/z']), keyOf });
   assert.deepEqual(got.map(g => g.id), ['x']);
+});
+
+test('a hub also lists its dispatch gates (the start check) that a task names, but a task\'s other gates stay on the card', () => {
+  const sessGates = [{ id: 's', kind: 'dispatch', wait: true, task: 't1' }, { id: 'p', kind: 'plan', wait: true, task: 't1' }];
+  const withTask = () => ({ id: 't1' });
+  const base = { sessGates, gates: [], taskOfGate: withTask, answered: new Set(), keyOf };
+  assert.deepEqual(api.workTermGatesOf({ ...base, hub: true }).map(g => g.id), ['s']);
+  assert.deepEqual(api.workTermGatesOf({ ...base }).map(g => g.id), []);
 });
 
 test('what a title or a question says is escaped', () => {
@@ -151,4 +159,9 @@ test('the stopped-hub block covers a hub with no process, also over a terminal t
   assert.equal(api.workStoppedHubShown({ ...on, present: true }), false);
   assert.equal(api.workStoppedHubShown({ ...on, reading: true }), false);
   assert.equal(api.workStoppedHubShown({ present: false }), false);
+});
+
+test('what is sent has the line breaks around it dropped, and the ones inside kept', () => {
+  assert.equal(api.workSendBody('\n\nfirst\nsecond\n\n'), 'first\nsecond');
+  assert.equal(api.workSendBody('\n \n'), ' ');
 });

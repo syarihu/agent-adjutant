@@ -331,6 +331,8 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-ask-bar button .material-symbols-outlined, .qc-quick button[data-wk-fold] .material-symbols-outlined { color: inherit; }
 .wk-ask-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .wk-ask-scroll .qc { display: flex; flex-direction: column; }
+/* None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
+.wk-ask-scroll .qc > * { flex: none; }
 .wk-ask-scroll .qc-foot { position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
 .wk-ask-scroll .qc-foot .gate-comment { width: 100%; min-height: 44px; max-height: 20vh; resize: vertical; }
 .wk-ask-scroll .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }
@@ -340,6 +342,8 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 /* The two buttons at the bottom right, clear of the terminal's scrollbar; the box around them lets the pointer through to the terminal. */
 .wk-term-fabs { position: absolute; right: 20px; bottom: 12px; z-index: 2; display: flex; gap: 8px; pointer-events: none; }
 .wk-term-fabs:empty { display: none; }
+/* The aide's peek button holds that corner of the middle (aide.css): while it is shown the two buttons sit above it. */
+.wk-term:has(.aide-peek:not([hidden])) .wk-term-fabs { bottom: 68px; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .wk-fab {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--md-sys-color-outline-variant);
@@ -355,7 +359,6 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-fab-age { font-weight: 500; font-size: 11.5px; opacity: .8; }
 /* The heading: a hub's status in one line, and the buttons at its right end wrapping when the middle is narrow. */
 .wk-hub-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; }
-.wk-term-head .wk-head-acts { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .wk-head-acts .btn-m3-text { padding: 4px 8px; font-size: 12px; }
 .wk-head-acts .btn-m3-text .material-symbols-outlined { font-size: 16px; }
 /* Over a stopped hub's terminal. */

@@ -1190,10 +1190,14 @@ function renderWorkTerm() {
   syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
   setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true, own.kind === 'hub' ? ['close', 'hub-start'] : ['close']) : '');
   const ph = wk('wk-term-ph');
-  const stopped = workStoppedHubShown({ isHub: !!hub, present: !!hub && hubSessionOf(hub).present, starting: !!hub && hubStartingNow(hub), reading });
-  ph.hidden = !!workTerm.term && !stopped;
+  const hubUp = !!hub && hubSessionOf(hub).present;
+  const hubStarting = !!hub && !hubUp && hubStartingNow(hub);
+  const stopped = workStoppedHubShown({ isHub: !!hub, present: hubUp, starting: hubStarting, reading });
+  // A hub on its way up has a dead terminal behind, if one was mounted: covered, rather than shown dead.
+  const coming = hubStarting && !reading;
+  ph.hidden = !!workTerm.term && !stopped && !coming;
   const loaded = state.now != null;
-  const text = workTerm.term ? ''
+  const text = coming ? '<div class="tp-muted">起動しています…</div>' : workTerm.term ? ''
     : !nav.task || nav.board === 'all' ? ''
       : !work.doc ? '<div class="tp-muted">読み込み中…</div>'
       : free ? termPlaceholderHtml(free)

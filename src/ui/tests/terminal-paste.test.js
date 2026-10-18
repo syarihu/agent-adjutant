@@ -11,12 +11,12 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'terminal.js'), 'utf8');
 const block = src.match(/function mountSessionTerminal[\s\S]*?\n\}\n(?=\n\/\* A terminal is offered)/);
 assert.ok(block, 'mountSessionTerminal not found in terminal.js');
 
-const setup = ({ bracketed = true } = {}) => {
+const setup = () => {
   const pasted = [];
   const sent = [];
   const sockets = [];
   class FakeTerminal {
-    constructor() { this.cols = 80; this.rows = 24; this.modes = { bracketedPasteMode: bracketed }; this.unicode = {}; }
+    constructor() { this.cols = 80; this.rows = 24; this.unicode = {}; }
     loadAddon() {}
     open() {}
     onData() {}
@@ -71,7 +71,6 @@ test('paste goes through the terminal once the socket is open', async () => {
   r.sockets[0].readyState = 1;
   assert.strictEqual(r.handle.paste('one\ntwo'), true);
   assert.deepStrictEqual(r.pasted, ['one\ntwo']);
-  assert.strictEqual(r.handle.bracketed(), true);
 });
 
 test('paste is refused after the terminal is closed', async () => {
@@ -83,11 +82,10 @@ test('paste is refused after the terminal is closed', async () => {
   assert.deepStrictEqual(r.pasted, []);
 });
 
-test('bracketed follows the mode the program asked for, and enter sends the Enter key alone', async () => {
-  const r = setup({ bracketed: false });
+test('enter sends the Enter key alone', async () => {
+  const r = setup();
   await ready();
   r.sockets[0].readyState = 1;
-  assert.strictEqual(r.handle.bracketed(), false);
   assert.strictEqual(r.handle.enter(), true);
   assert.deepStrictEqual(Array.from(r.sent.at(-1)), [13]);
 });

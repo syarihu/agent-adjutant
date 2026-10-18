@@ -17,13 +17,17 @@ const WORK_SEND_ENTER_MS = 150;
    (U+0080 to U+009F) ranges, and DEL. A CR is dropped, so a CRLF is the line break alone. */
 const workSendableText = text => String(text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
 
+/* What is sent: the text as it may go in, with the line breaks around it dropped (a draft that ends in one would press Enter). */
+const workSendBody = text => workSendableText(text).replace(/^\n+|\n+$/g, '');
+
 /* The gates that slide down over the terminal of what is selected. For a task, the ones it owns, on its board and not answered
    here; for a hub, or a session with no task, `sessGates` (what it waits on, which the page reads only for a session of the board
-   it is on) without the ones a task card shows. `taskOfGate` and `keyOf` are the page's. */
-function workTermGatesOf({ task = null, gates = [], sessGates = [], taskOfGate, answered, keyOf }) {
+   it is on) without the ones a task card shows (but a hub's dispatch gates, its start checks, whoever's task they name). `taskOfGate` and `keyOf` are the page's. */
+function workTermGatesOf({ task = null, hub = false, gates = [], sessGates = [], taskOfGate, answered, keyOf }) {
   const open = g => g.wait !== false && !answered.has(keyOf(g));
   if (task) return gates.filter(g => g.task === task.id && open(g) && (!task._slug || g._slug === task._slug));
-  return sessGates.filter(g => open(g) && !taskOfGate(g));
+  // A hub's start check is its own to answer here, whether or not a task has a card for it.
+  return sessGates.filter(g => open(g) && (!taskOfGate(g) || (hub && g.kind === 'dispatch')));
 }
 
 /* A hub's start check, which is a dispatch question that is not a quick one: it is a form over the terminal. */

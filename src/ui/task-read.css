@@ -23,9 +23,10 @@ body:not(.rail-hidden) #rail-toggle .rail-badge { display: none; }
 .wk-mid-sub { font-size: 11px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
 
 /* A review request's head over the middle has 「GitHub で開く」 and 「拡大」 at its right end (a task's has none). */
-.wk-term-head:has(.wk-head-acts) { display: flex; align-items: flex-start; gap: 8px; }
-.wk-head-main { min-width: 0; flex: 1; }
-.wk-head-acts { margin-left: auto; flex: none; display: flex; align-items: center; gap: 2px; }
+/* In a narrow middle the buttons wrap under the title, which keeps a readable width of its own, so the heading's height stays a few lines. */
+.wk-term-head:has(.wk-head-acts) { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 8px; }
+.wk-head-main { min-width: min(100%, 14em); flex: 1 1 14em; }
+.wk-head-acts { margin-left: auto; flex: 0 1 auto; max-width: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 2px; }
 
 /* The read-through: the index on the left (the 「拡大」's own look, `.cd-index`), one scroll on the right. The middle is what the layout
    asks (below), since its width depends on the sidebar and the panel and not on the window. */

@@ -23,7 +23,7 @@ function workTermAskGates(task, own, hub) {
   if (task) return workTermGatesOf({ ...base, task });
   const sessGates = hub ? (hubOther(hub) ? [] : sessGatesOf(hubSessionOf(hub)))
     : own?.kind === 'worker' && boardOfSession(own).own ? sessGatesOf(own) : [];
-  return workTermGatesOf({ ...base, sessGates });
+  return workTermGatesOf({ ...base, sessGates, hub: !!hub });
 }
 
 /* Drawn as the stage's top layer; the same markup is not drawn twice, and the slide plays only when it comes in from nothing. */
@@ -224,15 +224,11 @@ async function workSend(layerEl, withEnter) {
   const target = workSendTarget;
   if (!target || workSending) return;
   const box = layerEl.querySelector('.wk-send-text');
-  const text = workSendableText(box.value);
+  const text = workSendBody(box.value);
   if (!text.trim()) return note('ターミナルに送る', true, '送る内容が空です');
   const term = workTerm.term;
   if (!term || workTerm.board !== target.board || workTerm.sessionId !== target.sessionId) {
     return note('ターミナルに送る', true, '開いたときのセッションのターミナルではなくなったため、送りませんでした。下書きは残してあります');
-  }
-  // Without bracketed paste every line break would be an Enter, and each line would be submitted on its own.
-  if (text.includes('\n') && !term.bracketed()) {
-    return note('ターミナルに送る', true, 'このターミナルの入力欄は複数行の貼り付けを受け付けていません。下書きは残してあります');
   }
   const buttons = [...layerEl.querySelectorAll('.qd-foot button')].filter(x => !x.disabled);
   buttons.forEach(x => { x.disabled = true; });
@@ -248,7 +244,8 @@ async function workSend(layerEl, withEnter) {
     workSendDrafts.delete(target.draftKey);
     if (withEnter) {
       await new Promise(resolve => setTimeout(resolve, WORK_SEND_ENTER_MS));
-      if (workTerm.term !== term) note('ターミナルに送る', true, '貼り付けは済みましたが、表示しているセッションが変わったため、Enter は押していません');
+      if (workTerm.board !== target.board || workTerm.sessionId !== target.sessionId) note('ターミナルに送る', true, '貼り付けは済みましたが、表示しているセッションが変わったため、Enter は押していません');
+      else if (workTerm.term !== term) note('ターミナルに送る', true, '貼り付けは済みましたが、ターミナルがつなぎ直されたため、Enter は押していません。必要ならターミナルで押してください');
       else if (!term.enter()) note('ターミナルに送る', true, '貼り付けは済みましたが、Enter を送れませんでした。ターミナルで押してください');
     }
     done = true;
@@ -261,7 +258,8 @@ async function workSend(layerEl, withEnter) {
     box.readOnly = false;
     if (!done) buttons.forEach(x => { if (x.isConnected) x.disabled = false; });
   }
-  dialogStack.closeAll();
+  // Not another dialog that was opened meanwhile.
+  if (dialogStack.has(target.key)) dialogStack.closeAll();
   // Only put in: the person reads it in the input box and presses Enter.
   if (!withEnter && workTerm.term === term) term.focus();
 }
@@ -303,7 +301,7 @@ questionDialogEl().addEventListener('change', e => {
 /* The banner that names the gate a hub is waiting on and opens it, when that gate is not one of the lines over the terminal (it has a
    task card, or is on another board): the panel's own rule (`sessJudgeOf`). */
 function workHubWaitingHtml(h, s) {
-  const open = hubOther(h) ? [] : sessGatesOf(s).filter(g => !taskOfGate(g));
+  const open = workTermAskGates(null, null, h);
   return s.waiting && !open.some(g => g.id === s.waiting.id) ? sessGateHtml(s) : '';
 }
 
