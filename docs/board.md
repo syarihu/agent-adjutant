@@ -70,7 +70,7 @@ The sidebar offers two primary views: **ボード (Board)** and **いまの仕�
 
 A unified 3-column operational view across all repositories:
 - **Left Column**: The list of active sessions, hubs, gates, and review requests.
-- **Middle Column**: The embedded tmux terminal of the currently selected session or hub.
+- **Middle Column**: The embedded tmux terminal of the currently selected session or hub. For a selected task, each of its open gates is a line over the terminal: a quick confirmation (`quick`) is answered right there, and any other opens the question card with 「開いて答える」.
 - **Right Column**: The task detail panel, aide pane, or AI review summary.
 
 #### Grouping Options
@@ -144,6 +144,9 @@ Gates represent explicit decision points where an agent stops and waits for huma
   - `dispatch`: Task confirmation prior to worker launch.
   - `result`: An investigation's report, read rather than approved. Three answers: got it, ask more, or make it a task.
 - **Answering**: Choose an option (Approve, Revise, etc.), add optional comments, or answer directly in the session terminal (`adj gate close --terminal`).
+- **The question card** (opened from the line over a task's terminal in 「いまの仕事」; the task panel's tabs and 「拡大」 keep their own answer area): one dialog that reads top to bottom: あなたの依頼 (the request in your words and the goal), 調べたこと, 計画 (計画とやったこと on a diff or verify gate: the steps, marked done, the places to look at, open and declined findings, 懸念点), 前に決まっていること (only when it bears on this question), then the question itself as the heading, the choices one to a row, the comment box and the buttons. A part with nothing in it is not drawn, and the question is written once. The header and the answer area stay put; only the middle scrolls. A card has links only to what it lacks: 「差分を全部見る」 on a diff gate, 「Issue の本文」, 「レポートを開く」.
+- **Dialogs stack**: what the card opens (the full diff, the Issue body, a report) goes over it as a further layer. 「←」 or Esc goes back one layer; × closes them all. What you typed in the card's comment box is kept while the page is open.
+- **Gates written before steps and sections existed** use the same four parts: the request is the task's body (else the Issue's title, with its body one layer away), what was found is the gate's `problem` and, for a result, its `body`, a plan with no `steps` shows `decided` as the plan, and a gate with no `focus` asks the fixed question of its kind (or its title).
 - **Server status detection**: `adj gate open` checks whether a board server is active (`server: up` / `server: down`). If no server is running, the agent falls back to asking directly in its terminal.
 
 ---

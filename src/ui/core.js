@@ -777,7 +777,7 @@ function renderCounts() {
 
 /* The parts of the page, in the order `render` draws them and `resetViews` resets them. Each
    script registers its own parts at its end. */
-const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'layout'];
+const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'question-dialog', 'layout'];
 const viewsByName = new Map();
 
 /* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets

@@ -100,6 +100,34 @@ fn the_page_has_one_task_panel_and_no_drawer() {
 }
 
 #[test]
+fn the_page_has_one_question_dialog_with_the_card_and_the_stack() {
+    // One dialog holds every layer; a second element with the id would be a second place to answer in.
+    assert_eq!(UI_HTML.matches("id=\"question-dialog\"").count(), 1);
+    for piece in [
+        "function questionCardHtml",
+        "function quickRowHtml",
+        "function questionStripHtml",
+        "function dialogStackCore",
+        "function openQuestionDialog",
+        "function questionDialogFollow",
+        "registerView('question-dialog'",
+        "'task-panel', 'question-dialog', 'layout'",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    // The card is built from the aide's evidence and the gate's buttons, so those come first; the work view draws the strip.
+    let at = |piece: &str| UI_HTML.find(piece).unwrap();
+    assert!(at("function aideEvidenceParts") < at("function questionCardHtml"));
+    assert!(at("function questionCardHtml") < at("function dialogStackCore"));
+    assert!(at("function dialogStackCore") < at("function openQuestionDialog"));
+    assert!(at("function openQuestionDialog") < at("function renderWorkTerm"));
+    assert!(at("function choicesHtml") < at("function questionCardHtml"));
+    // The card's own buttons are plain buttons with `data-qc-*` or `data-act`: no new `data-action` name reaches main.js.
+    assert!(!UI_HTML.contains("data-action=\"qc-"));
+    assert!(!UI_HTML.contains("data-action=\"qd-"));
+}
+
+#[test]
 fn the_page_shows_a_tasks_read_through_in_the_middle() {
     // The tabs and the read-through are one each: a second copy would be a second place to type into.
     for id in [
@@ -1329,7 +1357,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 8);
+    assert_eq!(names.len(), 9);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),

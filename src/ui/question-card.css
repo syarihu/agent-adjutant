@@ -1,0 +1,120 @@
+/* The question card, the quick row and the strip over a task's terminal (question-card.js), and the stack of dialogs they open in
+   (dialog-stack.js, question-dialog.js). */
+
+/* ── The dialog: a head and a foot that stay, a body that scrolls ── */
+#question-dialog {
+  width: min(880px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  background: var(--md-sys-color-surface-container-lowest);
+  border-radius: var(--md-shape-corner-xl);
+}
+/* display is set only while open, or the closed dialog would show. */
+#question-dialog[open] { display: flex; flex-direction: column; }
+.qd-layers { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; max-height: inherit; }
+.qd-layer { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; max-height: inherit; }
+.qd-layer[hidden] { display: none; }
+.qd-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 12px 24px;
+  background: var(--md-sys-color-surface-container-low);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+.qd-back { margin-left: -12px; }
+.qd-head-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.qd-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+.qd-title { margin: 0; font-size: 18px; font-weight: 800; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
+.qd-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 24px 24px; }
+.qd-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 24px 16px;
+  background: var(--md-sys-color-surface-container-low);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+.qd-foot .gate-comment { min-height: 44px; max-height: 30vh; resize: vertical; }
+.qd-gone { flex: none; margin: 0; padding: 8px 24px; font-size: 12.5px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+/* The markdown body of a card is a `.body`, which the generic dialog rule would turn into a padded, scrolling flex column of its own. */
+#question-dialog .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }
+#question-dialog .body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+#question-dialog .diff { overflow-x: auto; }
+.qd-back:focus-visible, .qd-x:focus-visible, .qd-body:focus-visible, .qc-link:focus-visible, .qc-strip button:focus-visible, .qc-quick button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+
+/* ── The card ── */
+.qc-kind { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--md-sys-color-on-surface); }
+.qc-kind i { width: 8px; height: 8px; border-radius: var(--md-shape-corner-full); display: inline-block; }
+.qc-stage { padding: 16px 0; }
+.qc-stage + .qc-stage { border-top: 1px solid var(--md-sys-color-outline-variant); }
+.qc-stage h3 { margin: 0 0 10px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 800; color: var(--md-sys-color-on-surface); }
+.qc-stage h3 .material-symbols-outlined, .qc-sub .material-symbols-outlined { font-size: 18px; color: var(--md-sys-color-on-surface-variant); }
+.qc-stage h4 { margin: 12px 0 4px; font-size: 13px; font-weight: 700; }
+.qc-sub { margin: 14px 0 6px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.qc-quote { border-left: 3px solid var(--md-sys-color-outline-variant); padding: 2px 0 2px 14px; color: var(--md-sys-color-on-surface-variant); }
+.qc-quote > :first-child { margin-top: 0; }
+.qc-quote > :last-child { margin-bottom: 0; }
+.qc-goal { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; padding-left: 11px; border-left: 3px solid var(--md-sys-color-success); font-weight: 700; }
+.qc-goal .material-symbols-outlined { font-size: 18px; color: var(--md-sys-color-success); }
+.qc-goal p { margin: 0; }
+.qc-link { display: inline-flex; align-items: center; gap: 4px; margin: 10px 12px 0 0; padding: 0; border: 0; background: transparent; font: inherit; font-size: 13px; color: var(--md-sys-color-primary); cursor: pointer; text-decoration: none; }
+.qc-link:hover { text-decoration: underline; }
+.qc-link .material-symbols-outlined { font-size: 16px; }
+.qc-note { font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin: 0 0 6px; }
+.qc-earlier { margin: 0; font-size: 13px; }
+.qc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.qc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: var(--md-shape-corner-full); font-size: 12px; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.qc-chip.ok { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+.qc-chip.ng { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.qc-chip code { font: 12px/1.4 var(--font-mono); }
+.qc-steps { list-style: none; counter-reset: qc-step; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.qc-steps li { counter-increment: qc-step; position: relative; padding-left: 32px; min-height: 22px; }
+.qc-steps li::before { content: counter(qc-step); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.qc-step-text { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-weight: 600; overflow-wrap: anywhere; }
+.qc-step-detail { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.qc-findings { margin: 0; padding-left: 20px; line-height: 1.7; font-size: 13px; }
+.qc-sev { font-size: 10px; padding: 1px 6px; margin-right: 6px; }
+.qc-findings code { font: 11px var(--font-mono); background: var(--md-sys-color-surface-container-high); padding: 2px 6px; border-radius: 4px; }
+.qc-manual { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.qc-manual label { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.qc-manual input { margin-top: 3px; }
+.qc-output { margin: 8px 0; padding: 8px 12px; border-radius: var(--md-shape-corner-sm); background: var(--md-sys-color-surface-container-low); }
+.qc-output summary { cursor: pointer; }
+.qc-unsure { padding: 10px 14px; border-radius: var(--md-shape-corner-md); background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.qc-unsure > :first-child { margin-top: 0; }
+.qc-unsure > :last-child { margin-bottom: 0; }
+.qc-file { margin: 14px 0 4px; font-size: 12.5px; font-weight: 700; }
+.qc-file code { font: 12px var(--font-mono); }
+
+/* The question: a band of its own, the choices under it one to a row. */
+.qc-ask-stage { padding-top: 16px; border-top: 1px solid var(--md-sys-color-outline-variant); }
+.qc-ask { padding: 12px 16px; border-radius: var(--md-shape-corner-md); font-size: 15px; font-weight: 700; color: var(--md-sys-color-primary); background: color-mix(in srgb, var(--md-sys-color-primary) 10%, var(--md-sys-color-surface-container-lowest)); }
+.qc-ask > :first-child { margin-top: 0; }
+.qc-ask > :last-child { margin-bottom: 0; }
+.qc-choices { margin-top: 12px; }
+.qc-choices .choices-container { grid-template-columns: 1fr; gap: 10px; }
+.qc-decide { align-items: center; }
+.qc-spacer { flex: 1 1 auto; }
+
+/* ── The quick row and the strip, over the terminal ── */
+.qc-quick, .qc-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: var(--md-shape-corner-sm);
+  background: var(--md-sys-color-surface-container-low);
+  border-left: 3px solid var(--md-sys-color-warning);
+  font-size: 12.5px;
+}
+.qc-quick .material-symbols-outlined, .qc-strip .material-symbols-outlined { font-size: 16px; color: var(--md-sys-color-warning); }
+.qc-quick-text, .qc-strip-text { min-width: 0; overflow-wrap: anywhere; }
+.qc-quick-text { white-space: pre-line; }
+.qc-quick .pick, .qc-strip button { padding: 4px 14px; font-size: 12.5px; }
+.qc-quick .qc-chips { margin: 0; }
