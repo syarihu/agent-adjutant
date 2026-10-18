@@ -809,15 +809,9 @@ test('a task on a parent-task hub\'s board is grouped under the parent that hub 
   assert.deepStrictEqual(keys, [['none:acme/a', ['orphan', 'plain']], ['parent:acme/a/#2', ['asked', 'named']]]);
 });
 
-test('rows of a group keep to the order they started in, whatever their state; those with no start time come last, by key', () => {
-  const was = ctx.stampSecs;
-  ctx.stampSecs = x => Number(x) || 0;
-  try {
-    const mk = (key, st, startedAt) => ({ key, st, s: { startedAt, waiting: st === 'waiting' ? { openedAt: '1' } : null } });
-    const rows = [mk('d', 'working', undefined), mk('c', 'waiting', 30), mk('a', 'working', 20), mk('b', 'permission', 10), mk('e', 'done', undefined)];
-    const sorted = plain(run('rows.sort(workRowOrder)', { rows }));
-    assert.deepStrictEqual(sorted.map(r => r.key), ['b', 'a', 'c', 'd', 'e']);
-  } finally {
-    ctx.stampSecs = was;
-  }
+test('rows of a group keep to the order their tasks were made in, whatever their state or restarts; sessions with no task come last, by key', () => {
+  const mk = (key, st, id, startedAt) => ({ key, st, s: { startedAt }, task: id ? { id } : null });
+  const rows = [mk('d', 'working', null), mk('c', 'waiting', '20261018T000300Z-c', 1), mk('a', 'working', '20261018T000200Z-a', 99), mk('b', 'permission', '20261018T000100Z-b'), mk('e', 'done', null)];
+  const sorted = plain(run('rows.sort(workRowOrder)', { rows }));
+  assert.deepStrictEqual(sorted.map(r => r.key), ['b', 'a', 'c', 'd', 'e']);
 });

@@ -299,11 +299,12 @@ window.addEventListener('storage', e => {
   renderWorkBadge();
 });
 
-/* A row's place among the others in its group: the one that started first first, then by key. Independent of state, so a row does not
-   move when its state changes and what waits on the person is not pulled to the top (the TODO does that). */
+/* A row's place among the others in its group: the order the tasks were made in (a task's id begins with the time it was made), then
+   sessions with no task by key. Nothing that changes while a row is alive is in it, neither its state nor a restart's start time, so a row
+   does not move and what waits on the person is not pulled to the top (the TODO does that). */
 function workRowOrder(a, b) {
-  const started = r => stampSecs(r.s?.startedAt) || Number.MAX_SAFE_INTEGER;
-  return started(a) - started(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  const made = r => r.task ? `0${r.task.id}` : `1${r.key}`;
+  return made(a) < made(b) ? -1 : made(a) > made(b) ? 1 : (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 }
 /* How a state sorts, for the counts a folded heading gives. */
 const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
