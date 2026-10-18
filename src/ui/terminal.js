@@ -144,6 +144,19 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
       ws.send(encoder.encode(text));
       return true;
     },
+    // Text pasted the way a person's paste is: xterm turns line breaks into CR and wraps the text in
+    // the bracketed-paste markers when the program asked for them, so the program reads it as one
+    // event. False when the socket is not open.
+    paste(text) {
+      if (!term || !ws || ws.readyState !== WebSocket.OPEN) return false;
+      term.paste(text);
+      return true;
+    },
+    // Whether the program in the terminal asked for bracketed paste. Without it a pasted line break
+    // is an Enter.
+    bracketed: () => !!term?.modes?.bracketedPasteMode,
+    // The Enter key alone.
+    enter() { return this.type('\r'); },
     fit: scheduleFit,
     // The last lines on screen, for a panel to show once the pane behind them is gone. Read
     // before `dispose`, which takes the buffer with it.
