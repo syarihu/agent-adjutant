@@ -323,21 +323,16 @@ pub struct Step {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Which part of the card a section belongs to.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Which part of the card a section belongs to. The page reads `Section::stage` itself; this is
+/// how the tests read it, so it is not built into the binary.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SectionStage {
     /// What was found out.
     #[default]
     Found,
     /// A block of the plan itself, such as the fix for a cause.
     Plan,
-}
-
-impl SectionStage {
-    fn is_found(&self) -> bool {
-        *self == SectionStage::Found
-    }
 }
 
 /// One block of what was found or planned, under a heading the worker picks.
@@ -350,11 +345,25 @@ pub struct Section {
     /// Markdown.
     #[serde(default)]
     pub body: String,
-    #[serde(default, skip_serializing_if = "SectionStage::is_found")]
-    pub stage: SectionStage,
+    /// Kept as written, so that a stage a newer binary wrote does not stop the gate loading
+    /// (rule 10). `open` refuses an unknown one from a caller; see `Section::stage`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
     /// Keys this binary does not know, kept from the file (rule 10).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+impl Section {
+    /// `plan` is a block of the plan; anything else, a stage this binary does not know included,
+    /// reads as found.
+    pub fn stage(&self) -> SectionStage {
+        match self.stage.as_deref() {
+            Some("plan") => SectionStage::Plan,
+            _ => SectionStage::Found,
+        }
+    }
 }
 
 const STEP_SHAPE: &str = "each step is {text, detail?} or a string";

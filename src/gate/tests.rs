@@ -860,6 +860,26 @@ fn string_steps_are_read_as_text() {
 }
 
 #[test]
+fn a_stored_section_stage_this_binary_does_not_know_loads_and_is_kept() {
+    let (_sandbox, ctx) = hub();
+    let mut gate = gate(Kind::Result);
+    gate.sections =
+        serde_json::from_value(json!([{"heading": "h", "body": "b", "stage": "later"}])).unwrap();
+    let open = dir_of(&ctx, Shelf::Open);
+    std::fs::create_dir_all(&open).unwrap();
+    std::fs::write(
+        path_of(&open, &gate.id),
+        serde_json::to_string(&gate).unwrap(),
+    )
+    .unwrap();
+    let loaded = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    assert_eq!(loaded.sections[0].stage(), SectionStage::Found);
+    save(&ctx, Shelf::Open, &loaded).unwrap();
+    let text = std::fs::read_to_string(path_of(&open, &gate.id)).unwrap();
+    assert!(text.contains("\"stage\": \"later\""), "{text}");
+}
+
+#[test]
 fn a_section_stage_defaults_to_found_and_accepts_plan() {
     let request = GateRequest::from_json(&json!({"kind": "result", "title": "r", "sections": [
         {"heading": "a", "body": "b"},
@@ -867,7 +887,7 @@ fn a_section_stage_defaults_to_found_and_accepts_plan() {
         {"heading": "e", "body": "f", "stage": null},
     ]}))
     .unwrap();
-    let stages: Vec<_> = request.sections.iter().map(|s| s.stage).collect();
+    let stages: Vec<_> = request.sections.iter().map(Section::stage).collect();
     assert_eq!(
         stages,
         [SectionStage::Found, SectionStage::Plan, SectionStage::Found]

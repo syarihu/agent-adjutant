@@ -40,7 +40,8 @@ what to tell them, not the words to use.
   yourself, and **give that report to the user at this tab**. The hub only hands work out; results
   sent to it have nowhere to go (and the same report shows up in two places). You send the hub
   only two things on your own: a bug **outside this task**, through the `adj-report` procedure
-  (§7), and a request to clean up (§9). **Answering the hub with `kind: answer` when it asks with
+  (§7), and a request to clean up (§9). The one exception is an investigation result the person
+  answered `task` on, which goes through `adj-report` too (§8). **Answering the hub with `kind: answer` when it asks with
   `[question {id}]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
@@ -372,12 +373,13 @@ review is in (or you gave up) and you start working through the comments.
    duplicates together, and return them classified as unresolved / fixed / declined / outdated.
 3. Show the unresolved list and ask which to address following "Appendix — Show a person and wait (gate)":
    open a `kind: "question"` gate (`title: "Review findings to address"`,
-   `focus: "Which unresolved review comments should be addressed?"`, `"quick": true`,
+   `focus: "Which unresolved review comments should be addressed?"`,
    `facts`: how many are unresolved must / want / suspected false positives, and which bots wrote
-   them (the list itself stays in the tab: a quick gate cannot carry `sections` or a `body`),
+   them, and `sections`: the unresolved list, one section per severity (this one is not `quick`:
+   it offers a custom selection, so the person needs the list on the board),
    `choices`: e.g. `[{"id": "must", "label": "Address all must findings", "recommended": true}, {"id": "all", "label": "Address all findings (must and want)"}, {"id": "custom", "label": "Custom selection (specify in comment / Other)"}]`).
    Default: all `must`.
-   Include the items the agent flagged as **suspected false positives**, but mark them — Copilot is
+   Include the items the agent flagged as **suspected false positives** in the sections, but mark them — Copilot is
    confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
 4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
    agent, send it back to that id. Do not start a new agent.
@@ -457,8 +459,8 @@ fix, so there is no diff to review and no PR to open.
 2. Investigate. The tools are the same as §1's "Tools you may use" (a research agent; keep dozens
    of files of exploration out of your context). **Do not change the code** — even if you find
    something you could fix, do not. Fixing it is for the user to decide after reading the report.
-3. **Deliver the result.** Do not send it to the hub ("Where you stand"). Open neither an issue nor
-   a PR. Whether to file one is the user's call. **These three moves come in this order**:
+3. **Deliver the result.** Do not send it to the hub ("Where you stand"), unless the person answers
+   `task` (then through `adj-report`, as below). Open neither an issue nor a PR. Whether to file one is the user's call. **These three moves come in this order**:
 
    1. **Run `adj gate open`** (`kind: "result"` in "Appendix — Show a person and wait (gate)"). Put
       the report in `sections`, each under a heading: for a problem, 結論 · 原因 · 対応策; for an
