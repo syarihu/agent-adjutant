@@ -375,8 +375,8 @@ questionDialogEl().addEventListener('click', e => {
   // The gate's own place is in the page behind the dialog.
   if (e.target.closest('[data-tp-sess-gate]')) dialogStack.closeAll();
   else if (WORK_HUB_OPENS_DIALOG.includes(act)) dialogStack.closeAll();
-  // The same start as the stopped block's, with the same state while it is asked for.
-  else if (act === 'start') return workStartHub(hub);
+  // The same start as the stopped block's, with the same state while it is asked for; that state is shown in the middle, not here.
+  else if (act === 'start') { dialogStack.closeAll(); return workStartHub(hub); }
   const idle = e.target.closest('[data-tp-worktree]');
   if (idle) {
     dialogStack.closeAll();
