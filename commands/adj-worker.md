@@ -39,8 +39,9 @@ what to tell them, not the words to use.
 - **Do not hand the implementation back to the hub.** Do everything up to the final report
   yourself, and **give that report to the user at this tab**. The hub only hands work out; results
   sent to it have nowhere to go (and the same report shows up in two places). You send the hub
-  only two things on your own: a bug **outside this task**, through the `adj-report` procedure
-  (§7), and a request to clean up (§9). **Answering the hub with `kind: answer` when it asks with
+  only three things on your own: a bug **outside this task**, through the `adj-report` procedure
+  (§7), a request to clean up (§9), and an investigation result the person answered `task` on,
+  which goes through `adj-report` too (§8). **Answering the hub with `kind: answer` when it asks with
   `[question {id}]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
@@ -131,6 +132,11 @@ what to tell them, not the words to use.
    "what things look like when this is done" in `goal`, one to three sentences each, from the
    request and the issue read in step 1. The board's overview shows these, so do not restate the
    steps of the plan.
+   **Put the plan in `steps`, one step each in order** (`text`, and `detail` for a line under it,
+   such as the file it touches); `adj gate open` refuses a plan without them. Put what you found
+   in the code in `sections` (a heading that fits each block, and `stage: "plan"` for a block that
+   belongs with the plan, such as a fix), and in `decided` only what is already settled, not the
+   steps. `focus` is the one question to answer before you implement.
 
 ### Tools you may use
 
@@ -148,8 +154,8 @@ what to tell them, not the words to use.
   1. Show `## Requirements` and `## Acceptance criteria` to the user in a few lines.
   2. If `## Open questions` is not empty, **ask a person here**. The agent cannot ask. Do not carry
      them into the plan unresolved. Ask as `kind: "question"` following "Appendix — Show a person and wait
-     (gate)": put **only what needs deciding** in `focus`, and list the options in `choices` if there
-     are any. **This is the question asked most often.** Buried in a tab, it stalls for hours
+     (gate)": put **only what needs deciding** in `focus` (required: a gate that waits is refused
+     without it), and list the options in `choices` if there are any. **This is the question asked most often.** Buried in a tab, it stalls for hours
      while the board shows the task as in progress.
   3. Save `## Knowledge to Save`:
      `lk add "<title>" --keywords "<kw1,kw2>" --category "<category>" --content "<content>" --json`
@@ -295,7 +301,10 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    writes it from the config's `copilotReview`:
    - `ask` — open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
      `title: "Request a review from Copilot?"`, `focus: "Should Copilot be asked to review this PR?"`,
-     `choices`: `[{"id": "request", "label": "Request it", "recommended": true}, {"id": "skip", "label": "Do not request it"}]`.
+     `facts`: what you read of the PR (lines changed, files, the state of CI),
+     `choices`: `[{"id": "request", "label": "Request it", "recommended": true}, {"id": "skip", "label": "Do not request it"}]`,
+     `"quick": true` (a fixed confirmation answered with one press: it carries nothing but `facts`
+     and `choices`). A fact you could not read is written as "could not check", never a guess.
      If `request` was approved or chosen, request it in step 7; if `skip`, skip step 7.
    - `always` — request it in step 7 without asking.
    - `never` — do not ask and do not request it. Skip step 7.
@@ -365,9 +374,12 @@ review is in (or you gave up) and you start working through the comments.
 3. Show the unresolved list and ask which to address following "Appendix — Show a person and wait (gate)":
    open a `kind: "question"` gate (`title: "Review findings to address"`,
    `focus: "Which unresolved review comments should be addressed?"`,
+   `facts`: how many are unresolved must / want / suspected false positives, and which bots wrote
+   them, and `sections`: the unresolved list, one section per severity (this one is not `quick`:
+   it offers a custom selection, so the person needs the list on the board),
    `choices`: e.g. `[{"id": "must", "label": "Address all must findings", "recommended": true}, {"id": "all", "label": "Address all findings (must and want)"}, {"id": "custom", "label": "Custom selection (specify in comment / Other)"}]`).
    Default: all `must`.
-   Include the items the agent flagged as **suspected false positives**, but mark them — Copilot is
+   Include the items the agent flagged as **suspected false positives** in the sections, but mark them — Copilot is
    confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
 4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
    agent, send it back to that id. Do not start a new agent.
@@ -447,20 +459,30 @@ fix, so there is no diff to review and no PR to open.
 2. Investigate. The tools are the same as §1's "Tools you may use" (a research agent; keep dozens
    of files of exploration out of your context). **Do not change the code** — even if you find
    something you could fix, do not. Fixing it is for the user to decide after reading the report.
-3. **Deliver the result.** Do not send it to the hub ("Where you stand"). Open neither an issue nor
-   a PR. Whether to file one is the user's call. **These three moves come in this order**:
+3. **Deliver the result.** Do not send it to the hub ("Where you stand"), unless the person answers
+   `task` (then through `adj-report`, as below). Open neither an issue nor a PR. Whether to file one is the user's call. **These three moves come in this order**:
 
    1. **Run `adj gate open`** (`kind: "result"` in "Appendix — Show a person and wait (gate)"). Put
-      the report (conclusion → evidence → candidate fixes → out of scope) in `body`.
+      the report in `sections`, each under a heading: for a problem, 結論 · 原因 · 対応策; for an
+      analysis, 結論 · 内訳 · 根拠. What you are not sure of goes in `unsure`, not in a section
+      (do not write a section headed 懸念点, 迷っていること or 分からなかったこと). `body` is only for
+      attaching a long report as it is. `focus` is the question the person answers, for example
+      "Does this answer what you wanted to know?".
       **Run this before writing the report in the tab.** Write it first and it feels finished the
       moment it is written, and you move on to §9 without opening the gate.
    2. Look at the `server` that comes back. If `up`, say in one line that it is on the board and
       **end the turn**. If `down`, there is no board, so close the gate with `adjutant_gate_close`
       (or `adj gate close`) and write the report in this tab as usual.
-   3. When woken after `up`, read `adj outbox`. `ack` (acknowledged) means done; `ask` (a follow-up
-      question) means investigate further as the comment says and start again from 1.
+   3. When woken after `up`, read `adj outbox`. `ack` (acknowledged) means done, and you go on to
+      step 4; `ask` (a follow-up question) means investigate further as the comment says and start
+      again from 1; `task` (これをタスクにする) means hand the result to the hub as a task: send it with
+      `adj-report` (`adj skill adj-report`) with no `## Kind`, so that it is filed like a bug
+      report. Symptom is the conclusion; Suspected cause is the 原因 section; Location is the files
+      the result names; Why outside is "the task was investigation only; the person chose to make
+      it a task"; `## Scope` follows the person's comment, and is the file alone when there is none.
+      Then go on to step 4.
 
-   **This is something to be read, not approved**, so the only decisions are `ack` and `ask`.
+   **This is something to be read, not approved**, so the only decisions are `ack`, `ask` and `task`.
 4. If there is knowledge worth saving in `lk` (reusable understanding of the structure, where an
    existing implementation lives), save it the same way as `## Knowledge to Save` in §1. Whether it
    is kept here is what an investigation is worth.
@@ -474,15 +496,18 @@ ask the hub.**
 
 - **First check that no gate is still open** (`adj gate list`). If one remains, a person has not
   read it yet, so it is too early to ask for cleanup. Come back once it is closed.
-- **Do not send it on your own judgement.** First ask the user following "Appendix — Show a person and wait (gate)":
+- **Check for yourself before asking.** `git status --short` (uncommitted changes) and
+  `git log --branches --not --remotes` (unpushed commits), plus where the results live (a PR, or a
+  report only). **If anything is uncommitted or unpushed, deal with it first. If you cannot, do not
+  ask.**
+- **Do not send it on your own judgement.** Ask the user following "Appendix — Show a person and wait (gate)":
   open a `kind: "question"` gate (`title: "Work done: clean up worktree?"`,
   `focus: "The work is done. Ask the hub to remove this worktree, or keep it for now?"`,
-  `choices`: `[{"id": "cleanup", "label": "Ask for cleanup", "recommended": true}, {"id": "keep", "label": "Keep the worktree"}]`).
+  `facts`: what you just checked, such as "uncommitted 0", "unpushed 0" and "PR #N merged" or
+  "report only" (write "could not check" for one you could not read, never a guess),
+  `choices`: `[{"id": "cleanup", "label": "Ask for cleanup", "recommended": true}, {"id": "keep", "label": "Keep the worktree"}]`,
+  `"quick": true`).
   If they choose to keep it, do not send. What disappears is the results, and that cannot be undone.
-- **Check for yourself before sending.** `git status --short` (uncommitted changes) and
-  `git log --branches --not --remotes` (unpushed commits), plus where the results live (a PR, or a
-  report only). **If anything is uncommitted or unpushed, deal with it before sending. If you
-  cannot, do not send.**
 - Send `adjutant_send` with `kind` `done` **once**. `subject` is the conclusion in one line.
   **Pass this worktree's absolute path as `cwd`** — where the hub goes to remove is decided by the
   `worktree` header that comes from it (the path in the body is for people to read and is not an
@@ -530,7 +555,12 @@ adj gate open --json <<'JSON'
   "goal": "Recently shown search results appear without waiting for the API.",
   "facts": ["6 files to touch", "base origin/release/1.2"],
   "focus": "Please decide how the TTL is held. Once that is settled I can start implementing.",
-  "decided": "- An LRU of 64 entries, kept inside `SearchRepository`\n- Nothing is persisted",
+  "steps": [
+    { "text": "Add an LRU of 64 entries to the repository", "detail": "src/search/cache.rs" },
+    { "text": "Read through it in `SearchRepository`", "detail": "src/search/repository.rs" },
+    { "text": "Cover hits, misses and eviction with tests" }
+  ],
+  "decided": "- Nothing is persisted",
   "unsure": "Not sure whether to keep the hit rate in metrics.",
   "choices": [
     { "id": "const", "label": "Option A — a constant", "why": "there is no remote config",
@@ -546,24 +576,68 @@ JSON
 | Slot | What to write |
 | --- | --- |
 | `focus` | What **alone is enough to decide on**. The fork a person should decide |
-| `decided` | What is settled. Folded on the board (need not be read) |
+| `decided` | What is settled, not the plan's steps. Folded on the board (need not be read) |
 | `unsure` | Where you were not confident. **Do not swallow it** |
+| `steps` | `plan`: the plan, one `{ "text", "detail" }` per step, in order (a bare string is a step with that text). **A plan is refused without them** |
+| `sections` | What you found or planned, in order: `{ "heading", "body", "stage" }`, the heading picked to fit, the body markdown, `stage` `found` (the default) or `plan`. A `result` needs these or a `body` |
+| `quick` | `true` for a fixed confirmation answered with one press. It needs `choices`, and carries no `body`, `diff`, `run`, `steps`, `sections`, `findings`, `commands` or `manual` |
 
-A waiting gate always fills `focus`: the aide's display area shows it as the question, so a gate with
-no `focus` reaches the person with nothing asked.
+**`focus` is required on every gate that waits; `adj gate open` refuses one without it.** The aide's
+display area shows it as the question, so a gate with no `focus` would reach the person with
+nothing asked. A record (`"wait": false`) needs none. Do not put a 懸念点, 迷っていること or
+分からなかったこと section in `sections`: that is `unsure`.
 
 - `facts` are what is true whatever the decision (number of rounds, the `verify` result, lines).
 - `choices` only **when you want an option picked**. Two options are shown side by side. Be honest
   with `recommended`. A choice may carry `comment`, a draft of what you would send with it: picking
   that choice sends the person's own comment if they typed one, else this draft.
-- Extra fields per `kind`: `diff` (the diff as a string) / `run` (how to run it) / `body` (the
-  report).
-- `plan` has `problem` and `goal` (step 3 of §1).
+- Extra fields per `kind`: `diff` (the diff as a string) / `run` (how to run it) / `body` (a long
+  report kept as it is; prefer `sections`).
+- `plan` has `problem`, `goal` and `steps` (step 3 of §1).
+- `result` has `sections`. Its default headings are 結論 · 原因 · 対応策 for a problem and
+  結論 · 内訳 · 根拠 for an analysis.
 - **Do not skimp on `title` and `focus`.** On the board they are all that gets read.
-- Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `facts`, the choices' `label`,
+- Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `steps[].text`, `steps[].detail`,
+  `sections[].heading`, `sections[].body`, `facts`, the choices' `label`,
   `why` and `points` (not `id`, which you branch on), `body`, `findings[].text`,
   `findings[].reason` and `manual[]` in the brief's "Language"; the examples here are in English
   only because this file is. `commands[].command` and `output` stay as the command printed them.
+
+A `result` and a quick `question`, each as a person gets it:
+
+```bash
+adj gate open --json <<'JSON'
+{
+  "kind": "result",
+  "task": "{the brief's Task record; leave it out if `-`}",
+  "title": "Why the back navigation is slow",
+  "focus": "Does this answer what you wanted to know?",
+  "sections": [
+    { "heading": "結論", "body": "Every back navigation repeats the search request." },
+    { "heading": "原因", "body": "`SearchRepository` keeps no result, so each `onResume` calls the API." },
+    { "heading": "対応策", "body": "Keep the last results in memory.", "stage": "plan" }
+  ],
+  "unsure": "I did not measure the API latency."
+}
+JSON
+```
+
+```bash
+adj gate open --json <<'JSON'
+{
+  "kind": "question",
+  "task": "{the brief's Task record; leave it out if `-`}",
+  "title": "Work done: clean up worktree?",
+  "focus": "The work is done. Ask the hub to remove this worktree, or keep it for now?",
+  "facts": ["uncommitted 0", "unpushed 0", "PR #12 merged"],
+  "choices": [
+    { "id": "cleanup", "label": "Ask for cleanup", "recommended": true },
+    { "id": "keep", "label": "Keep the worktree" }
+  ],
+  "quick": true
+}
+JSON
+```
 
 `diff` and `verify` carry structured fields apart from the text slots. The board builds its tables
 from them. To keep it as a record, `"wait": false`; to wait, put the rules that stopped it in
@@ -632,7 +706,7 @@ JSON
   - **`up` with `wakeLine` and `wakeChecksScreen`** — the gate is on the board and the wake holds back while a question or a running turn is there (read from this tab's screen on tmux, or from the session's row on any terminal), and on tmux also while a person is typing. Say in one line that it is on the board and waiting for a decision, and **end the turn without `AskUserQuestion`**, so the prompt is empty when an answer on the board wakes you. The next input is one of two:
     - **The wake line** (equals or starts with `The hub sent you something`): call `adjutant_outbox` (or `adj outbox`), verify that the answer's `## gate` line matches the current gate ID, take the decision/chosen choice/comment from the outbox, and clear the outbox (`adjutant_outbox` `action: clear`). If the outbox message was for something else, handle it and end the turn again while the gate waits.
     - **The person's own message in this tab** (any message, while the gate waits): **call `adjutant_outbox` first.** An answer given on the board whose wake was held back (the person was typing, or the screen was not recognised) is waiting there. If it holds the answer for this gate (the `## gate` line matches), take the decision from it and clear the outbox. Otherwise, if the message is clearly a decision on this gate, treat it as the terminal answer and close the gate with `adjutant_gate_close` with `terminal: true` and a one-line `comment` saying what the person decided (or `adj gate close --id {gate id} --terminal --comment '…'`), as in "Answered in the terminal" below; if that reports `alreadyAnswered: true`, read `adjutant_outbox` again and take the decision from there. If the message is about something else, answer it and end the turn again while the gate waits; do not close the gate.
-  - **`up` with `wakeLine`, without `wakeChecksScreen`** (no session row, and iTerm2, a `workerWake` template, or a custom runner that is neither claude nor agy — a wake that types blind) — the gate is open on the board and waking is enabled. **Ask the same thing with `AskUserQuestion` in this tab too** (a single-question prompt with options matching the gate's `choices`, or the default options such as "Approve (Recommended)" / "Request changes" / "Reject" for plan, or "Approve (Recommended)" / "Request changes" for diff / verify). Whichever answer comes first is taken:
+  - **`up` with `wakeLine`, without `wakeChecksScreen`** (no session row, and iTerm2, a `workerWake` template, or a custom runner that is neither claude nor agy — a wake that types blind) — the gate is open on the board and waking is enabled. **Ask the same thing with `AskUserQuestion` in this tab too** (a single-question prompt with options matching the gate's `choices`, or the default options such as "Approve (Recommended)" / "Request changes" / "Reject" for plan, "Approve (Recommended)" / "Request changes" for diff / verify, or 分かった / 続けて聞く / これをタスクにする for result). Whichever answer comes first is taken:
     - **Answered on the board**: Answering the gate on the board wakes the worker by typing `wakeLine` (or the default starting with `The hub sent you something...`) followed by Enter into the tab. That wake line lands in `AskUserQuestion` as a free-text response. When the response equals or contains the wake line (or starts with `The hub sent you something`), **do not treat it as the person's choice**. Call `adjutant_outbox` (or `adj outbox` in the worker tab), verify that the answer's `## gate` line matches the current gate ID, take the decision/chosen choice/comment from the outbox, and clear the outbox (`adjutant_outbox` `action: clear`). If the outbox message was for something else (such as a hub notice or question), handle that message and continue waiting for the gate answer.
     - **Answered in the terminal**: When `AskUserQuestion` returns with an actual choice or comment from the user (not the wake line), **immediately close the gate on the board** with `adjutant_gate_close` with `terminal: true` and a one-line `comment` saying what the person decided (or `adj gate close --id {gate id} --terminal --comment '…'`) so the card does not linger on the board waiting. If you forget, the board closes it once you move on (the next phase or the next gate) and records it as answered in the terminal without what was decided, so close it yourself. If `adjutant_gate_close` reports `alreadyAnswered: true` (or the gate was already answered on the board), the board answer arrived first: take the decision from the board/outbox instead. Otherwise, proceed with the choice made in the terminal.
   - **`up` without `wakeLine`** (terminal waking disabled) — say in one line that it is on the board and waiting for a decision, and **end the turn**. Do not poll. Do not enter `AskUserQuestion` (because answering on the board cannot wake the tab).
@@ -644,7 +718,7 @@ JSON
 this shape:
 
 ```
-## Decision   approve | changes | reject | choice | ack | ask | answer
+## Decision   approve | changes | reject | choice | ack | ask | task | answer
 ## Chosen     Option A — a constant (const)     ← only when choices were offered
 ## gate       {id} ({kind})                     ← ({kind}, record) when a record is sent back
 
@@ -657,6 +731,7 @@ this shape:
 - `changes` / `ask`: fix it as the comment says, and **if it is the same point, add one to
   `rounds`** and open it again. The board looks at that number and suggests to the person that
   talking in the tab would be faster.
+- `task` (result): hand it over with `adj-report`, as §8 says.
 - `choice`: implement the chosen option. **Do not reopen the question by bringing up the merits of
   the option not chosen.**
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
@@ -757,6 +832,7 @@ Run round 1 first, show the results in order of severity (High → Medium → Lo
 - Otherwise open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
   `title: "Self-review: continue until convergence?"`,
   `focus: "Self-review round 1 found must-level issues. Should I continue reviewing and fixing until convergence?"`,
+  `facts`: round 1's must and want counts and the engine, `"quick": true`,
   `choices`: `[{"id": "continue", "label": "Keep going", "recommended": true}, {"id": "once", "label": "Fix once"}, {"id": "skip", "label": "Do not fix"}]`.
   These strings are in English only because this file is: write `title`, `focus` and the labels in
   the brief's "Language", and keep the choice `id`s as they are.

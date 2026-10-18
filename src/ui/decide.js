@@ -42,6 +42,7 @@ const BUTTONS = {
   reject:  g => `<button class="btn-m3-text reject" data-act="reject" style="color:var(--md-sys-color-error);"><span class="material-symbols-outlined" style="font-size:16px;">cancel</span><span>${decisionLabel('reject', g.kind)}</span></button>`,
   ack:     g => `<button class="btn-m3-primary approve" data-act="ack"><span class="material-symbols-outlined" style="font-size:16px;">check</span><span>${decisionLabel('ack', g.kind)}</span></button>`,
   ask:     g => `<button class="btn-m3-tonal changes" data-act="ask"><span class="material-symbols-outlined" style="font-size:16px;">help</span><span>${decisionLabel('ask', g.kind)}</span></button>`,
+  task:    g => `<button class="btn-m3-tonal changes" data-act="task"><span class="material-symbols-outlined" style="font-size:16px;">add_task</span><span>${decisionLabel('task', g.kind)}</span></button>`,
   answer:  g => `<button class="btn-m3-primary approve" data-act="answer"><span class="material-symbols-outlined" style="font-size:16px;">send</span><span>${decisionLabel('answer', g.kind)}</span></button>`,
 };
 
@@ -168,6 +169,7 @@ function gateDockHtml(g) {
     ack: () => btn('ack', 'btn-m3-primary approve', 'check', decisionLabel('ack', g.kind)),
     answer: () => btn('answer', 'btn-m3-primary approve', 'send', decisionLabel('answer', g.kind)),
     ask: () => btn('ask', 'btn-m3-tonal changes', 'help', decisionLabel('ask', g.kind)),
+    task: () => btn('task', 'btn-m3-tonal', 'add_task', decisionLabel('task', g.kind)),
   };
   return `<div class="decision-dock panel" data-gate="${esc(gateRef(g))}">
     ${roundsHintHtml(g)}
@@ -219,6 +221,8 @@ function gateJudgeHtml(g, task) {
     h += `<div class="panel"${expandAttrs('decided', g)}>${expandBtnHtml('決定事項')}<details class="decided"><summary style="font-weight:700;cursor:pointer;">決定事項</summary><div class="body" style="margin-top:8px;">${md(g.decided)}</div></details></div>`;
   }
 
+  h += sectionsCardsHtml(g);
+
   const pickable = !record;
   if (g.kind === 'diff') {
     h += reviewPanels(g);
@@ -252,6 +256,7 @@ function gateJudgeHtml(g, task) {
       </div>`;
     }
   } else {
+    h += stepsCardHtml(g);
     if (task?.body) {
       h += `<div class="panel"${expandAttrs('request', g)}>
         ${expandBtnHtml('依頼内容 / 要件プロンプト')}

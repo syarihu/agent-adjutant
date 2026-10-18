@@ -64,10 +64,10 @@ load([
   'const KIND_OF_TAB = { overview: "plan", review: "diff", check: "verify" };',
   fn(tvSrc, 'actHtml'),
   fn(tvSrc, 'gateHeadHtml'), fn(tvSrc, 'gateStatusHtml'),
-  ...['framesHtml', 'factsCardHtml', 'focusCardHtml', 'unsureCardHtml', 'reportCardHtml', 'filesTableHtml',
+  ...['framesHtml', 'factsCardHtml', 'focusCardHtml', 'unsureCardHtml', 'stepsCardHtml', 'sectionsCardsHtml', 'reportCardHtml', 'filesTableHtml',
     'diffCardHtml', 'planSourceOf', 'problemCardHtml', 'issueBodyCardHtml', 'goalCardHtml',
     'instructionCardHtml', 'planHeadCardHtml', 'planGateCardsHtml', 'detailsKvHtml', 'overviewTab',
-    'reviewTab', 'checkTab'].map(n => fn(tvSrc, n)),
+    'reviewTab', 'checkTab', 'gateDetailHtml'].map(n => fn(tvSrc, n)),
   cut(decSrc, /^const OUTCOME = [^\n]*\n/m),
   ...['cardDialogWaiting'].map(n => cst(dlgSrc, n)),
   ...['cardDialogAnsweredHeadHtml', 'cardDialogTaskGroups', 'cardDialogResolveTarget', 'cardDialogDockGate', 'cardDialogTaskHtml', 'cardDialogDockHtml', 'cardDialogActiveGroup']
@@ -392,4 +392,95 @@ test("a waiting plan of another board shows as waiting in a dialog the aide open
   assert.deepStrictEqual(keysOf(scoped).slice(0, 1), ['waiting:p-w']);
   // The page's state is back as it was once the cards are drawn.
   assert.ok(!planHead(plain(call('cardDialogTaskGroups', task, [w]))).includes('承認待ち'));
+});
+
+/* The plan's steps and what was found, which a gate carries beside the frames. */
+const stepped = { ...plan, id: 'p-s', decision: undefined, answeredAt: undefined,
+  steps: [{ text: 'first <b>', detail: 'src/a.rs' }, { text: 'second' }],
+  sections: [{ heading: '原因 <x>', body: 'because <i>' }, { heading: '対応策', body: 'fix it', stage: 'plan' }] };
+
+test('stepsCardHtml is an ordered list, escaped, with the detail as a line under its step; empty gives nothing', () => {
+  const h = call('stepsCardHtml', stepped);
+  assert.ok(h.includes('data-expand="steps"') && h.includes('計画の手順') && h.includes('<ol class="steps">'));
+  assert.ok(h.indexOf('first &lt;b&gt;') < h.indexOf('second'));
+  assert.ok(!h.includes('<b>') && h.includes('<div class="step-detail">src/a.rs</div>'));
+  assert.strictEqual((h.match(/<li>/g) || []).length, 2);
+  assert.strictEqual(call('stepsCardHtml', plan), '');
+  assert.strictEqual(call('stepsCardHtml', { ...plan, steps: [] }), '');
+});
+
+test('sectionsCardsHtml draws the found blocks, then the plan ones in a panel of their own, headings escaped and bodies as markdown', () => {
+  const h = call('sectionsCardsHtml', stepped);
+  assert.ok(h.includes('調べたこと') && h.includes('<h4 class="sec-heading">原因 &lt;x&gt;</h4>'));
+  assert.ok(!h.includes('<x>') && h.includes('<p>because &lt;i></p>'));
+  assert.ok(h.indexOf('原因') < h.indexOf('対応策') && h.indexOf('調べたこと') < h.indexOf('>計画<'));
+  assert.strictEqual(call('sectionsCardsHtml', stepped, 'found') + call('sectionsCardsHtml', stepped, 'plan'), h);
+  assert.ok(!call('sectionsCardsHtml', stepped, 'found').includes('対応策'));
+  assert.ok(!call('sectionsCardsHtml', stepped, 'plan').includes('原因'));
+  // A stage this page does not know reads as found.
+  assert.ok(call('sectionsCardsHtml', { sections: [{ heading: 'h', body: 'b', stage: 'later' }] }, 'found').includes('>h<'));
+  assert.strictEqual(call('sectionsCardsHtml', plan), '');
+  assert.strictEqual(call('sectionsCardsHtml', { sections: [] }), '');
+});
+
+test('planGateCardsHtml has the sections and the steps after the facts and before the report', () => {
+  const h = call('planGateCardsHtml', stepped);
+  const at = s => h.indexOf(s);
+  assert.ok(at('data-expand="facts"') < at('調べたこと') && at('調べたこと') < at('計画の手順'));
+  assert.ok(at('計画の手順') < at('>計画<') && at('>計画<') < at('data-expand="report"'));
+});
+
+test('a gate with no tab of its own shows its sections after the frames; the review and check tabs do too', () => {
+  const result = { id: 'r-1', kind: 'result', title: 'R', focus: 'ok?', openedAt: 'o', sections: stepped.sections };
+  const h = call('gateDetailHtml', result, [result]);
+  assert.ok(h.includes(call('framesHtml', result) + call('sectionsCardsHtml', result)));
+  const withSteps = call('gateDetailHtml', { ...result, steps: stepped.steps }, [result]);
+  assert.ok(withSteps.includes('計画の手順'));
+  const d = { ...diffGate, sections: stepped.sections };
+  wait([d]);
+  assert.ok(call('reviewTab', task, [d], {}).includes(call('framesHtml', d) + call('sectionsCardsHtml', d)));
+  const v = { ...verifyGate, sections: stepped.sections };
+  wait([v]);
+  assert.ok(call('checkTab', task, [v], {}).includes(call('framesHtml', v) + call('sectionsCardsHtml', v)));
+  wait([]);
+});
+
+test('the dialog has a card for the steps of the plan and of another kind, and one for the sections of a waiting gate', () => {
+  const p = dgate('p-s', 'plan', '2026-10-01T00:00:00Z', { ...stepped, id: 'p-s', openedAt: '2026-10-01T00:00:00Z', decision: 'approve', answeredAt: 'a' });
+  const r = dgate('r-1', 'result', '2026-10-02T00:00:00Z', { title: 'R', focus: 'ok?', waiting: true, options: ['ack'], sections: stepped.sections, steps: stepped.steps });
+  const gs = groupsOf([p, r]);
+  assert.ok(cardOf(gs, 'plan:steps').html.includes('first &lt;b&gt;'));
+  assert.strictEqual(gs.find(g => g.key === 'plan').cards.map(c => c.key).indexOf('plan:steps'),
+    gs.find(g => g.key === 'plan').cards.map(c => c.key).indexOf('plan:head') + 1);
+  assert.ok(cardOf(gs, 'gate:r-1:sections').html.includes('調べたこと') && cardOf(gs, 'gate:r-1:sections').wide);
+  assert.ok(cardOf(gs, 'gate:r-1:steps').html.includes('計画の手順'));
+  // Not drawn twice: the shown plan keeps its steps in the plan group.
+  assert.ok(!cardOf(gs, 'gate:p-s').html.includes('data-expand="steps"'));
+  assert.ok(cardOf(gs, 'gate:p-s').html.includes('data-expand="sections"'));
+  assert.strictEqual(call('cardDialogResolveTarget', gs, { section: 'steps', gate: 'p-s' }), 'plan:steps');
+  assert.strictEqual(call('cardDialogResolveTarget', gs, { section: 'sections', gate: 'r-1' }), 'gate:r-1:sections');
+  // A waiting plan has no steps card of its own in its group.
+  const w = dgate('p-w', 'plan', '2026-10-03T00:00:00Z', { ...stepped, id: 'p-w', waiting: true, options: ['approve'], openedAt: '2026-10-03T00:00:00Z' });
+  assert.ok(!cardOf(groupsOf([w]), 'gate:p-w:steps'));
+  wait([]);
+});
+
+/* The buttons of a result gate. */
+const dockCtx = vm.createContext({ gateRef: g => g.id, ideTitle: () => '', parkButtonHtml: () => '', roundsHintHtml: () => '' });
+vm.runInContext([
+  cut(utilSrc, /^const esc = [^\n]*\n/m),
+  cut(utilSrc, /^const DECISION_LABEL = [^\n]*\nconst DECISION_LABEL_OF_KIND = \{[\s\S]*?\n\};\nconst decisionLabel = [^\n]*\n[^\n]*\n/m),
+  fn(decSrc, 'gateDockHtml'),
+].join('\n'), dockCtx);
+
+test('a result gate offering ack, ask and task has three buttons with the result wording', () => {
+  const g = { id: 'r-1', kind: 'result', options: ['ack', 'ask', 'task'] };
+  const h = vm.runInContext('gateDockHtml(__g)', Object.assign(dockCtx, { __g: g }));
+  const acts = [...h.matchAll(/data-act="([a-z]+)"/g)].map(m => m[1]).filter(a => !['talk', 'close'].includes(a));
+  assert.deepStrictEqual(acts, ['ack', 'ask', 'task']);
+  for (const label of ['分かった', '続けて聞く', 'これをタスクにする']) assert.ok(h.includes(`<span>${label}</span>`), label);
+  assert.ok(h.includes('add_task'));
+  // A gate stored with the old two options keeps them.
+  Object.assign(dockCtx, { __g: { ...g, options: ['ack', 'ask'] } });
+  assert.ok(!vm.runInContext('gateDockHtml(__g)', dockCtx).includes('data-act="task"'));
 });

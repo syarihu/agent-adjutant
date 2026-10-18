@@ -10,6 +10,8 @@ fn a_gate_can_be_closed_without_delivering_to_the_worker() {
     let payload = serde_json::json!({
         "kind": "plan",
         "title": "設計方針の確認",
+        "focus": "どうするか",
+        "steps": [{ "text": "実装する" }],
         "worktree": fixture.repo.to_str().unwrap(),
     });
     let payload_file = fixture.repo.join("gate.json");
@@ -64,6 +66,7 @@ fn an_answer_to_a_gate_the_hub_opened_goes_to_the_hubs_inbox() {
             "kind": "dispatch",
             "task": "t-1",
             "title": "着手確認: WID-7",
+            "focus": "どうするか",
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -110,6 +113,7 @@ fn a_dispatch_gate_without_its_task_is_refused() {
         serde_json::json!({
             "kind": "dispatch",
             "title": "着手確認",
+            "focus": "どうするか",
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -146,6 +150,8 @@ fn answering_a_gate_writes_the_time_onto_its_task() {
             "kind": "plan",
             "task": task,
             "title": "設計方針の確認",
+            "focus": "どうするか",
+            "steps": [{ "text": "実装する" }],
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -285,6 +291,8 @@ fn a_plan_cannot_be_kept_as_a_record() {
             "kind": "plan",
             "wait": false,
             "title": "設計方針の確認",
+            "focus": "どうするか",
+            "steps": [{ "text": "実装する" }],
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -314,6 +322,7 @@ fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
     let out = open(serde_json::json!({
         "kind": "verify",
         "title": "動作確認",
+        "focus": "確認してほしい",
         "stoppedBy": ["manual-check", "stop-at"],
     }));
     assert!(out.status.success(), "{out:?}");
@@ -389,6 +398,8 @@ fn a_plan_the_hub_opened_is_answered_to_the_hubs_inbox() {
             "openedBy": "hub",
             "task": "t-1",
             "title": "設計レビュー: WID-7",
+            "focus": "どうするか",
+            "steps": [{ "text": "実装する" }],
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -471,6 +482,8 @@ fn a_body_file_becomes_the_gate_s_body_as_it_is() {
         serde_json::json!({
             "kind": "plan",
             "title": "t",
+            "focus": "どうするか",
+            "steps": [{ "text": "実装する" }],
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -493,6 +506,8 @@ fn a_body_file_becomes_the_gate_s_body_as_it_is() {
         serde_json::json!({
             "kind": "plan",
             "title": "t",
+            "focus": "どうするか",
+            "steps": [{ "text": "実装する" }],
             "body": "mine",
             "worktree": fixture.repo.to_str().unwrap(),
         })
@@ -526,6 +541,8 @@ fn a_null_opener_is_the_worker() {
             "kind": "plan",
             "openedBy": null,
             "title": "t",
+            "focus": "どうするか",
+            "steps": [{ "text": "実装する" }],
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),
@@ -548,6 +565,7 @@ fn open_question(fixture: &Fixture) -> String {
         serde_json::json!({
             "kind": "question",
             "title": "どちらにするか",
+            "focus": "どうするか",
             "worktree": fixture.repo.to_str().unwrap(),
         })
         .to_string(),

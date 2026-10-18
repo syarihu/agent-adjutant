@@ -108,6 +108,9 @@ pub struct WorkGate {
     /// The task it names, which may be one no turn above carries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    /// A fixed confirmation answered with one press: the list can answer it where it stands.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quick: bool,
 }
 
 /// As much of a task as a row shows.
@@ -424,6 +427,7 @@ fn turns_of(carried: &[Carried]) -> Vec<WorkTurn> {
             opened_at: gate.opened_at.clone(),
             slug: board.to_string(),
             task: gate.task.clone(),
+            quick: gate.quick,
         });
     }
     turns

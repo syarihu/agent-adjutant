@@ -55,6 +55,9 @@ fn gate(kind: Kind) -> Gate {
         rounds: 0,
         problem: None,
         goal: None,
+        steps: Vec::new(),
+        sections: Vec::new(),
+        quick: false,
         review_rounds: Vec::new(),
         findings: Vec::new(),
         commands: Vec::new(),
@@ -499,7 +502,7 @@ fn an_answer_to_a_record_says_it_is_one() {
 /// A report is read, not approved, so it must not come with an Approve button.
 #[test]
 fn a_result_gate_offers_reading_rather_than_approving() {
-    assert_eq!(Kind::Result.default_options(), ["ack", "ask"]);
+    assert_eq!(Kind::Result.default_options(), ["ack", "ask", "task"]);
     assert_eq!(Kind::Diff.default_options(), ["approve", "changes"]);
 }
 
@@ -541,7 +544,7 @@ fn open_drops_keys_the_gate_does_not_know() {
     };
     let ctx = crate::registry::context_of(repo).unwrap();
     let request = GateRequest::from_json(
-        &json!({"kind": "question", "title": "q", "worktree": "/tmp/wt", "futureField": 1}),
+        &json!({"kind": "question", "title": "q", "focus": "f", "worktree": "/tmp/wt", "futureField": 1}),
     )
     .unwrap();
     let (gate, _) = open(&ctx, request).unwrap();
@@ -564,7 +567,7 @@ fn an_open_payload_cannot_carry_a_decision() {
     };
     let ctx = crate::registry::context_of(repo).unwrap();
     let request = GateRequest::from_json(&json!({
-        "kind": "question", "title": "q", "worktree": "/tmp/wt",
+        "kind": "question", "title": "q", "focus": "f", "worktree": "/tmp/wt",
         "decision": "approve", "choice": "a", "comment": "c",
         "answeredAt": "20260101T000000Z",
         "answers": [{"decision": "approve", "answeredAt": "20260101T000000Z"}],
@@ -614,7 +617,8 @@ fn a_request_without_a_worktree_leaves_no_gate_behind() {
         nwo_source: "dirname",
     };
     let ctx = crate::registry::context_of(repo).unwrap();
-    let request = GateRequest::from_json(&json!({"kind": "question", "title": "q"})).unwrap();
+    let request =
+        GateRequest::from_json(&json!({"kind": "question", "title": "q", "focus": "f"})).unwrap();
     let err = open(&ctx, request).unwrap_err();
     assert_eq!(err, "not inside a worktree, and no --worktree was given");
     let dir = dir_of(&ctx, Shelf::Open);
@@ -635,11 +639,304 @@ fn absent_options_fall_back_to_the_kinds_defaults() {
         nwo_source: "dirname",
     };
     let ctx = crate::registry::context_of(repo).unwrap();
-    let request =
-        GateRequest::from_json(&json!({"kind": "question", "title": "q", "worktree": "/tmp/wt"}))
-            .unwrap();
+    let request = GateRequest::from_json(
+        &json!({"kind": "question", "title": "q", "focus": "f", "worktree": "/tmp/wt"}),
+    )
+    .unwrap();
     let (gate, _) = open(&ctx, request).unwrap();
     assert_eq!(gate.options, Kind::Question.default_options());
+}
+
+// ── what a gate has to carry ──
+
+/// Open `payload` for a worktree, and say what it was refused with (or the gate it became).
+fn open_payload(ctx: &Context, payload: serde_json::Value) -> Result<Gate, String> {
+    let mut payload = payload;
+    payload["worktree"] = json!("/tmp/wt");
+    open(ctx, GateRequest::from_json(&payload)?).map(|(gate, _)| gate)
+}
+
+fn left_behind(ctx: &Context) -> usize {
+    [Shelf::Open, Shelf::Record]
+        .iter()
+        .map(|shelf| {
+            std::fs::read_dir(dir_of(ctx, *shelf))
+                .map(|d| d.count())
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+#[test]
+fn a_waiting_gate_without_focus_is_refused_and_leaves_nothing() {
+    let (_sandbox, ctx) = hub();
+    let wanted = "a gate that waits needs focus: the question the person answers";
+    for payload in [
+        json!({"kind": "question", "title": "q"}),
+        json!({"kind": "question", "title": "q", "focus": "   "}),
+        json!({"kind": "question", "title": "q", "focus": null}),
+    ] {
+        assert_eq!(open_payload(&ctx, payload).unwrap_err(), wanted);
+    }
+    assert_eq!(left_behind(&ctx), 0);
+    // A record asks nobody, so it needs no question.
+    let record = json!({"kind": "diff", "title": "d", "wait": false});
+    assert!(open_payload(&ctx, record).is_ok());
+}
+
+#[test]
+fn a_plan_without_steps_is_refused() {
+    let (_sandbox, ctx) = hub();
+    let err = open_payload(&ctx, json!({"kind": "plan", "title": "p", "focus": "f"})).unwrap_err();
+    assert_eq!(err, "a plan gate needs steps: the plan, one step each");
+    let err = open_payload(
+        &ctx,
+        json!({"kind": "plan", "title": "p", "focus": "f", "steps": null}),
+    )
+    .unwrap_err();
+    assert!(err.starts_with("a plan gate needs steps"), "{err}");
+    assert_eq!(left_behind(&ctx), 0);
+    let plan = json!({"kind": "plan", "title": "p", "focus": "f", "steps": [{"text": "a"}]});
+    assert!(open_payload(&ctx, plan).is_ok());
+    // Steps on another kind are shown, not refused.
+    let question =
+        json!({"kind": "question", "title": "q", "focus": "f", "steps": [{"text": "a"}]});
+    assert_eq!(open_payload(&ctx, question).unwrap().steps.len(), 1);
+}
+
+#[test]
+fn a_step_without_text_and_a_section_without_a_heading_are_refused_by_number() {
+    let (_sandbox, ctx) = hub();
+    let err = open_payload(
+        &ctx,
+        json!({"kind": "plan", "title": "p", "focus": "f", "steps": [{"text": "a"}, {"text": " "}]}),
+    )
+    .unwrap_err();
+    assert_eq!(err, "step 2 has no text");
+    let err = open_payload(
+        &ctx,
+        json!({"kind": "plan", "title": "p", "focus": "f", "steps": [{"detail": "d"}]}),
+    )
+    .unwrap_err();
+    assert_eq!(err, "step 1 has no text");
+    for sections in [
+        json!([{"heading": "h", "body": "b"}, {"body": "b"}]),
+        json!([{"heading": "h", "body": "b"}, {"heading": "h"}]),
+        json!([{"heading": "h", "body": "b"}, {"heading": "h", "body": " "}]),
+    ] {
+        let err = open_payload(
+            &ctx,
+            json!({"kind": "result", "title": "r", "focus": "f", "sections": sections}),
+        )
+        .unwrap_err();
+        assert_eq!(err, "section 2 needs a heading and a body");
+    }
+    assert_eq!(left_behind(&ctx), 0);
+}
+
+#[test]
+fn a_result_needs_sections_or_a_body() {
+    let (_sandbox, ctx) = hub();
+    let err =
+        open_payload(&ctx, json!({"kind": "result", "title": "r", "focus": "f"})).unwrap_err();
+    assert_eq!(
+        err,
+        "a result gate needs what was found: sections, or a body"
+    );
+    let blank = json!({"kind": "result", "title": "r", "focus": "f", "body": "  "});
+    assert!(open_payload(&ctx, blank).is_err());
+    assert_eq!(left_behind(&ctx), 0);
+    let body = json!({"kind": "result", "title": "r", "focus": "f", "body": "report"});
+    assert!(open_payload(&ctx, body).is_ok());
+    let sections = json!({"kind": "result", "title": "r", "focus": "f",
+        "sections": [{"heading": "結論", "body": "b"}]});
+    assert!(open_payload(&ctx, sections).is_ok());
+}
+
+#[test]
+fn quick_needs_choices_and_nothing_to_read() {
+    let (_sandbox, ctx) = hub();
+    let choices = json!([{"id": "yes", "label": "Yes"}]);
+    let quick = |extra: serde_json::Value| {
+        let mut payload = json!({"kind": "question", "title": "q", "focus": "f",
+            "quick": true, "choices": choices});
+        for (key, value) in extra.as_object().unwrap() {
+            payload[key] = value.clone();
+        }
+        open_payload(&ctx, payload)
+    };
+    assert!(quick(json!({})).unwrap().quick);
+    let err = open_payload(
+        &ctx,
+        json!({"kind": "question", "title": "q", "focus": "f", "quick": true}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        "a quick gate is answered with one press: give it choices"
+    );
+    for (field, value) in [
+        ("body", json!("b")),
+        ("diff", json!("d")),
+        ("run", json!("r")),
+        ("steps", json!([{"text": "a"}])),
+        ("sections", json!([{"heading": "h", "body": "b"}])),
+        (
+            "findings",
+            json!([{"severity": "must", "location": "l", "text": "t", "outcome": "open"}]),
+        ),
+        ("commands", json!([{"command": "c", "result": "pass"}])),
+        ("manual", json!(["m"])),
+    ] {
+        let err = quick(json!({ field: value })).unwrap_err();
+        assert_eq!(
+            err,
+            format!("a quick gate carries nothing to read: drop {field} or quick")
+        );
+    }
+    // Facts are what a quick gate is for.
+    assert!(quick(json!({"facts": ["uncommitted 0"]})).is_ok());
+}
+
+#[test]
+fn quick_on_a_record_is_refused() {
+    let (_sandbox, ctx) = hub();
+    let err = open_payload(
+        &ctx,
+        json!({"kind": "diff", "title": "d", "wait": false, "quick": true,
+            "choices": [{"id": "a", "label": "A"}]}),
+    )
+    .unwrap_err();
+    assert_eq!(err, "a record asks nobody, so it cannot be quick");
+    assert_eq!(left_behind(&ctx), 0);
+}
+
+#[test]
+fn null_quick_steps_and_sections_read_as_absent() {
+    let request = GateRequest::from_json(&json!({"kind": "question", "title": "q",
+        "quick": null, "steps": null, "sections": null}))
+    .unwrap();
+    assert!(!request.quick);
+    assert!(request.steps.is_empty() && request.sections.is_empty());
+}
+
+#[test]
+fn quick_of_the_wrong_type_is_refused() {
+    let err = GateRequest::from_json(&json!({"kind": "question", "title": "q", "quick": "yes"}))
+        .unwrap_err();
+    assert_eq!(err, "quick must be true or false");
+}
+
+#[test]
+fn steps_and_sections_of_the_wrong_shape_name_the_shape() {
+    let step = "each step is {text, detail?} or a string";
+    for steps in [json!("a"), json!([1]), json!([{"text": 1}]), json!([["a"]])] {
+        let err = GateRequest::from_json(&json!({"kind": "plan", "title": "p", "steps": steps}))
+            .unwrap_err();
+        assert_eq!(err, step);
+    }
+    let section = "each section is {heading, body, stage?}";
+    for sections in [
+        json!("a"),
+        json!(["a"]),
+        json!([{"heading": 1, "body": "b"}]),
+    ] {
+        let err =
+            GateRequest::from_json(&json!({"kind": "result", "title": "r", "sections": sections}))
+                .unwrap_err();
+        assert_eq!(err, section);
+    }
+}
+
+#[test]
+fn string_steps_are_read_as_text() {
+    let request = GateRequest::from_json(
+        &json!({"kind": "plan", "title": "p", "steps": ["a", {"text": "b", "detail": "src/b.rs"}]}),
+    )
+    .unwrap();
+    assert_eq!(request.steps[0].text, "a");
+    assert_eq!(request.steps[0].detail, None);
+    assert_eq!(request.steps[1].detail.as_deref(), Some("src/b.rs"));
+}
+
+#[test]
+fn a_stored_section_stage_this_binary_does_not_know_loads_and_is_kept() {
+    let (_sandbox, ctx) = hub();
+    let mut gate = gate(Kind::Result);
+    gate.sections =
+        serde_json::from_value(json!([{"heading": "h", "body": "b", "stage": "later"}])).unwrap();
+    let open = dir_of(&ctx, Shelf::Open);
+    std::fs::create_dir_all(&open).unwrap();
+    std::fs::write(
+        path_of(&open, &gate.id),
+        serde_json::to_string(&gate).unwrap(),
+    )
+    .unwrap();
+    let loaded = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    assert_eq!(loaded.sections[0].stage(), SectionStage::Found);
+    save(&ctx, Shelf::Open, &loaded).unwrap();
+    let text = std::fs::read_to_string(path_of(&open, &gate.id)).unwrap();
+    assert!(text.contains("\"stage\": \"later\""), "{text}");
+}
+
+#[test]
+fn a_section_stage_defaults_to_found_and_accepts_plan() {
+    let request = GateRequest::from_json(&json!({"kind": "result", "title": "r", "sections": [
+        {"heading": "a", "body": "b"},
+        {"heading": "c", "body": "d", "stage": "plan"},
+        {"heading": "e", "body": "f", "stage": null},
+    ]}))
+    .unwrap();
+    let stages: Vec<_> = request.sections.iter().map(Section::stage).collect();
+    assert_eq!(
+        stages,
+        [SectionStage::Found, SectionStage::Plan, SectionStage::Found]
+    );
+    // Found is the default, so it is not written.
+    let json = serde_json::to_value(&request.sections).unwrap();
+    assert!(
+        json[0].get("stage").is_none() && json[1]["stage"] == "plan",
+        "{json}"
+    );
+    let err = GateRequest::from_json(&json!({"kind": "result", "title": "r", "sections": [
+        {"heading": "a", "body": "b"}, {"heading": "c", "body": "d", "stage": "later"},
+    ]}))
+    .unwrap_err();
+    assert_eq!(err, "section 2: stage is found or plan");
+}
+
+#[test]
+fn steps_and_sections_keep_keys_this_binary_does_not_know() {
+    let (_sandbox, ctx) = hub();
+    let mut gate = gate(Kind::Plan);
+    let raw = json!({
+        "steps": [{"text": "a", "done": true}],
+        "sections": [{"heading": "h", "body": "b", "icon": "x"}],
+    });
+    gate.steps = serde_json::from_value(raw["steps"].clone()).unwrap();
+    gate.sections = serde_json::from_value(raw["sections"].clone()).unwrap();
+    save(&ctx, Shelf::Open, &gate).unwrap();
+    let loaded = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    assert_eq!(loaded, gate);
+    let json = serde_json::to_value(&loaded).unwrap();
+    assert_eq!(json["steps"][0]["done"], true);
+    assert_eq!(json["sections"][0]["icon"], "x");
+    // None of the new keys is written when it is empty, so an old binary reads what it did.
+    let plain = serde_json::to_value(self::gate(Kind::Plan)).unwrap();
+    for key in ["steps", "sections", "quick"] {
+        assert!(plain.get(key).is_none(), "{key}");
+    }
+}
+
+#[test]
+fn a_result_gate_takes_task() {
+    let (_sandbox, ctx) = hub();
+    let payload = json!({"kind": "result", "title": "r", "focus": "f", "body": "b"});
+    let gate = open_payload(&ctx, payload).unwrap();
+    assert_eq!(gate.options, ["ack", "ask", "task"]);
+    assert!(decide::check(&gate, "task", None, Some("only the file"), Offered::Only).is_ok());
+    let err = decide::check(&gate, "approve", None, None, Offered::Only).unwrap_err();
+    assert!(err.contains("ack, ask, task"), "{err}");
 }
 
 // ── sending the points of a read-through ──

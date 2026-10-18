@@ -143,10 +143,11 @@ const OPENING: &str = "You are the one working in this worktree. You are not the
 
 const REPORT_TO_TASK: &str =
     "**the user at this tab**. Do not send results to the hub — the hub only hands work out,
-  and has nowhere to pass on what it receives. You send the hub only these two things on your own:
-  (a) a bug **outside this task**, through the `adj-report` procedure, and (b) a request to clean up
-  once the work is done.
-  (Answering when the hub asks with `[question {id}]` is neither of these, and is fine to do)";
+  and has nowhere to pass on what it receives. You send the hub only these three things on your own:
+  (a) a bug **outside this task**, through the `adj-report` procedure, (b) a request to clean up
+  once the work is done, and (c) an investigation result the person answered `task` on, also
+  through `adj-report`.
+  (Answering when the hub asks with `[question {id}]` is none of these, and is fine to do)";
 
 const TASK_OVERRIDES: &str = "Important overrides. If you remember the hub's procedure, the following take precedence:
 
@@ -158,7 +159,8 @@ const TASK_OVERRIDES: &str = "Important overrides. If you remember the hub's pro
 4. The reviewers' (sub-agents' / codex's) working directory is the current cwd too.
 5. Do not try to hand the implementation back to the hub. The hub only hands work out. Do everything
    up to the final report yourself, and **give that report to the user at this tab** (\"Report to\"
-   above; do not send it on to the hub).
+   above; do not send it on to the hub, except a result the person answered `task` on, through
+   `adj-report`).
 6. If you find \"a bug unrelated to the current task\" while working, **do not fix it yourself**.
    A diff with unrelated fixes mixed in can be neither reviewed nor reverted.
    Hand it to the hub following the `adj skill adj-report` procedure (or `adjutant_skill`

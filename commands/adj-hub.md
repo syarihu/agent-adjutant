@@ -872,7 +872,9 @@ cannot fetch from a bare key.
   and tracker and puts the request text on the Task line.
 - Record it with `adj task add --done-when report-only` (the brief then writes "investigation only
   (report and stop)"). The results go to the user at the
-  worker's tab and do not come back to the hub (having them come back doubles the report).
+  worker's tab and do not come back to the hub (having them come back doubles the report). The one
+  exception is a result the person chose to make a task: it arrives as an `adj-report` (no
+  `## Kind`) and is filed like any report.
 - **Without an issue there is nothing to make a worktree name from.** It cannot come from a key, so
   propose a short lowercase slug of the request (like `login-crash`) with `AskUserQuestion`, settle
   it, and pass it to "3. Create the worktree" as `{worktreeName}` (the branch is `{user}/{name}` as
@@ -1585,7 +1587,8 @@ comes from:
   implementer (`--executor` above).
 - **For "investigation only", no PR and no issue updates.** Have the results given to the user at
   that tab (the brief's "Report to" says so). Have them reported to you here and the report is
-  doubled. With no issue the record has no URL, and the brief puts the request text on the Task line.
+  doubled (the one exception is a result the person chose to make a task: it arrives as an
+  `adj-report` with no `## Kind`, and is filed like any report). With no issue the record has no URL, and the brief puts the request text on the Task line.
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
   it is; if it is not, pass `--out '<a path outside the worktree>'` and **change the path in Step 3's
   prompt to match**, because that prompt names `.claude/task-brief.md` literally.
@@ -1753,8 +1756,8 @@ shows it:
 adj gate open --file '{worktree}/.claude/jules-gate.json' --body-file '{worktree}/.claude/jules-plan.md' --json
 ```
 
-`--body-file` puts the plan file into the gate as it is, so what the person approves is exactly what
-Jules gets. The payload carries `"openedBy": "hub"` and the task, so the answer arrives in your inbox
+The payload carries `steps` because a plan gate is refused without them. `--body-file` puts the plan
+file into the gate as it is, so what the person approves is exactly what Jules gets. The payload carries `"openedBy": "hub"` and the task, so the answer arrives in your inbox
 as `kind: gate` ("The answer to a gate the hub opened"), not in the worktree's outbox. The gate and the
 card keep the worktree, so nothing else on the board changes.
 
@@ -2211,7 +2214,8 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   one who asked is someone in front of the board, so ask on the board too:
 
   The content is JSON; write it to `{main}/.claude/gate-{task_id}.json` with a file-writing tool (the
-  title is text from the task, so do not put it in a heredoc — "Keep task text off the shell"):
+  title is text from the task, so do not put it in a heredoc — "Keep task text off the shell").
+  Every gate that waits needs `focus`; `adj gate open` refuses one without it.
 
   ```json
   {
@@ -3059,10 +3063,13 @@ Write two files, with a file-writing tool (not a heredoc: they carry text taken 
      "goal": "<what things look like when this is done, one to three sentences>",
      "facts": ["<files to touch>", "base {base_branch}", "implementation goes to Jules"],
      "focus": "<the one or two points a person should decide or check; enough to answer from alone>",
-     "decided": "<what is settled, as a short list>",
+     "steps": [{"text": "<step>", "detail": "<files>"}],
+     "decided": "<what is settled, not the steps>",
      "unsure": "<where your confidence ran out; leave the key out if nowhere>",
      "rounds": 0
    }
+
+   `steps` is the plan's implementation steps in order, a short list (the design document is the body).
 
    If the task does not fit Jules — it needs a check only a person can make on a real device or
    screen, it is too large to specify completely, or a decision is needed before it can be planned —

@@ -15,6 +15,7 @@ fn open_question_in(fixture: &Fixture, worktree: &Path, kind: &str, opened_at: &
             "kind": kind,
             "task": "t-1",
             "title": "どちらにするか",
+            "focus": "どちらにするか",
             "worktree": worktree.to_str().unwrap(),
         })
         .to_string(),

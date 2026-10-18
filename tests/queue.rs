@@ -46,7 +46,7 @@ fn next_skips_held_tasks_and_names_the_ones_that_need_a_dispatch_gate() {
     std::fs::write(
         &gate_file,
         format!(
-            "{{\"kind\":\"dispatch\",\"task\":\"{asks}\",\"title\":\"{asks}\",\"worktree\":\"{}\"}}",
+            "{{\"kind\":\"dispatch\",\"task\":\"{asks}\",\"title\":\"{asks}\",\"focus\":\"start it?\",\"worktree\":\"{}\"}}",
             fixture.repo.display()
         ),
     )

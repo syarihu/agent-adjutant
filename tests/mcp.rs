@@ -317,6 +317,8 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
                     "title": "計画の承認",
                     "problem": "問題",
                     "goal": "目標",
+                    "focus": "この計画で進めてよいか",
+                    "steps": [{ "text": "実装する" }],
                     "cwd": fixture.repo.to_str().unwrap(),
                 }
             }),
@@ -393,6 +395,7 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
                 "arguments": {
                     "kind": "question",
                     "title": "どちらか",
+                    "focus": "どちらにするか",
                     "cwd": fixture.repo.to_str().unwrap(),
                 }
             }),
@@ -434,6 +437,7 @@ fn a_waiting_gate_opened_and_closed_through_the_server() {
                 "arguments": {
                     "kind": "question",
                     "title": "Board question",
+                    "focus": "Which one?",
                     "cwd": fixture.repo.to_str().unwrap(),
                 }
             }),
@@ -527,6 +531,8 @@ fn a_gate_opened_with_waking_off_omits_the_wake_line() {
                     "title": "計画の承認",
                     "problem": "問題",
                     "goal": "目標",
+                    "focus": "この計画で進めてよいか",
+                    "steps": [{ "text": "実装する" }],
                     "cwd": fixture.repo.to_str().unwrap(),
                 }
             }),
@@ -555,6 +561,8 @@ fn gate_opened_under_tmux(extra: &str) -> serde_json::Value {
                     "title": "計画の承認",
                     "problem": "問題",
                     "goal": "目標",
+                    "focus": "この計画で進めてよいか",
+                    "steps": [{ "text": "実装する" }],
                     "cwd": fixture.repo.to_str().unwrap(),
                 }
             }),

@@ -62,6 +62,13 @@ then is not a bug: **Symptom** says why the task should be split, **Location** t
 parent (`adj task update --parent`, sub-issue changes): the hub does that, after asking a person.
 Carry on with your task as planned.
 
+**A worker also uses this for an investigation result the person chose これをタスクにする on** (§8 of
+adj-worker). That is a bug report, with no `## Kind` line: **Symptom** is the conclusion, **Suspected
+cause** the 原因 section, **Location** the files the result names, **Why it is outside the current
+task** "the task was investigation only; the person chose to make it a task", and `## Scope` follows
+the person's comment, the file alone when there is none. The person has already said yes in the
+gate, so step 3 is not asked again for it.
+
 - Found in comes from the "Task" line of `.claude/task-brief.md`. If there is none, take the key
   from the branch name (`{user}/ALPHA-957` → `ALPHA-957`). **It is not the brief's "Parent task"
   line** — what goes here is the task you are holding now, because that is the work in which the
