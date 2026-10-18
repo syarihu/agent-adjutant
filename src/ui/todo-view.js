@@ -108,7 +108,7 @@ function todoSetHtml(slot, el, html) {
 const todoCtxOf = g => ({ ...questionCtxFor(g), key: gateKey(g) });
 
 /* Why the list cannot be trusted to be whole, as a line: a read that failed is not an empty list. */
-const todoStatus = () => todoNotes({ workDoc: work.doc, workError: work.error, othersDoc: others.doc, othersError: others.error });
+const todoStatus = () => todoNotes({ workDoc: work.doc, workError: work.error, othersDoc: others.doc, othersError: others.error, othersSyncError: others.syncError, nowSecs: othersNowEst() });
 const todoNotesHtml = notes => notes.map(n => `<p class="todo-hint todo-note">${esc(n)}</p>`).join('');
 
 function todoListOf(items, sel) {

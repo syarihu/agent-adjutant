@@ -52,13 +52,28 @@ const todoWaited = (since, now) => (Number.isFinite(since) ? `${agoLabel(minutes
 /* What the three sources (the work document, the review records, a board's state) say about whether the list can be trusted, one rule
    for all: an error with no data is the error and no list (`blocked`, or for the records only, no claim that nothing waits: `emptyOk`);
    an error with old data keeps the data and adds a line. `blocked` is the one line to show instead of the list, `notes` the lines over it. */
-function todoNotes({ workDoc, workError, othersDoc, othersError }) {
+function todoNotes({ workDoc, workError, othersDoc, othersError, othersSyncError = null, nowSecs = null }) {
   if (!workDoc) return { blocked: workError ? `読み込めませんでした: ${workError}` : '読み込み中…', notes: [], emptyOk: false };
   const notes = [];
+  let emptyOk = true;
   if (workError) notes.push(`最新を読めませんでした: ${workError}`);
-  if (!othersDoc) notes.push(othersError ? `レビュー依頼を読めませんでした: ${othersError}` : 'レビュー依頼を読み込み中…');
-  else if (othersError) notes.push(`レビュー依頼の最新を読めませんでした: ${othersError}`);
-  return { blocked: null, notes, emptyOk: !!othersDoc };
+  // A repository that could not be read contributes nothing, so nothing waiting is not known.
+  for (const r of (workDoc.repos || []).filter(x => x.error)) { notes.push(`${r.nwo} を読めませんでした: ${r.error}`); emptyOk = false; }
+  if (!othersDoc) {
+    notes.push(othersError ? `レビュー依頼を読めませんでした: ${othersError}` : 'レビュー依頼を読み込み中…');
+    return { blocked: null, notes, emptyOk: false };
+  }
+  if (othersError) notes.push(`レビュー依頼の最新を読めませんでした: ${othersError}`);
+  // The review requests are what the last sync found. A sync is the person's to run (some never do), so what it could not find is said
+  // over the list, as the AI 下読み list says it, and does not keep the gates from being called done.
+  const ls = othersDoc.lastSync;
+  if (!ls?.at) notes.push('レビュー依頼は、まだ同期していません（AI 下読みで同期すると読み込みます）');
+  const failedAfter = ls?.error && ls.errorAt && (!ls.at || ls.errorAt > ls.at) ? ls.error : null;
+  if (othersSyncError || failedAfter) { notes.push(`レビュー依頼の前回の同期に失敗しました: ${othersSyncError || failedAfter}`); }
+  if (ls?.complete === false) { notes.push('レビュー依頼の一部を読めませんでした'); }
+  if (ls?.truncated) { notes.push('レビュー依頼は100件を超えたため一部だけです'); }
+  if (nowSecs != null && othersStale(ls, nowSecs)) notes.push('レビュー依頼の最後の同期から30分以上たっています');
+  return { blocked: null, notes, emptyOk };
 }
 
 /* A quick question as its row, with where it is from. Until the board it is on has been read there is no question to show, and no button. */
@@ -69,7 +84,7 @@ function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = nu
   if (!g) return `<div class="todo-quick todo-pending" data-todo-key="${esc(item.key)}"><div class="qc-quick"><b class="qc-quick-text">${esc(item.title)}</b><span class="todo-loading">${error ? esc(`このボードを読めませんでした: ${error}`) : '読み込み中…'}</span></div>${from}</div>`;
   // The cached question stays (the server refuses an answer to one that no longer waits), with why it may be old.
   const stale = error ? `<div class="todo-note">${esc(`このボードの最新を読めませんでした: ${error}`)}</div>` : '';
-  return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key })}<div class="todo-task">${esc(item.title)}</div>${stale}${from}</div>`;
+  return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key, firstLine: true })}<div class="todo-task">${esc(item.title)}</div>${stale}${from}</div>`;
 }
 
 /* A gate to read as a button that selects it: what kind, which task, what is asked (the worker's own words, else the kind's fixed question). */

@@ -25,8 +25,8 @@ run([
 ].join('\n'), 'decide.js');
 run(read('question-card.js'), 'question-card.js');
 run(read('todo.js'), 'todo.js');
-const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, TODO_READ_ORDER } = vm.runInContext(
-  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, TODO_READ_ORDER })', ctx);
+const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, quickRowHtml, TODO_READ_ORDER } = vm.runInContext(
+  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoPrRowHtml, todoNotes, quickRowHtml, TODO_READ_ORDER })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -157,7 +157,7 @@ test('the selection stays, moves to the one that took its place, or starts on th
 });
 
 test('an error with no data is the error, and an error with old data is the data with a line', () => {
-  const ok = { workDoc: {}, othersDoc: {} };
+  const ok = { workDoc: {}, othersDoc: { lastSync: { at: stamp(T0) } } };
   assert.deepEqual(todoNotes({ ...ok }), { blocked: null, notes: [], emptyOk: true });
   assert.equal(todoNotes({ workDoc: null, workError: 'down' }).blocked, '読み込めませんでした: down');
   assert.equal(todoNotes({ workDoc: null }).blocked, '読み込み中…');
@@ -183,4 +183,34 @@ test('a gate its board no longer lists says it is not waiting, with no button, a
   const html = todoListHtml(it, { goneOf: () => true, now: T0 });
   assert.equal(html.split('もう待っていません').length - 1, 2);
   assert.ok(!html.includes('data-choice') && !html.includes('読み込み中…'));
+});
+
+test('an empty list is not claimed while a repository is unread, and what a sync missed is said over it', () => {
+  const ok = { workDoc: { repos: [] }, othersDoc: { lastSync: { at: stamp(T0), complete: true } }, nowSecs: T0 + 60 };
+  assert.equal(todoNotes(ok).emptyOk, true);
+  const bad = todoNotes({ ...ok, workDoc: { repos: [{ nwo: 'acme/widget', error: 'no board' }] } });
+  assert.equal(bad.emptyOk, false);
+  assert.ok(bad.notes[0].includes('acme/widget') && bad.notes[0].includes('no board'));
+  // A sync is the person's to run: what it missed is a note, not a reason to never say nothing waits.
+  for (const missed of [
+    { ...ok, othersDoc: {} },
+    { ...ok, othersDoc: { lastSync: { at: stamp(T0), complete: false } } },
+    { ...ok, othersDoc: { lastSync: { at: stamp(T0), truncated: true } } },
+    { ...ok, othersSyncError: 'gh failed' },
+  ]) {
+    const n = todoNotes(missed);
+    assert.equal(n.emptyOk, true);
+    assert.equal(n.notes.length, 1);
+  }
+  const old = todoNotes({ ...ok, nowSecs: T0 + 3 * 3600 });
+  assert.equal(old.emptyOk, true);
+  assert.equal(old.notes.length, 1);
+});
+
+test('a quick row shows the first line of the question only, and the shared row keeps the whole one', () => {
+  const it = todoItems({ doc: doc([repo('acme/widget', [turn('t1', [gate('g1', 'question', 1, { quick: true })])])]), records: [] });
+  const g = { id: 'g1', kind: 'question', title: 'T', focus: 'First line\nSecond line', _slug: 'b1', choices: [{ id: 'a', label: 'Yes' }] };
+  const html = todoQuickRowHtml(it.quick[0], g, {}, T0);
+  assert.ok(html.includes('First line') && !html.includes('Second line'));
+  assert.ok(quickRowHtml(g, {}).includes('Second line'));
 });

@@ -30,15 +30,20 @@ function questionSourceOf(key) {
   return null;
 }
 
+/* Whether the page's own state is where the gates of the board `slug` are: a board served alone, every board merged, or that board. */
+const questionStateReads = slug => !multiBoard || scopeAll() || nav.board === slug;
+
 /* The gate the page lists under `key` now, or null: not one answered in this page, and from the state of the board it is on, else
    from what a source has read of its own board. */
 function questionLive(key) {
   if (answeredGates.has(key)) return null;
   const src = questionSourceOf(key);
+  const slug = key.slice(0, Math.max(key.lastIndexOf('/'), 0));
   // The TODO view does not refresh the page's state, so there a source's read of the board is the fresher, and a board that was read
   // and does not list the gate (`gone`) says it is not waiting, whatever the state remembers.
   if (view === 'todo' && src) return src.gone ? null : src.g;
-  return (state.gates || []).find(x => gateKey(x) === key) || (src && !src.gone ? src.g : null);
+  // Elsewhere a source's cache is not kept fresh, so it stands in only for a board the page's own state does not read.
+  return (state.gates || []).find(x => gateKey(x) === key) || (src && !src.gone && !questionStateReads(slug) ? src.g : null);
 }
 
 /* `live` (as the page lists it) with the board `like` was opened on, so a card follows the gate and keeps sending to its board. */
@@ -66,7 +71,8 @@ function questionCtxOf(g) {
 /* `questionCtxOf`, read from the board's own state when the gate is one a source holds and the page's state does not. */
 function questionCtxFor(g) {
   const key = gateKey(g);
-  const src = view !== 'todo' && (state.gates || []).some(x => gateKey(x) === key) ? null : questionSourceOf(key);
+  const slug = key.slice(0, Math.max(key.lastIndexOf('/'), 0));
+  const src = view !== 'todo' && ((state.gates || []).some(x => gateKey(x) === key) || questionStateReads(slug)) ? null : questionSourceOf(key);
   return src?.data ? withViewState(src.data, () => questionCtxOf(g)) : questionCtxOf(g);
 }
 
