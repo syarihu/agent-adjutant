@@ -26,6 +26,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/page-body.html"),
     include_str!("../../ui/util.js"),
     include_str!("../../ui/core.js"),
+    include_str!("../../ui/org.js"),
     include_str!("../../ui/nav-legacy.js"),
     include_str!("../../ui/nav.js"),
     include_str!("../../ui/terminal.js"),

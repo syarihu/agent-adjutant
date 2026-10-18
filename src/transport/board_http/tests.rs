@@ -1461,6 +1461,10 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "const PARENT_REF = 'parent:'",
         // 「ターミナルで話す」 goes to the middle terminal in this view.
         "if (view === 'work') return focusWorkTerm();",
+        // The organisation the page looks at: one API for every view that narrows itself to it.
+        "function currentOrg",
+        "function setCurrentOrg",
+        "const ORG_EVENT = 'adj:org'",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
@@ -1727,6 +1731,7 @@ mod others_drafts {
             terminals: Default::default(),
             pr_poll: Default::default(),
             waits: Default::default(),
+            owner_icons: Default::default(),
             work_cache: Default::default(),
             aide: Default::default(),
         }
