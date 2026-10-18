@@ -115,5 +115,6 @@
 }
 .qc-quick .material-symbols-outlined, .qc-strip .material-symbols-outlined { font-size: 16px; color: var(--md-sys-color-warning); }
 .qc-quick-text, .qc-strip-text { min-width: 0; overflow-wrap: anywhere; }
+.qc-quick-text { white-space: pre-line; }
 .qc-quick .pick, .qc-strip button { padding: 4px 14px; font-size: 12.5px; }
 .qc-quick .qc-chips { margin: 0; }

@@ -105,6 +105,17 @@ test('a diff card whose approved plan is from before steps shows that plan\'s de
   assert.ok(c.body.indexOf('step one then step two') < c.body.indexOf('qc-ask'));
 });
 
+test('a diff card reads the approved plan\'s sections; a quick row keeps the whole question', () => {
+  const approved = { id: 'np', kind: 'plan', title: 'P', steps: [{ text: 's' }], sections: [{ heading: 'FoundH', body: 'f' }, { heading: 'PlanH', body: 'p', stage: 'plan' }], wait: false };
+  const g = { id: 'd3', kind: 'diff', title: 'Diff', wait: true, options: ['approve'], diff: DIFF, focus: 'ok?' };
+  const c = card(g, { task: { ...task, approvedPlan: approved }, plan: approved });
+  assert.ok(c.body.indexOf('FoundH') > c.body.indexOf('調べたこと') && c.body.indexOf('FoundH') < c.body.indexOf('計画とやったこと'));
+  assert.ok(c.body.indexOf('PlanH') > c.body.indexOf('計画とやったこと'));
+  const long = 'first line\n' + 'x'.repeat(150) + ' tail';
+  const q = quickRowHtml({ id: 'q9', kind: 'question', quick: true, wait: true, focus: long, choices: [{ id: 'a', label: 'A' }] });
+  assert.ok(q.includes('first line') && q.includes(' tail'));
+});
+
 test('steps are marked done only where the worker says so once one does; 前に決まっていること needs a choice or a comment', () => {
   const approved = { ...planGate, steps: [{ text: 'a', done: true }, { text: 'b', done: false }], wait: false };
   const g = { id: 'd2', kind: 'diff', title: 'D', wait: true, options: [], focus: 'f' };

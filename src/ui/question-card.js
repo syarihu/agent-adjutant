@@ -91,12 +91,15 @@ function qcBodyPlace(g) {
   return g.kind === 'result' ? 'link' : 'report';
 }
 
+/* The sections a card reads: on a diff or verify card, the approved plan's come first, for the gate itself rarely repeats them. */
+const qcSections = (g, ctx) => [...(['diff', 'verify'].includes(g.kind) ? ctx.plan?.sections || [] : []), ...(g.sections || [])];
+
 /* What was found: the problem, the sections the worker wrote under that stage, the facts. */
 function qcFoundHtml(g, ctx, body) {
   let h = '';
   const problem = g.kind === 'plan' ? g.problem : g.problem || ctx.plan?.problem;
   if (problem) h += `${qcSub('error', '問題')}<div class="body">${md(problem)}</div>`;
-  const found = (g.sections || []).filter(s => s.stage !== 'plan');
+  const found = qcSections(g, ctx).filter(s => s.stage !== 'plan');
   for (const s of found) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
   if (!['diff', 'verify'].includes(g.kind)) h += qcChips(g.facts);
   const place = qcBodyPlace(g);
@@ -176,7 +179,7 @@ function qcPlanHtml(g, ctx, body) {
   if (steps.length) h += qcStepsHtml(steps, allDone);
   if (decidedIsPlan) h += `<div class="body">${md(g.decided)}</div>`;
   if (planDecided) h += `<div class="body">${md(planDecided)}</div>`;
-  for (const s of (g.sections || []).filter(x => x.stage === 'plan')) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
+  for (const s of qcSections(g, ctx).filter(x => x.stage === 'plan')) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
   if (g.kind === 'diff') h += qcDiffHtml(g, ctx);
   if (g.kind === 'verify') h += qcVerifyHtml(g, ctx);
   // What the gate says that no part above took: `body` when 調べたこと did not use it, and what was decided.
@@ -232,7 +235,8 @@ function questionCardArticleHtml(g, ctx = {}) {
 /* A question answered where it stands: the question in a line, the facts as chips, the choices (or the options) as buttons. The
    recommended choice is the filled one; with none recommended, the first. */
 function quickRowHtml(g, ctx = {}) {
-  const line = aideFocusLine(g.focus) || aideFocusLine(g.title);
+  // The whole question, not its first line: a quick row has no card to open for the rest.
+  const line = mdPlain(g.focus).trim() || mdPlain(g.title).trim();
   const choices = g.choices || [];
   const lead = choices.findIndex(c => c.recommended);
   const buttons = choices.length
