@@ -67,3 +67,84 @@ test('Ctrl or ⌘ with Enter sends, a plain Enter does not, and an IME\'s Enter 
   assert.strictEqual(send({ key: 'Enter', ctrlKey: true, isComposing: true }), false);
   assert.strictEqual(send({ key: 'Enter', metaKey: true, keyCode: 229 }), false);
 });
+
+/* ── a send that outlives its dialog ── */
+
+const sendCtx = vm.createContext({});
+vm.runInContext([
+  cut(/^const requestBody = [^\n]*;/m), cut(/^let requestBusy = false;/m), cut(/^let requestDraft = '';/m), cut(/^let requestParent = null;/m),
+  cut(/^async function requestSend[\s\S]*?^}/m),
+].join('\n'), sendCtx);
+const fakeLayer = (text, hub = 'w') => {
+  const el = { text: { value: text }, hub: { value: hub }, error: { textContent: '' }, buttons: [{ dataset: { reqSend: 'queued' }, disabled: false }] };
+  return { el, querySelector: sel => ({ '[data-req-text]': el.text, '[data-req-hub]': el.hub, '[data-req-error]': el.error })[sel], querySelectorAll: () => el.buttons };
+};
+function sendSetup() {
+  const w = { current: null, closed: 0, notes: [], pending: null };
+  Object.assign(sendCtx, {
+    dialogStack: { layerEl: () => w.current, closeAll: () => { w.closed++; w.current = null; } },
+    boardApi: () => new Promise((ok, no) => { w.pending = { ok, no }; }),
+    note: (...a) => w.notes.push(a), handedNote: () => '', refreshWork: () => {}, refresh: () => {},
+  });
+  vm.runInContext('requestBusy = false; requestDraft = ""; requestParent = null;', sendCtx);
+  return w;
+}
+const draft = () => vm.runInContext('requestDraft', sendCtx);
+
+test('a send that finishes in its own dialog closes it and clears the draft', async () => {
+  const w = sendSetup();
+  const layer = w.current = fakeLayer('do it');
+  vm.runInContext('requestDraft = "do it"', sendCtx);
+  const done = sendCtx.requestSend('queued');
+  assert.ok(layer.el.buttons[0].disabled);
+  w.pending.ok({});
+  await done;
+  assert.strictEqual(w.closed, 1);
+  assert.strictEqual(draft(), '');
+});
+
+test('a send that finishes after the dialog was closed and opened again leaves the new dialog open, and its text alone', async () => {
+  const w = sendSetup();
+  w.current = fakeLayer('do it');
+  const done = sendCtx.requestSend('queued');
+  // Closed (which keeps the text as the draft), then opened again and typed in.
+  vm.runInContext('requestDraft = "do it"', sendCtx);
+  const again = w.current = fakeLayer('something new');
+  w.pending.ok({});
+  await done;
+  assert.strictEqual(w.closed, 0);
+  assert.strictEqual(again.el.text.value, 'something new');
+  assert.strictEqual(draft(), '');
+  // Left as it was opened, the text is what was sent and goes.
+  const w2 = sendSetup();
+  w2.current = fakeLayer('do it');
+  const done2 = sendCtx.requestSend('queued');
+  const reopened = w2.current = fakeLayer('do it');
+  w2.pending.ok({});
+  await done2;
+  assert.strictEqual(reopened.el.text.value, '');
+});
+
+test('a send that fails after its dialog was replaced says so in a note and not in the new dialog', async () => {
+  const w = sendSetup();
+  w.current = fakeLayer('do it');
+  const done = sendCtx.requestSend('queued');
+  const again = w.current = fakeLayer('do it');
+  w.pending.no(new Error('nope'));
+  await done;
+  assert.strictEqual(again.el.error.textContent, '');
+  assert.ok(w.notes.some(n => n[1] === true));
+  assert.ok(!again.el.buttons[0].disabled);
+  // In its own dialog the line is there and the text stays.
+  const w2 = sendSetup();
+  const own = w2.current = fakeLayer('do it');
+  const done2 = sendCtx.requestSend('queued');
+  w2.pending.no(new Error('nope'));
+  await done2;
+  assert.strictEqual(own.el.error.textContent, 'nope');
+  assert.strictEqual(own.el.text.value, 'do it');
+});
+
+test('the text is not given the focus as the dialog opens, so it starts small', () => {
+  assert.ok(!/\[data-req-text\]'\)\?\.focus\(\)/.test(src));
+});

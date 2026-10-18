@@ -76,7 +76,10 @@ function openRequestDialog({ parent = null, slug = null } = {}) {
       requestParent = null;
     },
   });
-  dialogStack.layerEl('request')?.querySelector('[data-req-text]')?.focus();
+  // Not the text: it starts small and grows when the person focuses it, which it would do at once if it had the focus already.
+  const layer = dialogStack.layerEl('request');
+  if (requestBusy) for (const b of layer.querySelectorAll('[data-req-send]')) b.disabled = true;
+  layer?.querySelector('[data-req-repo]')?.focus();
 }
 
 /* Send: refused with a line in the dialog when it is empty; otherwise one request at a time, both buttons dimmed meanwhile. */
@@ -90,24 +93,32 @@ async function requestSend(status) {
   if (!slug) { error.textContent = '依頼先の hub がありません'; return; }
   error.textContent = '';
   requestBusy = true;
-  const buttons = [...layer.querySelectorAll('[data-req-send]')];
-  for (const b of buttons) b.disabled = true;
+  const buttons = () => [...(dialogStack.layerEl('request')?.querySelectorAll('[data-req-send]') || [])];
+  for (const b of buttons()) b.disabled = true;
+  const body = requestBody(text, status, requestParent);
   const line = 'adj task add --needs-reading --body -' + (status === 'queued' ? ' --queue' : '');
+  // The dialog can be closed and opened again while this is out: what it does to the dialog is only for the one that sent.
+  const mine = () => dialogStack.layerEl('request') === layer;
   try {
-    const data = await boardApi(`/b/${slug}`, '/api/tasks', { method: 'POST', body: JSON.stringify(requestBody(text, status, requestParent)) });
+    const data = await boardApi(`/b/${slug}`, '/api/tasks', { method: 'POST', body: JSON.stringify(body) });
     note(line, false, (status === 'queued' ? '記録して受信箱へ。hub が読んで、着手前にあなたに確認します' : 'Backlog は受信箱へ送信しません') + handedNote(data.handed));
-    dialogStack.closeAll();
-    // After the layer's own close, which would have kept the text.
-    requestDraft = '';
+    if (mine()) dialogStack.closeAll();
+    else {
+      // Opened again since: its text is what was sent only if it was left alone.
+      const typed = dialogStack.layerEl('request')?.querySelector('[data-req-text]');
+      if (typed && typed.value.trim() === text) typed.value = '';
+    }
+    // After the layer's own close, which keeps the text: cleared only when it is what was sent, never what was typed since.
+    if (requestDraft.trim() === text) requestDraft = '';
     refreshWork(true);
     refresh(true);
   } catch (e) {
-    // The text stays, so it can be sent again.
-    error.textContent = e.message;
     note(`${line} → ${e.message}`, true);
+    // The text stays, so it can be sent again; the line is for the dialog that sent it.
+    if (mine()) error.textContent = e.message;
   } finally {
     requestBusy = false;
-    for (const b of buttons) b.disabled = false;
+    for (const b of buttons()) b.disabled = false;
   }
 }
 

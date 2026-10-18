@@ -125,7 +125,7 @@ function workRows(doc = work.doc) {
       // A task whose board is not served is read on the carrier, where a bare task id names the
       // repository's own task: the session opens instead.
       const ref = r.task && board !== r.board ? SESS_REF + s.id : ref0;
-      out.push({ id: `${r.board}/${ref0}`, key: `${board}/${ref}`, raw: `${repo.nwo}/${r.board}`, board, ref, repo, nwo: repo.nwo, s, st, data, task: r.task || null, isHub });
+      out.push({ id: `${r.board}/${ref0}`, key: `${board}/${ref}`, raw: `${repo.nwo}/${r.board}`, hubSlug: r.board, board, ref, repo, nwo: repo.nwo, s, st, data, task: r.task || null, isHub });
     }
   }
   // One row to a task: its best session.
@@ -211,7 +211,7 @@ function workTurnRow(e, judged, repo) {
   const gate = e.items.some(i => i.kind === 'gate');
   const parkedOnly = !gate && e.items.every(i => i.kind === 'parked');
   return {
-    id: e.id, key: `${board}/${ref}`, raw: `${repo.nwo}/${e.board}`, board, ref, repo, nwo: repo.nwo,
+    id: e.id, key: `${board}/${ref}`, raw: `${repo.nwo}/${e.board}`, hubSlug: e.board, board, ref, repo, nwo: repo.nwo,
     s: {}, st: gate ? 'waiting' : parkedOnly ? 'parked' : 'done', data: { now: work.doc.now, repo: repo.nwo, hubs: repo.hubs || [], sessions: [] },
     task: e.task, isHub: e.isHub, turn: true, entry: e, cls: judged.cls, live: judged.live, away: judged.away,
   };
@@ -299,15 +299,13 @@ window.addEventListener('storage', e => {
   renderWorkBadge();
 });
 
-/* A row's place among the others in its group: what waits on the person first, the longest waiting first. */
+/* A row's place among the others in its group: the one that started first first, then by key. Independent of state, so a row does not
+   move when its state changes and what waits on the person is not pulled to the top (the TODO does that). */
 function workRowOrder(a, b) {
-  // A worker that went on past its gate waits on nothing of the person's first: its own change is the clock.
-  const wait = r => r.st === 'waiting' && r.s.waiting ? stampSecs(r.s.waiting.openedAt) || 0 : r.s.agentSession?.updatedAt || 0;
-  return workStateOrder(a.st) - workStateOrder(b.st)
-    || (WORKS_ON_PERSON(a) ? wait(a) - wait(b) : 0)
-    || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  const started = r => stampSecs(r.s?.startedAt) || Number.MAX_SAFE_INTEGER;
+  return started(a) - started(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 }
-/* A row that is parked sorts with the ones that are only waiting to be looked at. */
+/* How a state sorts, for the counts a folded heading gives. */
 const workStateOrder = st => STATE_ORDER[st] ?? STATE_ORDER.done;
 const WORKS_ON_PERSON = r => r.st === 'waiting' || r.st === 'permission';
 
@@ -350,8 +348,15 @@ function workTreeByParent(rows, chipsByRepo = new Map(), repos = workRepos(), { 
     const items = [];
     const byParent = new Map();
     const loose = [];
+    // The parent a row belongs to: the one the hub whose board holds it runs (a task asked of a parent-task hub carries no `parent` of
+    // its own), else the parent the task names.
+    const hubParent = r => {
+      const hub = r.hubSlug && (repo.hubs || []).find(h => h.slug === r.hubSlug && h.parent);
+      const runs = hub ? (repo.parents || []).filter(p => p.hub === hub.slug) : [];
+      return (runs.find(p => p.key === hub.key) || (runs.length === 1 ? runs[0] : null))?.key || null;
+    };
     for (const r of mine) {
-      const key = r.task?.parent;
+      const key = hubParent(r) || r.task?.parent;
       if (key) byParent.set(key, [...(byParent.get(key) || []), r]);
       else loose.push(r);
     }

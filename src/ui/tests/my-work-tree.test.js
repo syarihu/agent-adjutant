@@ -795,3 +795,29 @@ test('a parent\'s hub head has a button of its own to the parent\'s overview, be
   assert.ok(!none({ missing: true }).includes('data-wk-parent'));
   assert.ok(!none({}, 'hub').includes('data-wk-parent'));
 });
+
+test('a task on a parent-task hub\'s board is grouped under the parent that hub runs, with or without a parent of its own', () => {
+  const repo = { ...repoA, hubs: [{ id: 'own', parent: false, key: 'own', slug: 'b-own' }, { id: 'p1', parent: true, key: '#2', slug: 'b-p1' }, { id: 'p9', parent: true, key: '#9', slug: 'b-p9' }],
+    parents: [{ key: '#2', hub: 'b-p1', number: 2 }] };
+  const onHub = { ...trow('asked'), repo, hubSlug: 'b-p1' };
+  const onOwn = { ...trow('plain'), repo, hubSlug: 'b-own' };
+  const named = { ...trow('named', '#2'), repo, hubSlug: 'b-own' };
+  // A parent-task hub whose parent the document does not list leaves the task to what it names.
+  const orphan = { ...trow('orphan'), repo, hubSlug: 'b-p9' };
+  const [repoNode] = plain(run('workTreeByParent(rows, new Map(), [repo])', { rows: [onHub, onOwn, named, orphan], repo }));
+  const keys = repoNode.items.map(n => [n.key, n.rows.map(r => r.key)]);
+  assert.deepStrictEqual(keys, [['none:acme/a', ['orphan', 'plain']], ['parent:acme/a/#2', ['asked', 'named']]]);
+});
+
+test('rows of a group keep to the order they started in, whatever their state; those with no start time come last, by key', () => {
+  const was = ctx.stampSecs;
+  ctx.stampSecs = x => Number(x) || 0;
+  try {
+    const mk = (key, st, startedAt) => ({ key, st, s: { startedAt, waiting: st === 'waiting' ? { openedAt: '1' } : null } });
+    const rows = [mk('d', 'working', undefined), mk('c', 'waiting', 30), mk('a', 'working', 20), mk('b', 'permission', 10), mk('e', 'done', undefined)];
+    const sorted = plain(run('rows.sort(workRowOrder)', { rows }));
+    assert.deepStrictEqual(sorted.map(r => r.key), ['b', 'a', 'c', 'd', 'e']);
+  } finally {
+    ctx.stampSecs = was;
+  }
+});
