@@ -24,7 +24,7 @@ const ctx = vm.createContext({
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
   sessionState: s => s.waiting && !s.went ? 'waiting' : s.state, gateFirst: s => !!s.waiting && !s.went, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:',
-  workRepos: () => [], esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
+  workRepos: () => [], SESS_REF: 'sess:', work: { doc: null }, esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
   // What a row's own markup reads from the page's other files.
   sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, agentStateOf: () => 'working',
   requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: (t, passed) => passed ? 'who-passed' : 'who', WORK_SUBAGENTS_SHOWN: 4,
@@ -45,14 +45,22 @@ vm.runInContext([
   cutActions(/^function hubTitleWhyHtml[\s\S]*?^}/m),
   cut(/^const workHubBase = [^\n]*;/m),
   cut(/^function workTitleToolsHtml[\s\S]*?^}/m),
-  cut(/^const WORK_BOXES = [\s\S]*?^\];/m),
   cut(/^const WORK_RUNNING = [^\n]*;/m),
-  cut(/^const workBoxOf = [^\n]*;/m),
+  cut(/^const workMerged = [^\n]*;/m),
+  cut(/^const WORK_LISTED = \[[^\]]*\];/m),
+  cut(/^function workRows[\s\S]*?^}/m),
+  cut(/^function workBetter[\s\S]*?^}/m),
+  cut(/^function workShape[\s\S]*?^}/m),
+  cut(/^function workNewOrder[\s\S]*?^}/m),
+  cut(/^const WORK_PROGRESS = \{[\s\S]*?^\};/m),
+  cut(/^function workSegments[\s\S]*?^}/m),
+  cut(/^const workParentName = [^\n]*;/m),
+  cut(/^function workParentMeta[\s\S]*?^}/m),
+  cut(/^function workRequestsHtml[\s\S]*?^}/m),
+  cut(/^function workHubStartButtonHtml[\s\S]*?^}/m),
   cut(/^function workRowOrder[\s\S]*?^}/m),
   cut(/^const workStateOrder = [^\n]*;/m),
   cut(/^const WORKS_ON_PERSON = [^\n]*;/m),
-  cut(/^const workOwnerName = [^\n]*;/m),
-  cut(/^function workOwnerGroups[\s\S]*?^}/m),
   cut(/^const WORK_HUB_WORD = [\s\S]*?\};/m),
   cut(/^const workHubWord = [^\n]*;/m),
   cut(/^function workRepoHubChips[\s\S]*?^}/m),
@@ -65,7 +73,6 @@ vm.runInContext([
   cut(/^function workHubWakeButtonHtml[\s\S]*?^}/m),
   cut(/^function workHubWhyHtml[\s\S]*?^}/m),
   cut(/^const workNewest = [^\n]*;/m),
-  cut(/^function workBands[\s\S]*?^}/m),
   cut(/^function workNewOrder[\s\S]*?^}/m),
   cut(/^function workFoldButton[\s\S]*?^}/m),
   cut(/^function workHubGroupName[\s\S]*?^}/m),
@@ -78,126 +85,9 @@ vm.runInContext([
   cut(/^function workSummaryHtml[\s\S]*?^}/m),
   cut(/^function workHubWakeHtml[\s\S]*?^}/m),
   cut(/^function workHubChipsHtml[\s\S]*?^}/m),
-  cut(/^function workBoxRepoGroups[\s\S]*?^}/m),
-  cut(/^function workTreeByState[\s\S]*?^}/m),
 ].join('\n'), ctx);
 const plain = v => JSON.parse(JSON.stringify(v));
 ctx.input = null;
-const groups = nodes => { ctx.input = nodes; return vm.runInContext('workOwnerGroups(input)', ctx); };
-const name = nwo => { ctx.arg = nwo; return vm.runInContext('workOwnerName(arg)', ctx); };
-const repo = (nwo, n = 1) => ({ key: `repo:${nwo}`, kind: 'repo', nwo, rows: Array.from({ length: n }, (_, i) => ({ key: `${nwo}#${i}` })), items: [] });
-
-test('the owner is the part of the name before the slash, or nothing', () => {
-  assert.strictEqual(name('acme/widget'), 'acme');
-  for (const v of ['widget', '/x', '', null]) assert.strictEqual(name(v), '');
-});
-
-test('repositories are grouped under their owners, in input order, with their rows', () => {
-  const a = repo('acme/a', 2), b = repo('acme/b'), c = repo('zed/c');
-  const out = groups([a, b, c]);
-  assert.deepStrictEqual(plain(out.map(o => o.key)), ['owner:acme', 'owner:zed']);
-  assert.deepStrictEqual(plain(out[0].items.map(i => i.nwo)), ['acme/a', 'acme/b']);
-  assert.strictEqual(out[0].items[0], a);
-  assert.strictEqual(out[0].rows.length, 3);
-  assert.strictEqual(out[0].rows[0], a.rows[0]);
-  assert.strictEqual(out[0].rows[2], b.rows[0]);
-  assert.strictEqual(out[0].kind, 'owner');
-});
-
-test('a single owner still gets an owner node', () => {
-  const out = groups([repo('acme/a')]);
-  assert.strictEqual(out.length, 1);
-  assert.strictEqual(out[0].key, 'owner:acme');
-});
-
-test('owners are in name order, case ignored', () => {
-  assert.deepStrictEqual(plain(groups([repo('Zeta/x'), repo('acme/y')]).map(o => o.label)), ['acme', 'Zeta']);
-});
-
-test('owners that differ only in case are one node, labelled by the first spelling', () => {
-  const out = groups([repo('Acme/x'), repo('acme/y')]);
-  assert.strictEqual(out.length, 1);
-  assert.strictEqual(out[0].key, 'owner:acme');
-  assert.strictEqual(out[0].label, 'Acme');
-  assert.strictEqual(out[0].items.length, 2);
-});
-
-test('a name with no slash goes last under オーナーなし', () => {
-  const out = groups([repo('local'), repo('acme/a')]);
-  assert.deepStrictEqual(plain(out.map(o => o.key)), ['owner:acme', 'owner:']);
-  assert.strictEqual(out[1].label, 'オーナーなし');
-});
-
-test('owner keys do not clash with repo or org keys', () => {
-  for (const o of groups([repo('acme/a'), repo('local')])) assert.ok(o.key.startsWith('owner:'));
-});
-
-const boxGroups = (box, rows, place = 'box') => { ctx.b = box; ctx.r = rows; ctx.p = place; return vm.runInContext('workBoxRepoGroups(b, r, p)', ctx); };
-const row = (nwo, id) => ({ key: `${nwo}#${id}`, nwo });
-
-test('a box has a heading per repository with the full owner/name, and no owner level', () => {
-  const out = boxGroups('running', [row('acme/a', 1), row('acme/b', 2)]);
-  assert.deepStrictEqual(plain(out.map(g => g.label)), ['acme/a', 'acme/b']);
-  for (const g of out) assert.strictEqual(g.kind, 'brepo');
-});
-
-test('box headings are in name order with case ignored', () => {
-  const out = boxGroups('running', [row('Zeta/x', 1), row('acme/y', 2), row('acme/B', 3)]);
-  assert.deepStrictEqual(plain(out.map(g => g.label)), ['acme/B', 'acme/y', 'Zeta/x']);
-});
-
-test('rows keep their order and the place given, as the same objects', () => {
-  const rows = [row('acme/a', 1), row('acme/b', 2), row('acme/a', 3)];
-  const out = boxGroups('new', rows, 'new');
-  assert.strictEqual(out[0].rows.length, 2);
-  assert.strictEqual(out[0].rows[0], rows[0]);
-  assert.strictEqual(out[0].rows[1], rows[2]);
-  assert.strictEqual(out[1].rows[0], rows[1]);
-  for (const g of out) g.items.forEach((it, i) => { assert.strictEqual(it.place, 'new'); assert.strictEqual(it.row, g.rows[i]); });
-});
-
-test('names differing only in case share one heading, labelled with the first spelling', () => {
-  const out = boxGroups('running', [row('Acme/A', 1), row('acme/a', 2)]);
-  assert.strictEqual(out.length, 1);
-  assert.strictEqual(out[0].label, 'Acme/A');
-  assert.strictEqual(out[0].rows.length, 2);
-});
-
-test('box headings follow the owner order of the tree, owner before name', () => {
-  const out = boxGroups('running', [row('a-b/y', 1), row('a/x', 2)]);
-  assert.deepStrictEqual(plain(out.map(g => g.label)), ['a/x', 'a-b/y']);
-});
-
-test('a name with no slash is its own heading, sorted with the others', () => {
-  const out = boxGroups('running', [row('local', 1), row('acme/a', 2), row('zeta/z', 3)]);
-  assert.deepStrictEqual(plain(out.map(g => g.label)), ['acme/a', 'local', 'zeta/z']);
-});
-
-test('box keys are per box and apart from the tree keys', () => {
-  const a = boxGroups('running', [row('acme/a', 1)]);
-  const b = boxGroups('other', [row('acme/a', 1)]);
-  assert.ok(a[0].key.startsWith('brepo:running/'));
-  assert.ok(b[0].key.startsWith('brepo:other/'));
-  assert.notStrictEqual(a[0].key, b[0].key);
-  for (const g of [...a, ...b]) for (const p of ['repo:', 'owner:', 'org:']) assert.ok(!g.key.startsWith(p));
-});
-
-test('the state view puts each row in its box, in box order, and the boxes in repository headings', () => {
-  const r = (nwo, id, st, cls) => ({ key: id, nwo, st, cls, s: {} });
-  const rows = [r('b/x', 'r1', 'working'), r('a/y', 'o1', 'done'), r('a/z', 'n1', 'waiting', 'new'), r('a/y', 'r2', 'idle'), r('b/x', 'l1', 'waiting')];
-  ctx.rows = rows;
-  const tree = vm.runInContext('workTreeByState(rows)', ctx);
-  assert.deepStrictEqual(plain(tree.map(b => b.key)), ['box:new', 'box:running', 'box:other']);
-  const view = tree.map(b => b.items.map(g => [g.kind, g.label, g.items.map(i => `${i.place}:${i.row.key}`)]));
-  assert.deepStrictEqual(plain(view), [
-    [['brepo', 'a/z', ['new:n1']]],
-    [['brepo', 'a/y', ['box:r2']], ['brepo', 'b/x', ['box:r1']]],
-    [['brepo', 'a/y', ['box:o1']], ['brepo', 'b/x', ['box:l1']]],
-  ]);
-  ctx.rows = [r('a/z', 'n1', 'waiting', 'new')];
-  assert.deepStrictEqual(plain(vm.runInContext('workTreeByState(rows)', ctx).map(b => b.key)), ['box:new']);
-});
-
 /* ── hubs as chips on the headings (#599) ── */
 const run = (code, vars) => { Object.assign(ctx, vars); return vm.runInContext(code, ctx); };
 const hubRow = (id, state, extra = {}) => ({ board: `b-${id}`, session: { id, kind: 'hub', state, present: state !== 'stopped', ...extra }, task: null });
@@ -275,40 +165,41 @@ test('placing: a hub no parent heading takes is left over; one chip is never pla
 
 const repoA = { nwo: 'acme/a', carrier: 'b-own', parents: [{ key: '#2', hub: 'b-p1', number: 2 }] };
 const trow = (id, parent) => ({ key: id, id, repo: repoA, nwo: 'acme/a', st: 'idle', s: {}, task: { id, parent } });
-const treeOf = (rows, chipsByRepo, repos = [repoA]) => plain(run('workTreeByParent(rows, [], byRepo, repos)', { rows, byRepo: chipsByRepo, repos }));
-const reposOf = tree => tree.flatMap(o => o.items);
+const treeOf = (rows, chipsByRepo, repos = [repoA]) => plain(run('workTreeByParent(rows, byRepo, repos)', { rows, byRepo: chipsByRepo, repos }));
+const reposOf = tree => tree;
 
 test('the parent tree: the own hub heads the group of the rows with no parent, first in the repository, and is not a task row', () => {
   const hub = { key: 'h', id: 'b-own/hub:own', repo: repoA, nwo: 'acme/a', st: 'idle', s: {}, isHub: true, task: null };
   const own = chip('own', false), p1 = chip('p1', true, '#2', 'b-p1');
-  const tree = run('workTreeByParent(rows, [], byRepo, repos)', { rows: [hub, trow('t1', '#2'), trow('t2')], byRepo: new Map([[repoA, [own, p1]]]), repos: [repoA] });
-  const [repoNode] = tree[0].items;
+  const [repoNode] = run('workTreeByParent(rows, byRepo, repos)', { rows: [hub, trow('t1', '#2'), trow('t2')], byRepo: new Map([[repoA, [own, p1]]]), repos: [repoA] });
   assert.strictEqual(repoNode.rows.length, 2);
   assert.ok(!repoNode.rows.includes(hub));
   assert.deepStrictEqual(plain(repoNode.hubs.map(c => c.id)), ['own']);
   const [none, parent] = repoNode.items;
-  assert.deepStrictEqual([none.key, none.kind, none.hub.id], ['none:acme/a', 'hub', 'own']);
-  assert.deepStrictEqual(plain(none.items.map(i => i.row.key)), ['b-own/hub:own', 't2']);
-  assert.strictEqual(none.items[0].row, own);
+  assert.deepStrictEqual([none.key, none.kind, none.hub.id, none.head.id], ['none:acme/a', 'hub', 'own', 'own']);
+  assert.deepStrictEqual(plain(none.items.map(i => i.row.key)), ['t2']);
+  assert.strictEqual(none.head, own);
   assert.deepStrictEqual(plain(none.rows.map(r => r.key)), ['t2']);
   assert.deepStrictEqual(plain(parent.hubs.map(c => c.id)), ['p1']);
-  assert.deepStrictEqual(plain(parent.items.map(i => i.row.key)), ['b-p1/hub:p1', 't1']);
+  assert.deepStrictEqual(plain(parent.items.map(i => i.row.key)), ['t1']);
   assert.deepStrictEqual(plain(parent.rows.map(r => r.key)), ['t1']);
-  assert.strictEqual(parent.items[0].row, p1);
+  assert.strictEqual(parent.head, p1);
 });
 
-test('the parent tree: a hub row stays first even when a task sorts before it', () => {
+test('the parent tree: the hub heads its group, whatever order the tasks sort in', () => {
   const p1 = chip('p1', true, '#2', 'b-p1');
   const early = { ...trow('a-first', '#2'), st: 'waiting' };
   const late = trow('z-last', '#2');
   const [parent] = reposOf(treeOf([late, early], new Map([[repoA, [p1]]])))[0].items;
-  assert.deepStrictEqual(parent.items.map(i => i.row.key), ['b-p1/hub:p1', 'a-first', 'z-last']);
+  assert.strictEqual(parent.head.id, 'p1');
+  assert.deepStrictEqual(parent.items.map(i => i.row.key), ['a-first', 'z-last']);
 });
 
 test('the parent tree: a parent-task hub no parent group takes is a row after the own hub, named by its key', () => {
   const own = chip('own', false), stray = chip('p9', true, '#9', 'b-p9');
   const [none] = reposOf(treeOf([trow('t2')], new Map([[repoA, [stray, own]]])))[0].items;
-  assert.deepStrictEqual(none.items.map(i => [i.row.id, !!i.named]), [['own', false], ['p9', true], ['t2', false]]);
+  assert.deepStrictEqual(none.items.map(i => [i.row.id, !!i.named]), [['p9', true], ['t2', false]]);
+  assert.strictEqual(none.head.id, 'own');
   assert.deepStrictEqual(none.hubs.map(c => c.id), ['own']);
 });
 
@@ -316,9 +207,11 @@ test('the parent tree: the hub group is first, above the parents, and only the h
   const [none, parent] = reposOf(treeOf([trow('t1', '#2'), trow('t2')], new Map([[repoA, [chip('own', false)]]])))[0].items;
   assert.deepStrictEqual([none.kind, parent.kind], ['hub', 'parent']);
   const onlyHub = reposOf(treeOf([], new Map([[repoA, [chip('own', false)]]])))[0].items;
-  assert.deepStrictEqual(onlyHub.map(n => [n.kind, n.rows.length, n.items.length]), [['hub', 0, 1]]);
+  assert.deepStrictEqual(onlyHub.map(n => [n.kind, n.rows.length, n.items.length]), [['hub', 0, 0]]);
+  assert.strictEqual(onlyHub[0].head.id, 'own');
   const onlyLoose = reposOf(treeOf([trow('t2')], new Map()))[0].items;
   assert.deepStrictEqual(onlyLoose.map(n => [n.kind, n.hub, n.hubs.length, n.rows.length, n.items.length]), [['hub', null, 0, 1, 1]]);
+  assert.strictEqual(onlyLoose[0].head, null);
   // Only tasks with a parent: no group of rows with no parent, and no own hub, so none at all.
   assert.deepStrictEqual(reposOf(treeOf([trow('t1', '#2')], new Map()))[0].items.map(n => n.kind), ['parent']);
 });
@@ -374,40 +267,7 @@ test('the chip is its own button with the state word, and the waiting badge only
 });
 
 const srow = (nwo, id, st, cls, isHub) => ({ key: id, nwo, st, cls, isHub, s: {} });
-const stateTree = (rows, chips) => plain(run('workTreeByState(rows, chips)', { rows, chips }));
 const schip = (nwo, id, present) => ({ ...chip(id, false), nwo, s: { present } });
-
-test('the state view: a new hub is a row in 新着 only, with its 既読; the other hubs are in 実行中 and そのほか', () => {
-  const hubs = [{ ...schip('a/y', 'n', true), cls: 'new' }, schip('a/y', 'on', true), schip('a/y', 'off', false)];
-  const tree = stateTree([srow('a/y', 'h1', 'idle', null, true), srow('a/y', 'h2', 'waiting', 'new', true), srow('a/y', 't1', 'working')], hubs);
-  assert.deepStrictEqual(tree.map(b => b.key), ['box:new', 'box:running', 'box:other']);
-  // The session rows `workRows` made of the hubs are not here: a hub is its chip's object.
-  assert.deepStrictEqual(tree.map(b => b.rows.map(r => r.key)), [[], ['t1'], []]);
-  assert.deepStrictEqual(tree.map(b => b.items.map(g => g.items.map(i => `${i.place}:${i.row.key}`))), [[['new:b-n/hub:n']], [['box:b-on/hub:on', 'box:t1']], [['box:b-off/hub:off']]]);
-});
-
-test('the state view: a hub is the first row of its repository group, which has a heading even with no task row', () => {
-  const tree = stateTree([srow('a/y', 'r1', 'working'), srow('a/y', 'r0', 'working')], [schip('a/y', 'on', true), schip('b/z', 'on2', true)]);
-  assert.deepStrictEqual(tree.map(b => b.key), ['box:running']);
-  const [ay, bz] = tree[0].items;
-  assert.deepStrictEqual([ay.kind, ay.label, ay.items.map(i => i.row.key), ay.rows.map(r => r.key), ay.hubs.map(c => c.id)], ['brepo', 'a/y', ['b-on/hub:on', 'r0', 'r1'], ['r0', 'r1'], ['on']]);
-  assert.deepStrictEqual([bz.label, bz.rows, bz.items.length, bz.hubs.map(c => c.id)], ['b/z', [], 1, ['on2']]);
-});
-
-test('the state view: a hub that runs is in 実行中, a stopped one in そのほか', () => {
-  const tree = stateTree([], [schip('a/y', 'on', true), schip('b/z', 'off', false)]);
-  assert.deepStrictEqual(tree.map(b => b.key), ['box:running', 'box:other']);
-  const [running, other] = tree.map(b => b.items);
-  assert.deepStrictEqual([running[0].kind, running[0].label, running[0].rows, running[0].hubs.map(c => c.id)], ['brepo', 'a/y', [], ['on']]);
-  assert.deepStrictEqual([other[0].label, other[0].hubs.map(c => c.id)], ['b/z', ['off']]);
-});
-
-test('box headings keep their order with hubs, and a hub is first in the group of its repository', () => {
-  const out = plain(run('workBoxRepoGroups("running", rows, "box", chips)', { rows: [row('b/x', 1)], chips: [schip('a/y', 'on', true), schip('b/x', 'on2', true)] }));
-  assert.deepStrictEqual(out.map(g => g.label), ['a/y', 'b/x']);
-  assert.deepStrictEqual(out.map(g => [g.rows.length, g.hubs.length]), [[0, 1], [1, 1]]);
-  assert.deepStrictEqual(out[1].items.map(i => i.row.key), ['b-on2/hub:on2', 'b/x#1']);
-});
 
 test('the chip names the hub by its key only for a parent-task hub on a repository heading', () => {
   const html = (c, named) => run('workHubChipsHtml([c], "acme/a", named)', { c, named });
@@ -471,9 +331,13 @@ test('the group of the rows with no parent is named for its hub and what it is d
   assert.ok(none.includes('>hub<') && !none.includes('親なし') && !none.includes('・'));
 });
 
-test('the 新着 header keeps its button that marks every new row read', () => {
-  const head = run('workHeadHtml(node, false)', { node: { key: 'new', kind: 'new', label: '新着', readAll: true, rows: [], items: [{}], hubs: [] } });
-  assert.ok(head.includes('data-wk-read-all') && head.includes('done_all') && head.includes('aria-label="新着をすべて既読にする"'));
+test('a group the hub heads has the fold button and the count for its heading, and the summary only while folded', () => {
+  const node = { key: 'none:a/b', kind: 'hub', rows: [{ st: 'working' }], items: [{}], hubs: [], head: chip('own', false) };
+  const open = run('workHeadHtml(node, false)', { node });
+  assert.ok(open.includes('data-wk-fold="none:a/b"') && open.includes('wk-count') && !open.includes('wk-sum') && !open.includes('wk-head-main'));
+  assert.ok(run('workHeadHtml(node, true)', { node }).includes('wk-sum'));
+  const parent = { ...node, kind: 'parent', parent: { key: '#2', number: 2, title: 'Parent' } };
+  assert.ok(run('workHeadHtml(node, false)', { node: parent }).includes('#2 Parent'));
 });
 
 test('the group name escapes what it draws', () => {
@@ -579,18 +443,15 @@ test('listed repositories: a running parent-task hub alone keeps its repository'
   assert.deepStrictEqual(listedOf([lrA], [], [], [[lrA, [lchip(lrA, true, 0, true)]]]), ['acme/a']);
 });
 
-test('listed repositories: idle ones are left out of both groupings, and an owner with only idle ones has no node', () => {
+test('listed repositories: idle ones are left out of the tree', () => {
   const idle = lrow(lrB, 'done'), busy = lrow(lrA, 'working');
   const byRepo = new Map([[lrA, [lchip(lrA, true)]], [lrB, [lchip(lrB, false)]], [lrC, [lchip(lrC, false)]]]);
   const v = run('workListedView([a, b, c], rows, [], byRepo)', { a: lrA, b: lrB, c: lrC, rows: [busy, idle], byRepo });
   assert.deepStrictEqual(plain(v.repos.map(r => r.nwo)), ['acme/a']);
-  const state = stateTree(v.rows, v.chips);
-  assert.deepStrictEqual(state.map(b => b.key), ['box:running']);
-  assert.ok(!JSON.stringify(state).includes('acme/b') && !JSON.stringify(state).includes('zed/c'));
-  assert.deepStrictEqual(stateTree(run('workListedView([a, b], rows, [], new Map())', { a: lrA, b: lrB, rows: [idle] }).rows, []), []);
-  const tree = plain(run('workTreeByParent(v.rows, [], v.chipsByRepo, v.repos)', { v }));
-  assert.deepStrictEqual(tree.map(o => o.key), ['owner:acme']);
-  assert.deepStrictEqual(tree[0].items.map(r => r.nwo), ['acme/a']);
+  const tree = plain(run('workTreeByParent(v.rows, v.chipsByRepo, v.repos)', { v }));
+  assert.deepStrictEqual(tree.map(r => r.nwo), ['acme/a']);
+  assert.ok(!JSON.stringify(tree).includes('acme/b') && !JSON.stringify(tree).includes('zed/c'));
+  assert.deepStrictEqual(plain(run('workTreeByParent(rows, new Map(), [a, b])', { a: lrA, b: lrB, rows: run('workListedView([a, b], rows, [], new Map())', { a: lrA, b: lrB, rows: [idle] }).rows })), []);
 });
 
 test('listed repositories: the keep given to the view keeps an idle repository with its rows and chip', () => {
@@ -753,15 +614,15 @@ test('a parent heading draws the title state of the hub that gave it its title, 
 });
 
 test('a hub row in 新着 has 既読 as well as the wake button, both beside the row', () => {
-  const rest = outsideRow(itemHtml(hubItem({ unseen: 1 }), 'new'));
+  const rest = outsideRow(itemHtml(hubItem({ unseen: 1 }, { cls: 'new' }), 'tree'));
   assert.ok(rest.includes('data-wk-read="b-own/hub:own"') && rest.includes('data-wk-wake="b-own/hub:own"'));
-  assert.ok(!outsideRow(itemHtml(hubItem({ unseen: 1 }), 'box')).includes('data-wk-read'));
+  assert.ok(!outsideRow(itemHtml(hubItem({ unseen: 1 }), 'tree')).includes('data-wk-read'));
 });
 
-test('a task row is as it was: a bare row button outside 新着, with 既読 inside it', () => {
+test('a task row is a bare row button unless it is new, and then has 既読 beside it, wherever it sits', () => {
   const task = { key: 'b/t1', id: 'b/t1', st: 'working', s: { present: true }, data: { now: 1 }, task: { id: 't1' } };
   assert.ok(itemHtml(task, 'tree').startsWith('<button type="button" class="wk-row'));
-  assert.ok(itemHtml(task, 'new').startsWith('<div class="wk-band-row" '));
+  assert.ok(itemHtml({ ...task, cls: 'new' }, 'tree').startsWith('<div class="wk-band-row" '));
 });
 
 test('a folded node counts the hubs below it once, and a stopped hub is not counted from its row twice', () => {
@@ -770,23 +631,22 @@ test('a folded node counts the hubs below it once, and a stopped hub is not coun
   assert.strictEqual(run('workHiddenHubWaits(node)', { node }), 2);
 });
 
-test('a new hub is once in the 新着 band and once in its order, and is not counted in its heading', () => {
-  const hub = { ...chip('own', false), cls: 'new', isHub: true, live: [], st: 'waiting' };
-  const dup = { key: hub.key, id: hub.id, cls: 'new', isHub: true, st: 'waiting', s: {} };
-  const t1 = { key: 'b/t1', id: 'b/t1', cls: 'new', st: 'waiting', s: {}, live: [] };
-  const [band] = run('workBands(rows)', { rows: [t1, hub] });
-  assert.deepStrictEqual(plain(band.items.map(i => i.row.key)).sort(), ['b-own/hub:own', 'b/t1']);
-  assert.strictEqual(band.items.filter(i => i.row === hub).length, 1);
-  assert.deepStrictEqual(plain(band.rows.map(r => r.key)), ['b/t1']);
-  assert.ok(!band.items.some(i => i.row === dup));
-  assert.deepStrictEqual(plain(run('workNewOrder([band])', { band })).sort(), ['b/t1', 'own']);
+test('the new rows are the ones of class new, in the order the tree draws them: a group\'s head, then what is under it', () => {
+  const mk = (id, cls) => ({ key: id, id, cls, st: 'waiting', s: {} });
+  const tree = [{ key: 'repo:a', kind: 'repo', items: [
+    { key: 'g1', kind: 'hub', head: mk('h1', 'new'), items: [{ row: mk('t1', 'new'), place: 'tree' }, { row: mk('t2', null), place: 'tree' }] },
+    { key: 'g2', kind: 'parent', head: mk('h2', null), items: [{ row: mk('t3', 'new'), place: 'tree' }] },
+    { key: 'g3', kind: 'hub', head: null, items: [{ row: mk('t4', 'new'), place: 'tree' }] },
+  ] }];
+  assert.deepStrictEqual(plain(run('workNewOrder(tree)', { tree })), ['h1', 't1', 't3', 't4']);
 });
 
-test('a parent-task hub row in a 「状態」 box is tagged with its key', () => {
-  const tree = run('workTreeByState([], chips)', { chips: [{ ...schip('a/y', 'p1', true), hub: { id: 'p1', parent: true, key: '#9', slug: 'b-p1' } }] });
-  const [it] = tree[0].items[0].items;
-  assert.strictEqual(it.named, true);
-  assert.ok(run('workItemHtml(r, "box", n)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }), key: it.row.key }, n: it.named }).includes('hub #9'));
+test('a parent-task hub no parent group takes is tagged with its key in the own group', () => {
+  const stray = { ...chip('p1', true, '#9', 'b-p1'), nwo: 'acme/a' };
+  const [repoNode] = treeOf([], new Map([[repoA, [stray]]]));
+  const [none] = repoNode.items;
+  assert.strictEqual(none.items[0].named, true);
+  assert.ok(run('workItemHtml(r, "tree", n)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }), key: none.items[0].row.key }, n: none.items[0].named }).includes('hub #9'));
 });
 
 test('a hub row puts the wake reason on a line of its own, outside the buttons and the row', () => {
@@ -835,4 +695,78 @@ test('focus after a rebuild goes back to the copy in the same cell, else to the 
   // A wake button inside the wrapper of the cell is found within it.
   const wrap = { dataset: { wkCell: 'tree/k' }, matches: () => false, querySelector: () => inner };
   assert.deepStrictEqual((log.length = 0, run('workRefocus(root, held, cell)', { root: { querySelectorAll: () => [band, wrap], querySelector: () => first }, held: '[data-wk-wake="k"]', cell: 'tree/k' }), log.slice()), ['inner']);
+});
+
+/* ── the list as the organisation's repositories, hubs and sessions (#728) ── */
+
+test('with one repository chosen the tree is that repository\'s groups, with no repository node', () => {
+  const rows = [trow('t1', '#2'), trow('t2')];
+  const byRepo = new Map([[repoA, [chip('own', false)]]]);
+  const withHeadings = treeOf(rows, byRepo);
+  assert.deepStrictEqual(withHeadings.map(n => n.kind), ['repo']);
+  const flat = plain(run('workTreeByParent(rows, byRepo, [repoA], { headings: false })', { rows, byRepo, repoA }));
+  assert.deepStrictEqual(flat.map(n => n.kind), ['hub', 'parent']);
+  assert.deepStrictEqual(flat.map(n => n.key), withHeadings[0].items.map(n => n.key));
+});
+
+test('a parent group headed by its hub row says the parent, and how far it has got, in that row', () => {
+  const p1 = chip('p1', true, '#2', 'b-p1');
+  const parent = { key: '#2', number: 2, title: 'Ship it', merged: 1, total: 3, children: [{ id: 'a', progress: 'merged' }], stacked: true };
+  const html = run('workItemHtml(r, "tree", false, p)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#2', slug: 'b-p1', unseen: 0 }), hub: p1.hub }, p: parent });
+  assert.ok(html.includes('#2 Ship it') && html.includes('1 / 3 マージ') && html.includes('wk-stack') && html.includes('class="wk-bar"'));
+  // Without a hub the group keeps the parent heading, with its button to the parent.
+  const [repoNode] = treeOf([trow('t1', '#2')], new Map());
+  const [group] = repoNode.items;
+  assert.deepStrictEqual([group.kind, group.head], ['parent', null]);
+  assert.ok(run('workHeadHtml(node, false)', { node: group }).includes('data-wk-parent="#2"'));
+});
+
+test('a merged task is listed after its worker has gone, and keeps its repository; one not merged is not', () => {
+  const doc = { now: 1, repos: [{ nwo: 'acme/a', hubs: [], rows: [
+    { board: 'b', session: { id: 's1', kind: 'worker', state: 'ended' }, task: { id: 't1', prState: 'merged' } },
+    { board: 'b', session: { id: 's2', kind: 'worker', state: 'ended' }, task: { id: 't2', prState: 'open' } },
+    { board: 'b', session: { id: 's3', kind: 'worker', state: 'none', branchPr: { state: 'merged' } }, task: null },
+  ] }] };
+  assert.deepStrictEqual(plain(run('workRows(doc).map(r => r.s.id)', { doc })), ['s1', 's3']);
+  const merged = { ...lrow(lrA, 'ended'), task: { id: 't1', prState: 'merged' } };
+  assert.deepStrictEqual(listedOf([lrA], [merged], [], []), ['acme/a']);
+  assert.deepStrictEqual(listedOf([lrA], [lrow(lrA, 'ended')], [], []), []);
+});
+
+test('a hub says how many requests it has not read, with the newest one\'s subject', () => {
+  const hub = (extra, st = 'stopped', more = {}) => ({ ...hubItem({ unseen: 1, ...extra }), st, ...more });
+  assert.strictEqual(run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 0 }) }), '');
+  assert.strictEqual(run('workRequestsHtml(c)', { c: hub({}) }), '');
+  const inbox = [{ kind: 'report', seen: false, subject: 'a report' }, { kind: 'request', seen: false, subject: 'newest <b>' }, { kind: 'request', seen: false, subject: 'older' }, { kind: 'request', seen: true, subject: 'read' }];
+  const line = run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 2, inbox }) });
+  assert.ok(line.includes('未読の依頼 2') && line.includes('「newest <b>」') && !line.includes('older') && !line.includes('a report'));
+  // The listed inbox keeps only the newest few, so the count can be more than it names.
+  const far = run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 3, inbox: [{ kind: 'report', seen: false, subject: 's' }] }) });
+  assert.ok(far.includes('未読の依頼 3') && !far.includes('「'));
+  assert.ok(run('workRowHtml(r)', { r: hub({ requestsUnseen: 2, inbox }) }).includes('未読の依頼 2'));
+});
+
+test('「hub を起動」 is beside a hub that is not running and has unread requests, and says why when it cannot', () => {
+  const hub = (st, extra = {}, more = {}) => ({ ...hubItem({ unseen: 0, requestsUnseen: 1, ...extra }), st, ...more });
+  const html = c => run('workHubStartButtonHtml(c)', { c });
+  const ok = html(hub('stopped', {}, { wakeBase: '/b/own' }));
+  assert.ok(ok.includes('data-wk-start="b-own/hub:own"') && ok.includes('hub を起動') && !ok.includes('disabled'));
+  assert.ok(html(hub('none', {}, { wakeBase: '/b/own' })).includes('data-wk-start'));
+  for (const st of ['working', 'idle', 'ended']) assert.strictEqual(html(hub(st, {}, { wakeBase: '/b/own' })), '', st);
+  assert.strictEqual(html(hub('stopped', { requestsUnseen: 0 }, { wakeBase: '/b/own' })), '');
+  const away = html(hub('stopped', {}, { wakeBase: null }));
+  assert.ok(away.includes('disabled') && away.includes('このサーバーにありません'));
+  const noKey = html(hub('stopped', { parent: true, key: null }, { wakeBase: '/b/p' }));
+  assert.ok(noKey.includes('disabled') && noKey.includes('キーが分からない'));
+  // A sibling of the row button, in the buttons beside it, never inside it.
+  assert.ok(outsideRow(itemHtml(hub('stopped', {}, { wakeBase: '/b/own' }), 'tree')).includes('data-wk-start'));
+});
+
+test('a poll that only changes words does not change the shape, and a hub that heads a group is part of it', () => {
+  const mk = (cls, head) => [{ key: 'g', kind: 'hub', head, hubs: head ? [head] : [], rows: [], items: [{ row: { key: 't1', cls }, place: 'tree' }] }];
+  const h = { key: 'h1', cls: null };
+  const shape = tree => JSON.stringify(run('workShape(tree, new Set())', { tree }));
+  assert.strictEqual(shape(mk(null, h)), shape(mk('new', { ...h, cls: 'new' })));
+  assert.notStrictEqual(shape(mk(null, h)), shape(mk(null, null)));
+  assert.notStrictEqual(shape(mk(null, h)), shape(mk(null, { key: 'h2' })));
 });

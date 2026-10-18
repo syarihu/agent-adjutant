@@ -1465,6 +1465,10 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "function currentOrg",
         "function setCurrentOrg",
         "const ORG_EVENT = 'adj:org'",
+        // The organisation switch, the place to ask for a task and the repository filter.
+        "id=\"org-switch\"",
+        "id=\"wk-req-btn\"",
+        "id=\"wk-repo-filter\"",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
@@ -1492,6 +1496,9 @@ fn the_page_has_the_work_view_and_no_review_queue() {
             && at("id=\"wk-groups\"") < at("id=\"task-panel\"")
     );
     assert!(!UI_HTML.contains("rail-global"));
+    // The list is one organisation's, by repository and hub: there is no grouping to choose.
+    assert!(!UI_HTML.contains("wk-group-menu"));
+    assert!(!UI_HTML.contains("data-wk-group"));
     // One width for both tabs: the sidebar's handle is the only one.
     assert!(!UI_HTML.contains("wk-list-resize"));
     // The panel has no terminal tab in this view.
