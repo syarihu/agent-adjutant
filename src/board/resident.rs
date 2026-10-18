@@ -23,6 +23,8 @@ pub struct Resident {
     pub pr_poll: Arc<crate::board::jobs::PrPoll>,
     /// What waits on a person and which terminals are open, over all boards.
     pub waits: Arc<crate::board::jobs::WaitWatch>,
+    /// The GitHub icon of each repository owner, read in the background for the work document.
+    pub owner_icons: Arc<crate::board::jobs::OwnerIcons>,
     /// The serialized `/api/work` document and when it was built, reused for 1500 ms so that
     /// several open pages polling every couple of seconds read the boards once between them.
     pub work_cache: Mutex<Option<(std::time::Instant, String)>>,

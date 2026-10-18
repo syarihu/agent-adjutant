@@ -437,3 +437,28 @@ fn a_quick_gate_says_so_in_the_list_and_another_says_nothing() {
     assert_eq!(json[0]["quick"], true);
     assert!(json[1].get("quick").is_none(), "{json}");
 }
+
+#[test]
+fn owners_are_left_out_of_the_document_until_there_is_one() {
+    let mut state = WorkState {
+        now: 1,
+        rate_limits: Default::default(),
+        repos: Vec::new(),
+        owners: Vec::new(),
+    };
+    assert!(
+        serde_json::to_value(&state)
+            .unwrap()
+            .get("owners")
+            .is_none()
+    );
+    state.owners.push(OwnerIcon {
+        login: "acme".to_string(),
+        avatar_url: Some("https://a/x".to_string()),
+        kind: None,
+    });
+    assert_eq!(
+        serde_json::to_value(&state).unwrap()["owners"],
+        json!([{"login": "acme", "avatarUrl": "https://a/x"}])
+    );
+}

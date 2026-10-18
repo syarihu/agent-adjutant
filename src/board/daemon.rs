@@ -215,6 +215,7 @@ impl BoundResident {
             terminals: Arc::default(),
             pr_poll: Arc::default(),
             waits: Arc::default(),
+            owner_icons: Arc::default(),
             work_cache: Mutex::default(),
             aide: Mutex::default(),
         });

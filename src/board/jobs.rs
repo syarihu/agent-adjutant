@@ -2,13 +2,15 @@
 //! notifications and of the pull requests the cards hold, the parent-task titles of the hubs,
 //! and what Jules says about the sessions the cards follow, the sweep that closes the gates
 //! whose worker has moved on, the queue of the code-review readers (which also closes the readers
-//! of finished tasks), and the watch that announces a session waiting on a person.
+//! of finished tasks), the watch that announces a session waiting on a person, and the GitHub icons
+//! of the repository owners.
 
 mod branch_prs;
 mod hub_titles;
 mod issue_parents;
 mod jules_watch;
 mod notifications;
+mod owner_icons;
 mod pr_poll;
 pub mod review_queue;
 pub mod sweep_gates;
@@ -16,5 +18,7 @@ mod wait_watch;
 
 pub use hub_titles::{HubTitles, ReadNow, cached_title};
 pub use jules_watch::{JulesSeen, Watch};
+pub(crate) use owner_icons::valid_login;
+pub use owner_icons::{OwnerIcon, OwnerIcons};
 pub use pr_poll::{HOST, PollBoards, PollHealth, PrPoll};
 pub use wait_watch::{OpenGuard, WaitWatch, target_key};
