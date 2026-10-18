@@ -80,6 +80,10 @@ function workHubStatusLineHtml(text, cls, counts = []) {
     + `${counts.length ? `<span class="tp-muted">${esc(counts.map(([l, v]) => `${l} ${v}`).join(' · '))}</span>` : ''}</div>`;
 }
 
+/* Whether the block over a stopped hub is shown: the hub has no process and is not on its way up. A terminal that was mounted before it
+   stopped is a dead one, so the block covers it as well; nothing is shown over the terminal of a read-through. */
+const workStoppedHubShown = ({ isHub = false, present = false, starting = false, reading = false } = {}) => isHub && !present && !starting && !reading;
+
 /* Over a stopped hub's terminal: how long it has been stopped, what is waiting in its inbox, and the button that starts it
    (`act` is the hub's action, which is 「hub を起動」 unless it is a parent's hub nothing reports to any more). */
 function workHubStoppedHtml({ since = '', unread = 0, act = null } = {}) {

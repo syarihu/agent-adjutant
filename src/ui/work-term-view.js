@@ -248,7 +248,8 @@ async function workSend(layerEl, withEnter) {
     workSendDrafts.delete(target.draftKey);
     if (withEnter) {
       await new Promise(resolve => setTimeout(resolve, WORK_SEND_ENTER_MS));
-      if (workTerm.term !== term || !term.enter()) note('ターミナルに送る', true, '貼り付けは済みましたが、Enter を送れませんでした。ターミナルで押してください');
+      if (workTerm.term !== term) note('ターミナルに送る', true, '貼り付けは済みましたが、表示しているセッションが変わったため、Enter は押していません');
+      else if (!term.enter()) note('ターミナルに送る', true, '貼り付けは済みましたが、Enter を送れませんでした。ターミナルで押してください');
     }
     done = true;
   } catch (err) {
@@ -383,8 +384,7 @@ questionDialogEl().addEventListener('click', e => {
 
 /* ── a stopped hub ── */
 
-/* A hub with no process, and not on its way up: its terminal has nothing to show, so the block says so over it. */
-const workHubStopped = hub => !!hub && !hubSessionOf(hub).present && !hubStartingNow(hub);
+/* The block over a stopped hub's terminal (`workStoppedHubShown` says when). */
 function workHubStoppedBlock(hub) {
   const s = hubSessionOf(hub);
   return workHubStoppedHtml({ since: sinceLabel(hubRowOf(hub)?.hubLastAlive), unread: hub.unseen || 0, act: hubActionOf(s) });

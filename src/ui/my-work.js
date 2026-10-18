@@ -1168,6 +1168,7 @@ function renderWorkTerm() {
   if (isPrRef(nav.task)) {
     setWorkTermPart('ask', wk('wk-term-ask'), '');
     setWorkTermPart('fabs', wk('wk-term-fabs'), '');
+    setWorkTermPart('askStatus', wk('wk-term-ask-status'), '');
     return renderPrRead(othersById(prIdOfRef(nav.task)));
   }
   const sel = workSelected();
@@ -1189,7 +1190,8 @@ function renderWorkTerm() {
   syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
   setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true, own.kind === 'hub' ? ['close', 'hub-start'] : ['close']) : '');
   const ph = wk('wk-term-ph');
-  ph.hidden = !!workTerm.term;
+  const stopped = workStoppedHubShown({ isHub: !!hub, present: !!hub && hubSessionOf(hub).present, starting: !!hub && hubStartingNow(hub), reading });
+  ph.hidden = !!workTerm.term && !stopped;
   const loaded = state.now != null;
   const text = workTerm.term ? ''
     : !nav.task || nav.board === 'all' ? ''
@@ -1200,7 +1202,7 @@ function renderWorkTerm() {
           : !loaded ? '<div class="tp-muted">接続しています…</div>'
             : !own ? '<div class="tp-muted">このボードにはこのセッションが見えないため、ターミナルを開けません</div>'
               : termPlaceholderHtml(own);
-  setWorkTermPart('ph', ph, !workTerm.term && !reading && workHubStopped(hub) ? workHubStoppedBlock(hub) : text);
+  setWorkTermPart('ph', ph, stopped ? workHubStoppedBlock(hub) : text);
   renderWorkTermOverlays({ sel, own, task, hub, reading });
   // Sized while it was hidden, which a terminal skips: asked again now that it has a size.
   if (revealed) workTerm.term?.fit();

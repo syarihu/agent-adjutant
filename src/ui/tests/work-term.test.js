@@ -27,7 +27,7 @@ run(cut(read('session-actions.js'), /^const actionButtonHtml = [^\n]*\n[^\n]*\n[
 run(read('question-card.js'), 'question-card.js');
 run(read('work-term.js'), 'work-term.js');
 const api = vm.runInContext(
-  '({ workSendableText, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workTermFabsHtml, workSendParts })', ctx);
+  '({ workSendableText, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
 
 const keyOf = g => `s/${g.id}`;
 const ctxOf = g => ({ task: null, nwo: 'acme/widget', key: keyOf(g), issue: { number: '', url: '', hasBody: false } });
@@ -142,4 +142,13 @@ test('what is sent has the control characters out, and keeps the tab and the lin
   const t = api.workSendableText('a\tb\nc\x1b[201~d\x07e\r\nf\x7fg\u009bh');
   assert.equal(t, 'a\tb\nc[201~de\nfgh');
   assert.equal(api.workSendableText(null), '');
+});
+
+test('the stopped-hub block covers a hub with no process, also over a terminal that was mounted before it stopped', () => {
+  const on = { isHub: true, present: false };
+  assert.equal(api.workStoppedHubShown(on), true);
+  assert.equal(api.workStoppedHubShown({ ...on, starting: true }), false);
+  assert.equal(api.workStoppedHubShown({ ...on, present: true }), false);
+  assert.equal(api.workStoppedHubShown({ ...on, reading: true }), false);
+  assert.equal(api.workStoppedHubShown({ present: false }), false);
 });
