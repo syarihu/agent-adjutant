@@ -75,8 +75,8 @@ function openQuestionDialog(g, opts = {}) {
 function questionDiffBodyHtml(diff) {
   const chunks = String(diff || '').split(/^(?=diff --git )/m).filter(x => x.trim());
   return chunks.map(chunk => {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/m.exec(chunk);
-    return `${m ? `<div class="qc-file"><code>${esc(m[2])}</code></div>` : ''}<div class="diff">${renderDiff(chunk.replace(/\n$/, ''))}</div>`;
+    const path = prParseDiff(chunk)[0]?.path;
+    return `${path ? `<div class="qc-file"><code>${esc(path)}</code></div>` : ''}<div class="diff">${renderDiff(chunk.replace(/\n$/, ''))}</div>`;
   }).join('');
 }
 

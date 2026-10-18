@@ -125,6 +125,13 @@ test('a diff gate\'s own steps are shown as it marks them, over the approved pla
   assert.equal(count(c.body, '<span class="qc-chip ok">済</span>'), 1);
 });
 
+test('a diff with a path Git quotes is counted', () => {
+  const quoted = 'diff --git "a/docs/\\346\\227\\245.md" "b/docs/\\346\\227\\245.md"\n--- "a/docs/\\346\\227\\245.md"\n+++ "b/docs/\\346\\227\\245.md"\n@@ -1 +1 @@\n-old\n+new\n';
+  const g = { id: 'd5', kind: 'diff', title: 'Diff', wait: true, options: ['approve'], diff: quoted, focus: 'ok?' };
+  const c = card(g, { task });
+  assert.ok(c.body.includes('1 ファイル') && c.body.includes('+1 −1'));
+});
+
 test('steps are marked done only where the worker says so once one does; 前に決まっていること needs a choice or a comment', () => {
   const approved = { ...planGate, steps: [{ text: 'a', done: true }, { text: 'b', done: false }], wait: false };
   const g = { id: 'd2', kind: 'diff', title: 'D', wait: true, options: [], focus: 'f' };

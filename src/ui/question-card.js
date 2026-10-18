@@ -30,20 +30,8 @@ const qcChips = facts => (facts || []).length ? `<div class="qc-chips">${facts.m
 const qcStage = (icon, title, inner, cls = '') => (inner ? `<section class="qc-stage${cls ? ` ${cls}` : ''}"><h3>${qcIcon(icon)}<span>${esc(title)}</span></h3>${inner}</section>` : '');
 const qcSub = (icon, title) => `<h4 class="qc-sub">${qcIcon(icon)}<span>${esc(title)}</span></h4>`;
 
-/* The files a unified diff touches, with the lines each gained and lost (as `filesOf` in task-view.js, which a test of this file does not load). */
-function qcDiffFiles(diff) {
-  const files = [];
-  let cur = null, inHeader = false;
-  for (const l of String(diff || '').split('\n')) {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(l);
-    if (m) { cur = { path: m[2], add: 0, del: 0 }; files.push(cur); inHeader = true; continue; }
-    if (l.startsWith('@@')) { inHeader = false; continue; }
-    if (!cur || inHeader) continue;
-    if (l.startsWith('+')) cur.add++;
-    else if (l.startsWith('-')) cur.del++;
-  }
-  return files;
-}
+/* The files a unified diff touches, with the lines each gained and lost. `prParseDiff` reads the paths Git quotes, too. */
+const qcDiffFiles = diff => prParseDiff(diff).map(f => ({ path: f.path, add: f.add, del: f.del }));
 
 /* What the question says as its heading: what the worker asked, else the gate's title when a task gives the card its own title (or the
    title would be written twice), else a fixed question for the kind. HTML. */
