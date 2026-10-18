@@ -34,7 +34,7 @@ All command options in `config.json` are command templates. Placeholders are **a
 ```
 
 ### Staging Long Command Lines
-When an expanded command line exceeds approximately 900 characters (common when passing large `PATH` variables via `agentEnv`), adjutant stages the script in `/tmp/adjutant-spawn-*.sh` and executes `sh /tmp/adjutant-spawn-*.sh`. This avoids shell truncation issues. Dry runs are never staged.
+When an expanded command line is longer than 900 bytes (common when passing large `PATH` variables via `agentEnv`), adjutant writes it to an `adjutant-spawn-*.sh` script in the system temporary directory (`TMPDIR`, else the platform default) and runs `sh <that script>` instead. A long line typed into the terminal can arrive with a chunk dropped from the middle, so the short line avoids running a mangled command. Dry runs are never staged.
 
 ---
 

@@ -27,7 +27,7 @@ adj server restart [--port <port>] [--open]
 - **Port allocation**: Defaults to `127.0.0.1:4577`, or any free port if 4577 is occupied.
 - **Switching repositories**: The unified page `/` provides a sidebar listing all repositories and parent-task hubs. Selecting "すべて" displays tasks across all boards.
 - **Automatic reconnection**: Existing browser tabs automatically reconnect if the port remains unchanged after `adj server restart`.
-- **Security & Tokens**: Bound strictly to `127.0.0.1`. Mutating actions require a token stored in `~/.local/state/adjutant/dashboard-token` (passed in URL query / `Origin` header).
+- **Security & Tokens**: Bound strictly to `127.0.0.1`. Every request needs the token stored in `~/.local/state/adjutant/dashboard-token`. The page reads it from the `token` URL query it was opened with and sends it in the `X-Adjutant-Token` header; state-changing requests are refused unless the token comes in that header. Separately, state-changing requests and terminal WebSocket connections must carry a browser `Origin` header that matches the board's own origin.
 
 ### Keeping the Resident Server Running with launchd (macOS)
 

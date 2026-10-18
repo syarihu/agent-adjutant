@@ -73,7 +73,7 @@ Jules responds only to comments posted by the GitHub account that initiated the 
 The task panel provides **レビュー指摘を Jules に回す**:
 1. Aggregates the first comment of review threads left by reviewers, Copilot, or review bots.
 2. You select which findings to forward.
-3. Posted as a single consolidated comment under your GitHub account via `gh` CLI.
+3. Posted as a single consolidated comment under the account `gh` is signed in as. When the task records who started the Jules session, that account must be the starter, or the relay is refused; switch with `gh auth switch` and retry.
 4. CLI equivalents:
    ```bash
    adj jules findings --id <task-id>
