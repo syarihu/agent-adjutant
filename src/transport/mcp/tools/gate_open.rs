@@ -8,7 +8,7 @@ use super::{cwd_param, cwd_property, hub_property, repo_property, resolve_repo};
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_gate_open",
-        "description": "Put something in front of a person on the board, the same as `adj gate open`: the arguments are the gate's payload. By default the gate waits — end your turn and read `adjutant_outbox` when woken; `server` says whether a board is up to see it at all, and when it is `down` ask in your own tab instead. With `wait: false` (diff and verify only) it is kept as a record: nobody is asked, and you go on with your work.",
+        "description": "Put something in front of a person on the board, the same as `adj gate open`: the arguments are the gate's payload. By default the gate waits — end your turn and read `adjutant_outbox` when woken; `server` says whether a board is up to see it at all, and when it is `down` ask in your own tab instead. With `wait: false` (diff and verify only) it is kept as a record: nobody is asked, and you go on with your work. A gate that waits needs `focus`, a plan needs `steps`, a result needs `sections` or a body, and a `quick` gate needs `choices` and nothing to read; one that lacks what it needs is refused and nothing is written.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -19,15 +19,18 @@ pub(super) fn definition() -> Value {
                 "openedBy": { "type": "string", "enum": ["worker", "hub"], "description": "For the hub only; a worker leaves it out. plan only: `hub` when the hub opens the plan of a task handed to Jules, so the answer reaches the hub's inbox rather than the worktree's outbox. Needs task. Default: worker." },
                 "wait": { "type": "boolean", "description": "false to keep a diff or verify gate as a record instead of waiting on it. Default: true." },
                 "facts": { "type": "array", "items": { "type": "string" }, "description": "True whatever is decided: rounds run, tests passed, lines changed." },
-                "focus": { "type": "string", "description": "What the person has to decide. Enough to answer from alone." },
-                "decided": { "type": "string", "description": "What is settled. Shown folded away." },
+                "focus": { "type": "string", "description": "Required when the gate waits: the question, enough to answer from alone." },
+                "decided": { "type": "string", "description": "What is settled. Shown folded away. Not the plan's steps." },
                 "unsure": { "type": "string", "description": "Where your confidence ran out." },
-                "body": { "type": "string", "description": "A report, for a result gate." },
+                "body": { "type": "string", "description": "A long report kept as it is; prefer sections." },
                 "run": { "type": "string", "description": "How to run it, for verify." },
                 "diff": { "type": "string", "description": "The diff, for diff." },
                 "choices": { "type": "array", "items": { "type": "object" }, "description": "Designs to choose between: id, label, why, points, recommended, comment (a draft to send if this one is picked and the person typed none)." },
                 "options": { "type": "array", "items": { "type": "string" }, "description": "The buttons. Default: by kind." },
                 "rounds": { "type": "integer", "description": "How many times this same point has gone back and forth with a person." },
+                "steps": { "type": "array", "items": { "type": ["object", "string"] }, "description": "plan: required. The plan, one step each, in order: text, detail (a line under it)." },
+                "sections": { "type": "array", "items": { "type": "object" }, "description": "What was found, in order: heading (you pick it to fit: 原因, 対応策, 内訳 ...), body (markdown), stage (found, the default, or plan). A result gate needs these or body. Not 懸念点: that is unsure." },
+                "quick": { "type": "boolean", "description": "true for a fixed confirmation answered with one press: needs choices, facts checked first, nothing to read." },
                 "problem": { "type": "string", "description": "plan: what is wrong today, from the request and the issue." },
                 "goal": { "type": "string", "description": "plan: what done looks like." },
                 "reviewRounds": { "type": "array", "items": { "type": "object" }, "description": "diff: one per review round — engine, must, want, scope, falsePositives." },

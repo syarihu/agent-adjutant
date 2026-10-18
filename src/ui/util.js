@@ -296,17 +296,18 @@ const kindOf = k => KINDS[k] || [k, '#898781'];
 
 /* What each gate decision is called on a button, wherever it is drawn. A kind overrides only
    where the decision means something different for it. */
-const DECISION_LABEL = { approve:'承認する', changes:'差し戻す', reject:'見送る', ack:'了解', ask:'追加で聞く', answer:'答える' };
+const DECISION_LABEL = { approve:'承認する', changes:'差し戻す', reject:'見送る', ack:'了解', ask:'追加で聞く', task:'これをタスクにする', answer:'答える' };
 const DECISION_LABEL_OF_KIND = {
   dispatch: { approve:'着手する' },
   issue:    { approve:'着手する' },
   verify:   { approve:'確認した', changes:'直してほしい' },
+  result:   { ack:'分かった', ask:'続けて聞く' },
 };
 const decisionLabel = (decision, kind) =>
   DECISION_LABEL_OF_KIND[kind]?.[decision] || DECISION_LABEL[decision] || decision;
 
 const DECISION = { approve:'承認した', changes:'差し戻した', reject:'見送った', choice:'案を選んだ',
-                   ack:'了解した', ask:'追加で聞いた', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };
+                   ack:'了解した', ask:'追加で聞いた', task:'タスクにした', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };
 
 /* What an answer that carries the points a person chose from a read-through of the task's PR (`handoff`: { pr, sha, count, overall })
    says, wherever the answers are listed: how many went to the worker, and the comment on the whole when it did too. */

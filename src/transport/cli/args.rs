@@ -809,7 +809,7 @@ pub(crate) struct GateAnswerArgs {
     pub(crate) hub: Option<String>,
     #[arg(long)]
     pub(crate) id: String,
-    /// approve | changes | reject | choice | ack | ask | answer
+    /// approve | changes | reject | choice | ack | ask | task | answer
     #[arg(long)]
     pub(crate) decision: String,
     /// Which of the gate's choices, for `--decision choice`

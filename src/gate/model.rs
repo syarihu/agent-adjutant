@@ -65,7 +65,7 @@ impl Kind {
     /// What the buttons are, when the payload does not say.
     pub fn default_options(self) -> Vec<String> {
         let options: &[&str] = match self {
-            Kind::Result => &["ack", "ask"],
+            Kind::Result => &["ack", "ask", "task"],
             Kind::Verify | Kind::Diff => &["approve", "changes"],
             Kind::Question => &["answer"],
             _ => &["approve", "changes", "reject"],
@@ -308,6 +308,113 @@ pub struct Choice {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// One step of a plan, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step {
+    /// Defaulted so that a step with no text is named by its number in `open`, not by serde.
+    #[serde(default)]
+    pub text: String,
+    /// A line under the step: the file it touches, a sub-point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Keys this binary does not know, kept from the file (rule 10).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Which part of the card a section belongs to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SectionStage {
+    /// What was found out.
+    #[default]
+    Found,
+    /// A block of the plan itself, such as the fix for a cause.
+    Plan,
+}
+
+impl SectionStage {
+    fn is_found(&self) -> bool {
+        *self == SectionStage::Found
+    }
+}
+
+/// One block of what was found or planned, under a heading the worker picks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Section {
+    /// Defaulted for the same reason as `Step::text`.
+    #[serde(default)]
+    pub heading: String,
+    /// Markdown.
+    #[serde(default)]
+    pub body: String,
+    #[serde(default, skip_serializing_if = "SectionStage::is_found")]
+    pub stage: SectionStage,
+    /// Keys this binary does not know, kept from the file (rule 10).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+const STEP_SHAPE: &str = "each step is {text, detail?} or a string";
+const SECTION_SHAPE: &str = "each section is {heading, body, stage?}";
+
+/// `steps` as the payload gave it. A bare string is a step with that text, and `null` is no
+/// steps; anything else of the wrong shape is refused naming the shape to use.
+fn read_steps(value: Option<&serde_json::Value>) -> Result<Vec<Step>, String> {
+    let items = match value {
+        None | Some(serde_json::Value::Null) => return Ok(Vec::new()),
+        Some(serde_json::Value::Array(items)) => items,
+        Some(_) => return Err(STEP_SHAPE.to_string()),
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            serde_json::Value::String(text) => Ok(Step {
+                text: text.clone(),
+                detail: None,
+                extra: serde_json::Map::new(),
+            }),
+            serde_json::Value::Object(_) => {
+                serde_json::from_value(item.clone()).map_err(|_| STEP_SHAPE.to_string())
+            }
+            _ => Err(STEP_SHAPE.to_string()),
+        })
+        .collect()
+}
+
+/// `sections` as the payload gave it; `null` is none. An unknown `stage` is refused by the
+/// section's number rather than read as the default.
+fn read_sections(value: Option<&serde_json::Value>) -> Result<Vec<Section>, String> {
+    let items = match value {
+        None | Some(serde_json::Value::Null) => return Ok(Vec::new()),
+        Some(serde_json::Value::Array(items)) => items,
+        Some(_) => return Err(SECTION_SHAPE.to_string()),
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(at, item)| {
+            let serde_json::Value::Object(fields) = item else {
+                return Err(SECTION_SHAPE.to_string());
+            };
+            let mut fields = fields.clone();
+            // `null` is as good as absent.
+            if fields.get("stage").is_some_and(serde_json::Value::is_null) {
+                fields.remove("stage");
+            }
+            if let Some(stage) = fields.get("stage")
+                && !matches!(stage.as_str(), Some("found" | "plan"))
+            {
+                return Err(format!("section {}: stage is found or plan", at + 1));
+            }
+            serde_json::from_value(serde_json::Value::Object(fields))
+                .map_err(|_| SECTION_SHAPE.to_string())
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Gate {
@@ -362,6 +469,15 @@ pub struct Gate {
     /// `plan`: what done looks like.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<String>,
+    /// `plan`: the plan, one step each, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<Step>,
+    /// What was found or planned, as blocks under headings the worker picked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<Section>,
+    /// A fixed confirmation answered with one press: it carries nothing to read.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub quick: bool,
     /// `diff`: the worker's own review, one entry per round. Not `rounds`, which already
     /// counts how often this gate has been round-tripped with a person.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -429,6 +545,9 @@ pub struct GateRequest {
     pub rounds: u32,
     pub problem: Option<String>,
     pub goal: Option<String>,
+    pub steps: Vec<Step>,
+    pub sections: Vec<Section>,
+    pub quick: bool,
     pub review_rounds: Vec<ReviewRound>,
     pub findings: Vec<Finding>,
     pub commands: Vec<CommandRun>,
@@ -498,6 +617,13 @@ impl GateRequest {
                 .collect::<Result<Vec<StopRule>, String>>()?,
             Some(_) => return Err("stoppedBy must be a list of rules".to_string()),
         };
+        let quick = match payload.get("quick") {
+            None | Some(serde_json::Value::Null) => false,
+            Some(serde_json::Value::Bool(quick)) => *quick,
+            Some(_) => return Err("quick must be true or false".to_string()),
+        };
+        let steps = read_steps(payload.get("steps"))?;
+        let sections = read_sections(payload.get("sections"))?;
         let worktree = payload
             .get("worktree")
             .and_then(serde_json::Value::as_str)
@@ -514,7 +640,8 @@ impl GateRequest {
             stopped_by,
             options: shown.options,
             facts: shown.facts,
-            focus: shown.focus,
+            // A blank focus is no focus: `open` asks for one from a gate that waits.
+            focus: shown.focus.filter(|f| !f.trim().is_empty()),
             decided: shown.decided,
             unsure: shown.unsure,
             body: shown.body,
@@ -524,6 +651,9 @@ impl GateRequest {
             rounds: shown.rounds,
             problem: shown.problem,
             goal: shown.goal,
+            steps,
+            sections,
+            quick,
             review_rounds: shown.review_rounds,
             findings: shown.findings,
             commands: shown.commands,
@@ -620,6 +750,10 @@ fn waits() -> bool {
 
 fn is_waiting(wait: &bool) -> bool {
     *wait
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Where a gate lives. Three directories of one hub's state, each holding `<id>.json` files.

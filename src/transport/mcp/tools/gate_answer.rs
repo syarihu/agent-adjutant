@@ -3,8 +3,8 @@ use serde_json::{Value, json};
 use super::{board_context, text_param};
 use crate::gate::{DecideError, Decided, Gate, Offered};
 
-const DECISIONS: [&str; 8] = [
-    "approve", "changes", "reject", "ack", "ask", "answer", "choice", "close",
+const DECISIONS: [&str; 9] = [
+    "approve", "changes", "reject", "ack", "ask", "task", "answer", "choice", "close",
 ];
 
 pub(super) fn definition() -> Value {

@@ -84,6 +84,8 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         }
     }
 
+    check_content(&request)?;
+
     // The address the answer is delivered to, so an agent that mistypes it waits on an
     // outbox nobody writes to. The caller fills it in from where it stands when the payload
     // does not name one.
@@ -120,6 +122,9 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         rounds,
         problem,
         goal,
+        steps,
+        sections,
+        quick,
         review_rounds,
         findings,
         commands,
@@ -144,6 +149,9 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         rounds,
         problem,
         goal,
+        steps,
+        sections,
+        quick,
         review_rounds,
         findings,
         commands,
@@ -165,4 +173,58 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         gate,
         crate::registry::running(&ctx.state, &ctx.repo).is_some(),
     ))
+}
+
+/// What the board needs in a gate to show it, refused before an ID is claimed so that a
+/// request without it leaves nothing behind.
+fn check_content(request: &GateRequest) -> Result<(), String> {
+    let kind = request.kind;
+    // Every gate that waits is answered from what the card says it asks.
+    if request.wait && request.focus.is_none() {
+        return Err("a gate that waits needs focus: the question the person answers".to_string());
+    }
+    if kind == Kind::Plan && request.steps.is_empty() {
+        return Err("a plan gate needs steps: the plan, one step each".to_string());
+    }
+    for (at, step) in request.steps.iter().enumerate() {
+        if step.text.trim().is_empty() {
+            return Err(format!("step {} has no text", at + 1));
+        }
+    }
+    for (at, section) in request.sections.iter().enumerate() {
+        if section.heading.trim().is_empty() || section.body.trim().is_empty() {
+            return Err(format!("section {} needs a heading and a body", at + 1));
+        }
+    }
+    if kind == Kind::Result
+        && request.sections.is_empty()
+        && request.body.as_deref().is_none_or(|b| b.trim().is_empty())
+    {
+        return Err("a result gate needs what was found: sections, or a body".to_string());
+    }
+    if request.quick {
+        if !request.wait {
+            return Err("a record asks nobody, so it cannot be quick".to_string());
+        }
+        if request.choices.is_empty() {
+            return Err("a quick gate is answered with one press: give it choices".to_string());
+        }
+        let blank = |text: &Option<String>| text.as_deref().is_none_or(|t| t.trim().is_empty());
+        let carried = [
+            ("body", !blank(&request.body)),
+            ("diff", !blank(&request.diff)),
+            ("run", !blank(&request.run)),
+            ("steps", !request.steps.is_empty()),
+            ("sections", !request.sections.is_empty()),
+            ("findings", !request.findings.is_empty()),
+            ("commands", !request.commands.is_empty()),
+            ("manual", !request.manual.is_empty()),
+        ];
+        if let Some((field, _)) = carried.iter().find(|(_, present)| *present) {
+            return Err(format!(
+                "a quick gate carries nothing to read: drop {field} or quick"
+            ));
+        }
+    }
+    Ok(())
 }
