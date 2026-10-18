@@ -872,7 +872,9 @@ cannot fetch from a bare key.
   and tracker and puts the request text on the Task line.
 - Record it with `adj task add --done-when report-only` (the brief then writes "investigation only
   (report and stop)"). The results go to the user at the
-  worker's tab and do not come back to the hub (having them come back doubles the report).
+  worker's tab and do not come back to the hub (having them come back doubles the report). The one
+  exception is a result the person chose to make a task: it arrives as an `adj-report` (no
+  `## Kind`) and is filed like any report.
 - **Without an issue there is nothing to make a worktree name from.** It cannot come from a key, so
   propose a short lowercase slug of the request (like `login-crash`) with `AskUserQuestion`, settle
   it, and pass it to "3. Create the worktree" as `{worktreeName}` (the branch is `{user}/{name}` as
@@ -1585,7 +1587,8 @@ comes from:
   implementer (`--executor` above).
 - **For "investigation only", no PR and no issue updates.** Have the results given to the user at
   that tab (the brief's "Report to" says so). Have them reported to you here and the report is
-  doubled. With no issue the record has no URL, and the brief puts the request text on the Task line.
+  doubled (the one exception is a result the person chose to make a task: it arrives as an
+  `adj-report` with no `## Kind`, and is filed like any report). With no issue the record has no URL, and the brief puts the request text on the Task line.
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
   it is; if it is not, pass `--out '<a path outside the worktree>'` and **change the path in Step 3's
   prompt to match**, because that prompt names `.claude/task-brief.md` literally.

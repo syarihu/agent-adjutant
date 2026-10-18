@@ -39,9 +39,9 @@ what to tell them, not the words to use.
 - **Do not hand the implementation back to the hub.** Do everything up to the final report
   yourself, and **give that report to the user at this tab**. The hub only hands work out; results
   sent to it have nowhere to go (and the same report shows up in two places). You send the hub
-  only two things on your own: a bug **outside this task**, through the `adj-report` procedure
-  (§7), and a request to clean up (§9). The one exception is an investigation result the person
-  answered `task` on, which goes through `adj-report` too (§8). **Answering the hub with `kind: answer` when it asks with
+  only three things on your own: a bug **outside this task**, through the `adj-report` procedure
+  (§7), a request to clean up (§9), and an investigation result the person answered `task` on,
+  which goes through `adj-report` too (§8). **Answering the hub with `kind: answer` when it asks with
   `[question {id}]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
