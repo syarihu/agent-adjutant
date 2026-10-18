@@ -185,8 +185,8 @@ const narrowRail = matchMedia('(max-width: 1024px)');
 function applyRailMode() {
   const cls = document.body.classList;
   const byPanel = cls.contains('panel-open') && !cls.contains('panel-right') && !cls.contains('panel-pop');
-  // 「いまの仕事」's list has no icon form.
-  cls.toggle('rail-icons', !cls.contains('view-work') && (narrowRail.matches || byPanel));
+  // 「いまの仕事」's list and the TODO's have no icon form.
+  cls.toggle('rail-icons', !cls.contains('view-work') && !cls.contains('view-todo') && (narrowRail.matches || byPanel));
 }
 narrowRail.addEventListener('change', applyRailMode);
 // Before the first poll has drawn anything, a narrow window already has its icon rail.

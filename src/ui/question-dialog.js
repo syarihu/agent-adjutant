@@ -18,10 +18,23 @@ function questionPin(g) {
   return g._slug || !multiBoard || !nav.board || nav.board === 'all' ? g : { ...g, _slug: nav.board, _base: `/b/${nav.board}` };
 }
 
-/* The gate the page lists under `key` now, or null: not one answered in this page, and only from the state of the board it is on. */
+/* Where a gate of another board than the page's can be found: `fn(key)` answers `{ g, data }` (the gate, pinned to its board, and the
+   state of that board it was read from) or null. The TODO list registers its cache of the boards it has read (todo-view.js). */
+const questionSources = [];
+function registerQuestionSource(fn) { questionSources.push(fn); }
+function questionSourceOf(key) {
+  for (const fn of questionSources) {
+    const found = fn(key);
+    if (found) return found;
+  }
+  return null;
+}
+
+/* The gate the page lists under `key` now, or null: not one answered in this page, and from the state of the board it is on, else
+   from what a source has read of its own board. */
 function questionLive(key) {
   if (answeredGates.has(key)) return null;
-  return (state.gates || []).find(x => gateKey(x) === key) || null;
+  return (state.gates || []).find(x => gateKey(x) === key) || questionSourceOf(key)?.g || null;
 }
 
 /* `live` (as the page lists it) with the board `like` was opened on, so a card follows the gate and keeps sending to its board. */
@@ -46,11 +59,18 @@ function questionCtxOf(g) {
   };
 }
 
+/* `questionCtxOf`, read from the board's own state when the gate is one a source holds and the page's state does not. */
+function questionCtxFor(g) {
+  const key = gateKey(g);
+  const src = (state.gates || []).some(x => gateKey(x) === key) ? null : questionSourceOf(key);
+  return src ? withViewState(src.data, () => questionCtxOf(g)) : questionCtxOf(g);
+}
+
 /* Opens the card of a waiting gate. `opts`: `ctx` (what `questionCtxOf` makes, from another board's records), `opener` (the element
    focus returns to), `onAnswered(g)`. A gate that no longer waits has no card. */
 function openQuestionDialog(g, opts = {}) {
   if (g.wait === false) return;
-  const ctx = opts.ctx || questionCtxOf(g);
+  const ctx = opts.ctx || questionCtxFor(g);
   const pinned = questionPin(g);
   const key = gateKey(pinned);
   if (dialogStack.has(`card:${key}`)) return;
@@ -85,7 +105,7 @@ function questionOpenLayer(what, root) {
   const key = root.closest('[data-qc-gate]')?.dataset.qcGate;
   const g = key && (questionBase?.key === key ? questionBase.g : questionLive(key));
   if (!g) return note('開く', true, 'この質問は、いま読めません');
-  const ctx = questionBase?.key === key ? questionBase.ctx : questionCtxOf(g);
+  const ctx = questionBase?.key === key ? questionBase.ctx : questionCtxFor(g);
   const title = ctx.task?.title || g.title || '';
   const layer = { key: `${what}:${key}`, opener: root };
   if (what === 'diff') {

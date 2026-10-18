@@ -8,6 +8,7 @@
      /b/<slug>/?task=gate:<slug>/<id>                      one board, a gate in the panel (`gate:<id>` on a board
                                                            served alone)
      /                                                     すべて, every board
+     /?view=todo                                           TODO, every board: what waits on you, and the question selected
      /?view=work                                           いまの仕事, every board; nothing selected, so the
                                                            middle is the aide (副官, aide.js)
      /b/<slug>/?view=work&task=<ref>&pane=detail           いまの仕事 with a row selected: the board of
@@ -55,6 +56,8 @@ function parseUrl(loc = location) {
   if (v === 'human') out.view = v;
   // The work view reads every board of a resident server: a board served alone has none.
   if (v === 'work' && multiBoard) out.view = 'work';
+  // The TODO reads every board too, and is on none of them.
+  if (v === 'todo' && multiBoard) { out.view = 'todo'; out.board = 'all'; }
   // The addresses of the セッション tab and of 要対応, which are gone, land where nav-legacy.js says.
   const legacy = legacyNav(loc, multiBoard);
   if (legacy) Object.assign(out, legacy.nav);
@@ -71,7 +74,7 @@ function parseUrl(loc = location) {
 function urlOf(n = nav) {
   const path = n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
-  if (n.view === 'human' || n.view === 'work') url += `&view=${n.view}`;
+  if (n.view === 'human' || n.view === 'work' || n.view === 'todo') url += `&view=${n.view}`;
   if (n.task) url += `&task=${encodeURIComponent(n.task)}`;
   if (n.task && n.pane !== 'detail') url += `&pane=${n.pane}`;
   return url;
@@ -143,7 +146,7 @@ const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.vie
 /* A move to or from the work view changes what the next poll asks for (the work document, the last
    lines of a board's), so it is made now. */
 function askWorkOnMove(prevView, boardChanged) {
-  if (!boardChanged && (nav.view === 'work') !== (prevView === 'work')) refresh(true);
+  if (!boardChanged && ((nav.view === 'work') !== (prevView === 'work') || (nav.view === 'todo') !== (prevView === 'todo'))) refresh(true);
 }
 
 /* Draw the screen the address names. */
@@ -167,6 +170,8 @@ function drawScreen(boardChanged) {
   try {
     if (nav.view === 'work') {
       setView('work');
+    } else if (nav.view === 'todo') {
+      setView('todo');
     } else {
       prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
       if (view !== 'board') setView('board'); else applyLayout();

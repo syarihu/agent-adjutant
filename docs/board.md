@@ -64,7 +64,7 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 ## Views
 
-The sidebar offers two primary views: **ボード (Board)** and **いまの仕事 (Work under way)**.
+The sidebar has three tabs: **ボード (Board)**, **いまの仕事 (Work under way)** and **TODO**.
 
 ### 1. いまの仕事 (Work Under Way: `?view=work`)
 
@@ -120,6 +120,15 @@ An interactive assistant session (shown when no specific task is selected in 「
 - **Answering gates through the aide**: Clicking 「副官に答えを伝える」 on a waiting gate or 「この判断」 pre-fills `[gate <board>/<id>] ` in the prompt. The aide reads your instruction (e.g. 「B で」), previews the proposed decision, and answers the gate once you confirm.
 
 ---
+
+### 4. TODO (`?view=todo`)
+
+What waits on you, across every repository. The sidebar's TODO tab carries a badge with the count; the count is every open gate that is not parked plus every pull request you were asked to review, whether or not its AI pre-reading has started. Terminal-only permission prompts, parked tasks' gates and your own tasks' PR turns are not in it.
+- **Popover**: resting the pointer on the tab (or focusing it with the keyboard) opens a list under it (beside it in the icon rail). A quick confirmation is answered right there; any other row opens the TODO view with that item selected. It closes when the pointer and focus have left it, or on Escape, and never opens in the TODO view or over a dialog.
+- **Left**: 「あなたの番」, in the order it is best answered. First the quick confirmations, oldest first. Then 「読んで決める」: start checks, filing confirmations, research results and reports, plans, questions, what is to go to Jules, manual checks and diffs, oldest first within each kind. Then the pull requests you were asked to review, with how far their AI pre-reading has got.
+- **Right**: the selected question as the same card the dialog shows (answered where it stands, with the diff, the Issue body and the report opening over it), or for a pull request a short card with a button into its review. With nothing waiting it says 「あなたの番はありません」.
+
+An answered item leaves the list at once. The selected item is page state; only `?view=todo` is in the address. The list is narrowed in one place, `todoInScope` in `src/ui/todo-view.js`.
 
 ## Task Panel & Gates
 
