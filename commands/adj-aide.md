@@ -77,7 +77,7 @@ before you call either (see "Show first, send after yes").
   (`owner/name`), `board` (the hub's `slug`), `body` (the person's words), and for a parent's hub
   `parent` (its URL). It writes the task record and puts it in the hub's inbox.
 - `adjutant_gate_answer` answers a gate as the board's buttons do: `board`, `id`, `decision`
-  (`approve`, `changes`, `reject`, `ack`, `ask`, `answer`, `choice` or `close`), `choice`, `comment`.
+  (`approve`, `changes`, `reject`, `ack`, `ask`, `task`, `answer`, `choice` or `close`), `choice`, `comment`.
   The answer goes to the worker, or to the hub for a gate the hub opened (`adjutant_gate_read` says
   which as `answeredBy`).
 

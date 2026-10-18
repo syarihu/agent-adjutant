@@ -1753,8 +1753,8 @@ shows it:
 adj gate open --file '{worktree}/.claude/jules-gate.json' --body-file '{worktree}/.claude/jules-plan.md' --json
 ```
 
-`--body-file` puts the plan file into the gate as it is, so what the person approves is exactly what
-Jules gets. The payload carries `"openedBy": "hub"` and the task, so the answer arrives in your inbox
+The payload carries `steps` because a plan gate is refused without them. `--body-file` puts the plan
+file into the gate as it is, so what the person approves is exactly what Jules gets. The payload carries `"openedBy": "hub"` and the task, so the answer arrives in your inbox
 as `kind: gate` ("The answer to a gate the hub opened"), not in the worktree's outbox. The gate and the
 card keep the worktree, so nothing else on the board changes.
 
@@ -2211,7 +2211,8 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   one who asked is someone in front of the board, so ask on the board too:
 
   The content is JSON; write it to `{main}/.claude/gate-{task_id}.json` with a file-writing tool (the
-  title is text from the task, so do not put it in a heredoc — "Keep task text off the shell"):
+  title is text from the task, so do not put it in a heredoc — "Keep task text off the shell").
+  Every gate that waits needs `focus`; `adj gate open` refuses one without it.
 
   ```json
   {
@@ -3059,10 +3060,13 @@ Write two files, with a file-writing tool (not a heredoc: they carry text taken 
      "goal": "<what things look like when this is done, one to three sentences>",
      "facts": ["<files to touch>", "base {base_branch}", "implementation goes to Jules"],
      "focus": "<the one or two points a person should decide or check; enough to answer from alone>",
-     "decided": "<what is settled, as a short list>",
+     "steps": [{"text": "<step>", "detail": "<files>"}],
+     "decided": "<what is settled, not the steps>",
      "unsure": "<where your confidence ran out; leave the key out if nowhere>",
      "rounds": 0
    }
+
+   `steps` is the plan's implementation steps in order, a short list (the design document is the body).
 
    If the task does not fit Jules — it needs a check only a person can make on a real device or
    screen, it is too large to specify completely, or a decision is needed before it can be planned —

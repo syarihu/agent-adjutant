@@ -135,12 +135,14 @@ Clicking any task card opens its detail panel:
 ### Gates
 
 Gates represent explicit decision points where an agent stops and waits for human input:
-- **Frame structure**: What to look at, what was already decided, and where agent confidence is uncertain.
+- **Frame structure**: What to look at, what was already decided, and where agent confidence is uncertain. A gate that waits always carries the question to answer (`focus`); `adj gate open` refuses one without it.
+- **What a gate carries**: `steps` (a plan's steps, in order; required on a `plan`), `sections` (what was found or planned, as blocks under headings the agent picks, in the `found` or `plan` stage) and `quick` (a fixed confirmation answered with one press, with nothing to read).
 - **Gate Types**:
   - `plan`: Approval of implementation plan, problem statement, and goals.
   - `diff`: Code review rounds and findings.
   - `verify`: Verification commands and manual test checks.
   - `dispatch`: Task confirmation prior to worker launch.
+  - `result`: An investigation's report, read rather than approved. Three answers: got it, ask more, or make it a task.
 - **Answering**: Choose an option (Approve, Revise, etc.), add optional comments, or answer directly in the session terminal (`adj gate close --terminal`).
 - **Server status detection**: `adj gate open` checks whether a board server is active (`server: up` / `server: down`). If no server is running, the agent falls back to asking directly in its terminal.
 

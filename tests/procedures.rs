@@ -154,6 +154,11 @@ fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
         "Stop at",
         "`problem`",
         "`goal`",
+        "`steps`",
+        "`sections`",
+        "`quick`",
+        "`task`",
+        "\"task\"",
     ] {
         assert!(text.contains(needle), "adj-worker.md does not say {needle}");
     }
@@ -185,5 +190,5 @@ fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
         }
         opened += 1;
     }
-    assert!(opened >= 3, "found only {opened} gate examples");
+    assert!(opened >= 5, "found only {opened} gate examples");
 }
