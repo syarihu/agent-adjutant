@@ -177,6 +177,11 @@ pub struct RepoHub {
     /// How many waiting messages that call for waking the hub have been read and not acked.
     #[serde(default)]
     pub seen: usize,
+    /// How many of the messages waiting are requests (from the board or `adj request`) the hub
+    /// has not read. Counted over the whole inbox, not the capped `inbox`; `unseen` counts every
+    /// kind that calls for waking the hub.
+    #[serde(default)]
+    pub requests_unseen: usize,
     /// When the oldest of the `unseen` messages was sent. Said apart from `inbox` because that
     /// keeps only the newest few.
     #[serde(default, skip_serializing_if = "Option::is_none")]

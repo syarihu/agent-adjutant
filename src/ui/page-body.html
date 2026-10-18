@@ -4,9 +4,13 @@
 
 <aside id="nav-rail">
   <div class="rail-brand">
-    <div class="brand-badge">adj</div>
+    <div class="org-switch" id="org-switch">
+      <div class="brand-badge" id="org-fallback">adj</div>
+      <button type="button" class="org-btn" id="org-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="org-menu" hidden></button>
+      <div class="org-menu" id="org-menu" role="menu" aria-label="組織" hidden></div>
+    </div>
     <div class="repo-info">
-      <span class="repo-title">ボード</span>
+      <span class="repo-title" id="org-name">ボード</span>
       <span class="repo-sub" id="boards-sub">…</span>
     </div>
   </div>
@@ -44,18 +48,20 @@
       <span class="aide-ava" aria-hidden="true"><span class="material-symbols-outlined">support_agent</span></span>
       <span class="aide-pin-main"><span class="aide-pin-name">副官</span><span class="aide-pin-sub" id="aide-pin-sub"></span></span>
       <span class="rail-badge zero" id="aide-pin-count" title="判断待ちの数">0</span></button></div>
+    <div class="wk-ask" id="wk-ask">
+      <button type="button" class="wk-req-btn" id="wk-req-btn"><span class="material-symbols-outlined" aria-hidden="true">add_task</span><span>依頼する</span></button>
+      <label class="wk-repo-filter"><span class="material-symbols-outlined" aria-hidden="true">folder</span><select id="wk-repo-filter" aria-label="リポジトリ"></select></label>
+    </div>
     <div class="pane-head wk-list-head">
       <div class="m3-segmented-tabs wk-tab-switch" role="group" aria-label="一覧">
         <button type="button" class="m3-seg-tab" data-wk-tab="task" aria-pressed="true">タスク<span class="rail-badge zero" id="wk-tab-count-task" title="新着の数">0</span></button>
         <button type="button" class="m3-seg-tab" data-wk-tab="others" aria-pressed="false">AI 下読み<span class="rail-badge zero" id="wk-tab-count-others" title="新着の数">0</span><span class="ov-stale-dot" id="ov-stale-dot" role="img" aria-label="同期が古くなっています" hidden></span></button>
       </div>
-      <button type="button" class="tool-btn wk-group-menu-btn" id="wk-group-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="wk-group-menu" aria-label="まとめ方: 親 Issue" title="まとめ方: 親 Issue">
-        <span class="material-symbols-outlined" aria-hidden="true">account_tree</span>
-      </button>
-      <div class="wk-group-menu" id="wk-group-menu" role="menu" aria-label="まとめ方" hidden>
-        <button type="button" role="menuitemradio" aria-checked="true" data-wk-group="parent"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span>親 Issue</button>
-        <button type="button" role="menuitemradio" aria-checked="false" data-wk-group="state"><span class="material-symbols-outlined" aria-hidden="true">view_agenda</span>状態</button>
-      </div>
+      <span class="wk-list-tools" id="wk-list-tools">
+        <button type="button" class="wk-act aide-ask" data-wk-aide-all title="副官に聞く（新着を上から順に）" aria-label="副官に聞く（新着を上から順に）"><span class="material-symbols-outlined" aria-hidden="true">support_agent</span></button>
+        <button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>
+        <label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label>
+      </span>
     </div>
     <div class="wk-list-scroll" id="wk-task-scroll"><div id="wk-groups"></div></div>
     <div class="wk-list-scroll" id="ov-scroll" hidden><div id="ov-groups"></div></div>

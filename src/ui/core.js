@@ -56,7 +56,7 @@ const PREF_KEY = 'adj-board-split';
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
 // railHidden is whether the sidebar is hidden in 「いまの仕事」 (the toggle at the head of the middle).
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  railWidth:300, workGroup:'parent', workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
+  railWidth:300, workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -73,7 +73,7 @@ if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // One width for both of the sidebar's tabs; a width saved before the range moved up is clamped, not reset.
 prefs.railWidth = Math.min(560, Math.max(260, Number(prefs.railWidth) || 300));
 delete prefs.workListWidth;
-if (prefs.workGroup !== 'state') prefs.workGroup = 'parent';
+delete prefs.workGroup;
 // Which list 「いまの仕事」 shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
 if (prefs.workTab !== 'others') prefs.workTab = 'task';
 prefs.othersRepo = typeof prefs.othersRepo === 'string' ? prefs.othersRepo.toLowerCase() : '';

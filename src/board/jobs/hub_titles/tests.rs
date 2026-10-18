@@ -42,6 +42,7 @@ fn hub(parent: bool, key: Option<&str>) -> RepoHub {
         inbox_count: 0,
         unseen: 0,
         seen: 0,
+        requests_unseen: 0,
         oldest_unseen_at: None,
         inbox: Vec::new(),
         children: 0,

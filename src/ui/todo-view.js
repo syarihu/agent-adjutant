@@ -6,8 +6,9 @@
    here (`todo.boards`) and handed to the card through a question source (question-dialog.js). Loaded after question-dialog.js,
    my-work.js, my-work-others-view.js and pr-panel.js, and before main.js. */
 
-/* Every organisation until the sidebar picks one: the one place that narrows the TODO. */
-const todoInScope = nwo => true;
+/* The organisation the sidebar has selected (org.js), or every one while none is known: the one place that narrows the TODO. The
+   selection is worked out once, for the whole pass. */
+const todoInScope = () => { const scope = orgScope(); return nwo => orgInScope(scope, nwo); };
 
 /* How long what was read of a board is kept before a poll reads it again. */
 const TODO_BOARD_FRESH_MS = 10000;
@@ -30,8 +31,9 @@ const todo = {
   timer: null,
 };
 
-const todoMine = () => todoItems({
-  doc: work.doc, records: othersRecords(), isDone: key => answeredGates.has(key), inScope: todoInScope,
+/* What waits on the person, in the selected organisation unless `inScope` says otherwise (the organisation switch counts the others with it). */
+const todoMine = (inScope = todoInScope()) => todoItems({
+  doc: work.doc, records: othersRecords(), isDone: key => answeredGates.has(key), inScope,
 });
 
 const todoSlugOf = key => key.slice(0, Math.max(key.lastIndexOf('/'), 0));
@@ -237,6 +239,9 @@ function todoFollow(force = false) {
     todoDrawPop(items);
   }
 }
+
+// Another organisation was selected: the badge, the popover and the view are of that one.
+onOrgChange(() => { todoFollow(true); if (todoBoardsWanted()) todoLoadBoards(); });
 
 registerView('todo-view', { render: () => todoFollow() });
 

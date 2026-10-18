@@ -134,7 +134,8 @@ pub fn all_repo_hubs_among_with(
             let inbox_count = entries.len();
             // Only what calls for waking the hub counts as waiting on it: the hub's own
             // question and needs-user copies, acks and notices are not waiting for a read.
-            let (mut unseen, mut seen, mut oldest_unseen_at) = (0, 0, None::<String>);
+            let (mut unseen, mut seen, mut requests_unseen, mut oldest_unseen_at) =
+                (0, 0, 0, None::<String>);
             for entry in &entries {
                 if !should_wake_hub(&entry.from, &hub_name, &entry.kind, &entry.subject) {
                     continue;
@@ -144,6 +145,10 @@ pub fn all_repo_hubs_among_with(
                     continue;
                 }
                 unseen += 1;
+                // A subset of `unseen`: the hub's own copies and the like are not requests to it.
+                if entry.kind == "request" {
+                    requests_unseen += 1;
+                }
                 if let Some(at) = &entry.at
                     && oldest_unseen_at.as_ref().is_none_or(|oldest| at < oldest)
                 {
@@ -189,6 +194,7 @@ pub fn all_repo_hubs_among_with(
                 inbox_count,
                 unseen,
                 seen,
+                requests_unseen,
                 oldest_unseen_at,
                 inbox,
                 children,

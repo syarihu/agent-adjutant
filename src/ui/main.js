@@ -124,7 +124,7 @@ const ACTIONS = {
   work: () => { if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
   todo: () => todoOpen(),
   boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
-  'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; if (prefs.railHidden) closeWorkGroupMenu(); applyLayout(); },
+  'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; if (prefs.railHidden) closeOrgMenu(); applyLayout(); },
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),

@@ -87,12 +87,11 @@ vm.runInContext([
   cut(/^const WORK_RUNNING = \[[^\]]*\];/m),
   cut(/^const WORK_GLYPH = \{[\s\S]*?^\};/m),
   cut(/^const WORKS_ON_PERSON = [^\n]*;/m),
-  cut(/^const workBoxOf = [^\n]*;/m),
 ].join('\n'), ctx);
 
-test('an unknown session is listed under 実行中, and is neither work on a person nor working', () => {
+test('an unknown session is listed and counted as running, and is neither work on a person nor working', () => {
   assert.ok(table("WORK_LISTED.includes('unknown')"));
-  assert.strictEqual(table("workBoxOf({ st: 'unknown' })"), 'running');
+  assert.ok(table("WORK_RUNNING.includes('unknown')"));
   assert.deepStrictEqual(plain(table("WORK_GLYPH.unknown")), ['visibility_off', '状態不明']);
   assert.strictEqual(table("WORKS_ON_PERSON({ st: 'unknown' })"), false);
   assert.strictEqual(table("WORKS_ON_PERSON({ st: 'permission' })"), true);

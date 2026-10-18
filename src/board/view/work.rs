@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
+use crate::board::jobs::{OwnerIcon, valid_login};
 use crate::board::{Resident, Server, Session};
 use crate::gate;
 use crate::mail::RepoHub;
@@ -31,6 +32,9 @@ pub struct WorkState {
     /// The first repository's: they are read from the agent session ledger, which no board owns.
     pub rate_limits: RateLimitsState,
     pub repos: Vec<WorkRepo>,
+    /// The owners of the repositories, with their GitHub icon once read.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub owners: Vec<OwnerIcon>,
 }
 
 /// One repository: the sessions that are listed with the task each is on, and what the page
@@ -202,7 +206,7 @@ pub fn work(resident: &Resident) -> WorkState {
     } else {
         Vec::new()
     };
-    let repos = carriers(&unfinished(all, &finished))
+    let repos: Vec<WorkRepo> = carriers(&unfinished(all, &finished))
         .into_iter()
         .map(|(nwo, slugs)| {
             let mut carried = Vec::new();
@@ -227,10 +231,25 @@ pub fn work(resident: &Resident) -> WorkState {
             repo_of(nwo, carried)
         })
         .collect();
+    // Read in the background and only looked up here, so the document never waits for GitHub.
+    let mut owners: Vec<String> = Vec::new();
+    for repo in &repos {
+        let owner = repo
+            .nwo
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if repo.nwo.contains('/') && valid_login(&owner) && !owners.contains(&owner) {
+            owners.push(owner);
+        }
+    }
+    resident.owner_icons.want(&owners);
     WorkState {
         now: crate::infra::clock::now_secs(),
         rate_limits: rate_limits.unwrap_or_default(),
         repos,
+        owners: resident.owner_icons.look(&owners),
     }
 }
 

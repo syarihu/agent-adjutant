@@ -73,10 +73,14 @@ A unified 3-column operational view across all repositories:
 - **Middle Column**: The embedded tmux terminal of the currently selected session or hub. For a selected task, each of its open gates is a line over the terminal: a quick confirmation (`quick`) is answered right there, and any other opens the question card with 「開いて答える」.
 - **Right Column**: The task detail panel, aide pane, or AI review summary.
 
-#### Grouping Options
-Tasks in 「いまの仕事」 can be grouped by:
-- **親 Issue (Parent Issue)** [Default]: Organizes by Owner → Repository → Parent Issue → Task. Hubs and unparented tasks appear at the top.
-- **状態 (Status)**: Grouped into 新着 (New), 実行中 (Running), and そのほか (Others).
+#### Organisation, repository and hierarchy
+The left list shows one organisation (a GitHub owner) at a time:
+- **Organisation switch**: the avatar at the top of the sidebar. Its menu lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Following a link to a row of another organisation switches to it.
+- **Repository filter**: 「すべて」 or one repository of the organisation. With one chosen, the repository headings are left out.
+- **Hierarchy**: Repository → hub → sessions. A hub is a row heading its group; the tasks it runs are indented below it. A parent issue's hub shows the parent's number, title and `n / m マージ` progress.
+- **依頼する**: opens one dialog to ask a hub for a task: pick the repository (of the organisation) and the hub (the repository's own, or a parent task's), write what you want, and send it with 「渡す」 (Ctrl/⌘+Enter) or keep it with 「あとで（Backlog）」. An unsent text is kept for the next time. The new-task button and 「子タスクを足す」 open the same dialog; a board served alone keeps its own form.
+- **未読の依頼**: a hub row says how many requests it has not read, with the newest subject; a hub that is not running offers 「hub を起動」.
+- **片付ける**: a row whose PR is merged stays listed after its worker exits. Its last line gives the uncommitted files and unpushed commits that removing the worktree would lose (`確認しています…` while it reads, and no button if git cannot be read). Only when there is nothing to lose does it offer 「片付ける」; one press removes the worktree and its branch. If work turned up in between, nothing is removed and the cleanup dialog opens for the forced path.
 
 #### 新着 (New / Attention Required)
 Holds items waiting for your action:

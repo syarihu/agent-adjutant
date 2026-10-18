@@ -365,6 +365,7 @@ fn expected_hubs() -> Value {
         "name": "adjutant-acme-widget-898449509108182c",
         "oldestUnseenAt": "20260922T043000Z",
         "parent": false,
+        "requestsUnseen": 0,
         "seen": 0,
         "slug": "acme-widget-898449509108182c",
         "state": {
@@ -381,6 +382,7 @@ fn expected_hubs() -> Value {
         "key": "wid-957",
         "name": "adjutant-acme-widget-wid-957-5283c95d4f4cc314",
         "parent": true,
+        "requestsUnseen": 0,
         "seen": 0,
         "slug": "acme-widget-wid-957-5283c95d4f4cc314",
         "state": {
@@ -681,6 +683,8 @@ fn expected_parents() -> Value {
 fn expected_work() -> Value {
     let mut work = json!({
       "now": "<now>",
+      // The stub `gh` fails, so the owner is listed by name alone.
+      "owners": [{"login": "acme"}],
       "rateLimits": {
         "accounts": []
       },

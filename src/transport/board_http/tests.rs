@@ -1461,6 +1461,17 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "const PARENT_REF = 'parent:'",
         // 「ターミナルで話す」 goes to the middle terminal in this view.
         "if (view === 'work') return focusWorkTerm();",
+        // The organisation the page looks at: one API for every view that narrows itself to it.
+        "function currentOrg",
+        "function setCurrentOrg",
+        "const ORG_EVENT = 'adj:org'",
+        // The organisation switch, the place to ask for a task and the repository filter.
+        "id=\"org-switch\"",
+        "id=\"wk-req-btn\"",
+        "id=\"wk-repo-filter\"",
+        // 「依頼する」 and 「片付ける」 on a merged row.
+        "function openRequestDialog",
+        "data-wk-clean",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
@@ -1488,6 +1499,9 @@ fn the_page_has_the_work_view_and_no_review_queue() {
             && at("id=\"wk-groups\"") < at("id=\"task-panel\"")
     );
     assert!(!UI_HTML.contains("rail-global"));
+    // The list is one organisation's, by repository and hub: there is no grouping to choose.
+    assert!(!UI_HTML.contains("wk-group-menu"));
+    assert!(!UI_HTML.contains("data-wk-group"));
     // One width for both tabs: the sidebar's handle is the only one.
     assert!(!UI_HTML.contains("wk-list-resize"));
     // The panel has no terminal tab in this view.
@@ -1727,6 +1741,7 @@ mod others_drafts {
             terminals: Default::default(),
             pr_poll: Default::default(),
             waits: Default::default(),
+            owner_icons: Default::default(),
             work_cache: Default::default(),
             aide: Default::default(),
         }
