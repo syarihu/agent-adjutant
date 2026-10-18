@@ -26,7 +26,13 @@
       <span class="lbl">いまの仕事</span>
       <span class="rail-badge zero" id="work-new-count" title="新着の数">0</span>
     </button>
+    <button type="button" role="tab" class="side-tab" id="nav-todo" data-action="todo" aria-controls="todo-list" aria-selected="false" title="TODO" aria-label="TODO">
+      <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+      <span class="lbl">TODO</span>
+      <span class="rail-badge zero" id="todo-count" title="あなたの番の数">0</span>
+    </button>
   </div>
+  <div class="todo-pop" id="todo-pop" role="dialog" aria-label="あなたの番" hidden></div>
 
   <div class="rail-destinations" id="side-boards" role="tabpanel" aria-labelledby="side-tab-boards">
     <div class="rail-section-label rail-boards-label">ボード</div>
@@ -55,6 +61,8 @@
     <div class="wk-list-scroll" id="ov-scroll" hidden><div id="ov-groups"></div></div>
     <div class="wk-rate" id="wk-rate"></div>
   </section>
+
+  <section class="todo-list" id="todo-list" role="tabpanel" aria-labelledby="nav-todo" aria-label="あなたの番"></section>
 
   <div class="rail-footer">
     <div class="rail-tools">
@@ -212,6 +220,8 @@
         <button type="button" class="aide-peek" id="aide-peek" hidden></button>
       </section>
     </div>
+    <!-- What waits on the person: the list is in the sidebar (#todo-list), the selected question's card here (todo-view.js). -->
+    <div id="todo-view"><section class="todo-card" id="todo-card" aria-label="選んだ質問"></section></div>
   </main>
 
   <footer id="m3-bottom-sheet">

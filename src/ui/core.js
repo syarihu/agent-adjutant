@@ -123,7 +123,7 @@ function applyLayout() {
   const tools = document.getElementById('view-tools');
   if (tools) tools.hidden = view !== 'board';
   const tabsRow = document.getElementById('view-tabs-row');
-  if (tabsRow) tabsRow.hidden = view === 'work';
+  if (tabsRow) tabsRow.hidden = view !== 'board';
   document.querySelectorAll('[data-layout]').forEach(b => {
     const on = b.dataset.layout === prefs.layout;
     b.classList.toggle('active', on);
@@ -683,9 +683,17 @@ function minuteSessions(sessions, now, mode) {
 async function refresh(force = false) {
   // The work view's list is its own document; the selected board's state below is what the panel and
   // the terminal read, and there is none while nothing is selected.
+  // The TODO reads the same two documents, and the state of each board that has something waiting on the person.
+  if (view === 'todo') {
+    await Promise.all([refreshWork(force), refreshOthers(force)]);
+    await todoLoadBoards(force);
+    todoFollow();
+    return;
+  }
   if (view === 'work') {
-    refreshWork(force);
-    refreshOthers(force);
+    // The popover over the list follows the documents too.
+    if (todo.popOpen) Promise.all([refreshWork(force), refreshOthers(force)]).then(todoPoll);
+    else { refreshWork(force); refreshOthers(force); }
     // The aide is read only while its pane is on screen: each read runs a process check.
     if (!nav.task) refreshAide(force);
     // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).
@@ -777,7 +785,7 @@ function renderCounts() {
 
 /* The parts of the page, in the order `render` draws them and `resetViews` resets them. Each
    script registers its own parts at its end. */
-const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'question-dialog', 'layout'];
+const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'question-dialog', 'todo-view', 'layout'];
 const viewsByName = new Map();
 
 /* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets

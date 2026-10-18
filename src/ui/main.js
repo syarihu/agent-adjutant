@@ -30,23 +30,28 @@ function setView(v) {
   view = v;
   const boardView = document.getElementById('board-view');
   const workView = document.getElementById('work-view');
+  const todoView = document.getElementById('todo-view');
 
   if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
   if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
+  if (todoView) todoView.style.display = v === 'todo' ? 'flex' : 'none';
   document.body.classList.toggle('view-work', v === 'work');
+  document.body.classList.toggle('view-todo', v === 'todo');
+  // The TODO has no task panel of its own: the one left open on the board is closed.
+  if (v === 'todo' && selectedTaskId) hideTaskPanelState();
   // The middle terminal is not kept behind another view, and the row that was open is left.
   if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); disposeTermSlot(aideTerm); }
 
   // Navigation rail active states
-  // The sidebar's switch follows the view: 「いまの仕事」 is its own tab, every other view is ボード's.
-  for (const [id, on] of [['side-tab-boards', v !== 'work'], ['nav-work', v === 'work']])
+  // The sidebar's switch follows the view: 「いまの仕事」 and TODO are tabs of their own, every other view is ボード's.
+  for (const [id, on] of [['side-tab-boards', v !== 'work' && v !== 'todo'], ['nav-work', v === 'work'], ['nav-todo', v === 'todo']])
     document.getElementById(id)?.setAttribute('aria-selected', String(on));
   applyRailMode();
   applyLayout();
 
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
-    const want = v === 'board' ? (prefs.tab === 'human' ? 'human' : 'agent') : 'work';
+    const want = v === 'board' ? (prefs.tab === 'human' ? 'human' : 'agent') : v;
     if (nav.view !== want) {
       nav.view = want;
       if (want !== 'work' && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
@@ -63,6 +68,9 @@ function setView(v) {
     } else if (v === 'work') {
       pageTitle.textContent = 'いまの仕事';
       pageSub.textContent = '全リポジトリの動いている仕事。左で選び、中央で話し、右で判定する';
+    } else if (v === 'todo') {
+      pageTitle.textContent = 'TODO';
+      pageSub.textContent = 'あなたの番。すぐ答えられるものから';
     }
   }
 
@@ -74,6 +82,8 @@ function setView(v) {
   if (v === 'work') {
     renderWorkView();
     renderTaskPanel();
+  } else if (v === 'todo') {
+    todoFollow(true);
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     render();
@@ -112,7 +122,8 @@ function toggleTheme() {
 const ACTIONS = {
   'new-task': () => openForm(),
   work: () => { if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
-  boards: () => { if (view === 'work') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
+  todo: () => todoOpen(),
+  boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
   'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; if (prefs.railHidden) closeWorkGroupMenu(); applyLayout(); },
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
@@ -184,8 +195,7 @@ async function boot() {
   // The server holds no clock, so the page carries one: it asks, nothing pushes.
   setInterval(refresh, 2000);
   // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
-  refreshWork();
-  refreshOthers();
-  setInterval(() => { refreshBoards(); if (view !== 'work') { refreshWork(); refreshOthers(); } }, 10000);
+  Promise.all([refreshWork(), refreshOthers()]).then(todoPoll);
+  setInterval(() => { refreshBoards(); if (view !== 'work') Promise.all([refreshWork(), refreshOthers()]).then(todoPoll); }, 10000);
 }
 boot();

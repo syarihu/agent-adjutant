@@ -111,7 +111,7 @@ fn the_page_has_one_question_dialog_with_the_card_and_the_stack() {
         "function openQuestionDialog",
         "function questionDialogFollow",
         "registerView('question-dialog'",
-        "'task-panel', 'question-dialog', 'layout'",
+        "'task-panel', 'question-dialog', 'todo-view', 'layout'",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
@@ -1357,7 +1357,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 9);
+    assert_eq!(names.len(), 10);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1372,6 +1372,30 @@ fn the_views_register_themselves() {
     }
     // No registration outside the order (it would throw at load).
     assert_eq!(UI_HTML.matches("registerView('").count(), names.len());
+}
+
+#[test]
+fn the_page_has_the_todo_entry_popover_and_view() {
+    for piece in [
+        "id=\"nav-todo\"",
+        "data-action=\"todo\"",
+        "id=\"todo-pop\"",
+        "id=\"todo-list\"",
+        "id=\"todo-view\"",
+        "id=\"todo-count\"",
+    ] {
+        assert_eq!(UI_HTML.matches(piece).count(), 1, "{piece}");
+    }
+    // The list is made from the question card's pieces and the question sources, which are defined first.
+    let at = |piece: &str| {
+        assert_eq!(UI_HTML.matches(piece).count(), 1, "{piece}");
+        UI_HTML.find(piece).unwrap()
+    };
+    assert!(at("function questionCardHtml") < at("function todoItems"));
+    assert!(at("function todoItems") < at("function todoFollow"));
+    assert!(at("function registerQuestionSource") < at("function todoFollow"));
+    // The one place that narrows the TODO.
+    assert_eq!(UI_HTML.matches("const todoInScope").count(), 1);
 }
 
 #[test]

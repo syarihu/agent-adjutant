@@ -224,8 +224,9 @@ function questionCardArticleHtml(g, ctx = {}) {
 /* A question answered where it stands: the question in a line, the facts as chips, the choices (or the options) as buttons. The
    recommended choice is the filled one; with none recommended, the first. */
 function quickRowHtml(g, ctx = {}) {
-  // The whole question, not its first line: a quick row has no card to open for the rest.
-  const line = mdPlain(g.focus).trim() || mdPlain(g.title).trim();
+  // The whole question, not its first line: a quick row has no card to open for the rest. A list that has the card beside it
+  // (`ctx.firstLine`) shows the first line only.
+  const line = ctx.firstLine ? aideFocusLine(g.focus) || aideFocusLine(g.title) : mdPlain(g.focus).trim() || mdPlain(g.title).trim();
   const choices = g.choices || [];
   const lead = choices.findIndex(c => c.recommended);
   const buttons = choices.length
