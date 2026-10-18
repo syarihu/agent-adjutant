@@ -36,6 +36,7 @@ vm.runInContext([
   cut(/^const workCleanRowHtml = [^\n]*;/m),
   cut(/^const workCleanable = [^\n]*;/m),
   cut(/^function workCleanWant[\s\S]*?^}/m),
+  cut(/^function workCleanClicked[\s\S]*?^}/m),
   cut(/^async function workCleanUp[\s\S]*?^}/m),
 ].join('\n'), ctx);
 const run = (code, vars = {}) => { Object.assign(ctx, vars); return vm.runInContext(code, ctx); };
@@ -137,4 +138,19 @@ test('a second press while one is out is ignored', async () => {
   await run('workCleanUp(r)', { r: row() });
   assert.strictEqual(calls.length, 0);
   run('workClean.busy.clear()');
+});
+
+test('the button\'s click finds its row by the key it carries and cleans that one, on its own board; a dimmed button does nothing', async () => {
+  calls.length = 0;
+  run('workClean.git.clear(); workClean.busy.clear()');
+  const one = row(), two = row({ key: 'b2/t2', board: 'b2', s: { id: 's2', kind: 'worker', worktree: '/w/two' }, task: { id: 't2', prState: 'merged' } });
+  run('workClean.git.set("b1/s1", { at: 1, git: clean }); workClean.git.set("b2/s2", { at: 1, git: clean })');
+  reply = { removed: true };
+  const rowsByKey = new Map([[one.key, one], [two.key, two]]);
+  await run('workCleanClicked(b, rows)', { b: { dataset: { wkClean: 'b2/t2' }, disabled: false }, rows: rowsByKey });
+  assert.deepStrictEqual(plain(calls.filter(c => c[0] === 'api')), [['api', '/b/b2', '/api/sessions/s2/cleanup', 'POST', '{}']]);
+  calls.length = 0;
+  await run('workCleanClicked(b, rows)', { b: { dataset: { wkClean: 'b1/t1' }, disabled: true }, rows: rowsByKey });
+  await run('workCleanClicked(b, rows)', { b: { dataset: { wkClean: 'nowhere' }, disabled: false }, rows: rowsByKey });
+  assert.strictEqual(calls.length, 0);
 });

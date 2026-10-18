@@ -47,6 +47,8 @@ vm.runInContext([
   cut(/^function workTitleToolsHtml[\s\S]*?^}/m),
   cut(/^const WORK_RUNNING = [^\n]*;/m),
   cut(/^const workMerged = [^\n]*;/m),
+  cut(/^let workFollowedAddr = [^\n]*;/m),
+  cut(/^function workFollowOrg[\s\S]*?^}/m),
   cut(/^const workInShown = [^\n]*;/m),
   cut(/^function workNewShown[\s\S]*?^}/m),
   cut(/^function workReadAll\(\)[\s\S]*?^}/m),
@@ -841,4 +843,31 @@ test('what the list as shown counts and reads is the selected organisation\'s (a
   // Another organisation's new rows alone leave nothing to read in this list.
   ctx.orgScope = () => ({ current: 'zeta', known: new Set(['acme', 'beta', 'zeta']) });
   assert.strictEqual(run('workNewShown()'), 0);
+});
+
+test('the organisation follows the address when it moves, and an address cleared on purpose is one too', () => {
+  const sets = [];
+  const page = { work: { doc: {} }, nav: { board: 'b1', task: 't1' }, currentOrg: () => 'acme', setCurrentOrg: o => sets.push(o), orgOf: nwo => nwo.split('/')[0],
+    workSelected: () => ({ repo: { nwo: 'beta/x' } }) };
+  Object.assign(ctx, page);
+  ctx.workFollowedAddr = null;
+  run('workFollowedAddr = null');
+  // No document yet: nothing is recorded, so the next round looks again.
+  ctx.work = { doc: null };
+  run('workFollowOrg()');
+  assert.strictEqual(run('workFollowedAddr'), null);
+  ctx.work = { doc: {} };
+  run('workFollowOrg()');
+  assert.deepStrictEqual(sets, ['beta']);
+  // Choosing another organisation cleared the address; going back to the old one follows it again.
+  Object.assign(ctx, { nav: { board: 'all', task: null }, workSelected: () => null });
+  run('workFollowOrg()');
+  assert.strictEqual(run('workFollowedAddr'), 'all/null');
+  Object.assign(ctx, { nav: { board: 'b1', task: 't1' }, workSelected: () => ({ repo: { nwo: 'beta/x' } }) });
+  run('workFollowOrg()');
+  assert.deepStrictEqual(sets, ['beta', 'beta']);
+  // An address that does not resolve yet is left unrecorded.
+  Object.assign(ctx, { nav: { board: 'b9', task: 't9' }, workSelected: () => null });
+  run('workFollowOrg()');
+  assert.strictEqual(run('workFollowedAddr'), 'b1/t1');
 });

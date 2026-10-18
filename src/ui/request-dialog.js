@@ -49,6 +49,8 @@ function openRequestDialog({ parent = null, slug = null } = {}) {
   if (!multiBoard || dialogStack.has('request')) return;
   const live = boards.filter(b => !b.finished);
   if (!live.length) return note('依頼する', true, '依頼できるボードがありません');
+  // A child's parent is on one board, and the selects are not editable: no other hub may take it.
+  if (parent && !live.some(b => b.slug === slug)) return note('依頼する', true, '親タスクのボードがないため、子タスクを依頼できません');
   const here = currentOrg();
   const first = requestPickBoard(boards, { slug, navBoard: nav.board, inWork: view === 'work', org: here, workRepo: prefs.workRepo });
   const login = first ? orgOf(first.nwo) : here;

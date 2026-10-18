@@ -1216,8 +1216,12 @@ let workFollowedAddr = null;
 /* The address moved to a row of another organisation (a link, a notification, back or forward): the list follows it. Only when the
    address moved, so that choosing another organisation in its menu, which leaves the address where it was until it is cleared, is not undone. */
 function workFollowOrg() {
+  // Before the document is here nothing can be resolved, and an address not recorded is looked at again by the next round.
+  if (!work.doc) return;
   const addr = `${nav.board}/${nav.task}`;
   if (addr === workFollowedAddr) return;
+  // Nothing selected on purpose (the address was cleared, as choosing an organisation does): that is an address too, so going back to the old one follows it.
+  if (!nav.task || !nav.board || nav.board === 'all') { workFollowedAddr = addr; return; }
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (!nwo) return;
@@ -1365,8 +1369,7 @@ wk('wk-list').addEventListener('click', e => {
     return h && !b.disabled && readHubTitle(h, workHubBase(h.slug));
   }
   if ((b = e.target.closest('[data-wk-clean]'))) {
-    const r = work.rowsByKey.get(b.dataset.wkClean);
-    return r && !b.disabled && workCleanUp(r);
+    return workCleanClicked(b, work.rowsByKey);
   }
   if ((b = e.target.closest('[data-wk-start]'))) {
     const c = work.hubsByKey.get(b.dataset.wkStart);

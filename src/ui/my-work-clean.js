@@ -56,6 +56,12 @@ function workCleanWant(r) {
     e => done({ git: null, error: e.message || String(e) }));
 }
 
+/* A press on a row's button: the row is found by the key the button carries, in the rows as last drawn. */
+function workCleanClicked(button, rowsByKey) {
+  const r = rowsByKey.get(button.dataset.wkClean);
+  return r && !button.disabled && workCleanUp(r);
+}
+
 /* One press: the clean-up that refuses to lose anything, on the board the row belongs to. If work turned up since the read, the row
    says what and the dialog opens on the way past it; if it went through, the row is gone from the list. */
 async function workCleanUp(r) {
