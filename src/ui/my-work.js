@@ -1207,7 +1207,7 @@ function renderWorkTerm() {
             : !own ? '<div class="tp-muted">このボードにはこのセッションが見えないため、ターミナルを開けません</div>'
               : termPlaceholderHtml(own);
   setWorkTermPart('ph', ph, stopped ? workHubStoppedBlock(hub) : text);
-  renderWorkTermOverlays({ sel, own, task, hub, reading });
+  renderWorkTermOverlays({ sel, own, task, hub, reading, stopped });
   // Sized while it was hidden, which a terminal skips: asked again now that it has a size.
   if (revealed) workTerm.term?.fit();
   if (reading) renderTaskReadMiddle(task);

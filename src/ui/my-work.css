@@ -331,9 +331,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-ask-bar button .material-symbols-outlined, .qc-quick button[data-wk-fold] .material-symbols-outlined { color: inherit; }
 .wk-ask-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .wk-ask-scroll .qc { display: flex; flex-direction: column; }
-/* None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
+/* The foot is a `footer`, which shell.css holds to 96px and scrolls; the card's buttons need the room. None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
 .wk-ask-scroll .qc > * { flex: none; }
-.wk-ask-scroll .qc-foot { position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
+.wk-ask-scroll .qc-foot { max-height: none; overflow: visible; position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
 .wk-ask-scroll .qc-foot .gate-comment { width: 100%; min-height: 44px; max-height: 20vh; resize: vertical; }
 .wk-ask-scroll .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }
 .wk-ask-scroll .body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
@@ -348,7 +348,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-fab {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
-  font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; box-shadow: var(--md-elevation-2);
+  font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; box-shadow: var(--md-elevation-2); white-space: nowrap;
 }
 .wk-fab:hover:not(:disabled) { background: var(--md-sys-color-surface-container-highest); }
 .wk-fab.primary { background: var(--md-sys-color-primary); border-color: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }

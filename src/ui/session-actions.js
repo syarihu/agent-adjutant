@@ -140,6 +140,11 @@ function runSessionAction(act, s) {
       if ((state.hubs || []).some(x => x.id === s.id && hubStartingNow(x))) return showSessNotice('hub を起動しています');
       return sessAct('hub-start', `hub を起動 (${key})`, async () => {
         const data = await api(`/api/hubs/${id}/start`, { method: 'POST', body: '{}' });
+        // Until its record shows, the hub is coming up, not stopped: the same markers a reset sets (`hubStartingNow`).
+        const started = (state.hubs || []).find(x => x.id === s.id);
+        if (started && !data.alreadyRunning) {
+          if (!started.parent) repoHubStartedAt = Date.now(); else if (started.key) hubKeyStartedAt[started.key] = Date.now();
+        }
         const text = data.alreadyRunning ? 'hub はすでに動いています' : 'hub を tmux で起動しました';
         note(`hub を起動 (${key})`, false, text);
         showSessNotice(text);

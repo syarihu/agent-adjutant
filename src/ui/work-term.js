@@ -17,8 +17,13 @@ const WORK_SEND_ENTER_MS = 150;
    (U+0080 to U+009F) ranges, and DEL. A CR is dropped, so a CRLF is the line break alone. */
 const workSendableText = text => String(text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
 
-/* What is sent: the text as it may go in, with the line breaks around it dropped (a draft that ends in one would press Enter). */
-const workSendBody = text => workSendableText(text).replace(/^\n+|\n+$/g, '');
+/* What is sent: the text as it may go in, with the lines around it that hold nothing dropped (a draft that ends in a line break would press Enter). */
+const workSendBody = text => workSendableText(text).replace(/^(?:[ \t]*\n)+/, '').replace(/(?:\n[ \t]*)+$/, '');
+
+/* The most a send carries, in UTF-8 bytes. The server drops a connection that sends a message over 1 MiB (`MAX_MESSAGE` in
+   src/infra/ws.rs), and xterm sends a paste as one message, so a send is kept well under it. */
+const WORK_SEND_MAX_BYTES = 512 * 1024;
+const workSendTooLong = text => new TextEncoder().encode(text).length > WORK_SEND_MAX_BYTES;
 
 /* The gates that slide down over the terminal of what is selected. For a task, the ones it owns, on its board and not answered
    here; for a hub, or a session with no task, `sessGates` (what it waits on, which the page reads only for a session of the board
@@ -54,15 +59,15 @@ function workAskFormHtml(g, key, ctx, draft) {
 
 /* What slides down: the start check first (a form, or its one line when its key is in `folded`), then a line for each of the rest,
    which a quick question answers where it stands and any other opens as a card. `ctxOf` gives a gate's card context, `keyOf` its
-   key, `draftOf` the comment typed for a key. */
-function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(), draftOf = () => '' } = {}) {
+   key, `draftOf` the comment typed for a key; `foldAll` draws the start check as its one line whatever `folded` says. */
+function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(), draftOf = () => '', foldAll = false } = {}) {
   const form = (gates || []).find(g => workIsStartCheck(g, hub));
   const rest = (gates || []).filter(g => g !== form);
   let html = '';
   if (form) {
     const key = keyOf(form);
     const draft = draftOf(key) || '';
-    html += folded.has(key) ? workAskFoldedHtml(form, key, draft) : workAskFormHtml(form, key, ctxOf(form), draft);
+    html += foldAll || folded.has(key) ? workAskFoldedHtml(form, key, draft) : workAskFormHtml(form, key, ctxOf(form), draft);
   }
   return html + questionStripHtml(rest, ctxOf);
 }

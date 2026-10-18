@@ -8,6 +8,9 @@
 const workAskFolded = new Set();
 /* A redraw of the questions waits while a comment box in them has the focus (checklist: no redraw while typing). */
 let workAskHeld = false;
+/* What the held draw was for (`workAskSubject`): a hold is dropped when the selection moved, or the old question would stay over the new terminal. */
+let workAskDrawnFor = null;
+const workAskSubject = () => `${nav.board}/${nav.task}`;
 /* What was written in 「書いて送る」 and not sent, by `${board}/${session id}`; kept while the page is. A page reload does not keep it. */
 const workSendDrafts = new Map();
 
@@ -30,11 +33,12 @@ function workTermAskGates(task, own, hub) {
 function drawWorkAsk(html) {
   const el = workAskEl();
   if (!el) return;
-  if (workTermPart.ask !== undefined && workTermPart.ask !== html && workCommentFocused()) {
+  if (workTermPart.ask !== undefined && workTermPart.ask !== html && workCommentFocused() && workAskDrawnFor === workAskSubject()) {
     workAskHeld = true;
     return;
   }
   workAskHeld = false;
+  workAskDrawnFor = workAskSubject();
   const arriving = !workTermPart.ask && !!html;
   // A redraw replaces the button that was pressed: the focus goes back to the fold button of the same question.
   const foldKey = el.contains(document.activeElement) ? document.activeElement.closest?.('[data-wk-fold]')?.dataset.wkFold : null;
@@ -64,11 +68,15 @@ function drawWorkFabs(own, hub, reading) {
 }
 
 /* Called by `renderWorkTerm` once the head, the bar and the terminal are in place. */
-function renderWorkTermOverlays({ own, task, hub, reading }) {
+function renderWorkTermOverlays({ own, task, hub, reading, stopped = false }) {
   const gates = reading ? [] : workTermAskGates(task, own, hub);
+  // Over a stopped hub the start check is one line, so the block with 「hub を起動」 under it is in reach.
   drawWorkAsk(workTermAskHtml(gates, {
-    ctxOf: questionCtxOf, keyOf: gateKey, hub: !!hub, folded: workAskFolded, draftOf: key => questionDrafts.get(key) || '',
+    ctxOf: questionCtxOf, keyOf: gateKey, hub: !!hub, folded: workAskFolded, draftOf: key => questionDrafts.get(key) || '', foldAll: stopped,
   }));
+  // What the placeholder says starts below what slides down over it.
+  const ph = wk('wk-term-ph');
+  ph.style.paddingTop = !ph.hidden && workAskEl().offsetHeight ? `${workAskEl().offsetHeight + 12}px` : '';
   drawWorkFabs(own, hub, reading);
   // Only the count is announced: the questions themselves are read where they are, and a redraw must not read the form out again.
   setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : '');
@@ -226,6 +234,7 @@ async function workSend(layerEl, withEnter) {
   const box = layerEl.querySelector('.wk-send-text');
   const text = workSendBody(box.value);
   if (!text.trim()) return note('ターミナルに送る', true, '送る内容が空です');
+  if (workSendTooLong(text)) return note('ターミナルに送る', true, `長すぎるため送りませんでした（上限は ${WORK_SEND_MAX_BYTES / 1024} KiB）。下書きは残してあります`);
   const term = workTerm.term;
   if (!term || workTerm.board !== target.board || workTerm.sessionId !== target.sessionId) {
     return note('ターミナルに送る', true, '開いたときのセッションのターミナルではなくなったため、送りませんでした。下書きは残してあります');

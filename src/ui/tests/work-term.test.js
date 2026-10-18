@@ -27,7 +27,7 @@ run(cut(read('session-actions.js'), /^const actionButtonHtml = [^\n]*\n[^\n]*\n[
 run(read('question-card.js'), 'question-card.js');
 run(read('work-term.js'), 'work-term.js');
 const api = vm.runInContext(
-  '({ workSendableText, workSendBody, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
+  '({ workSendableText, workSendBody, workSendTooLong, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
 
 const keyOf = g => `s/${g.id}`;
 const ctxOf = g => ({ task: null, nwo: 'acme/widget', key: keyOf(g), issue: { number: '', url: '', hasBody: false } });
@@ -163,5 +163,17 @@ test('the stopped-hub block covers a hub with no process, also over a terminal t
 
 test('what is sent has the line breaks around it dropped, and the ones inside kept', () => {
   assert.equal(api.workSendBody('\n\nfirst\nsecond\n\n'), 'first\nsecond');
-  assert.equal(api.workSendBody('\n \n'), ' ');
+  assert.equal(api.workSendBody('\n \n'), '');
+  assert.equal(api.workSendBody(' \t\n  indented\nnext  \n \n'), '  indented\nnext  ');
+});
+
+test('a send over the cap is too long, counted in UTF-8 bytes', () => {
+  assert.equal(api.workSendTooLong('a'.repeat(512 * 1024)), false);
+  assert.equal(api.workSendTooLong('a'.repeat(512 * 1024 + 1)), true);
+  assert.equal(api.workSendTooLong('あ'.repeat(180000)), true);
+});
+
+test('the start check of a stopped hub is drawn as its one line whatever was folded', () => {
+  const html = api.workTermAskHtml([dispatch], { ctxOf, keyOf, hub: true, foldAll: true });
+  assert.ok(html.includes('wk-ask-folded') && !html.includes('wk-ask-form'));
 });
