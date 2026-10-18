@@ -266,10 +266,25 @@ function cleanupFactsHtml(s, git) {
   return items.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join('');
 }
 
-async function openCleanupDialog(s) {
+/* The words for a clean-up that went through: what was removed, and whether any part of it needs the person's eye. Shared by the
+   dialog and by 「片付ける」 on a row of the list. */
+function cleanupSummary(data) {
+  const branch = data.branch?.name
+    ? (data.branch.deleted ? `ブランチ ${data.branch.name} も削除しました` : `ブランチ ${data.branch.name} は消せませんでした: ${data.branch.error}`) : '';
+  const badHooks = (data.hooks || []).filter(h => !h.ok).length;
+  const text = ['worktree を片付けました', branch, (data.tasks || []).length ? `タスク ${data.tasks.length} 件を完了にしました` : '',
+    badHooks ? `onWorktreeRemove が ${badHooks} 件失敗しました` : '', (data.taskErrors || []).length ? 'タスクの更新に失敗したものがあります' : '']
+    .filter(Boolean).join('。');
+  const bad = !!branch && !data.branch.deleted || badHooks > 0 || (data.taskErrors || []).length > 0;
+  return { text, bad };
+}
+
+/* `base` is the board the session belongs to: the page's own, or, from the list of the work, the row's. `blocked` is for a clean-up
+   that was already refused: the way past it (typing the name) is open at once. */
+async function openCleanupDialog(s, base = BASE, { blocked = false } = {}) {
   if (restartingNow(s)) return note('再起動しています。終わってから操作してください', true);
   const name = baseName(s.worktree) || s.id;
-  cleanupTarget = { s, name };
+  cleanupTarget = { s, name, base };
   sessEl('cleanup-name').textContent = name;
   sessEl('cleanup-path').textContent = s.worktree;
   sessEl('cleanup-force-name').textContent = name;
@@ -280,13 +295,14 @@ async function openCleanupDialog(s) {
   const force = sessEl('cleanup-force');
   force.hidden = true;
   force.open = false;
-  cleanupError('');
+  cleanupError(blocked ? '失われる作業があるため、削除しませんでした。' : '');
+  if (blocked) { force.hidden = false; force.open = true; }
   sessEl('cleanup-facts').innerHTML = '<li>確認しています…</li>';
   const dialog = sessEl('cleanup-dialog');
   dialog.returnValue = '';
   dialog.showModal();
   try {
-    const git = await api(`/api/sessions/${enc(s.id)}/git`);
+    const git = await boardApi(base, `/api/sessions/${enc(s.id)}/git`);
     if (cleanupTarget?.s !== s) return;
     sessEl('cleanup-facts').innerHTML = cleanupFactsHtml(s, git);
   } catch (e) {
@@ -310,7 +326,7 @@ async function runCleanup(forced) {
   sessEl('cleanup-force-run').disabled = true;
   cleanupError('');
   try {
-    const data = await api(`/api/sessions/${enc(t.s.id)}/cleanup`, {
+    const data = await boardApi(t.base, `/api/sessions/${enc(t.s.id)}/cleanup`, {
       method: 'POST', body: JSON.stringify(forced ? { force: true, confirm: sessEl('cleanup-confirm').value } : {}),
     });
     if (!data.removed) {
@@ -324,15 +340,10 @@ async function runCleanup(forced) {
       return;
     }
     sessEl('cleanup-dialog').close('done');
-    const branch = data.branch?.name
-      ? (data.branch.deleted ? `ブランチ ${data.branch.name} も削除しました` : `ブランチ ${data.branch.name} は消せませんでした: ${data.branch.error}`) : '';
-    const badHooks = (data.hooks || []).filter(h => !h.ok).length;
-    const text = ['worktree を片付けました', branch, (data.tasks || []).length ? `タスク ${data.tasks.length} 件を完了にしました` : '',
-      badHooks ? `onWorktreeRemove が ${badHooks} 件失敗しました` : '', (data.taskErrors || []).length ? 'タスクの更新に失敗したものがあります' : '']
-      .filter(Boolean).join('。');
-    const bad = !!branch && !data.branch.deleted || badHooks > 0 || (data.taskErrors || []).length > 0;
+    const { text, bad } = cleanupSummary(data);
     note(line, bad, text);
     showSessNotice(text, bad);
+    if (multiBoard) refreshWork(true);
     await refresh();
   } catch (e) {
     cleanupError(e.message);

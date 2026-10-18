@@ -1469,6 +1469,9 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "id=\"org-switch\"",
         "id=\"wk-req-btn\"",
         "id=\"wk-repo-filter\"",
+        // 「依頼する」 and 「片付ける」 on a merged row.
+        "function openRequestDialog",
+        "data-wk-clean",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }

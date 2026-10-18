@@ -23,7 +23,7 @@ const ctx = vm.createContext({
   boards: [],
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
-  sessionState: s => s.waiting && !s.went ? 'waiting' : s.state, gateFirst: s => !!s.waiting && !s.went, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:',
+  sessionState: s => s.waiting && !s.went ? 'waiting' : s.state, gateFirst: s => !!s.waiting && !s.went, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:', nav: { task: null }, workCleanable: () => false, workCleanRowHtml: () => '',
   workRepos: () => [], SESS_REF: 'sess:', work: { doc: null }, esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
   // What a row's own markup reads from the page's other files.
   sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, agentStateOf: () => 'working',
@@ -56,6 +56,7 @@ vm.runInContext([
   cut(/^function workSegments[\s\S]*?^}/m),
   cut(/^const workParentName = [^\n]*;/m),
   cut(/^function workParentMeta[\s\S]*?^}/m),
+  cut(/^function workParentOpenHtml[\s\S]*?^}/m),
   cut(/^function workRequestsHtml[\s\S]*?^}/m),
   cut(/^function workHubStartButtonHtml[\s\S]*?^}/m),
   cut(/^function workRowOrder[\s\S]*?^}/m),
@@ -769,4 +770,28 @@ test('a poll that only changes words does not change the shape, and a hub that h
   assert.strictEqual(shape(mk(null, h)), shape(mk('new', { ...h, cls: 'new' })));
   assert.notStrictEqual(shape(mk(null, h)), shape(mk(null, null)));
   assert.notStrictEqual(shape(mk(null, h)), shape(mk(null, { key: 'h2' })));
+});
+
+test('the new rows inside a folded group are not in the order 「処理したら次へ」 walks, but the group\'s head is', () => {
+  const mk = (id, cls) => ({ key: id, id, cls, st: 'waiting', s: {} });
+  const tree = [{ key: 'repo:a', kind: 'repo', items: [
+    { key: 'g1', kind: 'hub', head: mk('h1', 'new'), items: [{ row: mk('t1', 'new'), place: 'tree' }] },
+    { key: 'g2', kind: 'hub', head: mk('h2', null), items: [{ row: mk('t2', 'new'), place: 'tree' }] },
+  ] }];
+  const order = folded => plain(run('workNewOrder(tree, folded)', { tree, folded: new Set(folded) }));
+  assert.deepStrictEqual(order([]), ['h1', 't1', 't2']);
+  assert.deepStrictEqual(order(['g1']), ['h1', 't2']);
+  assert.deepStrictEqual(order(['repo:a']), []);
+});
+
+test('a parent\'s hub head has a button of its own to the parent\'s overview, beside the row and not inside it', () => {
+  const node = { key: 'parent:a/#2', kind: 'parent', parent: { key: '#2', number: 2, title: 'Ship it' }, rows: [], items: [], hubs: [], head: chip('p1', true, '#2', 'b-p1') };
+  const head = run('workHeadHtml(node, false)', { node });
+  assert.ok(head.includes('data-wk-parent="#2"') && head.includes('aria-label="親タスクの概要（#2 Ship it）"'));
+  assert.ok(!head.includes('wk-row'));
+  const current = run('workHeadHtml(node, false)', { node: { ...node, parent: { ...node.parent } }, });
+  assert.ok(!current.includes('aria-current'));
+  const none = (extra, kind = 'parent') => run('workHeadHtml(node, false)', { node: { ...node, kind, parent: { ...node.parent, ...extra } } });
+  assert.ok(!none({ missing: true }).includes('data-wk-parent'));
+  assert.ok(!none({}, 'hub').includes('data-wk-parent'));
 });

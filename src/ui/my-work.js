@@ -728,11 +728,13 @@ function workItemHtml(r, place, named = false, parent = null) {
   const cellKey = `${place}/${r.key}`;
   const cell = ` data-wk-cell="${esc(cellKey)}"`;
   const hub = r.isHub && !r.turn;
-  if (!band && !hub) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
+  // A merged row has the line of 「片付ける」 under it, with its button: a sibling of the row button, so the row is wrapped.
+  const clean = workCleanable(r);
+  if (!band && !hub && !clean) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
   const acts = (band ? act('data-wk-aide', 'support_agent', '副官に聞く') + act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + workHubStartButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
   const row = r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', band, named, parent);
-  return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${hub ? workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
+  return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}${clean ? ' wk-clean-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${clean ? workCleanRowHtml(r) : ''}${hub ? workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
 }
 
 /* How many rows are in each state, for a header that is folded. */
@@ -822,6 +824,15 @@ function workTitleToolsHtml(p) {
   return `<span class="hub-title-tools">${hubTitleMarkHtml(h, false)}${hubTitleReadButtonHtml(h, workHubBase(h.slug))}${hubTitleWhyHtml(h)}</span>`;
 }
 
+/* The button on the hub that heads a parent's group that opens the parent's overview, which the parent's own heading used to open. A
+   sibling of the hub's row (a button is not put inside another); none for a group that is not a parent's or whose parent the document does not list. */
+function workParentOpenHtml(node) {
+  if (node.kind !== 'parent' || node.parent.missing) return '';
+  const label = `親タスクの概要（${workParentName(node.parent)}）`;
+  const current = nav.task === PARENT_REF + node.parent.key;
+  return `<button type="button" class="wk-act wk-parent-open" data-wk-parent="${esc(node.parent.key)}"${current ? ' aria-current="true"' : ''} aria-label="${esc(label)}" title="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span></button>`;
+}
+
 /* A node's header. A folded one says how many rows are in each state, and shows the hubs it runs as chips (opened, they are rows below). */
 function workHeadHtml(node, folded) {
   const sum = folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : '';
@@ -830,7 +841,7 @@ function workHeadHtml(node, folded) {
   // A count of task rows: a heading with none says nothing.
   const count = node.rows.length ? `<span class="wk-count">${node.rows.length}</span>` : '';
   // A group the hub heads has the hub's row for a heading: this is the fold button and the count, and, while it is folded, how many rows are in each state.
-  if (node.head) return `${fold(node.key, node.kind === 'parent' ? workParentName(node.parent) : 'hub')}${folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : ''}${count}`;
+  if (node.head) return `${fold(node.key, node.kind === 'parent' ? workParentName(node.parent) : 'hub')}${folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : ''}${count}${workParentOpenHtml(node)}`;
   if (node.kind === 'parent') {
     const p = node.parent;
     const segs = workSegments(p);
@@ -886,6 +897,7 @@ const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.d
   : el?.dataset?.wkAideAll != null ? '[data-wk-aide-all]'
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
+  : el?.dataset?.wkClean != null ? `[data-wk-clean="${CSS.escape(el.dataset.wkClean)}"]`
   : el?.dataset?.wkStart != null ? `[data-wk-start="${CSS.escape(el.dataset.wkStart)}"]`
   : el?.dataset?.wkWake != null ? `[data-wk-wake="${CSS.escape(el.dataset.wkWake)}"]`
   : el?.dataset?.hubTitleRead != null ? `[data-hub-title-read="${CSS.escape(el.dataset.hubTitleRead)}"]`
@@ -919,13 +931,14 @@ function workSwapHead(head, html) {
   if (held) head.querySelector(held)?.focus({ preventScroll: true });
 }
 
-/* The ids of the new rows in the order the tree draws them: a group's head, then what is under it. */
-function workNewOrder(items) {
+/* The ids of the new rows in the order the tree draws them: a group's head, then what is under it. What is inside a folded group is
+   not drawn, so 「処理したら次へ」 does not open it: the person could not see where they were taken. */
+function workNewOrder(items, folded = new Set()) {
   const out = [];
   for (const it of items) {
     if (it.row) { if (it.row.cls === 'new') out.push(it.row.id); continue; }
     if (it.head?.cls === 'new') out.push(it.head.id);
-    out.push(...workNewOrder(it.items));
+    if (!folded.has(it.key)) out.push(...workNewOrder(it.items, folded));
   }
   return out;
 }
@@ -966,8 +979,10 @@ function drawWorkList() {
   // A hub is the chip's object wherever it is drawn: the session row `workRows` made of it is left out, so a key has one object.
   const listed = [...rows, ...turns].filter(r => !r.isHub);
   const tree = workTreeByParent(listed, chipsByRepo, repos, { headings: !choice });
-  work.newOrder = workNewOrder(tree);
   const folded = new Set(prefs.workFolded);
+  work.newOrder = workNewOrder(tree, folded);
+  // A merged row's git state is read in the background, a minute at a time; the list is drawn again with each answer.
+  for (const r of listed) if (workCleanable(r)) workCleanWant(r);
   const cells = new Map();
   const rowsByKey = new Map();
   // A poll that failed after one that worked, and a repository none of whose boards could be read: said above
@@ -1323,11 +1338,15 @@ wk('wk-list').addEventListener('click', e => {
     const h = workHubOfSlug(b.dataset.hubTitleRead);
     return h && !b.disabled && readHubTitle(h, workHubBase(h.slug));
   }
+  if ((b = e.target.closest('[data-wk-clean]'))) {
+    const r = work.rowsByKey.get(b.dataset.wkClean);
+    return r && !b.disabled && workCleanUp(r);
+  }
   if ((b = e.target.closest('[data-wk-start]'))) {
     const c = work.hubsByKey.get(b.dataset.wkStart);
     return c && !b.disabled && workHubStart(c);
   }
-  if ((b = e.target.closest('#wk-req-btn'))) return typeof openRequestDialog === 'function' ? openRequestDialog() : undefined;
+  if ((b = e.target.closest('#wk-req-btn'))) return openRequestDialog();
   if ((b = e.target.closest('[data-wk-hub]'))) {
     const c = work.hubsByKey.get(b.dataset.wkHub);
     return c && selectWorkRow(c);

@@ -915,6 +915,8 @@ function handedNote(handed) {
    the request instead of being left for the hub to read out of the text. */
 let formParent = null;
 function openForm() {
+  // One place to ask where there is more than one board: 「依頼する」 (request-dialog.js). A board served alone keeps this form.
+  if (multiBoard) return openRequestDialog();
   if (noBoard() && !boards.some(b => !b.finished)) return note('新しいタスク', true, '作り先のボードがありません');
   // 「すべて」 has no board of its own to create the task in: ask which. A request lands in one hub's
   // inbox and each hub turns away other repositories, so nothing else could route it.
@@ -933,6 +935,7 @@ function openForm() {
 /* The new-task form for a child of the parent at `parentUrl`, shown read-only and sent with the
    request. `slug` is the board the parent's task is on, which 「すべて」 would otherwise ask about. */
 function openChildForm(parentUrl, slug) {
+  if (multiBoard) return openRequestDialog({ parent: parentUrl, slug });
   openForm();
   const form = document.getElementById('form');
   if (!form.open) return;
