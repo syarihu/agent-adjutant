@@ -70,8 +70,11 @@ The sidebar has three tabs: **ボード (Board)**, **いまの仕事 (Work under
 
 A unified 3-column operational view across all repositories:
 - **Left Column**: The list of active sessions, hubs, gates, and review requests.
-- **Middle Column**: The embedded tmux terminal of the currently selected session or hub. For a selected task, each of its open gates is a line over the terminal: a quick confirmation (`quick`) is answered right there, and any other opens the question card with 「開いて答える」.
-- **Right Column**: The task detail panel, aide pane, or AI review summary.
+- **Middle Column**: The embedded tmux terminal of the currently selected session or hub, under a pinned heading: the title, the branch and agent, the Issue and PR links, and buttons at the right end (「タスク詳細」, 「IDE」 and 「セッションを閉じる」 for a task's worker; 「hub の詳細」 for a hub). Everything below is laid over the terminal and takes no room from it, so a question coming or going never resizes the terminal.
+  - **Questions** slide down over the terminal's top. A quick confirmation (`quick`) is answered in its line; any other is one line with 「開いて答える」, which opens the question card. A hub's start check (a `dispatch` question that is not quick) is a form over the top half of the terminal, with its answer buttons always in view; it folds to one line.
+  - **Two buttons at the bottom right.** 「最後のメッセージ」 shows the agent's last message as rendered Markdown (the whole text when the board still has it). 「書いて送る」 opens a wide box; its text is pasted into the terminal as one paste, and 「送ったら Enter も押す」 presses Enter after it (⌘Enter or Ctrl+Enter sends). The draft is kept per session while the page is open. A text with several lines is refused when the program in the terminal has not asked for bracketed paste, since each line would be submitted.
+  - **A hub** has no right column here: its status and counts are one line in the heading, and 「hub の詳細」 opens the rest (queue, inbox, idle worktrees, actions) in a dialog. A stopped hub shows 「hub を起動」 over its terminal.
+- **Right Column**: The task detail panel, aide pane, or AI review summary. Not shown for a hub.
 
 #### Organisation, repository and hierarchy
 The left list shows one organisation (a GitHub owner) at a time:

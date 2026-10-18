@@ -2,8 +2,9 @@
    Opens a waiting gate as a card, keeps it in step with the page's state while it is open, opens the full diff, the Issue body and
    the report over it as further layers, and answers through `answerGate` and `closeGateOf`, as the aide's display area does: not through
    `bindDecide`, whose comment box is looked up in the task panel and the 「拡大」 dialog. The card is also answered where it stands: a quick
-   question over the terminal in 「いまの仕事」 (a strip under the heading), and a heavy one is opened from there. The task panel's tabs
-   and the 「拡大」 dialog keep their own answer area until the card replaces it there. Loaded after dialog-stack.js and before my-work.js. */
+   question over the terminal in 「いまの仕事」 (it slides down over the terminal's top: work-term-view.js), and a heavy one is opened
+   from there. The task panel's tabs and the 「拡大」 dialog keep their own answer area until the card replaces it there. Loaded after
+   dialog-stack.js and before my-work.js. */
 
 /* What was typed in a card's comment box and not sent, by `gateKey`; kept while the page is. */
 const questionDrafts = new Map();
@@ -191,17 +192,6 @@ questionDialogEl().addEventListener('input', e => {
   const key = box?.closest('[data-qc-gate]')?.dataset.qcGate;
   if (!key) return;
   if (box.value) questionDrafts.set(key, box.value); else questionDrafts.delete(key);
-});
-
-/* A quick question is answered over the terminal; a heavy one is opened from its line. */
-document.getElementById('wk-term-head').addEventListener('click', e => {
-  const open = e.target.closest('[data-qc-open-gate]');
-  if (open) {
-    const g = questionLive(open.dataset.qcOpenGate);
-    return g ? openQuestionDialog(g, { opener: open }) : note('開く', true, 'この質問は、もう待っていません');
-  }
-  const b = e.target.closest('.qc-quick .pick[data-choice], .qc-quick [data-act]');
-  if (b && !b.disabled) questionAct(b);
 });
 
 /* ── Following the page ── */

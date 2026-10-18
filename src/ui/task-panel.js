@@ -263,7 +263,8 @@ function renderTaskPanelNow() {
   if (gone && view !== 'work') return dismissTaskPanel();
   // Until the board has answered once, what it lacks is not known to be missing.
   if (gone && state.now == null) return;
-  const shown = (!!(task || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work');
+  // In the work view a hub has no right column: its heading over the terminal has its status, and 「hub の詳細」 the rest.
+  const shown = (!!(task || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work') && !(view === 'work' && hub);
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop());
@@ -680,16 +681,21 @@ function hubTermWhy(h, s) {
 // The work view has the terminal in the middle, so the panel has no such tab there.
 const hubPaneOf = (h, s) => nav.pane === 'term' && view !== 'work' && !hubTermWhy(h, s) ? 'term' : 'detail';
 
-function hubPanelHeadHtml(h, s) {
-  const row = hubRowOf(h);
-  const since = sinceLabel(row?.hubLastAlive);
-  const [pillText, pillCls] = hubRestartPending(h) ? ['再起動しています…', 'pill-neutral']
+/* The hub's state as the pill says it: [text, class]. */
+function hubStatusOf(h, s) {
+  const since = sinceLabel(hubRowOf(h)?.hubLastAlive);
+  return hubRestartPending(h) ? ['再起動しています…', 'pill-neutral']
     : hubStartingNow(h) ? ['起動しています…', 'pill-neutral']
     : !s.present ? [`停止中${since ? ` · ${since}` : ''}`, 'pill-err']
     : s.waiting ? ['入力待ち', 'pill-warn']
     : sessionState(s) === 'permission' ? [permissionLabel(s), 'pill-warn']
     : sessionState(s) === 'unknown' ? [STATE_LABEL.unknown, STATE_PILL.unknown]
     : ['稼働中', 'pill-good'];
+}
+
+function hubPanelHeadHtml(h, s) {
+  const row = hubRowOf(h);
+  const [pillText, pillCls] = hubStatusOf(h, s);
   const origin = row ? boardName(row) : repoName();
   const nwo = row?.nwo || state.repo || '';
   const title = h.parent ? `親タスク hub — ${[h.key, h.title].filter(Boolean).join(' ') || '（キー不明）'}`
@@ -759,6 +765,21 @@ function openIdleWorktree(id) {
 
 /* No maxWorkers means no cap: say so rather than print 「/ null」. */
 const workerSlotsText = w => w.max == null ? `${w.busy || 0} 稼働（上限なし）` : `${w.busy || 0} / ${w.max} 稼働`;
+/* What a hub has in hand, as [[label, value]]: the page's own board is read from its state, another board's from its row in the
+   list. */
+function hubCountsOf(h) {
+  const other = hubOther(h);
+  const row = hubRowOf(h);
+  const queued = other ? row?.queued : (state.tasks || []).filter(t => t.status === 'queued').length;
+  const counts = [];
+  if (!other && state.workerSlots) counts.push(['worker', workerSlotsText(state.workerSlots)]);
+  else if (other && row) counts.push(['作業中', `${row.working || 0} 件`]);
+  if (!other) counts.push(['あなたの確認待ち', `${waitingIn()} 件`]);
+  else if (row) counts.push(['あなたの確認待ち', `${row.waiting || 0} 件`]);
+  if (queued != null) counts.push(['待ちキュー', `${queued} 件`]);
+  counts.push(['受信箱', `${h.inboxCount || 0} 件`]);
+  return counts;
+}
 function hubDetailHtml(h, s) {
   const other = hubOther(h);
   const row = hubRowOf(h);
@@ -776,17 +797,8 @@ function hubDetailHtml(h, s) {
   const pend = sessionPendingRows().filter(p => p.hubId === h.id);
   if (pend.length) html += `<div class="m3-filled-card">${secTitle('起動を依頼中')}${pend.map(pendingRowHtml).join('')}</div>`;
 
-  // The page's own board is read from its state; another board's from its row in the list.
   const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
-  const queued = other ? row?.queued : line.length;
-  const counts = [];
-  if (!other && state.workerSlots) counts.push(kv('worker', workerSlotsText(state.workerSlots)));
-  else if (other && row) counts.push(kv('作業中', `${row.working || 0} 件`));
-  if (!other) counts.push(kv('あなたの確認待ち', `${waitingIn()} 件`));
-  else if (row) counts.push(kv('あなたの確認待ち', `${row.waiting || 0} 件`));
-  if (queued != null) counts.push(kv('待ちキュー', `${queued} 件`));
-  counts.push(kv('受信箱', `${h.inboxCount || 0} 件`));
-  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${counts.join('')}</div>${agentFactsHtml(s)}</div>`;
+  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${hubCountsOf(h).map(([label, value]) => kv(label, value)).join('')}</div>${agentFactsHtml(s)}</div>`;
 
   // Only the page's own board has its tasks to name; another board's are read on its own page.
   if (!other) {
@@ -907,7 +919,8 @@ function disposeTermSlot(slot) {
   Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, endReason: null, reconnect: false });
 }
 
-function termBarHtml(s, slot = panelTerm, actions = true) {
+/* `omit` names the session buttons (`act`) left out of the bar, for ones the page draws elsewhere. */
+function termBarHtml(s, slot = panelTerm, actions = true, omit = []) {
   if (!s || !hasSession(s)) return '';
   const st = sessionState(s);
   const last = s.present ? lastOutputText(s) : null;
@@ -918,7 +931,7 @@ function termBarHtml(s, slot = panelTerm, actions = true) {
     + `<span class="tp-bar-gap"></span>`
     + (reset ? actionButtonHtml(reset) : '')
     + (again ? '<button type="button" class="btn-m3-tonal sess-act" data-tp-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>' : '')
-    + (actions ? sessionButtons(s).bar.map(b => actionButtonHtml(b)).join('') : '');
+    + (actions ? sessionButtons(s).bar.filter(b => !omit.includes(b.act)).map(b => actionButtonHtml(b)).join('') : '');
 }
 
 /* Over the host while there is no terminal in it: why not, and the last screen if this page saw

@@ -219,7 +219,14 @@
         <div class="wk-term-head" id="wk-term-head"></div>
         <div class="tp-pane tp-term wk-term-pane" id="wk-term-pane" role="tabpanel" aria-labelledby="wk-mid-tab-task">
           <div class="tp-term-bar" id="wk-term-bar"></div>
-          <div class="tp-term-host" id="wk-term-host"></div>
+          <!-- The stage is the terminal's own place: what is laid over it sits beside the host, never in it (the terminal clears its host
+               when it goes) and never in the flow above it, so a question coming or going does not resize the terminal (work-term-view.js).
+               #wk-term-ask slides down from its top edge; #wk-term-fabs holds the two buttons at its bottom right. -->
+          <div class="wk-term-stage">
+            <div class="tp-term-host" id="wk-term-host"></div>
+            <div class="wk-term-ask" id="wk-term-ask" aria-live="polite"></div>
+            <div class="wk-term-fabs" id="wk-term-fabs"></div>
+          </div>
           <div class="tp-term-ph" id="wk-term-ph"></div>
         </div>
         <div class="task-read" id="task-read" role="tabpanel" aria-labelledby="wk-mid-tab-ai" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
