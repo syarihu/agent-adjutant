@@ -118,7 +118,7 @@ async function questionAct(b) {
   const key = root.dataset.qcGate;
   const live = questionLive(key);
   const snapshot = questionBase?.key === key && !questionBase.gone ? questionBase.g : null;
-  const g = live ? pinLike(live, snapshot) : snapshot && !answeredGates.has(key) ? snapshot : null;
+  const g = live ? pinLike(questionPin(live), snapshot) : snapshot && !answeredGates.has(key) ? snapshot : null;
   if (!g) return note('判断', true, 'この質問は、もう待っていません');
   if (b.matches('[data-qc-ide]')) return worktreeAct('ide', g.worktree, false, g._slug || null);
   const act = b.matches('.pick[data-choice]') ? 'choice' : b.dataset.act;

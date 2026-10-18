@@ -166,13 +166,16 @@ function qcPlanHtml(g, ctx, body) {
   const steps = (own ? g.steps : ctx.plan?.steps) || [];
   // An old worker wrote the steps in `decided`: on a plan gate with none of its own, that is the plan and is not shown a second time.
   const decidedIsPlan = own && !steps.length && !!g.decided;
-  const approved = !own && steps.length > 0;
+  // The same holds for the approved plan a diff or verify card carries out.
+  const planDecided = !own && !steps.length ? ctx.plan?.decided || '' : '';
+  const approved = !own && (steps.length > 0 || !!planDecided);
   // A diff or verify gate opens after the work, and no worker marks steps done yet: until one does, every step reads as done.
   const allDone = after && steps.length > 0 && !steps.some(x => 'done' in x);
   let h = '';
   if (approved) h += '<div class="qc-note">計画は承認済み</div>';
   if (steps.length) h += qcStepsHtml(steps, allDone);
   if (decidedIsPlan) h += `<div class="body">${md(g.decided)}</div>`;
+  if (planDecided) h += `<div class="body">${md(planDecided)}</div>`;
   for (const s of (g.sections || []).filter(x => x.stage === 'plan')) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
   if (g.kind === 'diff') h += qcDiffHtml(g, ctx);
   if (g.kind === 'verify') h += qcVerifyHtml(g, ctx);

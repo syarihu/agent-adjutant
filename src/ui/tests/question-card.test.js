@@ -96,6 +96,15 @@ test('a diff card is 計画とやったこと, marks the approved steps done and
   assert.ok(c.body.indexOf('前に決まっていること') < c.body.indexOf('qc-ask'));
 });
 
+test('a diff card whose approved plan is from before steps shows that plan\'s decided as the plan', () => {
+  const approved = { id: 'op', kind: 'plan', title: 'Old', decided: 'step one then step two', wait: false };
+  const g = { id: 'd2', kind: 'diff', title: 'Diff', wait: true, options: ['approve'], diff: DIFF, focus: 'ok?' };
+  const c = card(g, { task: { ...task, approvedPlan: approved }, plan: approved });
+  assert.ok(c.body.includes('計画は承認済み'));
+  assert.equal(count(c.body, 'step one then step two'), 1);
+  assert.ok(c.body.indexOf('step one then step two') < c.body.indexOf('qc-ask'));
+});
+
 test('steps are marked done only where the worker says so once one does; 前に決まっていること needs a choice or a comment', () => {
   const approved = { ...planGate, steps: [{ text: 'a', done: true }, { text: 'b', done: false }], wait: false };
   const g = { id: 'd2', kind: 'diff', title: 'D', wait: true, options: [], focus: 'f' };
