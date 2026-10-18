@@ -175,5 +175,5 @@ test('a send over the cap is too long, counted in UTF-8 bytes', () => {
 
 test('the start check of a stopped hub is drawn as its one line whatever was folded', () => {
   const html = api.workTermAskHtml([dispatch], { ctxOf, keyOf, hub: true, foldAll: true });
-  assert.ok(html.includes('wk-ask-folded') && !html.includes('wk-ask-form'));
+  assert.ok(html.includes('wk-ask-folded') && !html.includes('wk-ask-form') && !html.includes('data-wk-fold'));
 });

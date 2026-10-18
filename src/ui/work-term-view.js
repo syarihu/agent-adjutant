@@ -76,7 +76,8 @@ function renderWorkTermOverlays({ own, task, hub, reading, stopped = false }) {
   }));
   // What the placeholder says starts below what slides down over it.
   const ph = wk('wk-term-ph');
-  ph.style.paddingTop = !ph.hidden && workAskEl().offsetHeight ? `${workAskEl().offsetHeight + 12}px` : '';
+  const askBox = workAskEl().getBoundingClientRect();
+  ph.style.paddingTop = !ph.hidden && askBox.height ? `${Math.ceil(askBox.bottom - ph.getBoundingClientRect().top + 12)}px` : '';
   drawWorkFabs(own, hub, reading);
   // Only the count is announced: the questions themselves are read where they are, and a redraw must not read the form out again.
   setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : '');
@@ -374,8 +375,8 @@ questionDialogEl().addEventListener('click', e => {
   // The gate's own place is in the page behind the dialog.
   if (e.target.closest('[data-tp-sess-gate]')) dialogStack.closeAll();
   else if (WORK_HUB_OPENS_DIALOG.includes(act)) dialogStack.closeAll();
-  // A hub started from here is connected to once its window exists (syncTermSlot).
-  else if (act === 'start') workTerm.reconnect = true;
+  // The same start as the stopped block's, with the same state while it is asked for.
+  else if (act === 'start') return workStartHub(hub);
   const idle = e.target.closest('[data-tp-worktree]');
   if (idle) {
     dialogStack.closeAll();
@@ -390,6 +391,29 @@ questionDialogEl().addEventListener('click', e => {
 });
 
 /* ── a stopped hub ── */
+
+/* The hubs whose start was asked for from here and has not answered, by `${board}/${hub id}`. The start request answers once the hub is up,
+   so until then the hub is coming up, not stopped: its block says so and has no button to press twice. Page-local: the markers a
+   reset sets (`hubStartingNow`) are shared by every repository hub. */
+const workHubStarting = new Set();
+const workHubStartKey = hub => `${nav.board}/${hub.id}`;
+const workHubStartPending = hub => !!hub && workHubStarting.has(workHubStartKey(hub));
+
+/* 「hub を起動」 from the stopped block or the hub's dialog. A failure is said by the action itself, and the block comes back. */
+async function workStartHub(hub) {
+  const key = workHubStartKey(hub);
+  if (workHubStarting.has(key)) return;
+  // A new terminal is mounted once its window exists (syncTermSlot).
+  workTerm.reconnect = true;
+  workHubStarting.add(key);
+  renderWorkTerm();
+  try {
+    await runSessionAction('hub-start', hubSessionOf(hub));
+  } finally {
+    workHubStarting.delete(key);
+    renderWorkTerm();
+  }
+}
 
 /* The block over a stopped hub's terminal (`workStoppedHubShown` says when). */
 function workHubStoppedBlock(hub) {

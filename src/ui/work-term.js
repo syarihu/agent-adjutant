@@ -41,13 +41,13 @@ const workIsStartCheck = (g, hub) => !!hub && g.kind === 'dispatch' && !g.quick;
 /* The start check folded to one line: the kind, the question, the gate's first button and 「広げる」. Inside the gate's own
    element, so a click on the button is answered as it is anywhere else. With a comment typed in the form the button is left out,
    for it would send the answer without it. */
-function workAskFoldedHtml(g, key, draft) {
+function workAskFoldedHtml(g, key, draft, expand = true) {
   const line = aideFocusLine(g.focus) || aideFocusLine(g.title);
   const first = !draft && (g.options || [])[0];
   const button = first && BUTTONS[first] ? BUTTONS[first](g) : '';
   return `<div class="qc-quick wk-ask-folded" data-qc-gate="${esc(key)}">${qcIcon('bolt')}<span class="qc-kind">${esc(kindOf(g.kind)[0])}</span>`
     + `<b class="qc-quick-text">${esc(line)}</b><span class="qc-spacer"></span>${button}`
-    + `<button type="button" class="btn-m3-text" data-wk-fold="${esc(key)}" aria-expanded="false">${qcIcon('expand_more')}<span>広げる</span></button></div>`;
+    + (expand ? `<button type="button" class="btn-m3-text" data-wk-fold="${esc(key)}" aria-expanded="false">${qcIcon('expand_more')}<span>広げる</span></button>` : '') + '</div>';
 }
 
 /* The start check open: the card as one article under a bar that folds it. The card scrolls inside the sheet, and its foot stays. */
@@ -59,7 +59,7 @@ function workAskFormHtml(g, key, ctx, draft) {
 
 /* What slides down: the start check first (a form, or its one line when its key is in `folded`), then a line for each of the rest,
    which a quick question answers where it stands and any other opens as a card. `ctxOf` gives a gate's card context, `keyOf` its
-   key, `draftOf` the comment typed for a key; `foldAll` draws the start check as its one line whatever `folded` says. */
+   key, `draftOf` the comment typed for a key; `foldAll` draws the start check as its one line whatever `folded` says, with no button to open it. */
 function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(), draftOf = () => '', foldAll = false } = {}) {
   const form = (gates || []).find(g => workIsStartCheck(g, hub));
   const rest = (gates || []).filter(g => g !== form);
@@ -67,7 +67,7 @@ function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(),
   if (form) {
     const key = keyOf(form);
     const draft = draftOf(key) || '';
-    html += foldAll || folded.has(key) ? workAskFoldedHtml(form, key, draft) : workAskFormHtml(form, key, ctxOf(form), draft);
+    html += foldAll || folded.has(key) ? workAskFoldedHtml(form, key, draft, !foldAll) : workAskFormHtml(form, key, ctxOf(form), draft);
   }
   return html + questionStripHtml(rest, ctxOf);
 }
@@ -106,8 +106,8 @@ function workHubStoppedHtml({ since = '', unread = 0, act = null } = {}) {
    to show; `sendWhy` is why sending is not possible just now, or ''. */
 function workTermFabsHtml({ hasLast = false, lastAge = '', sendWhy = '' } = {}) {
   const last = hasLast
-    ? `<button type="button" class="wk-fab" data-wk-fab="lastmsg">${qcIcon('chat')}<span>最後のメッセージ</span>${lastAge ? `<span class="wk-fab-age">${esc(lastAge)}</span>` : ''}</button>` : '';
-  const send = `<button type="button" class="wk-fab primary" data-wk-fab="send"${sendWhy ? ` disabled title="${esc(sendWhy)}"` : ''}>${qcIcon('edit_square')}<span>書いて送る</span></button>`;
+    ? `<button type="button" class="wk-fab" data-wk-fab="lastmsg" aria-label="${esc(`最後のメッセージ${lastAge ? `（${lastAge}）` : ''}`)}" title="最後のメッセージ">${qcIcon('chat')}<span>最後のメッセージ</span>${lastAge ? `<span class="wk-fab-age">${esc(lastAge)}</span>` : ''}</button>` : '';
+  const send = `<button type="button" class="wk-fab primary" data-wk-fab="send" aria-label="書いて送る"${sendWhy ? ` disabled title="${esc(sendWhy)}"` : ' title="書いて送る"'}>${qcIcon('edit_square')}<span>書いて送る</span></button>`;
   return last + send;
 }
 

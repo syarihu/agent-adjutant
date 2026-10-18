@@ -1191,7 +1191,7 @@ function renderWorkTerm() {
   setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true, own.kind === 'hub' ? ['close', 'hub-start'] : ['close']) : '');
   const ph = wk('wk-term-ph');
   const hubUp = !!hub && hubSessionOf(hub).present;
-  const hubStarting = !!hub && !hubUp && hubStartingNow(hub);
+  const hubStarting = !!hub && !hubUp && (hubStartingNow(hub) || workHubStartPending(hub));
   const stopped = workStoppedHubShown({ isHub: !!hub, present: hubUp, starting: hubStarting, reading });
   // A hub on its way up has a dead terminal behind, if one was mounted: covered, rather than shown dead.
   const coming = hubStarting && !reading;
@@ -1230,6 +1230,7 @@ wk('wk-term-pane').addEventListener('click', e => {
     return renderWorkTerm();
   }
   // A session resumed or started from here is connected to once its window exists (syncTermSlot).
+  if (b.dataset.sessAct === 'hub-start' && hub) return workStartHub(hub);
   if (b.dataset.sessAct === 'resume' || b.dataset.sessAct === 'hub-start') workTerm.reconnect = true;
   runSessionAction(b.dataset.sessAct, s);
 });
