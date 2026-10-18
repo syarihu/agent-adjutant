@@ -150,6 +150,10 @@ pub fn all_repo_hubs_among_with(
                     oldest_unseen_at = Some(at.clone());
                 }
             }
+            let requests_unseen = entries
+                .iter()
+                .filter(|e| e.kind == "request" && !e.seen)
+                .count();
             // `list` is oldest first, so the newest are at the end.
             let inbox = entries
                 .into_iter()
@@ -189,6 +193,7 @@ pub fn all_repo_hubs_among_with(
                 inbox_count,
                 unseen,
                 seen,
+                requests_unseen,
                 oldest_unseen_at,
                 inbox,
                 children,

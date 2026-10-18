@@ -115,6 +115,7 @@ fn parent_hub_with_a_record(
         inbox_count: 2,
         unseen: 0,
         seen: 0,
+        requests_unseen: 0,
         oldest_unseen_at: None,
         inbox: Vec::new(),
         children: 0,

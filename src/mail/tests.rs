@@ -1101,6 +1101,34 @@ fn the_oldest_unseen_message_is_the_one_the_age_is_told_of() {
 }
 
 #[test]
+fn unread_requests_are_counted_over_the_whole_inbox() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    let dir = tempfile::tempdir().unwrap();
+    let read_one = sent(&root, "dashboard", "request", "already read");
+    sent(&root, "dashboard", "request", "still waiting");
+    sent(&root, "w", "notice", "plain notice");
+    read(&root, "acme-widget", &read_one).unwrap();
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
+    assert_eq!(hubs[0].requests_unseen, 1);
+
+    // The listing keeps the newest 20; a request older than all of them is still counted.
+    let inbox = inbox_dir(&root, "acme-widget");
+    std::fs::write(
+        inbox.join("20200101T000000Z-old.md"),
+        "---\nfrom: dashboard\nkind: request\nsubject: oldest\nat: 20200101T000000Z\n---\n\nb\n",
+    )
+    .unwrap();
+    for n in 0..20 {
+        sent(&root, "w", "report", &format!("report {n}"));
+    }
+    let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
+    assert_eq!(hubs[0].inbox.len(), 20);
+    assert!(hubs[0].inbox.iter().all(|m| m.subject != "oldest"));
+    assert_eq!(hubs[0].requests_unseen, 2);
+}
+
+#[test]
 fn what_does_not_call_for_waking_the_hub_counts_in_neither_number() {
     let sandbox = Sandbox::empty();
     let root = sandbox.state();

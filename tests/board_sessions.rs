@@ -1092,6 +1092,7 @@ fn a_hub_lists_its_inbox_newest_first_with_a_cap_and_the_full_count() {
     // The count and the age are of the whole inbox, not of the 20 listed.
     assert_eq!(hub["unseen"], 23);
     assert_eq!(hub["seen"], 0);
+    assert_eq!(hub["requestsUnseen"], 0);
     assert_eq!(hub["oldestUnseenAt"], "20260922T040000Z");
     let items = hub["inbox"].as_array().unwrap();
     assert_eq!(items.len(), 20);
