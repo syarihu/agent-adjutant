@@ -19,7 +19,7 @@ function questionPin(g) {
 }
 
 /* Where a gate of another board than the page's can be found: `fn(key)` answers `{ g, data }` (the gate, pinned to its board, and the
-   state of that board it was read from) or null. The TODO list registers its cache of the boards it has read (todo-view.js). */
+   state of that board it was read from), `{ gone: true }` (the board was read and no longer lists it as waiting) or null (not known). The TODO list registers its cache of the boards it has read (todo-view.js). */
 const questionSources = [];
 function registerQuestionSource(fn) { questionSources.push(fn); }
 function questionSourceOf(key) {
@@ -34,9 +34,11 @@ function questionSourceOf(key) {
    from what a source has read of its own board. */
 function questionLive(key) {
   if (answeredGates.has(key)) return null;
-  // The TODO view does not refresh the page's state, so there a source's read of the board is the fresher.
-  if (view === 'todo') return questionSourceOf(key)?.g || (state.gates || []).find(x => gateKey(x) === key) || null;
-  return (state.gates || []).find(x => gateKey(x) === key) || questionSourceOf(key)?.g || null;
+  const src = questionSourceOf(key);
+  // The TODO view does not refresh the page's state, so there a source's read of the board is the fresher, and a board that was read
+  // and does not list the gate (`gone`) says it is not waiting, whatever the state remembers.
+  if (view === 'todo' && src) return src.gone ? null : src.g;
+  return (state.gates || []).find(x => gateKey(x) === key) || (src && !src.gone ? src.g : null);
 }
 
 /* `live` (as the page lists it) with the board `like` was opened on, so a card follows the gate and keeps sending to its board. */
@@ -65,7 +67,7 @@ function questionCtxOf(g) {
 function questionCtxFor(g) {
   const key = gateKey(g);
   const src = view !== 'todo' && (state.gates || []).some(x => gateKey(x) === key) ? null : questionSourceOf(key);
-  return src ? withViewState(src.data, () => questionCtxOf(g)) : questionCtxOf(g);
+  return src?.data ? withViewState(src.data, () => questionCtxOf(g)) : questionCtxOf(g);
 }
 
 /* Opens the card of a waiting gate. `opts`: `ctx` (what `questionCtxOf` makes, from another board's records), `opener` (the element

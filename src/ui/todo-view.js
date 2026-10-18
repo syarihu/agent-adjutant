@@ -40,9 +40,12 @@ function todoGateOf(key) {
   const g = (todo.boards[todoSlugOf(key)]?.data?.gates || []).find(x => gateKey(x) === key);
   return g && g.wait !== false ? g : null;
 }
+/* The board was read and does not list the gate as waiting: not the same as a board not read yet. */
+const todoGoneOf = key => !!todo.boards[todoSlugOf(key)]?.data && !todoGateOf(key);
 registerQuestionSource(key => {
-  const g = answeredGates.has(key) ? null : todoGateOf(key);
-  return g ? { g, data: todo.boards[todoSlugOf(key)].data } : null;
+  if (answeredGates.has(key)) return null;
+  const g = todoGateOf(key);
+  return g ? { g, data: todo.boards[todoSlugOf(key)].data } : todoGoneOf(key) ? { gone: true } : null;
 });
 
 /* Why the board of `key` could not be read, or null. */
@@ -112,7 +115,7 @@ function todoListOf(items, sel) {
   // Nothing has been read yet, or the read failed: not the same as nothing waiting.
   const st = todoStatus();
   if (st.blocked) return todoNotesHtml([st.blocked]);
-  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, sel, now: Date.now() / 1000, records: othersRecords(), emptyOk: st.emptyOk });
+  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, goneOf: todoGoneOf, sel, now: Date.now() / 1000, records: othersRecords(), emptyOk: st.emptyOk });
 }
 
 function todoDrawBadge(items) {
@@ -145,8 +148,9 @@ function todoPrCardHtml(rec) {
 function todoEmptyCardHtml(items) {
   const st = todoStatus();
   if (st.blocked) return `<div class="todo-card-empty">${todoNotesHtml([st.blocked])}</div>`;
-  const hint = items.quick.length ? '左の確認は、その場で押せます。' : 'worker が何か聞いてきたら、ここに出ます。';
-  return `<div class="todo-card-empty">${todoNotesHtml(st.notes)}${st.emptyOk ? `<p class="todo-empty">あなたの番はありません</p><p class="todo-hint">${esc(hint)}</p>` : ''}</div>`;
+  // With quick rows left, something does wait: there is only nothing here to select.
+  const [line, hint] = items.quick.length ? ['選んで読む質問はありません', '左の確認は、その場で押せます。'] : ['あなたの番はありません', 'worker が何か聞いてきたら、ここに出ます。'];
+  return `<div class="todo-card-empty">${todoNotesHtml(st.notes)}${st.emptyOk ? `<p class="todo-empty">${esc(line)}</p><p class="todo-hint">${esc(hint)}</p>` : ''}</div>`;
 }
 
 /* The gate's card: the head when it changed, the body that scrolls when it changed and nothing in it has the focus (keeping where it was
@@ -190,7 +194,8 @@ function todoDrawCard(items) {
   if (!g) {
     todo.card = null;
     const why = todoBoardError(key);
-    return todoSetHtml('card', el, `<div class="todo-card-empty"><p class="todo-hint">${why ? esc(`このボードを読めませんでした: ${why}`) : '読み込み中…'}</p></div>`);
+    const text = todoGoneOf(key) ? 'この質問は、もう待っていません' : why ? `このボードを読めませんでした: ${why}` : '読み込み中…';
+    return todoSetHtml('card', el, `<div class="todo-card-empty"><p class="todo-hint">${esc(text)}</p></div>`);
   }
   todoDrawGateCard(el, key, g);
 }
@@ -320,6 +325,12 @@ window.addEventListener('resize', todoPlace);
 
 /* ── Clicks ── */
 
+const TODO_FOCUSABLE = 'button:not([disabled]), a[href]';
+function todoRefocus(box, index) {
+  const all = [...box.querySelectorAll(TODO_FOCUSABLE)];
+  (all[Math.min(index, all.length - 1)] || (box.id === 'todo-pop' ? todoTabEl() : null))?.focus({ preventScroll: true });
+}
+
 function todoClick(e) {
   const row = e.target.closest('[data-todo-sel]');
   if (row) return e.currentTarget.id === 'todo-pop' ? todoOpen(row.dataset.todoSel) : todoSelect(row.dataset.todoSel);
@@ -336,9 +347,19 @@ function todoClick(e) {
   const key = b.closest('[data-qc-gate]')?.dataset.qcGate;
   if (b.dataset.act === 'talk') {
     const g = key && questionLive(key);
-    return g ? go({ board: g._slug, view: 'work', task: g.task || null, pane: 'detail' }) : note('話す', true, 'この質問は、もう待っていません');
+    if (!g) return note('話す', true, 'この質問は、もう待っていません');
+    // As `talk` does (decide.js), which finds the gate in the page's own state and so cannot for another board's: the window of
+    // the worker, or the hub's for a gate the hub opened.
+    if (g.answeredByHub) focusHub(g._slug); else worktreeAct('focus', g.worktree, false, g._slug);
+    return note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
   }
-  questionAct(b).then(() => todoFollow(true));
+  // The answered row goes; focus used to be on its button, and moves to the row that takes its place (below, else above).
+  const box = e.currentTarget;
+  const at = b === document.activeElement && box.id !== 'todo-card' ? [...box.querySelectorAll(TODO_FOCUSABLE)].indexOf(b) : -1;
+  questionAct(b).then(() => {
+    todoFollow(true);
+    if (at >= 0 && (!document.activeElement || document.activeElement === document.body)) todoRefocus(box, at);
+  });
 }
 for (const id of ['todo-pop', 'todo-list', 'todo-card']) document.getElementById(id).addEventListener('click', todoClick);
 

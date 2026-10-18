@@ -62,8 +62,10 @@ function todoNotes({ workDoc, workError, othersDoc, othersError }) {
 }
 
 /* A quick question as its row, with where it is from. Until the board it is on has been read there is no question to show, and no button. */
-function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = null) {
+function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = null, gone = false) {
   const from = `<div class="todo-from">${esc(item.nwo)} · ${esc(todoWaited(item.since, now))}</div>`;
+  // Read, and not listed: no question and no button; the next read of the work document drops the row.
+  if (!g && gone) return `<div class="todo-quick todo-pending" data-todo-key="${esc(item.key)}"><div class="qc-quick"><b class="qc-quick-text">${esc(item.title)}</b><span class="todo-loading">もう待っていません</span></div>${from}</div>`;
   if (!g) return `<div class="todo-quick todo-pending" data-todo-key="${esc(item.key)}"><div class="qc-quick"><b class="qc-quick-text">${esc(item.title)}</b><span class="todo-loading">${error ? esc(`このボードを読めませんでした: ${error}`) : '読み込み中…'}</span></div>${from}</div>`;
   // The cached question stays (the server refuses an answer to one that no longer waits), with why it may be old.
   const stale = error ? `<div class="todo-note">${esc(`このボードの最新を読めませんでした: ${error}`)}</div>` : '';
@@ -71,9 +73,9 @@ function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = nu
 }
 
 /* A gate to read as a button that selects it: what kind, which task, what is asked (the worker's own words, else the kind's fixed question). */
-function todoReadRowHtml(item, g, sel, now = Date.now() / 1000) {
+function todoReadRowHtml(item, g, sel, now = Date.now() / 1000, gone = false) {
   const [label, color] = kindOf(item.kind);
-  const ask = aideFocusLine(g?.focus) || QUESTION_ASK_OF_KIND[item.kind] || QUESTION_ASK_OF_KIND.question;
+  const ask = gone && !g ? 'もう待っていません' : aideFocusLine(g?.focus) || QUESTION_ASK_OF_KIND[item.kind] || QUESTION_ASK_OF_KIND.question;
   return `<button type="button" class="todo-row" data-todo-sel="${esc(item.key)}"${sel === item.key ? ' aria-current="true"' : ''}>`
     + `<span class="todo-kind"><i style="background:${esc(color)}"></i>${esc(label)}</span>`
     + `<span class="todo-title">${esc(item.title)}</span><span class="todo-ask">${esc(ask)}</span>`
@@ -93,14 +95,14 @@ function todoPrRowHtml(rec, sel, now = Date.now() / 1000, records = []) {
 }
 
 /* The whole list: the quick rows, then (only when there is something to read) a separator, the gates to read and the pull requests.
-   `gateOf(key)` is the gate once its board has been read, `errorOf(key)` why that read failed, `ctxOf(g)` the card's context, `sel` the selected key. */
-function todoListHtml(items, { gateOf = () => null, errorOf = () => null, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, records = [], emptyOk = true } = {}) {
+   `gateOf(key)` is the gate once its board has been read, `errorOf(key)` why that read failed, `goneOf(key)` whether the board was read and does not list it, `ctxOf(g)` the card's context, `sel` the selected key. */
+function todoListHtml(items, { gateOf = () => null, errorOf = () => null, goneOf = () => false, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, records = [], emptyOk = true } = {}) {
   // Nothing waiting is only said when every source was read.
   if (!items.count) return emptyOk ? '<p class="todo-empty">あなたの番はありません</p>' : '';
-  const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now, errorOf(w.key)); }).join('');
+  const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now, errorOf(w.key), goneOf(w.key)); }).join('');
   const heavy = items.read.length + items.prs.length > 0;
   return quick
     + (heavy && items.quick.length ? '<h3 class="todo-sep">読んで決める</h3>' : heavy ? '<h3 class="todo-sep first">読んで決める</h3>' : '')
-    + items.read.map(w => todoReadRowHtml(w, gateOf(w.key), sel, now)).join('')
+    + items.read.map(w => todoReadRowHtml(w, gateOf(w.key), sel, now, goneOf(w.key))).join('')
     + items.prs.map(r => todoPrRowHtml(r, sel, now, records)).join('');
 }

@@ -177,3 +177,10 @@ test('nothing waiting is claimed only when every source was read, and a cached q
   assert.ok(html.includes('data-choice="a"'));
   assert.ok(html.includes('このボードの最新を読めませんでした: HTTP 500'));
 });
+
+test('a gate its board no longer lists says it is not waiting, with no button, and a read row says so too', () => {
+  const it = todoItems({ doc: doc([repo('acme/widget', [turn('t1', [gate('g1', 'question', 1, { quick: true }), gate('g2', 'plan', 2)])])]), records: [] });
+  const html = todoListHtml(it, { goneOf: () => true, now: T0 });
+  assert.equal(html.split('もう待っていません').length - 1, 2);
+  assert.ok(!html.includes('data-choice') && !html.includes('読み込み中…'));
+});
