@@ -61,10 +61,6 @@ pub(super) fn upgrade_resident(
     mut stream: TcpStream,
     reader: BufReader<TcpStream>,
 ) -> std::io::Result<()> {
-    if req.path == "/api/aide/terminal" {
-        // The window comes from the aide's own record; the page only says which session it knows.
-        return super::terminal::serve_aide(resident, req.param("session"), req, stream, reader);
-    }
     if req.path == "/api/others/terminal" {
         // Resolved from the record of the PR, so the page names a PR and nothing more.
         let Some(pr) = req.param("id").and_then(crate::others::pr_of) else {
@@ -147,24 +143,6 @@ pub(super) fn route_resident(
                 &json!({ "error": "could not build the work list" }).to_string(),
             ),
         },
-        ("GET", "/api/aide") => http::json(
-            out,
-            200,
-            &serde_json::to_string(&crate::board::aide::find(&resident.root, resident.tmux))
-                .unwrap_or_default(),
-        ),
-        // What the aide has put in its display area. Read only: the aide's `adjutant_show` writes
-        // the file itself, so there is no request that changes it for a page to be tricked into.
-        ("GET", "/api/aide/display") => match crate::board::aide::display(&resident.root) {
-            Ok(display) => http::json(
-                out,
-                200,
-                &serde_json::to_string(&display).unwrap_or_default(),
-            ),
-            Err(e) => http::json(out, 500, &json!({ "error": e }).to_string()),
-        },
-        ("POST", "/api/aide/open") => open_aide(resident, out),
-        ("POST", "/api/aide/reset") => reset_aide(resident, out),
         ("GET", "/api/others") => http::json(
             out,
             200,
@@ -202,83 +180,6 @@ pub(super) fn route_resident(
         ("POST", "/api/others/drafts") => save_drafts(resident, req, out),
         ("POST", "/api/others/pending") => push_pending(resident, req, out),
         _ => no_such_route(out),
-    }
-}
-
-/// `POST /api/aide/open`: open the aide the first time, and find it again after. The body is
-/// ignored. Never started by a `GET`: reading its state must not start a Claude session.
-fn open_aide(resident: &Resident, out: &mut impl Write) -> std::io::Result<()> {
-    use crate::lifecycle::aide::{AideOpened, AideRefused};
-    match crate::board::aide::open(resident) {
-        Ok(AideOpened::Started {
-            record,
-            description,
-        }) => http::json(
-            out,
-            200,
-            &json!({ "started": true, "sessionId": record.session_id, "description": description })
-                .to_string(),
-        ),
-        Ok(AideOpened::Running(record)) => http::json(
-            out,
-            200,
-            &json!({ "started": false, "state": "running", "sessionId": record.session_id })
-                .to_string(),
-        ),
-        Ok(AideOpened::Starting(record)) => http::json(
-            out,
-            200,
-            &json!({ "started": false, "state": "starting", "sessionId": record.session_id })
-                .to_string(),
-        ),
-        Err(AideRefused::NotStartable) => http::json(out, 409, &not_startable()),
-        Err(AideRefused::Failed(why)) => http::json(out, 500, &json!({ "error": why }).to_string()),
-    }
-}
-
-fn not_startable() -> String {
-    json!({
-        "error": "opening the aide needs terminal.preset \"tmux\"",
-        "why": "not-startable",
-    })
-    .to_string()
-}
-
-/// `POST /api/aide/reset`: replace the aide with a fresh one, even in the middle of a turn. The
-/// body is ignored.
-fn reset_aide(resident: &Resident, out: &mut impl Write) -> std::io::Result<()> {
-    use crate::lifecycle::aide::{AideOpened, ResetRefused};
-    match crate::board::aide::reset(resident) {
-        Ok(done) => {
-            let (started, record) = match done.reset.opened {
-                AideOpened::Started { record, .. } => (true, record),
-                AideOpened::Running(record) | AideOpened::Starting(record) => (false, record),
-            };
-            http::json(
-                out,
-                200,
-                &json!({
-                    "reset": true,
-                    "wasRunning": done.reset.was_running,
-                    "wasBusy": done.was_busy,
-                    "started": started,
-                    "sessionId": record.session_id,
-                })
-                .to_string(),
-            )
-        }
-        Err(ResetRefused::NotStartable) => http::json(out, 409, &not_startable()),
-        Err(ResetRefused::StopFailed(why)) => {
-            http::json(out, 500, &json!({ "error": why }).to_string())
-        }
-        Err(ResetRefused::StartFailed { stopped, why }) => {
-            let said = if stopped {
-                format!("stopped the aide, but could not start a new one: {why}")
-            } else {
-                format!("could not start a new aide: {why}")
-            };
-            http::json(out, 500, &json!({ "error": said }).to_string())
-        }
     }
 }
 

@@ -2,7 +2,6 @@
 //! board and the subcommands hand work to, one file per operation. Names infra, kernel,
 //! registry, mail, task and others, and nothing above them.
 
-pub mod aide;
 pub mod hub;
 mod model;
 pub mod review;

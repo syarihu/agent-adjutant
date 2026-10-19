@@ -98,11 +98,6 @@ pub fn claude_hook_command(exe: &str) -> String {
     guarded(exe, "hook claude")
 }
 
-/// The command a status line runs: `exe hook claude --status-line`, guarded like the hooks.
-pub fn claude_status_line_command(exe: &str) -> String {
-    guarded(exe, "hook claude --status-line")
-}
-
 /// `claude_hook_command` for the entries `adj setup <agent>` writes into that agent's global
 /// hooks file: the same, with `--global` marking them as adjutant's so they can be found again.
 pub fn global_hook_command(exe: &str, agent: GlobalHookAgent) -> String {
@@ -131,15 +126,6 @@ pub fn claude_settings(command: &str) -> Value {
         })
         .collect();
     json!({ "hooks": hooks })
-}
-
-/// `claude_settings` with a status line that runs `status_line`. The aide is the one session
-/// given its own: its context figure is shown on the board and recorded only from a status line,
-/// so it gets adj's even though this replaces the person's own in that one window.
-pub fn aide_settings(hook: &str, status_line: &str) -> Value {
-    let mut settings = claude_settings(hook);
-    settings["statusLine"] = json!({ "type": "command", "command": status_line });
-    settings
 }
 
 /// The binary a settings file written by `claude_settings` calls, read back out of its first
@@ -357,23 +343,6 @@ pub fn remove_global_hooks(
 mod tests {
     use super::*;
     use GlobalHookAgent::{Claude, Codex};
-
-    #[test]
-    fn the_aide_settings_add_a_guarded_status_line_to_every_hook() {
-        let hook = claude_hook_command("/bin/adj");
-        let line = claude_status_line_command("/bin/adj");
-        let settings = aide_settings(&hook, &line);
-        assert_eq!(settings["hooks"], claude_settings(&hook)["hooks"]);
-        assert_eq!(
-            settings["hooks"].as_object().unwrap().len(),
-            CLAUDE_EVENTS.len()
-        );
-        assert_eq!(settings["statusLine"]["type"], "command");
-        let command = settings["statusLine"]["command"].as_str().unwrap();
-        assert!(command.starts_with("[ ! -x /bin/adj ] || "), "{command}");
-        assert!(command.contains("hook claude --status-line"), "{command}");
-        assert!(command.ends_with("|| true"), "{command}");
-    }
 
     #[test]
     fn every_event_has_one_entry_and_only_the_tool_events_have_a_matcher() {

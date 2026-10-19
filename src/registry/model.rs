@@ -629,64 +629,6 @@ impl From<AgentStatus> for String {
     }
 }
 
-// ── the aide ────────────────────────────────────────────────────
-
-/// How long an aide that has been started but has not yet recorded its process still counts
-/// as starting: the reader reaper's grace. Past it, a start that never reported is taken for one
-/// that failed.
-pub const AIDE_START_GRACE_SECS: i64 = 90;
-
-/// `<state>/aide.json`: the one aide session of the machine, written the way a reader's
-/// record is. Unknown keys stay in `other`, so a newer binary's fields survive an older one's write.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AideRecord {
-    pub session_id: String,
-    /// When the launch was claimed, in epoch seconds.
-    #[serde(default)]
-    pub launched_at: i64,
-    /// The agent's process, once the launch has reported it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ps_started: Option<String>,
-    /// Where its window is.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal: Option<SessionTerminal>,
-    #[serde(flatten)]
-    pub other: Map<String, Value>,
-}
-
-/// What an aide record says about the process behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AideState {
-    /// Claimed, and its process has not been recorded yet, within the grace.
-    Starting,
-    Running,
-    /// Its process is gone, or it never reported one and the grace has passed.
-    Gone,
-    /// `ps` could not say.
-    CannotTell,
-}
-
-/// The one rule that reads an aide record: classification only, nothing is written.
-/// `liveness` answers for a pid and the start time recorded with it.
-pub fn aide_state_with(
-    record: &AideRecord,
-    now: i64,
-    liveness: &dyn Fn(u32, Option<&str>) -> Liveness,
-) -> AideState {
-    match record.pid {
-        Some(pid) => match liveness(pid, record.ps_started.as_deref()) {
-            Liveness::Alive => AideState::Running,
-            Liveness::Gone => AideState::Gone,
-            Liveness::CannotTell => AideState::CannotTell,
-        },
-        None if now - record.launched_at < AIDE_START_GRACE_SECS => AideState::Starting,
-        None => AideState::Gone,
-    }
-}
-
 /// A session id that is safe as a file name: it keys `agent-sessions/<id>.json`, and an id with
 /// a `/` or a `..` in it would name a file outside the directory.
 pub fn valid_session_id(id: &str) -> bool {

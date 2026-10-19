@@ -15,7 +15,6 @@ pub(super) mod refresh;
 pub(super) mod request;
 pub(super) mod reviews;
 pub(super) mod send;
-pub(super) mod show;
 pub(super) mod skill;
 pub(super) mod tell;
 pub(super) mod work;
@@ -121,11 +120,6 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_gate_read",
         definition: gate_read::definition,
         call: gate_read::call,
-    },
-    Tool {
-        name: "adjutant_show",
-        definition: show::definition,
-        call: show::call,
     },
     Tool {
         name: "adjutant_reviews",

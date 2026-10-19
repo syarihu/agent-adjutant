@@ -34,7 +34,7 @@ const CLOSE_GONE: u16 = 4410;
 const CLOSE_TMUX_FAILED: u16 = 4500;
 
 #[cfg(unix)]
-pub(super) use imp::{serve, serve_aide, serve_reader};
+pub(super) use imp::{serve, serve_reader};
 
 #[cfg(not(unix))]
 pub(super) fn serve(
@@ -51,17 +51,6 @@ pub(super) fn serve(
 pub(super) fn serve_reader(
     _resident: &Resident,
     _pr: &PrRef,
-    _req: &Request,
-    mut stream: TcpStream,
-    _reader: BufReader<TcpStream>,
-) -> std::io::Result<()> {
-    crate::infra::http::json(&mut stream, 404, r#"{"error":"no such route"}"#)
-}
-
-#[cfg(not(unix))]
-pub(super) fn serve_aide(
-    _resident: &Resident,
-    _session: Option<&str>,
     _req: &Request,
     mut stream: TcpStream,
     _reader: BufReader<TcpStream>,
@@ -205,36 +194,6 @@ mod imp {
             ),
             NoReaderWindow::Gone => (CLOSE_GONE, "the reader has ended".to_string()),
             NoReaderWindow::Unreadable(e) => (CLOSE_NO_SESSION, e),
-        }
-    }
-
-    /// The terminal of the aide, from the window its record names. `session` is the one the page
-    /// knows: a record of another session closes the connection as replaced.
-    pub(in crate::transport::board_http) fn serve_aide(
-        resident: &Resident,
-        session: Option<&str>,
-        req: &Request,
-        stream: TcpStream,
-        reader: BufReader<TcpStream>,
-    ) -> std::io::Result<()> {
-        serve_on(
-            &Host::of_resident(resident),
-            || crate::board::aide::window(&resident.root, session).map_err(aide_close),
-            req,
-            stream,
-            reader,
-        )
-    }
-
-    /// The close code and words for an aide that has no window to attach to.
-    pub(super) fn aide_close(why: crate::board::aide::NoAideWindow) -> (u16, String) {
-        use crate::board::aide::NoAideWindow;
-        match why {
-            NoAideWindow::NoAide => (CLOSE_NO_SESSION, "no aide has been started".to_string()),
-            NoAideWindow::NoWindow => (CLOSE_NO_SESSION, "no aide window".to_string()),
-            NoAideWindow::Gone => (CLOSE_GONE, "the aide has ended".to_string()),
-            NoAideWindow::Replaced => (CLOSE_GONE, "the aide was replaced".to_string()),
-            NoAideWindow::Unreadable(e) => (CLOSE_NO_SESSION, e),
         }
     }
 
@@ -606,16 +565,6 @@ mod imp {
 mod tests {
     use super::imp::*;
     use super::*;
-
-    #[test]
-    fn a_replaced_or_ended_aide_is_gone_and_the_rest_is_no_session() {
-        use crate::board::aide::NoAideWindow::*;
-        assert_eq!(aide_close(Gone).0, CLOSE_GONE);
-        assert_eq!(aide_close(Replaced).0, CLOSE_GONE);
-        for other in [NoAide, NoWindow, Unreadable("x".to_string())] {
-            assert_eq!(aide_close(other).0, CLOSE_NO_SESSION);
-        }
-    }
 
     #[test]
     fn a_resize_is_clamped_and_anything_else_is_ignored() {

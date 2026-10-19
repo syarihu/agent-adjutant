@@ -37,7 +37,7 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
         "repo": address.nwo,
         "hub": address.hub,
         // Who receives an answer to it: the hub's inbox for a gate the hub opened, else the
-        // worker's outbox. What the aide words its confirmation with before adjutant_gate_answer.
+        // worker's outbox. What a session words its confirmation with before adjutant_gate_answer.
         "answeredBy": if gate.answered_by_hub() { "hub" } else { "worker" },
         "gate": gate,
     }))
