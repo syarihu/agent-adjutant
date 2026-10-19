@@ -55,7 +55,7 @@ function setView(v) {
     }
   }
 
-  renderTitle();
+  renderBoardHead();
 
   if (v === 'work') {
     renderWorkView();

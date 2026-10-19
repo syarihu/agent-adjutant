@@ -529,7 +529,7 @@ async function fetchBoards() {
     checkNewGates(everyGate());
     checkNewWaits(everyWait());
     renderBoardRows();
-    renderTitle();
+    renderBoardHead();
     // The hub panel reads the list for its origin, address and counts.
     redrawHubPanel();
   } catch {

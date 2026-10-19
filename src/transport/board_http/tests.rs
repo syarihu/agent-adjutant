@@ -1347,7 +1347,7 @@ fn the_views_register_themselves() {
     for name in [
         "renderColumns",
         "renderBoardRows",
-        "renderTitle",
+        "renderBoardHead",
         "renderWorkView",
         "renderTaskPanel",
         "hideTaskPanelState",

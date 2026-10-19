@@ -112,47 +112,40 @@
 <dialog id="question-dialog" class="qd"><div class="qd-layers"></div></dialog>
 
 <div id="app-main">
-  <header class="top-app-bar">
-    <div class="page-title-area">
-      <div class="crumbs" id="crumbs"></div>
-      <h1 class="page-title" id="page-title">タスクボード</h1>
-      <span class="page-subtitle" id="page-subtitle">エージェントの作業と、あなたの確認待ちを分けて表示</span>
-    </div>
-
-    <div class="top-bar-actions" style="margin-left:auto;">
-      <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" data-action="own-hub" title="このボードの hub を開く">
-        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
-        <span>hub</span>
-      </button>
-      <button class="tool-btn" id="btn-resync" data-action="resync" title="再同期 (adj refresh)" aria-label="再同期 (adj refresh)">
-        <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
-      </button>
-    </div>
-
-    <div class="view-tabs-row" id="view-tabs-row">
-      <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
-        <button type="button" role="tab" class="view-tab" data-tab="agent" aria-controls="board-view" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
-        <button type="button" role="tab" class="view-tab" data-tab="human" aria-controls="board-view" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
-      </nav>
-      <div class="view-tools" id="view-tools">
-        <div class="m3-segmented-tabs" id="layout-switch">
-          <button type="button" class="m3-seg-tab" data-layout="tabs" data-action="layout" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
-          <button type="button" class="m3-seg-tab" data-layout="split" data-action="layout" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
-        </div>
-        <div class="m3-segmented-tabs" id="arrange-switch">
-          <button type="button" class="m3-seg-tab" data-arrange="top" data-action="arrange" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
-          <button type="button" class="m3-seg-tab" data-arrange="left" data-action="arrange" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
-        </div>
-      </div>
-    </div>
-  </header>
-
   <!-- A notice about what was just done (a session started, a hub restarted), in the flow above whichever view is
        on, so it is seen whether or not the panel is open. -->
   <div class="sess-notice" id="sess-notice" hidden></div>
 
   <main>
     <div id="board-view" role="tabpanel">
+      <div class="board-head" id="board-head">
+        <h1 class="board-head-title" id="board-title"></h1>
+        <span class="board-head-acts">
+          <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" data-action="own-hub" title="このボードの hub を開く">
+            <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+            <span>hub</span>
+          </button>
+          <button class="tool-btn" id="btn-resync" data-action="resync" title="再同期 (adj refresh)" aria-label="再同期 (adj refresh)">
+            <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+          </button>
+        </span>
+        <div class="view-tabs-row" id="view-tabs-row">
+          <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
+            <button type="button" role="tab" class="view-tab" data-tab="agent" aria-controls="board-view" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
+            <button type="button" role="tab" class="view-tab" data-tab="human" aria-controls="board-view" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
+          </nav>
+          <div class="view-tools" id="view-tools">
+            <div class="m3-segmented-tabs" id="layout-switch">
+              <button type="button" class="m3-seg-tab" data-layout="tabs" data-action="layout" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
+              <button type="button" class="m3-seg-tab" data-layout="split" data-action="layout" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
+            </div>
+            <div class="m3-segmented-tabs" id="arrange-switch">
+              <button type="button" class="m3-seg-tab" data-arrange="top" data-action="arrange" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
+              <button type="button" class="m3-seg-tab" data-arrange="left" data-action="arrange" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="boards">
         <section class="pane" id="pane-human">
           <div class="pane-head">
@@ -166,7 +159,7 @@
         <section class="pane" id="pane-agent">
           <div class="pane-head">
             <span class="material-symbols-outlined">smart_toy</span>
-            <span class="pane-title">エージェント</span>
+            <span class="pane-title">エージェントの作業</span>
             <span class="pane-sub">worker の工程。点線のカードは人の確認待ちで止まっています</span>
           </div>
           <div id="hub-strip-slot">
