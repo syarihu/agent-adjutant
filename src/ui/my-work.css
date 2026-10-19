@@ -94,9 +94,12 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
   display: flex; flex-direction: column; gap: 2px;
   background: var(--md-sys-color-surface-container-high); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-sm); box-shadow: var(--md-elevation-3);
 }
-/* An invisible bridge over the gap, so the menu stays open while the pointer crosses it. */
-.org-menu::before { content: ''; position: absolute; top: 0; bottom: 0; right: 100%; width: 8px; }
-@media (hover: hover) { .org-switch:not(.shut):hover > .org-menu:not(:empty) { display: flex; } }
+/* The switch reaches over the gap with an invisible bridge while hovered, so the menu stays open while the pointer crosses it.
+   The bridge is the switch's, not the menu's: the menu scrolls, which would clip anything it drew outside itself. */
+@media (hover: hover) {
+  .org-switch:not(.shut):hover > .org-menu:not(:empty) { display: flex; }
+  .org-switch:not(.shut):hover::after { content: ''; position: absolute; top: 0; left: 100%; width: 8px; height: 100%; }
+}
 .org-item {
   display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--md-sys-color-on-surface);
   font: inherit; font-size: 12.5px; text-align: left; padding: 6px 10px; border-radius: var(--md-shape-corner-xs); cursor: pointer;

@@ -1378,6 +1378,8 @@ function renderWorkTabs() {
   wk('ov-scroll').hidden = !others;
   // What belongs to the tasks' list only: the place to ask for a task, the filter and the actions on new rows.
   wk('wk-ask').hidden = others;
+  // 「レビュー」's list starts with the code-review hub's state (#751), so the aide's row is the tasks' list's only.
+  document.querySelector('.aide-pin-wrap').hidden = others;
   renderWorkTools();
   renderOthersStaleDot();
 }
