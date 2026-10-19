@@ -399,7 +399,7 @@ function othersListHtml() {
   }
   // Every new row counts, the ones the repository and AI 下読み chips hide too (as 「タスク」 marks every new entry whatever is folded).
   const readAllHtml = othersNewIds(records, marks).length ? workReadAllButtonHtml('data-ov-read-all') : '';
-  return `<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${stageChipsHtml}${readAllHtml}</div>${alerts}${othersHubHtml(hubView)}${body}`;
+  return `${othersHubHtml(hubView)}<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${stageChipsHtml}${readAllHtml}</div>${alerts}${body}`;
 }
 
 /* How to find again what has the keyboard focus after a redraw: the control by its own data, else (a button that has gone, as

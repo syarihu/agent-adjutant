@@ -55,7 +55,11 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-list-head:has(> #wk-list-tools[hidden]) { display: none; }
 .wk-list-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .wk-list-tools[hidden] { display: none; }
-/* Where a task is asked for, and the repository the list is narrowed to. */
+/* Where a task is asked for: one button at the top of the list column, whichever list is under it. */
+.list-ask { flex: none; padding: 10px 12px 4px; }
+.list-ask[hidden] { display: none; }
+.list-ask .wk-req-btn { width: 100%; padding: 10px 14px; border-radius: 9999px; font-size: 13px; font-weight: 800; box-shadow: var(--md-elevation-1); }
+/* The repository the list is narrowed to. */
 .wk-ask { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; }
 .wk-ask[hidden] { display: none; }
 .wk-req-btn {
@@ -71,31 +75,40 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
   background: var(--md-sys-color-surface-container-high); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-sm);
 }
 
-/* The organisation switch, at the top of the rail: its avatar and name, with the count of what waits in the others. */
+/* The organisation switch, at the top of the rail: its avatar with the count of what waits in the others, and its name under it with ⇕.
+   The menu opens beside it on hover or keyboard focus (org-switch.js); `.shut` keeps it closed after a choice while the pointer is still on it. */
 .org-switch { position: relative; flex: none; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.org-name:empty { display: none; }
-.org-name { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
-.org-btn { position: relative; display: inline-flex; border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: var(--md-shape-corner-md); }
+.org-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 70px; border: 0; background: transparent; padding: 4px 2px; cursor: pointer; border-radius: var(--md-shape-corner-md); color: var(--md-sys-color-on-surface-variant); }
+.org-btn:hover { background: var(--wk-hover); }
+.org-ava-wrap { position: relative; display: inline-flex; }
+.org-n { display: flex; align-items: center; max-width: 100%; font-size: 10.5px; font-weight: 700; }
+.org-short { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.org-n .material-symbols-outlined { flex: none; font-size: 13px; }
 .org-btn[hidden], .org-menu[hidden], .brand-badge[hidden] { display: none; }
-.org-ava-box { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; overflow: hidden;
-  background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-weight: 900; font-size: 14px; }
+.org-ava-box { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; overflow: hidden;
+  background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-weight: 900; font-size: 15px; }
 .org-ava { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .org-badge { position: absolute; top: -4px; right: -6px; margin: 0; font-size: 10px; padding: 1px 5px; }
 .org-menu {
-  position: absolute; top: 0; left: calc(100% + 6px); z-index: 60; min-width: 200px; max-height: 60vh; overflow-y: auto; padding: 4px;
+  position: absolute; top: 0; left: 100%; margin-left: 6px; z-index: 60; min-width: 200px; max-height: 60vh; overflow-y: auto; padding: 4px;
   display: flex; flex-direction: column; gap: 2px;
   background: var(--md-sys-color-surface-container-high); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-sm); box-shadow: var(--md-elevation-3);
 }
+/* An invisible bridge over the gap, so the menu stays open while the pointer crosses it. */
+.org-menu::before { content: ''; position: absolute; top: 0; bottom: 0; right: 100%; width: 8px; }
+@media (hover: hover) { .org-switch:not(.shut):hover > .org-menu:not(:empty) { display: flex; } }
 .org-item {
   display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--md-sys-color-on-surface);
   font: inherit; font-size: 12.5px; text-align: left; padding: 6px 10px; border-radius: var(--md-shape-corner-xs); cursor: pointer;
 }
-.org-item .org-ava-box { width: 24px; height: 24px; font-size: 12px; }
+.org-item .org-ava-box { width: 24px; height: 24px; font-size: 12px; border-radius: 8px; }
 .org-item:hover { background: var(--wk-hover); }
 .org-item[aria-checked="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .org-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .org-tag { margin-left: 6px; font-size: 10.5px; color: var(--md-sys-color-on-surface-variant); }
-.org-item-count { flex: none; font-size: 11px; font-weight: 700; color: var(--md-sys-color-warning); }
+.org-item-count { flex: none; min-width: 18px; text-align: center; font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 9999px; color: var(--md-sys-color-warning); background: color-mix(in srgb, var(--md-sys-color-warning) 16%, transparent); }
+.org-check { flex: none; font-size: 18px; }
+.org-item[aria-checked="false"] .org-check { visibility: hidden; }
 .org-item-count.zero { visibility: hidden; }
 .wk-list-scroll[hidden] { display: none; }
 .wk-list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 12px; }
@@ -208,6 +221,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-meta { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); font-family: var(--font-mono); }
 .wk-meta .sub { font-family: inherit; color: var(--md-sys-color-tertiary); }
 .wk-row[aria-current="true"] .wk-meta .sub { color: inherit; }
+.wk-meta .wk-end { margin-left: auto; }
 .wk-meta .add { color: var(--md-sys-color-success); }
 .wk-meta .del { color: var(--md-sys-color-error); }
 .wk-line { font-size: 11px; font-family: var(--font-mono); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
@@ -284,7 +298,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 @keyframes wk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .wk-glyph.working, .wk-glyph.restarting { animation: none; } }
 
-/* The rate limits under the list. */
+/* The rate limits, pinned to the bottom of the list column. */
 .wk-rate { flex: none; padding: 8px 14px; border-top: 1px solid var(--md-sys-color-outline-variant); font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-direction: column; gap: 4px; }
 .wk-rate:empty { display: none; }
 .wk-rate-acct { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }

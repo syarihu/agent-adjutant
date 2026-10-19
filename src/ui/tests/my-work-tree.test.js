@@ -26,7 +26,7 @@ const ctx = vm.createContext({
   sessionState: s => s.waiting && !s.went ? 'waiting' : s.state, gateFirst: s => !!s.waiting && !s.went, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:', nav: { task: null }, workCleanable: () => false, workCleanRowHtml: () => '',
   workRepos: () => [], SESS_REF: 'sess:', work: { doc: null }, esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
   // What a row's own markup reads from the page's other files.
-  sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, agentStateOf: () => 'working',
+  sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, workNewest: () => null, WORK_PR_NOW: {}, agentStateOf: () => 'working',
   requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: (t, passed) => passed ? 'who-passed' : 'who', WORK_SUBAGENTS_SHOWN: 4,
 });
 vm.runInContext([
@@ -73,6 +73,8 @@ vm.runInContext([
   cut(/^function workPlaceHubChips[\s\S]*?^}/m),
   cut(/^const workPercent = [^\n]*;/m),
   cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
+  cut(/^const workMergedEnd = [^\n]*;/m),
+  cut(/^function workTurnRowHtml[\s\S]*?^}/m),
   cut(/^function workRowHtml[\s\S]*?^}/m),
   cut(/^function workItemHtml[\s\S]*?^}/m),
   cut(/^function workRefocus[\s\S]*?^}/m),
@@ -557,7 +559,7 @@ test('a hub row carries what a session row does, with the inbox counts in place 
   const html = itemHtml(hubItem({ unseen: 2, seen: 4 }, {}), 'tree');
   const rowPart = html.match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0];
   assert.ok(rowPart.includes('data-wk="b-own/hub:own"') && rowPart.includes('<g idle>'));
-  assert.ok(rowPart.includes('claude · opus') && rowPart.includes('42%') && rowPart.includes('サブエージェント 1'));
+  assert.ok(rowPart.includes('claude · opus') && rowPart.includes('42%') && rowPart.includes('wk-line tree') && rowPart.includes('└ x'));
   assert.ok(rowPart.includes('<said>did a thing\nmore</said>'));
   assert.ok(rowPart.includes('受信箱 未確認 2') && rowPart.includes('確認済み 4'));
   assert.ok(rowPart.includes('<span class="wk-tag">hub</span>'));
@@ -870,4 +872,39 @@ test('the organisation follows the address when it moves, and an address cleared
   Object.assign(ctx, { nav: { board: 'b9', task: 't9' }, workSelected: () => null });
   run('workFollowOrg()');
   assert.strictEqual(run('workFollowedAddr'), 'b1/t1');
+});
+
+/* ── a row's order, and the PR number only once merged (#751) ── */
+const plainRow = (extra = {}) => ({ ...hubItem(), isHub: false, id: 'k', key: 'k', st: 'working', task: { pr: 'x', title: 'T' }, data: { now: 1 },
+  s: { present: true, agent: 'claude', branch: 'feat/x', agentSession: { activity: 'doing it', subagents: [{ type: 'sub' }] } }, ...extra });
+const rowOf = r => itemHtml(r, 'tree').match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0];
+
+test('a row that is not merged shows no PR number, and one that is merged shows it with マージ at the end of the meta', () => {
+  const open = rowOf(plainRow());
+  assert.ok(!open.includes('#12') && !open.includes('マージ'));
+  ctx.prRefNumber = () => 12;
+  try {
+    assert.ok(!rowOf(plainRow()).includes('#12'));
+    const merged = rowOf(plainRow({ task: { pr: 'x', title: 'T', prState: 'merged' }, s: { present: true, agent: 'claude', uncommitted: { insertions: 3, deletions: 1 }, agentSession: {} } }));
+    assert.ok(merged.includes('<span class="wk-end">#12 マージ</span>') && !merged.includes('+3'));
+    const turn = run('workTurnRowHtml(r)', { r: { entry: {}, task: { pr: 'x', title: 'T' }, live: [], data: { now: 1 }, key: 'k', st: 'waiting' } });
+    assert.ok(!turn.includes('#12'));
+    const mergedTurn = run('workTurnRowHtml(r)', { r: { entry: {}, task: { pr: 'x', title: 'T', prState: 'merged' }, live: [], data: { now: 1 }, key: 'k', st: 'waiting' } });
+    assert.ok(mergedTurn.includes('<span class="wk-end">#12 マージ</span>'));
+  } finally {
+    ctx.prRefNumber = () => null;
+  }
+});
+
+test('an unmerged row has its uncommitted diff at the end of the meta', () => {
+  const html = rowOf(plainRow({ s: { present: true, agent: 'claude', branch: 'feat/x', uncommitted: { insertions: 3, deletions: 1 }, agentSession: {} } }));
+  assert.ok(/<span class="wk-end"><span class="add">\+3<\/span> <span class="del">-1<\/span><\/span>/.test(html));
+});
+
+test('a row reads agent, title, meta, what it runs, the hub\'s unread requests, then the sub-agents', () => {
+  const hub = hubItem({ unseen: 1, requestsUnseen: 1 }, { st: 'working', s: { present: true, agent: 'claude', agentSession: { activity: 'doing it', subagents: [{ type: 'sub' }] } } });
+  const html = rowOf(hub);
+  const at = x => { const i = html.indexOf(x); assert.ok(i >= 0, x); return i; };
+  const order = [at('class="wk-agent"'), at('class="wk-title"'), at('class="wk-meta"'), at('doing it'), at('未読の依頼'), at('wk-line tree')];
+  assert.deepStrictEqual(order, [...order].sort((a, b) => a - b));
 });

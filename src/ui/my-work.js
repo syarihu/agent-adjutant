@@ -585,6 +585,8 @@ async function refreshWork(force = false) {
     // The rail's レビュー count is narrowed by the organisations this document lists.
     renderOthersCount();
     if (pendingGate && view === 'work') openPendingGate();
+    // The usage is under the list column on every view but the TODO's.
+    renderWorkRate();
     if (view !== 'work') return;
     const json = JSON.stringify(workSig(doc));
     const minute = Math.floor((doc.now || 0) / 60);
@@ -622,8 +624,9 @@ const workGlyphHtml = (st, extra = '') => {
 
 const workPercent = n => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
-/* One row, in the order the issue gives: the state, the agent and its model and context, the title, the PR and branch
-   and how long ago the state changed, the sub-agents, the diff, what it asks, what it is running, and the gate. A hub is a row too,
+/* One row, top to bottom: the state with the agent, its model and context; the title; the branch and how long ago the state changed,
+   with the diff at the right end (or 「#N マージ」 once the PR is merged: an Issue or PR number is not shown before that, #751); what it asks,
+   what it is running, what it said and the gate; a hub's unread requests; the sub-agents. A hub is a row too,
    with what its inbox holds in place of a branch; `named` says which parent task's hub it is, where that is not the group's. A hub
    that heads a parent's group is that parent's row: `parent` puts the parent's number and title where the hub's would be, and how far its
    children have got in the meta. */
@@ -635,7 +638,8 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   const bar = ctx == null ? '' : `<span class="wk-ctx${ctx >= 90 ? ' crit' : ctx >= 70 ? ' warn' : ''}" title="コンテキスト ${ctx}%"><span class="wk-ctx-bar"><i style="width:${ctx}%"></i></span>${ctx}%</span>`;
   const label = sessionLabel(s, false, data);
   const title = task?.title || label.text;
-  const prNumber = task ? prRefNumber(task.pr) : s.branchPr?.number;
+  const merged = workMerged(r);
+  const prNumber = merged ? (task ? prRefNumber(task.pr) : s.branchPr?.number) : null;
   const since = a.updatedAt ?? s.phaseAt;
   const age = since != null && data.now != null ? agoLabel(minutesSince(since, data.now)) : '';
   const subs = s.present ? (a.subagents || []) : [];
@@ -645,13 +649,10 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   const meta = [
     workAwayChip(r.away),
     ...(parent ? workParentMeta(parent) : []),
-    prNumber ? `#${esc(prNumber)}` : '',
     s.branch && !r.isHub ? esc(s.branch) : '',
     ...inbox,
     age ? esc(age) : '',
-    subs.length ? `<span class="sub">サブエージェント ${subs.length}</span>` : '',
-    diff,
-  ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
+  ].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (merged ? workMergedEnd(prNumber) : diff ? `<span class="wk-end">${diff}</span>` : '');
   // The gate is first unless the worker went on past it; its line is drawn either way, for it can still be answered.
   const first = gateFirst(s, data);
   const asks = !first && agentStateOf(s) === 'permission' && a.request ? `<span class="wk-line ask">${esc(requestText(s))}</span>` : '';
@@ -659,7 +660,7 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   const said = (band || r.isHub) && !asks && !first && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
   const parked = !s.waiting ? workParkedHtml(r) : '';
   const doing = st === 'working' && a.activity ? `<span class="wk-line">${esc(a.activity)}</span>` : '';
-  const tree = st === 'working' && subs.length
+  const tree = subs.length
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
@@ -668,9 +669,12 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
     ${workGlyphHtml(st)}<span class="wk-main">
       ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
       <span class="wk-title">${r.isHub ? `<span class="wk-tag">${esc(named && r.hub?.parent && r.hub.key ? `hub ${r.hub.key}` : 'hub')}</span>${hubTitleMarkHtml(r.hub)}` : ''}${esc(parent ? workParentName(parent) || title : title)}</span>
-      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${r.isHub ? workRequestsHtml(r) : ''}${asks}${said}${doing}${tree}${gate}${parked}
+      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${gate}${doing}${said}${parked}${r.isHub ? workRequestsHtml(r) : ''}${tree}
     </span></button>`;
 }
+
+/* The right end of a merged row's meta: the PR's number, shown from the merge on and not before (#751). */
+const workMergedEnd = number => `<span class="wk-end">${number ? `#${esc(number)} ` : ''}マージ</span>`;
 
 /* A parent's name as its heading says it: `#number title`, or its key. */
 const workParentName = p => `${p.number ? `#${p.number}` : p.key}${p.title ? ` ${p.title}` : ''}`;
@@ -723,10 +727,10 @@ const workGateWho = (task, passed = false) => parkOf(task) ? `置いている �
 function workTurnRowHtml(r, cell = '', band = false) {
   const e = r.entry;
   const title = r.task?.title || (e.session ? sessionLabel(e.session, false, r.data).text : e.gateTitle || r.ref);
-  const prNumber = r.task ? prRefNumber(r.task.pr) : null;
+  const prNumber = workMerged(r) && r.task ? prRefNumber(r.task.pr) : null;
   const newest = workNewest(r);
   const age = newest && r.data.now != null ? agoLabel(minutesSince(newest, r.data.now)) : '';
-  const meta = [workAwayChip(r.away), prNumber ? `#${esc(prNumber)}` : '', age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('');
+  const meta = [workAwayChip(r.away), age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (workMerged(r) ? workMergedEnd(prNumber) : '');
   const gate = r.live.find(i => i.kind === 'gate');
   const pr = r.live.find(i => i.kind === 'pr');
   const lines = (gate ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(gate.gate)[0])} · ${esc(workGateWho(r.task))}</span>` : '')
@@ -1412,7 +1416,6 @@ wk('wk-list').addEventListener('click', e => {
     const c = work.hubsByKey.get(b.dataset.wkStart);
     return c && !b.disabled && workHubStart(c);
   }
-  if ((b = e.target.closest('#wk-req-btn'))) return openRequestDialog();
   if ((b = e.target.closest('[data-wk-hub]'))) {
     const c = work.hubsByKey.get(b.dataset.wkHub);
     return c && selectWorkRow(c);

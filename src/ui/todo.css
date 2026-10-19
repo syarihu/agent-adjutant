@@ -2,6 +2,8 @@
 /* The column shows the boards, 「いまの仕事」's list or the TODO's list, by the rail's entry. */
 body:not(.view-todo) #todo-list { display: none; }
 body.view-todo #side-boards, body.view-todo #wk-list { display: none; }
+/* The usage sits at the bottom of the other lists; the TODO's has none. */
+body.view-todo #wk-rate { display: none; }
 /* The list is the column's, as 「いまの仕事」's is: the rest of its height. */
 #side-list .todo-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 

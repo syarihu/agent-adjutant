@@ -405,7 +405,7 @@ body.panel-pop #task-panel {
   .tp-resize { display: none; }
   /* The rail stays; the list goes above the middle. */
   body { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  #nav-rail { grid-column: 1; grid-row: 1 / -1; }
+  #nav-rail { grid-column: 1; grid-row: 1 / -1; z-index: 30; }
   #side-list { grid-column: 2; grid-row: 1; width: auto; height: 45vh; border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
   #app-main { grid-column: 2; grid-row: 2; min-height: 0; }
   #list-resize { display: none; }

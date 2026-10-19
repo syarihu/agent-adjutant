@@ -8,7 +8,6 @@
     <div class="brand-badge" id="org-fallback">adj</div>
     <button type="button" class="org-btn" id="org-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="org-menu" hidden></button>
     <div class="org-menu" id="org-menu" role="menu" aria-label="組織" hidden></div>
-    <span class="org-name" id="org-name"></span>
   </div>
 
   <button type="button" class="rail-fab" data-action="new-task" title="依頼する" aria-label="依頼する">
@@ -40,6 +39,8 @@
 </nav>
 
 <aside id="side-list" aria-label="一覧">
+  <div class="list-ask" id="list-ask"><button type="button" class="wk-req-btn" id="wk-req-btn" data-action="new-task"><span class="material-symbols-outlined" aria-hidden="true">add_task</span><span>依頼する</span></button></div>
+
   <div class="rail-destinations" id="side-boards">
     <div class="rail-section-label rail-boards-label">ボード</div>
     <div id="board-rows"></div>
@@ -51,7 +52,6 @@
       <span class="aide-pin-main"><span class="aide-pin-name">副官</span><span class="aide-pin-sub" id="aide-pin-sub"></span></span>
       <span class="rail-badge zero" id="aide-pin-count" title="判断待ちの数">0</span></button></div>
     <div class="wk-ask" id="wk-ask">
-      <button type="button" class="wk-req-btn" id="wk-req-btn"><span class="material-symbols-outlined" aria-hidden="true">add_task</span><span>依頼する</span></button>
       <label class="wk-repo-filter"><span class="material-symbols-outlined" aria-hidden="true">folder</span><select id="wk-repo-filter" aria-label="リポジトリ"></select></label>
     </div>
     <div class="pane-head wk-list-head">
@@ -63,10 +63,11 @@
     </div>
     <div class="wk-list-scroll" id="wk-task-scroll"><div id="wk-groups"></div></div>
     <div class="wk-list-scroll" id="ov-scroll" hidden><div id="ov-groups"></div></div>
-    <div class="wk-rate" id="wk-rate"></div>
   </section>
 
   <section class="todo-list" id="todo-list" aria-label="あなたの番"></section>
+
+  <div class="wk-rate" id="wk-rate"></div>
 
   <div class="list-resize" id="list-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="一覧の幅" aria-valuemin="240" aria-valuemax="560" aria-valuenow="330" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
 </aside>

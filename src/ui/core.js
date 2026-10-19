@@ -109,6 +109,9 @@ function markRail() {
     if (!b) continue;
     if (id === on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   }
+  // 「依頼する」 tops the list column of every place but 「レビュー」, whose list is of other people's work.
+  const ask = document.getElementById('list-ask');
+  if (ask) ask.hidden = on === 'nav-review';
 }
 
 function applyLayout() {

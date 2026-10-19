@@ -64,7 +64,7 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 ## Views
 
-The page is a rail of icons with the list of the place chosen in a column beside it. The rail has **いまの仕事 (Work under way)**, **TODO**, **レビュー (Review)** and **ボード (Board)**, with the organisation switch and a ＋ button (「依頼する」) above them and the notification settings and the theme below. `/` opens いまの仕事 on the resident server; `/?view=agent` is 「すべて」, and a board's own address (`/b/<slug>/`) opens that board. The list column's width is dragged between 240px and 560px and remembered. A board served alone has the rail and the board only.
+The page is a rail of icons with the list of the place chosen in a column beside it. The rail has **いまの仕事 (Work under way)**, **TODO**, **レビュー (Review)** and **ボード (Board)**, with the organisation switch and a ＋ button (「依頼する」) above them and the notification settings and the theme below. The list column of いまの仕事, TODO and ボード starts with a 「依頼する」 button too (レビュー's list does not), and the usage (rate limits) is pinned to the bottom of the list column in every place but TODO. A row shows `#N マージ` at the right end of its meta only once its PR is merged; before that it carries no Issue or PR number. `/` opens いまの仕事 on the resident server; `/?view=agent` is 「すべて」, and a board's own address (`/b/<slug>/`) opens that board. The list column's width is dragged between 240px and 560px and remembered. A board served alone has the rail and the board only.
 
 ### 1. いまの仕事 (Work Under Way: `?view=work`)
 
@@ -78,7 +78,7 @@ A unified 3-column operational view across all repositories:
 
 #### Organisation, repository and hierarchy
 The left list shows one organisation (a GitHub owner) at a time:
-- **Organisation switch**: the avatar at the top of the rail. Its menu lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Following a link to a row of another organisation switches to it.
+- **Organisation switch**: the avatar at the top of the rail, with the organisation's name and ⇕ under it. Its menu opens on hover or keyboard focus (or a tap), marks the current organisation with ✓ and lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Following a link to a row of another organisation switches to it.
 - **Repository filter**: 「すべて」 or one repository of the organisation. With one chosen, the repository headings are left out.
 - **Hierarchy**: Repository → hub → sessions. A hub is a row heading its group; the tasks it runs are indented below it. A parent issue's hub shows the parent's number, title and `n / m マージ` progress.
 - **依頼する**: opens one dialog to ask a hub for a task: pick the repository (of the organisation) and the hub (the repository's own, or a parent task's), write what you want, and send it with 「渡す」 (Ctrl/⌘+Enter) or keep it with 「あとで（Backlog）」. An unsent text is kept for the next time. The new-task button and 「子タスクを足す」 open the same dialog; a board served alone keeps its own form.
