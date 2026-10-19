@@ -400,7 +400,7 @@ function othersListHtml() {
     if (!groups.length) {
       // Counted over all the records with the repository that applies above, so the number is of what the toggle would bring back.
       const hiddenN = hideDone ? othersGroups(records, repo, stage, nowEst).reduce((n, g) => n + g.rows.length, 0) : 0;
-      const showBtn = '<button type="button" class="ov-sync-btn lite" data-ov-done aria-pressed="false"><span class="material-symbols-outlined" aria-hidden="true">visibility</span>終わったものも表示</button>';
+      const showBtn = '<button type="button" class="ov-sync-btn lite" data-ov-done><span class="material-symbols-outlined" aria-hidden="true">visibility</span>終わったものも表示</button>';
       const label = stage ? stageChips.find(c => c.key === stage)?.label || '' : '';
       const text = stage ? `「${label}」の PR はありません` : '終わっていない PR はありません';
       body = `<div class="wk-empty">${esc(text)}${hiddenN > 0 ? `。終わった PR ${hiddenN} 件を隠しています<br>${showBtn}` : ''}</div>`;

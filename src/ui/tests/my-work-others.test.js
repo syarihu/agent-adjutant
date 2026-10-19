@@ -591,7 +591,7 @@ test('a list of only finished PRs says how many are hidden and offers to show th
   const doc = listDoc([finished(2, 'merged')]);
   const html = listOf(doc);
   assert.ok(html.includes('終わっていない PR はありません。終わった PR 1 件を隠しています'));
-  assert.ok(/class="ov-sync-btn lite" data-ov-done aria-pressed="false">[\s\S]*終わったものも表示/.test(html));
+  assert.ok(/class="ov-sync-btn lite" data-ov-done>[\s\S]*終わったものも表示/.test(html));
   assert.strictEqual(rowCount(html), 0);
   const off = listOf(doc, { hideDone: false });
   assert.strictEqual(rowCount(off), 1);
