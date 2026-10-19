@@ -1148,6 +1148,14 @@ test('a row the page selected by itself does not replace the one the person sele
   w.c.nav = { board: 'b-1', task: '42' };
   w.run('workRemember()');
   assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"42"}');
+  // Leaving the picked row through an address that is not kept (a PR), then choosing it, keeps it.
+  w.c.nav = { board: 'all', task: null };
+  w.run('workSelectFirst()');
+  w.c.nav = { board: 'b-1', task: 'pr:o/r#1' };
+  w.run('workRemember()');
+  w.c.nav = { board: 'b-1', task: 'first' };
+  w.run('workRemember()');
+  assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"first"}');
 });
 
 test('the restore happens once, waits for the document, and leaves an address, a link in flight and the other tab alone', () => {

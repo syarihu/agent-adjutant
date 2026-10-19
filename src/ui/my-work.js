@@ -1035,13 +1035,13 @@ function workLastRead(login) {
 
 /* Keep the row the address selects as the one of its organisation: only a row of 「いまの仕事」, not a PR or a bare gate. */
 function workRemember() {
+  // A row the page picked by itself (the fallback, an organisation switch) is not what the person selected, until the address leaves it.
+  if (work.autoSel && work.autoSel !== `${nav.board}/${nav.task}`) work.autoSel = null;
   if (view !== 'work' || prefs.workTab !== 'task' || !nav.task || !nav.board || nav.board === 'all' || isPrRef(nav.task) || isGateRef(nav.task)) return;
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (!nwo) return;
-  // A row the page picked by itself (the fallback, an organisation switch) is not what the person selected.
-  if (work.autoSel === `${nav.board}/${nav.task}`) return;
-  work.autoSel = null;
+  if (work.autoSel) return;
   const login = orgOf(nwo);
   const cur = workLastRead(login);
   if (cur && cur.board === nav.board && cur.task === nav.task) return;
