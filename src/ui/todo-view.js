@@ -1,8 +1,7 @@
 /* ── TODO: the page's half (the list and its markup are todo.js; the card is question-card.js) ───────────────────────────────────
    The sidebar's third entry counts what waits on the person, shows it in a popover while the pointer or the keyboard is on the entry,
-   and opens a view of it: the list on the left (quick questions answered where they stand, then what is read before it is decided, then
-   the pull requests to review) and the selected question as the same card the dialog has on the right. The work document and the review
-   records are the page's own (`work`, `others`); a gate's content is not in them, so the state of each board that has a gate is read
+   and opens a view of it: the list on the left (quick questions answered where they stand, then what is read before it is decided) and
+   the selected question as the same card the dialog has on the right. The work document is the page's own (`work`); a gate's content is not in them, so the state of each board that has a gate is read
    here (`todo.boards`) and handed to the card through a question source (question-dialog.js). Loaded after question-dialog.js,
    my-work.js, my-work-others-view.js and pr-panel.js, and before main.js. */
 
@@ -23,7 +22,7 @@ const todo = {
   seen: {},        // key -> when the page first saw the gate listed by the work document (ms)
   items: null,     // what `todoMine` said at the last round
   keys: [],        // what can be selected, as last drawn
-  sel: null,       // the selected key (a gate's, or a pull request's): the page's, not the address's
+  sel: null,       // the selected key (a gate's): the page's, not the address's
   html: { pop: null, list: null, card: null },
   card: null,      // { key, head, body } of the gate drawn on the right
   popOpen: false,
@@ -33,7 +32,7 @@ const todo = {
 
 /* What waits on the person, in the selected organisation unless `inScope` says otherwise (the organisation switch counts the others with it). */
 const todoMine = (inScope = todoInScope()) => todoItems({
-  doc: work.doc, records: othersRecords(), isDone: key => answeredGates.has(key), inScope,
+  doc: work.doc, isDone: key => answeredGates.has(key), inScope,
 });
 
 const todoSlugOf = key => key.slice(0, Math.max(key.lastIndexOf('/'), 0));
@@ -121,14 +120,14 @@ function todoSetHtml(slot, el, html) {
 const todoCtxOf = g => ({ ...questionCtxFor(g), key: gateKey(g) });
 
 /* Why the list cannot be trusted to be whole, as a line: a read that failed is not an empty list. */
-const todoStatus = () => todoNotes({ workDoc: work.doc, workError: work.error, othersDoc: others.doc, othersError: others.error, othersSyncError: others.syncError, nowSecs: othersNowEst() });
+const todoStatus = () => todoNotes({ workDoc: work.doc, workError: work.error });
 const todoNotesHtml = notes => notes.map(n => `<p class="todo-hint todo-note">${esc(n)}</p>`).join('');
 
 function todoListOf(items, sel) {
   // Nothing has been read yet, or the read failed: not the same as nothing waiting.
   const st = todoStatus();
   if (st.blocked) return todoNotesHtml([st.blocked]);
-  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, goneOf: todoGoneOf, sel, now: Date.now() / 1000, records: othersRecords(), emptyOk: st.emptyOk });
+  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, goneOf: todoGoneOf, sel, now: Date.now() / 1000, emptyOk: st.emptyOk });
 }
 
 function todoDrawBadge(items) {
@@ -136,31 +135,12 @@ function todoDrawBadge(items) {
   if (!badge) return;
   badge.textContent = items.count;
   badge.classList.toggle('zero', items.count === 0);
-  // The PRs waiting on you are the rail's レビュー.
-  const review = document.getElementById('review-count');
-  if (!review) return;
-  review.textContent = items.prs.length;
-  review.classList.toggle('zero', items.prs.length === 0);
 }
 
 function todoDrawList(items) {
   const el = document.getElementById('todo-list');
   todoSetHtml('list', el, `<h2 class="todo-head">あなたの番<span class="rail-badge${items.count ? '' : ' zero'}">${items.count}</span></h2>`
     + `<div class="todo-scroll">${todoListOf(items, todo.sel)}</div>`);
-}
-
-/* The card the right side shows for a pull request: where it is from, how far its AI 下読み is, and the way into its review. */
-function todoPrCardHtml(rec) {
-  const records = othersRecords();
-  const now = othersNowEst();
-  const stage = OTHERS_STAGE_MARK[othersAiStage(rec, records, now)];
-  const url = httpUrl(rec.url);
-  const sub = [rec.repo, rec.author ? `@${rec.author}` : '', othersRequestedLabel(rec, now)].filter(Boolean).map(x => `<span class="qc-where">${esc(x)}</span>`).join('');
-  return `<article class="qc todo-article" data-todo-pr="${esc(rec.id)}"><header class="qd-head"><div class="qd-head-main">`
-    + `<div class="qd-sub"><span class="qc-kind"><i class="todo-pr-dot"></i>レビュー依頼</span>${sub}</div><h2 class="qd-title">#${esc(rec.number)} ${esc(rec.title)}</h2></div></header>`
-    + `<div class="qd-body">${todoNotesHtml(todoStatus().notes)}<section class="qc-stage"><h3><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>AI 下読み</span></h3><p class="todo-stage">${esc(stage)}</p></section></div>`
-    + `<footer class="qd-foot"><div class="decide qc-decide"><button type="button" class="btn-m3-primary" data-todo-pr-open="${esc(rec.id)}">レビューの画面で開く</button>`
-    + `<span class="qc-spacer"></span>${url ? `<a class="qc-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>GitHub で開く</span></a>` : ''}</div></footer></article>`;
 }
 
 function todoEmptyCardHtml(items) {
@@ -203,11 +183,6 @@ function todoDrawCard(items) {
   const el = document.getElementById('todo-card');
   const key = todo.sel;
   if (!key) { todo.card = null; return todoSetHtml('card', el, todoEmptyCardHtml(items)); }
-  if (key.startsWith('pr:')) {
-    const rec = othersById(key.slice(3));
-    todo.card = null;
-    return todoSetHtml('card', el, rec ? todoPrCardHtml(rec) : todoEmptyCardHtml(items));
-  }
   const g = todoGateOf(key);
   if (!g) {
     todo.card = null;
@@ -356,11 +331,6 @@ function todoClick(e) {
   const row = e.target.closest('[data-todo-sel]');
   if (row) return e.currentTarget.id === 'todo-pop' ? todoOpen(row.dataset.todoSel) : todoSelect(row.dataset.todoSel);
   if (e.target.closest('[data-todo-open]')) return todoOpen();
-  const pr = e.target.closest('[data-todo-pr-open]');
-  if (pr) {
-    const rec = othersById(pr.dataset.todoPrOpen);
-    return rec ? prOpen(rec) : note('開く', true, 'このレビュー依頼は、いま読めません');
-  }
   const open = e.target.closest('[data-qc-open]');
   if (open) return questionOpenLayer(open.dataset.qcOpen, open);
   const b = e.target.closest('.pick[data-choice], [data-act], [data-qc-ide]');

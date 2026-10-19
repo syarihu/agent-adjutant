@@ -11,6 +11,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
+const othersWaiting = vm.runInContext('othersWaiting', ctx);
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersSyncWords, othersHubStopText, othersGroups, othersRepoChips,
   othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
   othersOutOfReviewLine, othersReadMode, othersReadAllPatches, othersAiStage, othersEffectiveStage, othersStageChips } = ctx;
@@ -29,6 +30,14 @@ test('the items of a record are its events that have a time, and a record waitin
   assert.deepStrictEqual(plain(othersItems(r)), [{ kind: 'requested', since: T0 }, { kind: 'rerequested', since: T0 + 5 }, { kind: 'pushed', since: T0 + 9 }]);
   for (const state of ['waiting-on-author', 'done', 'something-new']) assert.deepStrictEqual(plain(othersItems(rec(2, { state }))), []);
   assert.deepStrictEqual(plain(othersItems(rec(5, { events: null }))), []);
+});
+
+test('the rail\'s count: only the records in a state that waits on the person, in the repositories kept', () => {
+  const records = [rec(1), rec(2, { state: 'ai-reading' }), rec(3, { state: 'ai-ready' }), rec(4, { state: 'pushed' }),
+    rec(5, { state: 'waiting-on-author' }), rec(6, { state: 'done' }), rec(7, { repo: 'other/app' })];
+  assert.deepStrictEqual(othersWaiting(records).map(r => r.number), [1, 2, 3, 4, 7]);
+  assert.deepStrictEqual(othersWaiting(records, repo => repo === 'other/app').map(r => r.number), [7]);
+  assert.deepStrictEqual(plain(othersWaiting(null)), []);
 });
 
 test('a record is new after an event, not once read at or after it, and new again after a later event', () => {

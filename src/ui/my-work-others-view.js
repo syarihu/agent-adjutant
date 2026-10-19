@@ -78,12 +78,22 @@ async function refreshOthers(force = false) {
   }
   renderWorkBadge();
   renderOthersStaleDot();
-  // The rail's レビュー count is the TODO's PRs, which these records carry.
-  todoFollow();
+  renderOthersCount();
   if (view === 'work') renderOthersList(force);
   // The PR that is open follows its record, and one named by the address is opened once the records are here.
   prFollow();
 }
+
+/* The rail's レビュー count: the records that wait on the person, in the selected organisation. */
+function renderOthersCount() {
+  const badge = document.getElementById('review-count');
+  if (!badge) return;
+  const n = othersWaiting(othersRecords(), todoInScope()).length;
+  badge.textContent = n;
+  badge.classList.toggle('zero', n === 0);
+}
+// Another organisation was selected: the count is of that one.
+onOrgChange(renderOthersCount);
 
 /* Open the PR in the panel and the middle, as a task opens (pr-panel.js); selecting a row does not read it. */
 function othersSelect(rec) {

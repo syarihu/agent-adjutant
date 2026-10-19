@@ -533,6 +533,8 @@ async function fetchBoards() {
     renderBoardHead();
     // The hub panel reads the list for its origin, address and counts.
     redrawHubPanel();
+    // So is the rail's レビュー count, by the organisations the list adds.
+    renderOthersCount();
   } catch {
     // The list is a convenience; the board polls keep reporting a server that is gone.
   } finally {
@@ -697,7 +699,7 @@ function minuteSessions(sessions, now, mode) {
 async function refresh(force = false) {
   // The work view's list is its own document; the selected board's state below is what the panel and
   // the terminal read, and there is none while nothing is selected.
-  // The TODO reads the same two documents, and the state of each board that has something waiting on the person.
+  // The TODO reads the work document and the state of each board that has a gate; the review records are read too, for the rail's レビュー count.
   if (view === 'todo') {
     await Promise.all([refreshWork(force), refreshOthers(force)]);
     await todoLoadBoards(force);

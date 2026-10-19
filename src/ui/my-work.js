@@ -582,6 +582,8 @@ async function refreshWork(force = false) {
     workTrackParks();
     // The sidebar counts what is new on every view; the list is drawn on its own.
     renderWorkBadge();
+    // The rail's レビュー count is narrowed by the organisations this document lists.
+    renderOthersCount();
     if (pendingGate && view === 'work') openPendingGate();
     if (view !== 'work') return;
     const json = JSON.stringify(workSig(doc));
