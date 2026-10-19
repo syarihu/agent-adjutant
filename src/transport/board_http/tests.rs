@@ -89,6 +89,16 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         // The icon form of the sidebar: the rail is always icons, and the list is a column of its own.
         "rail-icons",
         "function applyRailMode",
+        // The page header and the CLI console's bottom sheet, and the global footer rule that capped a card's foot.
+        "top-app-bar",
+        "m3-bottom-sheet",
+        "toggleBottomSheet",
+        "id=\"log\"",
+        "sheet-latest-cmd",
+        "id=\"crumbs\"",
+        "page-subtitle",
+        "class=\"side-tabs\"",
+        "footer { border-top",
         // The card's button for the terminal tab outside the board.
         "class=\"m3-icon-button\" title=\"ターミナルのworkerタブを前面表示\"",
     ] {
