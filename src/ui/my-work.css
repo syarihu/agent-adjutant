@@ -73,6 +73,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 
 /* The organisation switch, at the top of the rail: its avatar and name, with the count of what waits in the others. */
 .org-switch { position: relative; flex: none; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.org-name:empty { display: none; }
 .org-name { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
 .org-btn { position: relative; display: inline-flex; border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: var(--md-shape-corner-md); }
 .org-btn[hidden], .org-menu[hidden], .brand-badge[hidden] { display: none; }

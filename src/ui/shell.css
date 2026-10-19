@@ -46,7 +46,8 @@
 .rail-btn[aria-current="page"] .rail-lbl { font-weight: 800; color: var(--md-sys-color-on-surface); }
 .rail-lbl { max-width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rail-btn .rail-badge { position: absolute; top: 2px; right: 6px; margin: 0; font-size: 9.5px; padding: 0 5px; }
-.rail-btn .ov-stale-dot { position: absolute; top: 4px; right: 10px; }
+/* At the pill's other corner, so it does not sit under the count. */
+.rail-btn .ov-stale-dot { position: absolute; top: 2px; left: 10px; }
 #review-count { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 .rail-fab {
   width: 48px;

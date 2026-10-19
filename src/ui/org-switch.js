@@ -37,7 +37,7 @@ function renderOrgSwitch() {
     closeOrgMenu();
     btn.hidden = true;
     orgEl('org-fallback').hidden = false;
-    orgEl('org-name').textContent = 'ボード';
+    orgEl('org-name').textContent = '';
     return;
   }
   const current = currentOrg();
