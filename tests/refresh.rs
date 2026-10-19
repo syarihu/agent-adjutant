@@ -98,21 +98,47 @@ echo "{\"data\":{$data}}"
     (path, asked)
 }
 
-/// A record in `status`, pointing at `pr`.
+/// A directory with only what the binary needs besides `gh`: `git`, linked into a directory
+/// of its own. Not the directory `git` lives in, which is where `gh` is often installed too — on
+/// a CI runner both are in /usr/bin — and a PATH through it would still find `gh`.
+fn git_only_bin(fixture: &Fixture) -> PathBuf {
+    let git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let git = PathBuf::from(String::from_utf8_lossy(&git.stdout).trim());
+    let only_git = fixture.repo.join("git-only-bin");
+    std::fs::create_dir_all(&only_git).unwrap();
+    let _ = std::fs::remove_file(only_git.join("git"));
+    std::os::unix::fs::symlink(&git, only_git.join("git")).unwrap();
+    only_git
+}
+
+/// A record in `status`, pointing at `pr`. Written with no `gh` on the PATH: moving a record
+/// that has a PR to done reads it, and a test must never reach the developer's own `gh`.
 fn task_with_pr(fixture: &Fixture, title: &str, status: &str, pr: &str) -> String {
     let added = fixture.json(&["task", "add", "--title", title, "--body", title, "--json"]);
     let id = added["task"]["id"].as_str().unwrap().to_string();
-    fixture.ok(&[
-        "task",
-        "update",
-        "--id",
-        &id,
-        "--status",
-        status,
-        "--pr",
-        pr,
-        "--no-hand-over",
-    ]);
+    let out = fixture
+        .command([
+            "task",
+            "update",
+            "--id",
+            &id,
+            "--status",
+            status,
+            "--pr",
+            pr,
+            "--no-hand-over",
+        ])
+        .env("PATH", git_only_bin(fixture))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     id
 }
 
@@ -251,13 +277,25 @@ fn a_record_that_cannot_be_moved_is_reported_and_the_rest_still_move() {
     assert_eq!(status_of(&fixture, &merged), "done");
 }
 
-/// A finished record is not looked up at all: there is nothing its PR could change.
+/// A cancelled record is not looked up at all, and a done one only until its PR state is
+/// final: a merged or closed PR cannot change.
 #[test]
-fn a_done_or_cancelled_task_is_not_asked_about() {
+fn a_cancelled_task_and_a_done_one_recorded_final_are_not_asked_about() {
     let fixture = Fixture::new(QUIET);
-    task_with_pr(&fixture, "done", "done", &format!("{PULL}/2"));
     let cancelled = task_with_pr(&fixture, "cancelled", "cancelled", &format!("{PULL}/1"));
     let (path, asked) = stub_gh(&fixture);
+    let merged = task_with_pr(&fixture, "merged", "pr", &format!("{PULL}/1"));
+    let closed = task_with_pr(&fixture, "closed", "pr", &format!("{PULL}/3"));
+    // Their PRs' states are read once, as the moves to done read them.
+    for id in [&merged, &closed] {
+        let out = fixture
+            .command(["task", "update", "--id", id, "--status", "done"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    let _ = std::fs::remove_file(&asked);
 
     let out = fixture
         .command(["task", "refresh"])
@@ -272,6 +310,139 @@ fn a_done_or_cancelled_task_is_not_asked_about() {
     );
     assert!(!asked.exists(), "gh was asked about a finished task");
     assert_eq!(status_of(&fixture, &cancelled), "cancelled");
+    let shown = fixture.json(&["task", "show", "--id", &closed]);
+    assert_eq!(shown["prStatus"]["state"], "closed", "{shown}");
+}
+
+/// A `gh` that answers `answer_file`'s content for the pull request it is asked about, and
+/// counts its runs in the file it returns.
+fn counting_gh(fixture: &Fixture, answer_file: &Path) -> (String, PathBuf) {
+    let stubs = fixture.repo.join("counting-bin");
+    let calls = fixture.repo.join("counting-calls");
+    stub_bin(
+        &stubs,
+        "gh",
+        &format!(
+            "#!/bin/sh\necho call >> {}\ncat {}\n",
+            shell_quoted(&calls.to_string_lossy()),
+            shell_quoted(&answer_file.to_string_lossy())
+        ),
+    );
+    (path_with(&stubs), calls)
+}
+
+fn set_answer(file: &Path, state: &str) {
+    std::fs::write(file, answer_for(&pr_json(state, false, "", &[]))).unwrap();
+}
+
+fn run_with(fixture: &Fixture, path: &str, args: &[&str]) -> std::process::Output {
+    let out = fixture.command(args).env("PATH", path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+fn call_count(calls: &Path) -> usize {
+    std::fs::read_to_string(calls).map_or(0, |t| t.lines().count())
+}
+
+/// A card moved to done while its PR was still open keeps `open` until a refresh reads it
+/// again: then the state is corrected, and the record is not moved, not stamped as just
+/// finished, and not listed. Once merged it is not asked about again.
+#[test]
+fn a_done_task_recorded_open_is_corrected_without_being_moved() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "work", "pr", &format!("{PULL}/9"));
+    let answer = fixture.repo.join("answer");
+    set_answer(&answer, "OPEN");
+    let (path, calls) = counting_gh(&fixture, &answer);
+    run_with(&fixture, &path, &["task", "refresh"]);
+    run_with(
+        &fixture,
+        &path,
+        &["task", "update", "--id", &id, "--status", "done"],
+    );
+    let before = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(before["status"], "done");
+    assert_eq!(before["prStatus"]["state"], "open", "{before}");
+
+    set_answer(&answer, "MERGED");
+    let out = run_with(&fixture, &path, &["task", "refresh", "--json"]);
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    for list in ["done", "open", "skipped", "unreadable", "closed"] {
+        if let Some(entries) = result.get(list) {
+            assert!(ids(entries).is_empty(), "{list}: {result}");
+        }
+    }
+    let after = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(after["status"], "done");
+    assert_eq!(after["prStatus"]["state"], "merged", "{after}");
+    assert_eq!(after["updatedAt"], before["updatedAt"], "{after}");
+    assert_eq!(after["prTurnAt"], before["prTurnAt"], "{after}");
+
+    let asked = call_count(&calls);
+    run_with(&fixture, &path, &["task", "refresh"]);
+    assert_eq!(call_count(&calls), asked, "a merged record was asked about");
+}
+
+/// A done task whose PR is still open is read at every refresh, and stays done.
+#[test]
+fn a_done_task_whose_pr_is_still_open_stays_done() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "work", "pr", &format!("{PULL}/9"));
+    let answer = fixture.repo.join("answer");
+    set_answer(&answer, "OPEN");
+    let (path, calls) = counting_gh(&fixture, &answer);
+    run_with(
+        &fixture,
+        &path,
+        &["task", "update", "--id", &id, "--status", "done"],
+    );
+    let asked = call_count(&calls);
+    run_with(&fixture, &path, &["task", "refresh"]);
+    assert!(call_count(&calls) > asked, "the done task was not read");
+    assert_eq!(status_of(&fixture, &id), "done");
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["prStatus"]["state"], "open", "{shown}");
+}
+
+/// Moving a card to done reads its PR once, so a PR merged before the move is recorded as
+/// merged; the turn is not stamped, as the record never saw the change happen.
+#[test]
+fn moving_a_task_with_a_pr_to_done_records_its_pr_state() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "work", "pr", &format!("{PULL}/9"));
+    let answer = fixture.repo.join("answer");
+    set_answer(&answer, "MERGED");
+    let (path, _) = counting_gh(&fixture, &answer);
+    run_with(
+        &fixture,
+        &path,
+        &["task", "update", "--id", &id, "--status", "done"],
+    );
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["status"], "done");
+    assert_eq!(shown["prStatus"]["state"], "merged", "{shown}");
+    assert!(shown["prTurnAt"].is_null(), "{shown}");
+}
+
+/// A `gh` that cannot be run does not stop the move.
+#[test]
+fn moving_to_done_without_gh_still_moves() {
+    let fixture = Fixture::new(QUIET);
+    let id = task_with_pr(&fixture, "work", "pr", &format!("{PULL}/9"));
+    let only_git = git_only_bin(&fixture);
+    run_with(
+        &fixture,
+        &only_git.to_string_lossy(),
+        &["task", "update", "--id", &id, "--status", "done"],
+    );
+    let shown = fixture.json(&["task", "show", "--id", &id]);
+    assert_eq!(shown["status"], "done");
+    assert!(shown["prStatus"].is_null(), "{shown}");
 }
 
 /// Without `gh` there is no answer, and no answer is not "merged".
@@ -279,17 +450,7 @@ fn a_done_or_cancelled_task_is_not_asked_about() {
 fn without_gh_every_task_is_left_alone_and_said_to_be_unreadable() {
     let fixture = Fixture::new(QUIET);
     let id = task_with_pr(&fixture, "merged", "pr", &format!("{PULL}/1"));
-    // Only what the binary needs besides `gh`: `git`, linked into a directory of its own.
-    // Not the directory `git` lives in, which is where `gh` is often installed too — on a CI
-    // runner both are in /usr/bin — and a PATH through it would still find `gh`.
-    let git = Command::new("sh")
-        .args(["-c", "command -v git"])
-        .output()
-        .unwrap();
-    let git = PathBuf::from(String::from_utf8_lossy(&git.stdout).trim());
-    let only_git = fixture.repo.join("git-only-bin");
-    std::fs::create_dir_all(&only_git).unwrap();
-    std::os::unix::fs::symlink(&git, only_git.join("git")).unwrap();
+    let only_git = git_only_bin(&fixture);
     let out = fixture
         .command(["task", "refresh", "--json"])
         .env("PATH", &only_git)

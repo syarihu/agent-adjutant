@@ -166,6 +166,20 @@ pub fn update_checked(
     store::save(ctx, &task)?;
     drop(lock);
 
+    // A task moved to done after its PR merged would keep the state it was last read with. Read
+    // it once, outside the lock: `gh` is slow. The move stands whatever `gh` says.
+    let task = if was != Status::Done
+        && task.status == Status::Done
+        && task.pr.is_some()
+        // A `closed` PR can still be reopened and merged, and this read is a one-off on a
+        // person's action, so only `merged` is taken as settled.
+        && task.pr_status.as_ref().is_none_or(|s| s.state != "merged")
+    {
+        refresh::read_on_finish(ctx, task)
+    } else {
+        task
+    };
+
     // Handing over is a *transition*, not a status: re-sending on every save would put one
     // task in the inbox once for every time somebody dragged its card.
     // Not when the hub is the one queueing it: the inbox it would land in is its own. That is

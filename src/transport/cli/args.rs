@@ -1037,7 +1037,8 @@ pub(crate) enum TaskAction {
     /// The queued task a free worker slot should take next, and the ones waiting on a
     /// confirmation nobody has been asked for
     Next(TaskNextArgs),
-    /// Move every task whose pull request was merged to done, and say what was left alone
+    /// Move every task whose pull request was merged to done, and say what was left alone. Done
+    /// tasks are read too, only to correct the PR state kept on them
     Refresh(TaskRefreshArgs),
     /// Read the task's issue again and keep its title and body on the record
     FetchIssue(TaskFetchIssueArgs),

@@ -23,13 +23,41 @@ pub struct Checked {
     pub failed: Option<String>,
 }
 
-/// The records a refresh looks at: every one with a `pr` that is not finished.
+/// How long moving a task to `done` may wait on `gh` to read its PR once. Short: a person is
+/// waiting on the move, and a PR that cannot be read in time is simply left as recorded.
+const FINISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The records a refresh acts on: every one with a `pr` that is not finished. Finished ones
+/// are not asked about for a move (see `stale_finished` for the ones read only to be corrected).
 pub fn candidates(ctx: &Context) -> Vec<Task> {
     list(&ctx.state, &ctx.repo.slug)
         .into_iter()
         .filter(|t| !matches!(t.status, Status::Done | Status::Cancelled))
         .filter(|t| t.pr.is_some())
         .collect()
+}
+
+/// The done records whose kept PR state may be out of date: a `pr`, and no summary or one that
+/// is neither `merged` nor `closed`. A task moved to done by hand after its PR merged keeps
+/// the state it was last read with, which `candidates` never corrects.
+///
+/// Cancelled ones are left out: a cancelled task stays cancelled whatever its PR did, so its
+/// state is nobody's concern. So are records already `merged` or `closed`: those states
+/// cannot change, which also keeps the cost bounded, since every record is asked about until
+/// it reaches one of them and never after.
+pub fn stale_finished(ctx: &Context) -> Vec<Task> {
+    list(&ctx.state, &ctx.repo.slug)
+        .into_iter()
+        .filter(|t| t.status == Status::Done && t.pr.is_some())
+        .filter(|t| !pr_state_is_final(t))
+        .collect()
+}
+
+/// Whether the PR state kept on `task` is one that cannot change any more.
+fn pr_state_is_final(task: &Task) -> bool {
+    task.pr_status
+        .as_ref()
+        .is_some_and(|s| matches!(s.state.as_str(), "merged" | "closed"))
 }
 
 /// The pull request each record's `pr` names. A bare number is read against this repository,
@@ -67,19 +95,24 @@ pub(super) fn unreadable_pr(pr: &str) -> String {
 }
 
 /// Bring the records up to date with their pull requests: every one that has a `pr` and is
-/// not finished is asked about, all in one query, and the ones whose PR was merged are moved
-/// to `done`.
+/// not finished is asked about, and the ones whose PR was merged are moved to `done`. Done
+/// records whose kept PR state is not yet final are asked about in the same query, only to
+/// correct that state (`record_finished`): they are never moved and not returned.
 ///
 /// Nothing else is changed. A PR still open is still in review; one closed without merging
 /// may have been replaced by another, which only a person knows; one `gh` cannot read is
 /// not evidence of anything. Those are returned for the caller to report.
 pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
-    let candidates = candidates(ctx);
+    let live = candidates(ctx);
+    let stale = stale_finished(ctx);
     let deadline = std::time::Instant::now() + GH_TIMEOUT;
-    let refs = pr_refs(ctx, &candidates);
+    // One query for both, the records still in play first: they are what the shared deadline
+    // protects.
+    let all: Vec<Task> = live.iter().chain(&stale).cloned().collect();
+    let refs = pr_refs(ctx, &all);
     let readable: Vec<PrRef> = refs.iter().flatten().cloned().collect();
     let mut read = read_prs(&readable, deadline).answers.into_iter();
-    let answers = candidates
+    let mut answers: Vec<(PrState, Option<PrStatus>)> = all
         .iter()
         .zip(&refs)
         .map(|(t, r)| match r {
@@ -92,7 +125,47 @@ pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
             ),
         })
         .collect();
-    Ok(apply(ctx, candidates, answers))
+    let stale_answers = answers.split_off(live.len());
+    record_finished(ctx, stale, stale_answers);
+    Ok(apply(ctx, live, answers))
+}
+
+/// Keep what GitHub said on done records whose PR state was out of date, one answer each. The
+/// record is only corrected: its status, park and `updatedAt` stay (it is not `apply`, which
+/// would stamp the record as just finished), and the turn is not stamped, as nobody saw the
+/// change happen. An answer that could not be read leaves the record for the next refresh.
+pub(super) fn record_finished(
+    ctx: &Context,
+    tasks: Vec<Task>,
+    answers: Vec<(PrState, Option<PrStatus>)>,
+) {
+    for (task, (_, summary)) in tasks.into_iter().zip(answers) {
+        if let Some(summary) = summary.filter(|s| task.pr_status.as_ref() != Some(s)) {
+            store_pr_status(ctx, task, summary, Seen::Finished);
+        }
+    }
+}
+
+/// Read the PR of a task that has just been moved to `done`, once, and keep what GitHub said
+/// on the record, so a card moved after its PR merged does not keep `open`. Not stamping the
+/// turn: the record never saw the change happen. Never fails the move: a PR `gh` cannot read in
+/// time leaves the record as it was, for a later refresh to correct. Call it without the
+/// task's lock held, since `gh` is slow.
+pub(super) fn read_on_finish(ctx: &Context, task: Task) -> Task {
+    let Some(pr) = pr_refs(ctx, std::slice::from_ref(&task))
+        .into_iter()
+        .flatten()
+        .next()
+    else {
+        return task;
+    };
+    let deadline = std::time::Instant::now() + FINISH_TIMEOUT;
+    match read_prs(&[pr], deadline).answers.into_iter().next() {
+        Some((_, Some(summary))) if task.pr_status.as_ref() != Some(&summary) => {
+            store_pr_status(ctx, task, summary, Seen::Finished)
+        }
+        _ => task,
+    }
 }
 
 /// Act on what GitHub said about `candidates`, one answer each: a merged PR moves its record
@@ -110,7 +183,7 @@ pub fn apply(
             // when GitHub's answer differs from what is stored, so a quiet PR costs no write
             // and the page, which redraws when the JSON changes, stays still.
             let task = match summary.filter(|s| task.pr_status.as_ref() != Some(s)) {
-                Some(summary) => store_pr_status(ctx, task, summary),
+                Some(summary) => store_pr_status(ctx, task, summary, Seen::Now),
                 None => task,
             };
             checked.push(Checked {
@@ -155,18 +228,37 @@ pub fn apply(
     checked
 }
 
+/// How a PR summary reached a record.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Seen {
+    /// Read while the record was in play: a changed turn is stamped on `pr_turn_at`.
+    Now,
+    /// Read of a record already `done`, which never saw the change happen: no stamp, and
+    /// nothing is written unless the record is still `done` with the summary it had when `gh`
+    /// was asked, once the lock is held (it may have been cancelled or reopened meanwhile, or
+    /// another read may have stored a newer answer, which a slow one must not undo).
+    Finished,
+}
+
 /// Keep what GitHub said about `task`'s PR on its record, if the record still points at that
 /// PR once the lock is held. The summary is a cache, so a record that cannot be written is
 /// returned as it was rather than failing the refresh. `updatedAt` stays: nobody changed the
-/// task, and the board reads that stamp as the last time somebody did.
-fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus) -> Task {
+/// task, and the board reads that stamp as the last time somebody did. `seen` says
+/// how the answer was come by (see `Seen`).
+pub(super) fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus, seen: Seen) -> Task {
     let write = || -> Result<Option<Task>, String> {
         let _lock = store::lock(ctx, &task.id)?;
         let mut now = get(&ctx.state, &ctx.repo.slug, &task.id)?;
         if now.pr != task.pr || now.pr_status.as_ref() == Some(&summary) {
             return Ok(None);
         }
-        note_turn(&mut now, Some(&summary));
+        if seen == Seen::Finished && (now.status != Status::Done || now.pr_status != task.pr_status)
+        {
+            return Ok(None);
+        }
+        if seen == Seen::Now {
+            note_turn(&mut now, Some(&summary));
+        }
         now.pr_status = Some(summary);
         store::save(ctx, &now)?;
         Ok(Some(now))

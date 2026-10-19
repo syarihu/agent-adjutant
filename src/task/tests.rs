@@ -1797,6 +1797,146 @@ fn a_refresh_that_moves_a_parked_task_to_done_clears_the_park() {
     assert!(!text.contains("parked"), "{text}");
 }
 
+/// A saved record in `status` with a `pr` (when given) and the kept summary, under its own title.
+fn finished_task(
+    ctx: &crate::registry::Context,
+    title: &str,
+    status: Status,
+    pr_url: Option<&str>,
+    kept: Option<PrStatus>,
+) -> Task {
+    let mut task = Task::new(
+        new_id("20260922T041233Z", title),
+        Kind::Investigate,
+        title.to_string(),
+        DoneWhen::ReportOnly,
+        "20260922T041233Z",
+    );
+    task.status = status;
+    task.pr = pr_url.map(str::to_string);
+    task.pr_status = kept;
+    save(ctx, &task).unwrap();
+    task
+}
+
+#[test]
+fn only_done_records_with_a_pr_not_yet_final_are_stale() {
+    let (_sandbox, ctx) = hub();
+    let url = Some("https://github.com/acme/widget/pull/7");
+    let quiet = finished_task(&ctx, "no summary", Status::Done, url, None);
+    let open = finished_task(
+        &ctx,
+        "open",
+        Status::Done,
+        url,
+        Some(pr("open", "none", 0, 1)),
+    );
+    finished_task(
+        &ctx,
+        "merged",
+        Status::Done,
+        url,
+        Some(pr("merged", "none", 0, 0)),
+    );
+    finished_task(
+        &ctx,
+        "closed",
+        Status::Done,
+        url,
+        Some(pr("closed", "none", 0, 0)),
+    );
+    finished_task(&ctx, "no pr", Status::Done, None, None);
+    finished_task(&ctx, "cancelled", Status::Cancelled, url, None);
+    finished_task(&ctx, "working", Status::Pr, url, None);
+
+    let mut ids: Vec<String> = stale_finished(&ctx).into_iter().map(|t| t.id).collect();
+    ids.sort();
+    let mut want = vec![quiet.id, open.id];
+    want.sort();
+    assert_eq!(ids, want);
+}
+
+#[test]
+fn recording_a_finished_pr_state_changes_nothing_else_about_the_record() {
+    let (_sandbox, ctx) = hub();
+    let url = Some("https://github.com/acme/widget/pull/7");
+    let task = finished_task(
+        &ctx,
+        "done",
+        Status::Done,
+        url,
+        Some(pr("open", "none", 0, 1)),
+    );
+    let before = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+
+    record_finished(
+        &ctx,
+        vec![task.clone()],
+        vec![(PrState::Merged, Some(pr("merged", "approved", 0, 0)))],
+    );
+    let after = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(after.status, Status::Done);
+    assert_eq!(after.pr_status.unwrap().state, "merged");
+    assert_eq!(after.updated_at, before.updated_at);
+    assert_eq!(after.parked, before.parked);
+    assert_eq!(after.pr_turn_at, before.pr_turn_at);
+
+    // An answer that could not be read leaves the record alone.
+    record_finished(
+        &ctx,
+        vec![before.clone()],
+        vec![(PrState::Unreadable("no gh".to_string()), None)],
+    );
+    let kept = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(kept.pr_status.unwrap().state, "merged");
+}
+
+#[test]
+fn a_record_no_longer_done_keeps_its_pr_state_when_a_finished_read_arrives() {
+    let (_sandbox, ctx) = hub();
+    let url = Some("https://github.com/acme/widget/pull/7");
+    let task = finished_task(
+        &ctx,
+        "cancelled",
+        Status::Cancelled,
+        url,
+        Some(pr("open", "none", 0, 1)),
+    );
+    record_finished(
+        &ctx,
+        vec![task.clone()],
+        vec![(PrState::Merged, Some(pr("merged", "approved", 0, 0)))],
+    );
+    let after = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    assert_eq!(after.pr_status.unwrap().state, "open");
+}
+
+#[test]
+fn a_slow_finished_read_does_not_undo_a_newer_one() {
+    let (_sandbox, ctx) = hub();
+    let url = Some("https://github.com/acme/widget/pull/7");
+    let stale = finished_task(
+        &ctx,
+        "slow",
+        Status::Done,
+        url,
+        Some(pr("open", "none", 0, 1)),
+    );
+    // Another read stored the merge while this one was still waiting on `gh`.
+    record_finished(
+        &ctx,
+        vec![stale.clone()],
+        vec![(PrState::Merged, Some(pr("merged", "approved", 0, 0)))],
+    );
+    record_finished(
+        &ctx,
+        vec![stale.clone()],
+        vec![(PrState::Open, Some(pr("open", "approved", 0, 0)))],
+    );
+    let after = get(&ctx.state, &ctx.repo.slug, &stale.id).unwrap();
+    assert_eq!(after.pr_status.unwrap().state, "merged");
+}
+
 #[test]
 fn a_request_not_yet_read_says_so_first_and_keeps_every_other_line() {
     let mut task = sample();
