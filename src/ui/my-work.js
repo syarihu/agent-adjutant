@@ -253,12 +253,12 @@ const workNewCount = () => work.doc ? [...workJudge().values()].filter(j => j.cl
 /* What the page title counts: the new rows of both lists, whichever view is on. */
 const workBadgeCount = () => workNewCount() + othersNewCount();
 
-/* The rail's count and the column toggle's: how many rows are new, whichever view is on. */
+/* The rail's count, whatever the repository filter narrows the list to, and the column toggle's, of the list it hides. */
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
   const all = workBadgeCount();
-  const counts = [[el, workNewShown()], [wk('rail-toggle-count'), workNewShown()]];
+  const counts = [[el, workNewCount()], [wk('rail-toggle-count'), workNewShown()]];
   for (const [box, n] of counts) {
     if (!box) continue;
     box.textContent = n;

@@ -20,16 +20,25 @@ function toastPush(list, item, now, max = TOAST_MAX) {
 const toastLive = (list, now) => list.filter(t => now - t.at < (t.err ? TOAST_ERR_MS : TOAST_MS));
 
 let toastTimer = null;
+let drawn = [];                 // the list as last drawn, which the buttons' indexes point into
 function drawToasts() {
   const host = document.getElementById('toasts');
   if (!host) return;
+  // Inside a modal dialog that is open, since the page behind it is inert: its close buttons would not take a click, nor its text be read out.
+  const parent = document.querySelector('dialog:modal') || document.body;
+  if (host.parentElement !== parent) parent.append(host);
+  // A redraw replaces the buttons: the one a keyboard was on gets the focus back (the same toast, found by its text).
+  const on = host.contains(document.activeElement) ? drawn[Number(document.activeElement.dataset.toastClose)] : null;
+  const back = on ? toasts.findIndex(t => t.text === on.text && t.sub === on.sub && t.err === on.err) : -1;
+  drawn = toasts;
   host.innerHTML = toasts.map((t, i) => `<div class="toast${t.err ? ' err' : ''}" role="${t.err ? 'alert' : 'status'}">` +
     `<div class="toast-body"><div class="toast-text">${esc(t.text)}</div>${t.sub ? `<div class="toast-sub">${esc(t.sub)}</div>` : ''}</div>` +
     `<button type="button" class="tool-btn" data-toast-close="${i}" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>`).join('');
-  // A popover is in the top layer: shown again on each note, it sits above a modal dialog that is open (the question dialog calls note()).
+  // A popover is in the top layer: shown again on each note, it sits above whatever else is there (the question dialog calls note()).
   try { if (host.matches(':popover-open')) host.hidePopover(); } catch { /* not supported */ }
   if (!toasts.length) return;
   try { host.showPopover(); } catch { /* not supported: it is fixed in the corner as it is */ }
+  if (back >= 0) host.querySelector(`[data-toast-close="${back}"]`)?.focus({ preventScroll: true });
 }
 
 function sweepToasts() {
@@ -46,6 +55,8 @@ function note(line, isError, why) {
   sweepToasts();
 }
 
+// A dialog that closes with the toasts inside takes them out of sight: they go back to the page.
+document.addEventListener('close', e => { if (e.target.contains(document.getElementById('toasts'))) drawToasts(); }, true);
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-toast-close]');
   if (!b) return;
