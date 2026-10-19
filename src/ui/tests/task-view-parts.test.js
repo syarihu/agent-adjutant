@@ -57,7 +57,6 @@ load([
   cut(tvSrc, /^const DIFF_LOADING = [^\n]*\n/m),
   cst(tvSrc, 'isWaiting'),
   cut(utilSrc, /^let viewData = null;\nconst stateNow = [^\n]*\nfunction withViewState[\s\S]*?\n\}\n/m),
-  'const cdData = () => stateNow();',
   'const isGithubIssue = u => /issues\\/\\d+/.test(u || "");',
   'const issueNumberOf = u => /(\\d+)$/.exec(u)?.[1] || "";',
   fn(tvSrc, 'gateShownIn'), fn(tvSrc, 'gateForTab'), fn(tvSrc, 'filesOf'),
@@ -379,9 +378,9 @@ test('in the dialog the wait head leaves out the focus it carries and the plan h
   assert.ok(!cardOf(groupsOf(two), 'plan:head').html.includes('計画 2件'));
 });
 
-test("a waiting plan of another board shows as waiting in a dialog the aide opened, and not in the page's own state", () => {
+test("a waiting plan of another board shows as waiting in that board's state, and not in the page's own", () => {
   const w = dgate('p-w', 'plan', '2026-10-01T00:00:00Z', { ...plan, id: 'p-w', openedAt: '2026-10-01T00:00:00Z', options: ['approve'], choices: [{ id: 'a', label: 'A' }] });
-  // The page holds no open gate: the plan waits only on the board the dialog was opened for.
+  // The page holds no open gate: the plan waits only in the board's state the cards are drawn under.
   wait([]);
   const plain = html => JSON.parse(JSON.stringify(html));
   const planHead = gs => cardOf(gs, 'plan:head')?.html || '';
@@ -389,7 +388,6 @@ test("a waiting plan of another board shows as waiting in a dialog the aide open
   assert.ok(!planHead(page).includes('承認待ち'));
   const scoped = plain(ctx.withViewState({ gates: [w], tasks: [task] }, () => call('cardDialogTaskGroups', task, [w])));
   assert.ok(planHead(scoped).includes('承認待ち'), 'the plan card says it waits for approval');
-  assert.deepStrictEqual(keysOf(scoped).slice(0, 1), ['waiting:p-w']);
   // The page's state is back as it was once the cards are drawn.
   assert.ok(!planHead(plain(call('cardDialogTaskGroups', task, [w]))).includes('承認待ち'));
 });

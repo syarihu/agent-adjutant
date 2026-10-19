@@ -16,9 +16,6 @@ const cardDialog = {
   // marked 「更新」 until they have been seen, `updatedDocks` the gates whose switch is marked the same way, `seenTimers`
   // the cards seen and about to be let go, `updateTimer`, `updateText` and `updateChanges` the notice under the head, `waitingRefs` the gates
   // that waited at the last sync, `rebase` that the next content sync only takes over what it draws, marking nothing.
-  // Set when a part of the aide's pane opened the task: `{ board, base, data }`, `data()` that board's state as the aide read it.
-  // The dialog then reads its task from there and not from the page's own `state`, and the panel need not show the task (null otherwise).
-  scope: null,
   mode: 'card', target: null, targetAt: 0, pinned: null, pinnedAt: 0, dock: null, dockSig: '', groups: [], gateIds: {}, active: null, spy: false,
   answered: new Map(), answeredHere: new Set(), noMore: false,
   cardSigs: new Map(), updated: new Set(), updatedDocks: new Set(), seenTimers: new Map(), updateTimer: 0, updateText: '', updateChanges: null, waitingRefs: [], rebase: false,
@@ -28,9 +25,7 @@ const CARD_DIALOG_GATE_GONE = 'この gate への答えはパネルから消え�
 const CARD_DIALOG_TASK_GONE = 'パネルからこのタスクがなくなりました（最後に表示した内容です）';
 const CARD_DIALOG_NONE_LEFT = '判断待ちはもうありません';
 const cardDialogDrafts = new Map(); // gate ref -> a comment typed in the dialog, kept past a close: the panel has a box for one gate only
-/* The state the task path reads: the scope's board, else the page's. */
-const cdData = () => cardDialog.scope?.data() || state;
-const cdTaskById = id => (cdData().tasks || []).find(t => t.id === id);
+const cdTaskById = id => (state.tasks || []).find(t => t.id === id);
 const cardDialogEl = () => document.getElementById('card-dialog');
 const cardDialogDockEl = () => cardDialogEl().querySelector('.card-dialog-dock');
 /* A whole task and a whole PR (pr-dialog.js) are read under the index; a single card is not. */
@@ -181,7 +176,6 @@ function lastMessageArrived() {
 function openCardDialog(btn) {
   const dlg = cardDialogEl();
   if (!dlg || dlg.open) return;
-  cardDialog.scope = null;
   const task = cardDialogTask();
   if (task) return openCardDialogTask(task, btn);
   const card = btn.closest('[data-expand]');
@@ -243,7 +237,7 @@ function cardDialogFocusTarget() {
     .map(el => el.querySelector('[data-expand-open]'))[0];
   // Opened from the head's button, which no card stands for.
   const head = cardDialog.section ? null : document.querySelector('#task-panel [data-expand-task]');
-  return [cardDialog.opener, again, head, cardDialog.scope ? document.querySelector('#aide-display [data-aide-expand]') : null, document.querySelector('#tp-tabs [aria-selected="true"]'),
+  return [cardDialog.opener, again, head, document.querySelector('#tp-tabs [aria-selected="true"]'),
     document.querySelector('#task-panel [data-tp-close]')].find(shown) || null;
 }
 
@@ -261,12 +255,11 @@ async function cardDialogAnswer(b) {
   // What the answer was for, taken before the gate leaves the panel's data.
   const ref = b.closest?.('[data-gate]')?.dataset.gate;
   const act = b.matches?.('.pick[data-choice]') ? 'choice' : b.dataset?.act;
-  const scoped = cardDialog.mode === 'task' && !!cardDialog.scope;
-  const g = cardDialog.mode === 'task' && ref ? (scoped ? (cdData().gates || []).find(x => gateRef(x) === ref) : gateByRef(ref)) : null;
+  const g = cardDialog.mode === 'task' && ref ? gateByRef(ref) : null;
   const comment = (ref && commentBox(ref)?.value.trim()) || '';
   let sent;
   cardDialog.answering = true;
-  try { sent = scoped ? await cardDialogScopedAct(b, ref, act, g, comment) : await decideAct(b); } finally { if (token === cardDialog.token) cardDialog.answering = false; }
+  try { sent = await decideAct(b); } finally { if (token === cardDialog.token) cardDialog.answering = false; }
   // Only the opening the click was made in: another may have been opened while the answer was on its way.
   if (token !== cardDialog.token || !cardDialogEl().open) return;
   if (!sent) {
@@ -277,24 +270,6 @@ async function cardDialogAnswer(b) {
   } else if (cardDialog.mode !== 'task') closeCardDialog();
   else if (g && g.wait !== false) cardDialogAfterAnswer(ref, g, act, b.dataset?.choice, comment);
   else cardDialogSync();
-}
-/* An answer given in a dialog the aide opened: the gate is the scope's board's own, which `gateByRef` (the page's `state`) does not
-   hold. It is answered through `answerGate`, taken off the scope's data at once as `dropGate` does for the page's, and the work
-   document and the aide's boards are read again. */
-async function cardDialogScopedAct(b, ref, act, g, comment) {
-  if (!g || deciding.has(ref)) return false;
-  deciding.add(ref);
-  try {
-    const sent = act === 'close' ? await closeGateOf(g, comment) : await answerGate(g, act, act === 'choice' ? b.dataset.choice : undefined, comment);
-    if (sent) {
-      const held = aide.boards[g._slug];
-      aideBoardWrote(g._slug);
-      if (held?.data) held.data = { ...held.data, gates: (held.data.gates || []).filter(x => x.id !== g.id) };
-      refresh(true);
-      refreshBoards();
-    }
-    return sent;
-  } finally { deciding.delete(ref); }
 }
 /* The answered gate is kept here until the history has its record, and the column goes on to the next waiting gate. */
 function cardDialogAfterAnswer(ref, g, act, choice, comment) {
@@ -307,7 +282,7 @@ function cardDialogAfterAnswer(ref, g, act, choice, comment) {
   });
   const token = cardDialog.token;
   const task = cdTaskById(cardDialog.subject);
-  const all = task ? cardDialogWithAnswered(gatesOf(task, cdData()), cardDialog.answered) : [];
+  const all = task ? cardDialogWithAnswered(gatesOf(task, state), cardDialog.answered) : [];
   const waiting = cardDialogWaiting(all);
   // The one after the answered gate in the order they are read, else the first from the top.
   const next = all.slice(all.findIndex(g => gateRef(g) === ref) + 1).find(g => waiting.includes(g)) || waiting[0] || null;
@@ -347,32 +322,17 @@ cardDialogEl().addEventListener('click', async e => {
   if ((b = hit('[data-cd-dock]'))) return cardDialogSetDock(b.dataset.cdDock, true);
   if ((b = hit('[data-cd-see]'))) return cardDialogSeeNotice(b.dataset.cdSee);
   // Leaving for the terminal: the dialog goes first, and focus is not given back to the panel.
-  if (cardDialog.scope && hit('[data-gate] [data-act="talk"]')) {
-    return note('ターミナルで話す', true, '副官の画面からは、一覧の「ターミナルを見る」から開いてください');
-  }
   if ((b = hit('[data-gate] [data-act="talk"]'))) {
     cardDialog.quiet = true; closeCardDialog();
     return void decideAct(b);
   }
   if ((b = hit('[data-focus]'))) {
     cardDialog.quiet = true; closeCardDialog();
-    // Of the scoped board's, not the one the page infers from its own `state`.
-    return void worktreeAct('focus', b.dataset.focus, false, cardDialog.scope?.board || null);
+    return void worktreeAct('focus', b.dataset.focus);
   }
   if ((b = hit('[data-gate] [data-act], [data-gate] .pick[data-choice]'))) return cardDialogGateButton(b);
-  // 「置く」 in a dialog the aide opened: the task is the scope's board's, which `parkClick` (the page's `state`) does not hold.
-  if (cardDialog.scope && (b = hit('[data-park-task]'))) {
-    const task = cdTaskById(b.dataset.parkTask);
-    if (!task) return;
-    const base = task._base || cardDialog.scope.base;
-    return 'parkOff' in b.dataset ? void setPark(task, base, null) : openParkDialog(task, base);
-  }
   if (parkClick(e)) return;
-  if ((b = hit('[data-ide]'))) {
-    // `ideReady` reads the state of the board the worktree is on: the scope's when the aide opened the dialog.
-    if (cardDialog.scope) return void withViewState(cdData(), () => worktreeAct('ide', b.dataset.ide, false, cardDialog.scope.board));
-    worktreeAct('ide', b.dataset.ide);
-  }
+  if ((b = hit('[data-ide]'))) worktreeAct('ide', b.dataset.ide);
 });
 cardDialogEl().addEventListener('change', e => {
   const box = e.target.closest?.('input[data-manual-gate]');
@@ -423,13 +383,12 @@ cardDialogEl().addEventListener('close', () => {
   // What was typed goes back to the box of the same gate in the panel, and to no other.
   cardDialogEl().querySelectorAll('[data-gate]').forEach(el => {
     const typed = el.querySelector('.gate-comment')?.value;
-    const panelBox = !cardDialog.scope && selectedTaskId === cardDialog.subject ? cardDialogPanelComment(el.dataset.gate) : null;
+    const panelBox = selectedTaskId === cardDialog.subject ? cardDialogPanelComment(el.dataset.gate) : null;
     if (panelBox && typed != null) panelBox.value = typed;
     // A gate the panel has no box for keeps its draft here, for the next opening.
     if (cardDialog.mode === 'task' && typed != null) typed ? cardDialogDrafts.set(el.dataset.gate, typed) : cardDialogDrafts.delete(el.dataset.gate);
   });
   if (!cardDialog.quiet) cardDialogFocusTarget()?.focus();
-  cardDialog.scope = null;
   cardDialog.subject = null; cardDialog.opener = null; cardDialog.sig = ''; cardDialog.held = false;
   cardDialog.quiet = false; cardDialog.gone = false; cardDialog.expectControls = false; cardDialog.pressing = false; cardDialog.answering = false; cardDialog.gateGone = false;
   cardDialog.target = null; cardDialog.pinned = null; cardDialog.dock = null; cardDialog.groups = []; cardDialog.gateIds = {}; cardDialog.active = null;
@@ -450,7 +409,7 @@ cardDialogEl().addEventListener('close', () => {
 const cardDialogTask = () => selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
 
 /* The waiting gates of the task, oldest first, with their open time as `gatesOf` orders them. */
-const cardDialogWaiting = all => all.filter(g => g.wait !== false && isWaiting(g, cdData()));
+const cardDialogWaiting = all => all.filter(g => g.wait !== false && isWaiting(g, state));
 
 /* The heading of an answered gate's block: what it was, how and when it was answered, and the answer. */
 function cardDialogAnsweredHeadHtml(g) {
@@ -482,7 +441,7 @@ function cardDialogTaskGroups(task, all) {
   };
   // The review, the diff and the plan are the latest (or the waiting) gate of each kind, whatever chip the panel has
   // picked; the earlier rounds are in the answered gates.
-  const data = cdData();
+  const data = state;
   const gR = gateForTab(task, 'review', all, {}, data);
   const reviewCards = (g, k) => [
     card(`${k}:rounds`, 'セルフレビュー', roundsCardHtml(g), { expand: at('rounds', g) }),
@@ -663,7 +622,7 @@ function cardDialogWithAnswered(all, answered) {
     const i = out.findIndex(g => gateRef(g) === ref);
     if (i >= 0 && out[i].decision) answered.delete(ref);
     else if (i < 0) out.push(copy);
-    else if (!isWaiting(out[i], cdData())) out[i] = copy;
+    else if (!isWaiting(out[i], state)) out[i] = copy;
   }
   return out.sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || '') || claimSeq(a) - claimSeq(b));
 }
@@ -815,17 +774,17 @@ function cardDialogApplyTarget(task, all) {
 }
 
 /* `want` is where to land, as `{ section, gate }` or null (the top); left out, it is what the button says: a card of the panel names
-   its section and gate, the head's button the first gate that waits. `btn` is null when a part of the aide opened it. */
+   its section and gate, the head's button the first gate that waits. `btn` is null when the dialog is opened with no button. */
 function openCardDialogTask(task, btn, want) {
   const dlg = cardDialogEl();
   const card = btn?.closest('[data-expand]');
-  const all = gatesOf(task, cdData());
+  const all = gatesOf(task, state);
   const first = cardDialogWaiting(all)[0];
   const target = want !== undefined ? want : card ? { section: card.dataset.expand, gate: card.dataset.expandGate || null }
     : first ? { section: null, gate: gateRef(first) } : null;
   const dock = cardDialogDockGate(all, target?.gate);
   Object.assign(cardDialog, {
-    mode: 'task', subject: cardDialog.scope ? task.id : selectedTaskId, pane: nav.pane, section: target?.section || null, gate: target?.gate || null,
+    mode: 'task', subject: selectedTaskId, pane: nav.pane, section: target?.section || null, gate: target?.gate || null,
     opener: btn, sig: '', held: false, quiet: false, gone: false, answering: false, gateGone: false, pressing: false,
     target, targetAt: Date.now(), pinned: null, dock: dock ? gateRef(dock) : null, dockSig: '', groups: [], gateIds: {}, active: null,
     answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
@@ -1084,12 +1043,11 @@ function cardDialogTaskSync(force, initial) {
   if (cardDialog.answering) return;
   const task = cdTaskById(cardDialog.subject);
   // Checked first: dismissing the panel clears the selection too. What was shown stays, read-only.
-  if (!task && cdData().now != null) {
+  if (!task && state.now != null) {
     cardDialog.gone = true;
     return cardDialogStrip(CARD_DIALOG_TASK_GONE);
   }
-  // A dialog the aide opened does not depend on the panel: it holds a task of its own.
-  if (!cardDialog.scope && (selectedTaskId !== cardDialog.subject || tp('task-panel').hidden)) {
+  if ((selectedTaskId !== cardDialog.subject || tp('task-panel').hidden)) {
     cardDialog.quiet = true;
     if (dlg.open) dlg.close();
     return;
@@ -1102,7 +1060,7 @@ function cardDialogTaskSync(force, initial) {
   if (title.textContent !== task.title) title.textContent = task.title;
   // The history's record taking the place of an answered gate's copy changes what is drawn, with nothing new in it.
   const copies = cardDialog.answered.size;
-  const all = cardDialogWithAnswered(gatesOf(task, cdData()), cardDialog.answered);
+  const all = cardDialogWithAnswered(gatesOf(task, state), cardDialog.answered);
   // Kept on the dialog, not here: a sync held while typing must not lose it.
   if (cardDialog.answered.size !== copies) cardDialog.rebase = true;
   const waiting = cardDialogWaiting(all);
@@ -1157,11 +1115,9 @@ function cardDialogTaskSync(force, initial) {
   const rebase = cardDialog.rebase;
   cardDialog.rebase = false;
 
-  // What the cards read of the page they are in is the scope's board's while the aide's dialog draws them.
-  const { groups, html, dockHtml } = withViewState(cardDialog.scope ? cdData() : null, () => {
-    const gs = cardDialogTaskGroups(task, all);
-    return { groups: gs, html: cardDialogTaskHtml(gs), dockHtml: cardDialogDockHtml(waiting) };
-  });
+  const groups = cardDialogTaskGroups(task, all);
+  const html = cardDialogTaskHtml(groups);
+  const dockHtml = cardDialogDockHtml(waiting);
   const sig = `${html.index}\u0000${html.content}`;
   cardDialog.groups = groups;
   cardDialog.gateIds = Object.fromEntries(all.map(g => [g.id, gateRef(g)]));
@@ -1233,25 +1189,4 @@ function cardDialogTaskSync(force, initial) {
     cardDialogApplyTarget(task, all);
     cardDialogSpy();
   }
-}
-
-/* 「拡大」 of a task a part of the aide's pane names, with the task not selected in the panel. The task is read from the board's
-   state the aide holds (read now when it has none), and `target` is what the part says: 'request' lands on 「依頼と計画」, anything
-   else on the first gate that waits. */
-async function openTaskDialogFor({ board, taskId, target, gate = null, opener = null }) {
-  const dlg = cardDialogEl();
-  if (!dlg || dlg.open) return;
-  const scope = { board, base: `/b/${board}`, data: () => aide.boards[board]?.data };
-  const find = () => (scope.data()?.tasks || []).find(t => t.id === taskId);
-  let task = find();
-  if (!task) {
-    await loadAideBoards(true);
-    task = find();
-  }
-  // Another dialog may have been opened while the board was being read.
-  if (dlg.open) return;
-  if (!task) return note('拡大で開く', true, 'このタスクは、いまのボードにありません');
-  cardDialog.scope = scope;
-  // A plan lands on its request; any other gate on the gate the part shows, not the oldest that waits.
-  openCardDialogTask(task, opener, target === 'request' ? { section: 'request', gate: null } : gate ? { section: null, gate } : undefined);
 }
