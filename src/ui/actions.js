@@ -1077,19 +1077,6 @@ function parkClick(e) {
   return true;
 }
 
-function note(line, isError, why) {
-  log.unshift({ line, isError, why });
-  log = log.slice(0, 5);
-  document.getElementById('log').innerHTML = log.map(l =>
-    `<li class="${l.isError ? 'err' : ''}"><b>${l.isError ? '!' : '$'}</b> ${esc(l.line)}` +
-    (l.why ? `   <span style="color:var(--muted)">— ${esc(l.why)}</span>` : '') + '</li>').join('');
-  const latestCmd = document.getElementById('sheet-latest-cmd');
-  if (latestCmd) {
-    latestCmd.textContent = line;
-    latestCmd.style.color = isError ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-outline)';
-  }
-}
-
 // The ball count belongs in the tab title: you should know it is your turn without
 // having to look at the page. The board's name follows it, so tabs of several boards differ.
 registerView('board-rows', { render: () => renderBoardRows() });

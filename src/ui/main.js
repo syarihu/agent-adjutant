@@ -144,8 +144,6 @@ document.addEventListener('click', e => {
   if (el) ACTIONS[el.dataset.action](el);
 });
 
-note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
-
 /* Whether this server serves several boards: the resident answers the list of them, a board
    served on its own does not know the route. */
 async function probeBoards() {

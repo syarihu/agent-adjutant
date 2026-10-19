@@ -48,6 +48,39 @@
 #log li b { color: var(--md-sys-color-on-surface); font-weight: 700; }
 #log li.err { color: var(--md-sys-color-error); }
 
+/* ── Toasts (toast.js) ── */
+#toasts {
+  position: fixed;
+  inset: auto 16px 64px auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, calc(100vw - 108px));
+  z-index: 70;
+}
+#toasts:popover-open { display: flex; }
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 8px 10px 14px;
+  border-radius: var(--md-shape-corner-md);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  box-shadow: var(--md-elevation-3);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.toast.err { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.toast-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.toast-sub { margin-top: 2px; font: 11.5px/1.5 var(--font-mono); color: var(--md-sys-color-on-surface-variant); }
+.toast.err .toast-sub { color: inherit; opacity: .8; }
+
 dialog {
   border: none;
   border-radius: var(--md-shape-corner-xl);

@@ -10,7 +10,6 @@ let BASE = (m => m ? `/b/${m[1]}` : '')(/^\/b\/([^/]+)/.exec(location.pathname))
 const emptyState = () => ({ tasks: [], workers: [], pending: [], gates: [] });
 let state = emptyState();
 let view = 'board';
-let log = [];
 let selectedTaskId = null;   // what the panel is open on: a task id, a hub as HUB_REF + its id, or a session with no task as SESS_REF + its id
 // The panel's terminal, kept while its task (or hub) is open: moving the panel or switching to 詳細 must
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
