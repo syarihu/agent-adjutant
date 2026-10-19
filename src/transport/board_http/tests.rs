@@ -1468,7 +1468,7 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         // The list is the resident's own document, not a merge made in the page.
         "boardApi('', '/api/work')",
         "view=work",
-        "const DEFAULT_MULTI_VIEW = 'agent'",
+        "const DEFAULT_MULTI_VIEW = 'work'",
         "const PARENT_REF = 'parent:'",
         // 「ターミナルで話す」 goes to the middle terminal in this view.
         "if (view === 'work') return focusWorkTerm();",

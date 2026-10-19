@@ -53,7 +53,7 @@ test('the PR panes belong to a PR: another task falls back to 詳細, and a PR i
   assert.strictEqual(w.parse('/b/acme/?token=t&task=t1&pane=review').pane, 'review');
   // A task on 「すべて」 is dropped as before; so is a PR when the view is not the work view.
   assert.strictEqual(w.parse('/?token=t&view=work&task=t1').task, null);
-  assert.strictEqual(w.parse(`/?token=t&task=${enc}`).task, null);
+  assert.strictEqual(w.parse(`/?token=t&view=agent&task=${enc}`).task, null);
   assert.strictEqual(w.parse(`/?token=t&view=human&task=${enc}`).task, null);
   // A board served on its own has no work view.
   assert.strictEqual(world(false).parse(`/?token=t&view=work&task=${enc}`).task, null);
@@ -98,4 +98,17 @@ test('a task\'s read-through panes are kept for a task in the work view, and for
   assert.strictEqual(w.parse('/b/acme/?token=t&view=work&pane=ai').pane, 'detail');
   // On 「すべて」 the task is dropped, and so is its pane.
   assert.strictEqual(w.parse('/?token=t&view=work&task=t1&pane=ai').pane, 'detail');
+});
+
+test('`/` opens the work view, and 「すべて」 is asked for by name', () => {
+  const w = world();
+  assert.deepStrictEqual(w.parse('/?token=t'), { board: 'all', view: 'work', task: null, pane: 'detail' });
+  assert.deepStrictEqual(w.parse('/?token=t&view=agent'), { board: 'all', view: 'agent', task: null, pane: 'detail' });
+  assert.strictEqual(w.urlOf({ board: 'all', view: 'agent', task: null, pane: 'detail' }), '/?token=t&view=agent');
+  assert.deepStrictEqual(w.parse(w.urlOf({ board: 'all', view: 'agent', task: null, pane: 'detail' })), { board: 'all', view: 'agent', task: null, pane: 'detail' });
+  // A board's own address is the agent board, with no `view` in it; a board served alone is too.
+  assert.deepStrictEqual(w.parse('/b/acme/?token=t'), { board: 'acme', view: 'agent', task: null, pane: 'detail' });
+  assert.strictEqual(w.urlOf({ board: 'acme', view: 'agent', task: null, pane: 'detail' }), '/b/acme/?token=t');
+  assert.deepStrictEqual(world(false).parse('/?token=t'), { board: null, view: 'agent', task: null, pane: 'detail' });
+  assert.strictEqual(world(false).urlOf({ board: null, view: 'agent', task: null, pane: 'detail' }), '/?token=t');
 });
