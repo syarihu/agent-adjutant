@@ -180,18 +180,6 @@ const paneOf = task => nav.pane === 'term' ? (view !== 'work' && hasSession(sess
 /* The same for a session with no task, which is its own subject. */
 const sessPaneOf = s => nav.pane === 'term' && view !== 'work' && hasSession(s) ? 'term' : 'detail';
 
-/* The sidebar is the icon rail when the window is narrow, and while the panel sits on its left. */
-const narrowRail = matchMedia('(max-width: 1024px)');
-function applyRailMode() {
-  const cls = document.body.classList;
-  const byPanel = cls.contains('panel-open') && !cls.contains('panel-right') && !cls.contains('panel-pop');
-  // 「いまの仕事」's list and the TODO's have no icon form.
-  cls.toggle('rail-icons', !cls.contains('view-work') && !cls.contains('view-todo') && (narrowRail.matches || byPanel));
-}
-narrowRail.addEventListener('change', applyRailMode);
-// Before the first poll has drawn anything, a narrow window already has its icon rail.
-applyRailMode();
-
 /* What each part was last drawn from: a part is drawn again only when it changed. */
 let panelScrolledFor = null;
 /* The task, tab and gate the task's tabs were last drawn for: a comment being typed and the open
@@ -273,7 +261,6 @@ function renderTaskPanelNow() {
   cls.toggle('panel-right', prefs.panelDock === 'right' || view === 'work');
   cls.toggle('panel-pop', shown && panelPop());
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
-  applyRailMode();
   markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
   if (!task && !hub && !sess && !parent && !gateOf && !gone) return renderHandForm(null);
@@ -1146,12 +1133,13 @@ tp('tp-scrim').addEventListener('click', () => closeTaskPanel());
 
 /* The width is dragged from the edge that faces the page, saved when the pointer is let go;
    the arrow keys move it a step at a time. */
+// What lies left of the page: the rail and the list beside it.
+const sideWidth = () => tp('nav-rail').offsetWidth + tp('side-list').offsetWidth;
 // The side is read from body, not prefs.panelDock: the work view keeps the panel on the right
 // whichever side it is docked on, and the handle follows the class.
 const panelOnRight = () => document.body.classList.contains('panel-right');
 function setPanelWidth(raw) {
-  const rail = tp('nav-rail').offsetWidth;
-  prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - rail - 320)));
+  prefs.panelWidth = Math.round(Math.max(320, Math.min(raw, innerWidth - sideWidth() - 320)));
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
 }
 // A double click puts the width back to where it started.
@@ -1175,10 +1163,7 @@ tp('tp-resize').addEventListener('pointerdown', e => {
   const handle = e.currentTarget;
   handle.setPointerCapture(e.pointerId);
   document.body.classList.add('tp-dragging');
-  const move = ev => {
-    const rail = tp('nav-rail').offsetWidth;
-    setPanelWidth(panelOnRight() ? innerWidth - ev.clientX : ev.clientX - rail);
-  };
+  const move = ev => setPanelWidth(panelOnRight() ? innerWidth - ev.clientX : ev.clientX - sideWidth());
   const end = () => {
     handle.removeEventListener('pointermove', move);
     handle.removeEventListener('pointerup', end);

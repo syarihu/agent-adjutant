@@ -1,11 +1,9 @@
-/* ── TODO: the entry in the sidebar's switch, its popover, the list in the sidebar and the selected question's card ── */
-/* The sidebar shows the boards, 「いまの仕事」's list or the TODO's list, by the tab. */
+/* ── TODO: the entry in the rail, its popover, the list in the list column and the selected question's card ── */
+/* The column shows the boards, 「いまの仕事」's list or the TODO's list, by the rail's entry. */
 body:not(.view-todo) #todo-list { display: none; }
 body.view-todo #side-boards, body.view-todo #wk-list { display: none; }
-/* The list is the sidebar's, as 「いまの仕事」's is: out to its edges, and the rest of its height. */
-#nav-rail .todo-list { flex: 1; min-height: 0; margin: 0 -12px; display: flex; flex-direction: column; }
-.single-board #nav-todo { display: none; }
-body.view-todo #crumbs { visibility: hidden; }
+/* The list is the column's, as 「いまの仕事」's is: the rest of its height. */
+#side-list .todo-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 .todo-head { margin: 0; padding: 10px 14px 8px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--md-sys-color-primary); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .todo-head .rail-badge { margin-left: 0; }
@@ -41,7 +39,7 @@ body.view-todo #crumbs { visibility: hidden; }
 .todo-title { font-size: 13px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
 .todo-ask { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 
-/* The popover: under the entry, or beside it in the icon rail; placed by todo-view.js. */
+/* The popover: beside the rail's entry; placed by todo-view.js. */
 .todo-pop {
   position: fixed; z-index: 40; display: flex; flex-direction: column; max-height: 320px; overflow: hidden;
   background: var(--md-sys-color-surface-container-lowest); color: var(--md-sys-color-on-surface);
@@ -70,10 +68,8 @@ body.view-todo #crumbs { visibility: hidden; }
 #todo-card .diff { overflow-x: auto; }
 #todo-card .qd-body:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
 
-/* On a phone-width window the list sits above the card, as 「いまの仕事」's does. */
+/* On a phone-width window the list sits above the card (shell.css puts it there), as 「いまの仕事」's does. */
 @media (max-width: 720px) {
-  body.view-todo { flex-direction: column; }
-  body.view-todo #nav-rail { width: auto; height: 50vh; overflow-y: auto; flex: none; border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-  body.view-todo #nav-rail .todo-list { min-height: 180px; }
-  body.view-todo #app-main { flex: 1; min-height: 0; }
+  body.view-todo #side-list { height: 50vh; }
+  body.view-todo #side-list .todo-list { min-height: 180px; }
 }

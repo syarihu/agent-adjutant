@@ -250,15 +250,15 @@ function workNewShown() {
 /* How many rows are new, in every organisation (the title and the notifications are the page's, not the list's). */
 const workNewCount = () => work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
 
-/* What the sidebar's tab and the page title count: the new rows of both lists, whichever view is on. */
+/* What the page title counts: the new rows of both lists, whichever view is on. */
 const workBadgeCount = () => workNewCount() + othersNewCount();
 
-/* The sidebar's count and the two halves of the switch's: how many rows are new in each list, whichever view is on. */
+/* The rail's count, whatever the repository filter narrows the list to, and the column toggle's, of the list it hides. */
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;
   const all = workBadgeCount();
-  const counts = [[el, all], [wk('rail-toggle-count'), all], [wk('wk-tab-count-task'), workNewShown()], [wk('wk-tab-count-others'), othersNewCount()]];
+  const counts = [[el, workNewCount()], [wk('rail-toggle-count'), workNewShown()]];
   for (const [box, n] of counts) {
     if (!box) continue;
     box.textContent = n;
@@ -1363,11 +1363,11 @@ function renderWorkTools() {
   if (tools) tools.hidden = prefs.workTab === 'others' || workNewShown() === 0;
 }
 
-/* The switch between the two lists: which is pressed, which is shown, and what belongs to one only (the request button and the
-   filter are the tasks'; the dot is the other's). */
+/* The column shows one of the two lists, by the rail's entry chosen: which is shown, and what belongs to one only (the request
+   button and the filter are the tasks'; the dot is the other's). */
 function renderWorkTabs() {
   const others = prefs.workTab === 'others';
-  for (const b of wk('wk-list').querySelectorAll('[data-wk-tab]')) b.setAttribute('aria-pressed', String(b.dataset.wkTab === prefs.workTab));
+  markRail();
   wk('wk-task-scroll').hidden = others;
   wk('ov-scroll').hidden = !others;
   // What belongs to the tasks' list only: the place to ask for a task, the filter and the actions on new rows.
@@ -1420,16 +1420,18 @@ wk('wk-list').addEventListener('click', e => {
     const r = work.rowsByKey.get(b.dataset.wk);
     return r && selectWorkRow(r);
   }
-  if ((b = e.target.closest('[data-wk-tab]'))) {
-    // Choosing 「AI 下読み」 on purpose ends what a PR link made of the tab, even when it is the one showing.
-    const chosen = b.dataset.wkTab === 'others' && prKeepTab();
-    if (prefs.workTab === b.dataset.wkTab && !chosen) return;
-    prefs.workTab = b.dataset.wkTab;
-    savePrefs();
-    renderWorkTabs();
-    return renderOthersList();
-  }
 });
+
+/* Choose the list the column shows: the tasks', or the AI 下読み of the PRs others asked you to review (the rail's レビュー). */
+function setWorkTab(tab) {
+  // Choosing 「AI 下読み」 on purpose ends what a PR link made of the tab, even when it is the one showing.
+  const chosen = tab === 'others' && prKeepTab();
+  if (prefs.workTab === tab && !chosen) return;
+  prefs.workTab = tab;
+  savePrefs();
+  renderWorkTabs();
+  renderOthersList();
+}
 
 /* Start a hub from its row, once at a time per hub; the list follows when the board answers. */
 const workStarting = new Set();
@@ -1658,10 +1660,10 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at }) {
   });
 }
 
-bindWidthHandle(wk('rail-resize'), {
-  read: () => prefs.railWidth, min: 260, max: () => 560, reset: 300,
-  at: x => x,
-  apply: w => { prefs.railWidth = w; document.body.style.setProperty('--rail-w-set', `${w}px`); },
+bindWidthHandle(wk('list-resize'), {
+  read: () => prefs.listWidth, min: 240, max: () => 560, reset: 330,
+  at: x => x - wk('nav-rail').offsetWidth,
+  apply: w => { prefs.listWidth = w; document.body.style.setProperty('--list-w-set', `${w}px`); },
 });
 
 registerView('work-view', { render: () => renderWorkView() });

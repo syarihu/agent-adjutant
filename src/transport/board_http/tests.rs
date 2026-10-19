@@ -76,7 +76,6 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         "data-pane=",
         "panelDock",
         "panelDialog",
-        "rail-icons",
         "function renderTaskPanel",
         "function openTaskPanel",
     ] {
@@ -87,6 +86,19 @@ fn the_page_has_one_task_panel_and_no_drawer() {
         "function renderDrawer",
         "let panelPop",
         "sidesheet-header",
+        // The icon form of the sidebar: the rail is always icons, and the list is a column of its own.
+        "rail-icons",
+        "function applyRailMode",
+        // The page header and the CLI console's bottom sheet, and the global footer rule that capped a card's foot.
+        "top-app-bar",
+        "m3-bottom-sheet",
+        "toggleBottomSheet",
+        "id=\"log\"",
+        "sheet-latest-cmd",
+        "id=\"crumbs\"",
+        "page-subtitle",
+        "class=\"side-tabs\"",
+        "footer { border-top",
         // The card's button for the terminal tab outside the board.
         "class=\"m3-icon-button\" title=\"ターミナルのworkerタブを前面表示\"",
     ] {
@@ -848,10 +860,9 @@ fn the_sidebar_lists_boards_and_has_no_hub_footer() {
     for piece in ["id=\"hub-rows\"", "自律 hub", "function renderHubRows"] {
         assert!(!UI_HTML.contains(piece), "{piece}");
     }
-    // The sidebar keeps one count, the number of 新着: no 要対応 entry, no gate count, and no
-    // 「あなたの確認待ち」 badge on a board's row.
+    // The sidebar keeps the number of 新着, and the rail's レビュー the PRs waiting on you: no 要対応
+    // queue, no gate count, and no 「あなたの確認待ち」 badge on a board's row.
     for gone in [
-        "id=\"nav-review\"",
         "id=\"gate-count\"",
         "function renderGateCount",
         "mini-badge",
@@ -1346,7 +1357,7 @@ fn the_views_register_themselves() {
     for name in [
         "renderColumns",
         "renderBoardRows",
-        "renderTitle",
+        "renderBoardHead",
         "renderWorkView",
         "renderTaskPanel",
         "hideTaskPanelState",
@@ -1458,17 +1469,17 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         // The page's own notification settings, and the end-of-turn notifications read from the document.
         "id=\"notify-dialog\"",
         "function notifyEndEvents",
-        "id=\"rail-resize\"",
-        // The sidebar is hidden from the toggle at the head of the middle, in this view only, and the choice is kept.
-        "aria-controls=\"nav-rail\"",
+        "id=\"list-resize\"",
+        // The list column is hidden from the toggle at the head of the middle, in this view only, and the choice is kept.
+        "aria-controls=\"side-list\"",
         "data-action=\"rail-toggle\"",
-        "body.view-work.rail-hidden #nav-rail { display: none; }",
-        "body.view-work.rail-hidden { --rail-w: 0px; }",
+        "body.view-work.rail-hidden #side-list { display: none; }",
+        "body.view-work.rail-hidden { --list-w: 0px; }",
         "prefs.railHidden = prefs.railHidden === true",
         // The list is the resident's own document, not a merge made in the page.
         "boardApi('', '/api/work')",
         "view=work",
-        "const DEFAULT_MULTI_VIEW = 'agent'",
+        "const DEFAULT_MULTI_VIEW = 'work'",
         "const PARENT_REF = 'parent:'",
         // 「ターミナルで話す」 goes to the middle terminal in this view.
         "if (view === 'work') return focusWorkTerm();",
@@ -1488,15 +1499,18 @@ fn the_page_has_the_work_view_and_no_review_queue() {
     }
     assert_eq!(UI_HTML.matches("id=\"rail-toggle-count\"").count(), 1);
     // A board served alone has no list of boards to read the work from.
-    assert!(UI_HTML.contains(".single-board #nav-work { display: none; }"));
-    // One sidebar with a switch at its top: the boards, and the list of the work under way beside the
-    // terminal's column, not inside it.
+    assert!(UI_HTML
+        .contains(".single-board #nav-work, .single-board #nav-todo, .single-board #nav-review { display: none; }"));
+    // An icon rail with the places to go, and the list of the one chosen in a column beside the
+    // terminal's, not inside it. A board served alone has the rail and the middle only.
     for piece in [
-        "id=\"side-tab-boards\"",
+        "id=\"nav-boards\"",
         "data-action=\"boards\"",
-        "role=\"tablist\"",
-        "aria-controls=\"wk-list\"",
-        ".single-board .side-tabs { display: none; }",
+        "id=\"nav-review\"",
+        "data-action=\"review\"",
+        "id=\"review-count\"",
+        "id=\"side-list\"",
+        "body.single-board #side-list { display: none; }",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
@@ -1506,14 +1520,18 @@ fn the_page_has_the_work_view_and_no_review_queue() {
             .unwrap_or_else(|| panic!("the page lacks {piece}"))
     };
     assert!(
-        at("id=\"nav-rail\"") < at("id=\"wk-groups\"")
+        at("id=\"nav-rail\"") < at("id=\"side-list\"")
+            && at("id=\"side-list\"") < at("id=\"wk-groups\"")
             && at("id=\"wk-groups\"") < at("id=\"task-panel\"")
     );
+    // The two lists are the rail's entries, not tabs of the list.
+    assert!(!UI_HTML.contains("data-wk-tab"));
+    assert!(!UI_HTML.contains("role=\"tablist\" aria-label=\"サイドバーの表示\""));
     assert!(!UI_HTML.contains("rail-global"));
     // The list is one organisation's, by repository and hub: there is no grouping to choose.
     assert!(!UI_HTML.contains("wk-group-menu"));
     assert!(!UI_HTML.contains("data-wk-group"));
-    // One width for both tabs: the sidebar's handle is the only one.
+    // One width for both lists: the column's handle is the only one.
     assert!(!UI_HTML.contains("wk-list-resize"));
     // The panel has no terminal tab in this view.
     assert!(UI_HTML.contains("const term = view === 'work' ? ''"));
@@ -1530,7 +1548,6 @@ fn the_page_has_the_work_view_and_no_review_queue() {
     }
     for gone in [
         "id=\"review\"",
-        "id=\"nav-review\"",
         "id=\"rv-judge\"",
         "function renderReview",
         "function goToQueue",

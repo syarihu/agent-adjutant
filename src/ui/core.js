@@ -10,7 +10,6 @@ let BASE = (m => m ? `/b/${m[1]}` : '')(/^\/b\/([^/]+)/.exec(location.pathname))
 const emptyState = () => ({ tasks: [], workers: [], pending: [], gates: [] });
 let state = emptyState();
 let view = 'board';
-let log = [];
 let selectedTaskId = null;   // what the panel is open on: a task id, a hub as HUB_REF + its id, or a session with no task as SESS_REF + its id
 // The panel's terminal, kept while its task (or hub) is open: moving the panel or switching to 詳細 must
 // not take the socket down. `reconnect` asks the next draw to mount a fresh one (after 再開).
@@ -54,9 +53,9 @@ const PREF_KEY = 'adj-board-split';
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
-// railHidden is whether the sidebar is hidden in 「いまの仕事」 (the toggle at the head of the middle).
+// listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle).
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  railWidth:300, workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
+  workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -70,12 +69,16 @@ prefs.railHidden = prefs.railHidden === true;
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // What is in the browser's storage is not trusted: a width outside its range is the default, a fold
 // list is a list of strings.
-// One width for both of the sidebar's tabs; a width saved before the range moved up is clamped, not reset.
-prefs.railWidth = Math.min(560, Math.max(260, Number(prefs.railWidth) || 300));
+// The list column's width. The sidebar's was `railWidth` (300 by default): it is carried over only when it was set on purpose.
+// It is clamped, not reset, when the range moved.
+if (prefs.listWidth === undefined && Number(prefs.railWidth) !== 300) prefs.listWidth = prefs.railWidth;
+prefs.listWidth = Math.min(560, Math.max(240, Number(prefs.listWidth) || 330));
+delete prefs.railWidth;
 delete prefs.workListWidth;
 delete prefs.workGroup;
-// Which list 「いまの仕事」 shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
-if (prefs.workTab !== 'others') prefs.workTab = 'task';
+// Which list the work view shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
+// The page opens on 「いまの仕事」 whichever rail entry was last chosen: `/` is いまの仕事, not レビュー.
+prefs.workTab = 'task';
 prefs.othersRepo = typeof prefs.othersRepo === 'string' ? prefs.othersRepo.toLowerCase() : '';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
@@ -84,24 +87,35 @@ prefs.notify = notifyPrefs(prefs.notify);
 // `prPrefsToSave` (pr-panel.js) keeps the tab a PR link switched to out of what is saved.
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(typeof prPrefsToSave === 'function' ? prPrefsToSave() : prefs)); } catch {} };
 
-/* The sidebar's toggle: its icon, and its name, which carries the 新着 count its badge shows while the sidebar is hidden (the label
+/* The list column's toggle: its icon, and its name, which carries the 新着 count its badge shows while the column is hidden (the label
    replaces the button's content for a screen reader). Called when the pref changes and when the count does. */
 function renderRailToggle() {
   const rt = document.getElementById('rail-toggle');
   if (!rt) return;
   const n = Number(document.getElementById('rail-toggle-count')?.textContent) || 0;
-  const label = !prefs.railHidden ? 'サイドバーを隠す' : n ? `サイドバーを表示（新着 ${n} 件）` : 'サイドバーを表示';
+  const label = !prefs.railHidden ? '一覧を隠す' : n ? `一覧を表示（新着 ${n} 件）` : '一覧を表示';
   rt.setAttribute('aria-expanded', String(!prefs.railHidden));
   rt.setAttribute('aria-label', label);
   rt.title = label;
   rt.querySelector('.material-symbols-outlined').textContent = prefs.railHidden ? 'left_panel_open' : 'left_panel_close';
 }
 
+/* The rail's entry for the place on screen is the one `aria-current="page"`: the work view's two lists are 「いまの仕事」 and
+   「レビュー」, the TODO is its own, and every board is under 「ボード」. */
+function markRail() {
+  const on = view === 'work' ? (prefs.workTab === 'others' ? 'nav-review' : 'nav-work') : view === 'todo' ? 'nav-todo' : 'nav-boards';
+  for (const id of ['nav-work', 'nav-review', 'nav-todo', 'nav-boards']) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (id === on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  }
+}
+
 function applyLayout() {
   const boards = document.getElementById('boards');
   if (!boards) return;
-  // The widths of the sidebar and of the work view's list; the panel's own is set by renderTaskPanel.
-  document.body.style.setProperty('--rail-w-set', `${prefs.railWidth}px`);
+  // The width of the list column; the panel's own is set by renderTaskPanel.
+  document.body.style.setProperty('--list-w-set', `${prefs.listWidth}px`);
   // The class only takes effect in 「いまの仕事」, whose middle has the toggle (my-work.css).
   document.body.classList.toggle('rail-hidden', prefs.railHidden);
   renderRailToggle();
@@ -315,13 +329,13 @@ function updateNotifyButton() {
     return;
   }
   if (Notification.permission === 'granted') {
-    btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_active</span><span>通知ON</span>';
+    btn.innerHTML = '<span class="material-symbols-outlined rail-pill" aria-hidden="true">notifications_active</span><span class="rail-lbl">通知ON</span>';
     btn.title = `デスクトップ通知が有効です（${notifyKindsText()}）。クリックで設定`;
   } else if (Notification.permission === 'denied') {
-    btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications_off</span><span>通知OFF</span>';
+    btn.innerHTML = '<span class="material-symbols-outlined rail-pill" aria-hidden="true">notifications_off</span><span class="rail-lbl">通知OFF</span>';
     btn.title = 'ブラウザの設定で通知がブロックされています';
   } else {
-    btn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">notifications</span><span>通知を許可</span>';
+    btn.innerHTML = '<span class="material-symbols-outlined rail-pill" aria-hidden="true">notifications</span><span class="rail-lbl">通知を許可</span>';
     btn.title = `通知を許可すると、確認待ち・完了・失敗・レビュー依頼のデスクトップ通知を選んで受け取れます（いまは ${notifyKindsText()}）`;
   }
 }
@@ -516,7 +530,7 @@ async function fetchBoards() {
     checkNewGates(everyGate());
     checkNewWaits(everyWait());
     renderBoardRows();
-    renderTitle();
+    renderBoardHead();
     // The hub panel reads the list for its origin, address and counts.
     redrawHubPanel();
   } catch {

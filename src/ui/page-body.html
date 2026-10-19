@@ -2,48 +2,50 @@
 </head>
 <body>
 
-<aside id="nav-rail">
-  <div class="rail-brand">
-    <div class="org-switch" id="org-switch">
-      <div class="brand-badge" id="org-fallback">adj</div>
-      <button type="button" class="org-btn" id="org-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="org-menu" hidden></button>
-      <div class="org-menu" id="org-menu" role="menu" aria-label="組織" hidden></div>
-    </div>
-    <div class="repo-info">
-      <span class="repo-title" id="org-name">ボード</span>
-      <span class="repo-sub" id="boards-sub">…</span>
-    </div>
+<!-- The rail: where to go. The list of the place chosen is the column beside it (#side-list). -->
+<nav id="nav-rail" aria-label="画面">
+  <div class="org-switch" id="org-switch">
+    <div class="brand-badge" id="org-fallback">adj</div>
+    <button type="button" class="org-btn" id="org-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="org-menu" hidden></button>
+    <div class="org-menu" id="org-menu" role="menu" aria-label="組織" hidden></div>
+    <span class="org-name" id="org-name"></span>
   </div>
 
-  <button class="m3-fab-extended" data-action="new-task">
+  <button type="button" class="rail-fab" data-action="new-task" title="依頼する" aria-label="依頼する">
     <span class="material-symbols-outlined" aria-hidden="true">add</span>
-    <span>新しいタスク</span>
   </button>
 
-  <div class="side-tabs" role="tablist" aria-label="サイドバーの表示">
-    <button type="button" role="tab" class="side-tab" id="side-tab-boards" data-action="boards" aria-controls="side-boards" aria-selected="true" title="ボード" aria-label="ボード">
-      <span class="material-symbols-outlined" aria-hidden="true">dashboard</span>
-      <span class="lbl">ボード</span>
-    </button>
-    <button type="button" role="tab" class="side-tab" id="nav-work" data-action="work" aria-controls="wk-list" aria-selected="false" title="いまの仕事" aria-label="いまの仕事">
-      <span class="material-symbols-outlined" aria-hidden="true">work_history</span>
-      <span class="lbl">いまの仕事</span>
-      <span class="rail-badge zero" id="work-new-count" title="新着の数">0</span>
-    </button>
-    <button type="button" role="tab" class="side-tab" id="nav-todo" data-action="todo" aria-controls="todo-list" aria-selected="false" title="TODO" aria-label="TODO">
-      <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
-      <span class="lbl">TODO</span>
-      <span class="rail-badge zero" id="todo-count" title="あなたの番の数">0</span>
-    </button>
-  </div>
-  <div class="todo-pop" id="todo-pop" role="dialog" aria-label="あなたの番" hidden></div>
+  <button type="button" class="rail-btn" id="nav-work" data-action="work" title="いまの仕事">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">view_list</span><span class="rail-lbl">いまの仕事</span><span class="rail-badge zero" id="work-new-count" title="新着の数">0</span>
+  </button>
+  <button type="button" class="rail-btn" id="nav-todo" data-action="todo" title="TODO">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">task_alt</span><span class="rail-lbl">TODO</span><span class="rail-badge zero" id="todo-count" title="あなたの番の数">0</span>
+  </button>
+  <button type="button" class="rail-btn" id="nav-review" data-action="review" title="レビュー">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">rate_review</span><span class="rail-lbl">レビュー</span><span class="rail-badge zero" id="review-count" title="あなたのレビューを待っている PR の数">0</span><span class="ov-stale-dot" id="ov-stale-dot" role="img" aria-label="同期が古くなっています" hidden></span>
+  </button>
+  <button type="button" class="rail-btn" id="nav-boards" data-action="boards" title="ボード">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">view_kanban</span><span class="rail-lbl">ボード</span>
+  </button>
 
-  <div class="rail-destinations" id="side-boards" role="tabpanel" aria-labelledby="side-tab-boards">
+  <span class="rail-grow"></span>
+
+  <button type="button" class="rail-btn" id="btn-notify" data-action="notify" title="デスクトップ通知を設定">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">notifications</span><span class="rail-lbl">通知</span>
+  </button>
+  <button type="button" class="rail-btn" data-action="theme" title="テーマ切替">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">contrast</span><span class="rail-lbl">テーマ</span>
+  </button>
+  <div class="todo-pop" id="todo-pop" role="dialog" aria-label="あなたの番" hidden></div>
+</nav>
+
+<aside id="side-list" aria-label="一覧">
+  <div class="rail-destinations" id="side-boards">
     <div class="rail-section-label rail-boards-label">ボード</div>
     <div id="board-rows"></div>
   </div>
 
-  <section class="wk-list" id="wk-list" role="tabpanel" aria-labelledby="nav-work" aria-label="いまの仕事の一覧">
+  <section class="wk-list" id="wk-list" aria-label="いまの仕事の一覧">
     <div class="aide-pin-wrap"><button type="button" class="aide-pin" id="aide-pin" title="副官を開く">
       <span class="aide-ava" aria-hidden="true"><span class="material-symbols-outlined">support_agent</span></span>
       <span class="aide-pin-main"><span class="aide-pin-name">副官</span><span class="aide-pin-sub" id="aide-pin-sub"></span></span>
@@ -53,10 +55,6 @@
       <label class="wk-repo-filter"><span class="material-symbols-outlined" aria-hidden="true">folder</span><select id="wk-repo-filter" aria-label="リポジトリ"></select></label>
     </div>
     <div class="pane-head wk-list-head">
-      <div class="m3-segmented-tabs wk-tab-switch" role="group" aria-label="一覧">
-        <button type="button" class="m3-seg-tab" data-wk-tab="task" aria-pressed="true">タスク<span class="rail-badge zero" id="wk-tab-count-task" title="新着の数">0</span></button>
-        <button type="button" class="m3-seg-tab" data-wk-tab="others" aria-pressed="false">AI 下読み<span class="rail-badge zero" id="wk-tab-count-others" title="新着の数">0</span><span class="ov-stale-dot" id="ov-stale-dot" role="img" aria-label="同期が古くなっています" hidden></span></button>
-      </div>
       <span class="wk-list-tools" id="wk-list-tools">
         <button type="button" class="wk-act aide-ask" data-wk-aide-all title="副官に聞く（新着を上から順に）" aria-label="副官に聞く（新着を上から順に）"><span class="material-symbols-outlined" aria-hidden="true">support_agent</span></button>
         <button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>
@@ -68,22 +66,12 @@
     <div class="wk-rate" id="wk-rate"></div>
   </section>
 
-  <section class="todo-list" id="todo-list" role="tabpanel" aria-labelledby="nav-todo" aria-label="あなたの番"></section>
+  <section class="todo-list" id="todo-list" aria-label="あなたの番"></section>
 
-  <div class="rail-footer">
-    <div class="rail-tools">
-      <button class="tool-btn" id="btn-notify" data-action="notify" title="デスクトップ通知を設定">
-        <span class="material-symbols-outlined" aria-hidden="true">notifications</span>
-      </button>
-      <button class="tool-btn" data-action="theme" title="テーマ切替" aria-label="テーマ切替">
-        <span class="material-symbols-outlined" aria-hidden="true">dark_mode</span>
-      </button>
-    </div>
-  </div>
-  <div class="rail-resize" id="rail-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="サイドバーの幅" aria-valuemin="260" aria-valuemax="560" aria-valuenow="300" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
+  <div class="list-resize" id="list-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="一覧の幅" aria-valuemin="240" aria-valuemax="560" aria-valuenow="330" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）"></div>
 </aside>
 
-<!-- The task panel is a child of body, between the sidebar and the page, and is never moved:
+<!-- The task panel is a child of body, between the list and the page, and is never moved:
      left or right is a class on body (CSS order), so the terminal inside it keeps its socket.
      Only the parts around #tp-term-host are redrawn; the host and its ancestors are not. -->
 <section id="task-panel" aria-label="タスクのパネル" hidden>
@@ -124,47 +112,40 @@
 <dialog id="question-dialog" class="qd"><div class="qd-layers"></div></dialog>
 
 <div id="app-main">
-  <header class="top-app-bar">
-    <div class="page-title-area">
-      <div class="crumbs" id="crumbs"></div>
-      <h1 class="page-title" id="page-title">タスクボード</h1>
-      <span class="page-subtitle" id="page-subtitle">エージェントの作業と、あなたの確認待ちを分けて表示</span>
-    </div>
-
-    <div class="top-bar-actions" style="margin-left:auto;">
-      <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" data-action="own-hub" title="このボードの hub を開く">
-        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
-        <span>hub</span>
-      </button>
-      <button class="tool-btn" id="btn-resync" data-action="resync" title="再同期 (adj refresh)" aria-label="再同期 (adj refresh)">
-        <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
-      </button>
-    </div>
-
-    <div class="view-tabs-row" id="view-tabs-row">
-      <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
-        <button type="button" role="tab" class="view-tab" data-tab="agent" aria-controls="board-view" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
-        <button type="button" role="tab" class="view-tab" data-tab="human" aria-controls="board-view" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
-      </nav>
-      <div class="view-tools" id="view-tools">
-        <div class="m3-segmented-tabs" id="layout-switch">
-          <button type="button" class="m3-seg-tab" data-layout="tabs" data-action="layout" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
-          <button type="button" class="m3-seg-tab" data-layout="split" data-action="layout" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
-        </div>
-        <div class="m3-segmented-tabs" id="arrange-switch">
-          <button type="button" class="m3-seg-tab" data-arrange="top" data-action="arrange" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
-          <button type="button" class="m3-seg-tab" data-arrange="left" data-action="arrange" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
-        </div>
-      </div>
-    </div>
-  </header>
-
   <!-- A notice about what was just done (a session started, a hub restarted), in the flow above whichever view is
        on, so it is seen whether or not the panel is open. -->
   <div class="sess-notice" id="sess-notice" hidden></div>
 
   <main>
     <div id="board-view" role="tabpanel">
+      <div class="board-head" id="board-head">
+        <h1 class="board-head-title" id="board-title"></h1>
+        <span class="board-head-acts">
+          <button class="btn-m3-tonal" id="btn-hub" style="padding:6px 12px;font-size:12px;" data-action="own-hub" title="このボードの hub を開く">
+            <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
+            <span>hub</span>
+          </button>
+          <button class="tool-btn" id="btn-resync" data-action="resync" title="再同期 (adj refresh)" aria-label="再同期 (adj refresh)">
+            <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+          </button>
+        </span>
+        <div class="view-tabs-row" id="view-tabs-row">
+          <nav class="view-tabs" role="tablist" aria-label="ボードの表示">
+            <button type="button" role="tab" class="view-tab" data-tab="agent" aria-controls="board-view" title="worker の工程"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span><span class="lbl">エージェント</span><span class="rail-count" id="agent-count" title="作業中の worker">0</span></button>
+            <button type="button" role="tab" class="view-tab" data-tab="human" aria-controls="board-view" title="あなたの確認を待っているもの"><span class="material-symbols-outlined" aria-hidden="true">person</span><span class="lbl">人</span><span class="rail-badge" id="human-badge" title="あなたの確認待ち">0</span></button>
+          </nav>
+          <div class="view-tools" id="view-tools">
+            <div class="m3-segmented-tabs" id="layout-switch">
+              <button type="button" class="m3-seg-tab" data-layout="tabs" data-action="layout" title="ボードを1つずつ表示"><span class="material-symbols-outlined" aria-hidden="true">tab</span>1つずつ</button>
+              <button type="button" class="m3-seg-tab" data-layout="split" data-action="layout" title="2つのボードを並べて表示"><span class="material-symbols-outlined" aria-hidden="true">splitscreen</span>並べる</button>
+            </div>
+            <div class="m3-segmented-tabs" id="arrange-switch">
+              <button type="button" class="m3-seg-tab" data-arrange="top" data-action="arrange" title="人のボードを上に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_top</span>人を上</button>
+              <button type="button" class="m3-seg-tab" data-arrange="left" data-action="arrange" title="人のボードを左に"><span class="material-symbols-outlined" aria-hidden="true">splitscreen_left</span>人を左</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="boards">
         <section class="pane" id="pane-human">
           <div class="pane-head">
@@ -178,7 +159,7 @@
         <section class="pane" id="pane-agent">
           <div class="pane-head">
             <span class="material-symbols-outlined">smart_toy</span>
-            <span class="pane-title">エージェント</span>
+            <span class="pane-title">エージェントの作業</span>
             <span class="pane-sub">worker の工程。点線のカードは人の確認待ちで止まっています</span>
           </div>
           <div id="hub-strip-slot">
@@ -195,15 +176,15 @@
       </div>
     </div>
     <!-- The work under way in every repository: the selected session's terminal here (with nothing selected, the aide:
-         aide.js), the list in the sidebar (#wk-list), and (the task panel, which is the body's own) what to judge. Nothing
+         aide.js), the list in the list column (#wk-list), and (the task panel, which is the body's own) what to judge. Nothing
          here is drawn from the board's state: the list is /api/work, and only the panel and the terminal read the board
          that was selected. -->
     <div id="work-view">
       <section class="wk-term" id="wk-term" aria-label="選んだ仕事のターミナル">
-        <!-- The row over the middle is always shown in this view. #wk-mid-lead holds the toggle that hides and shows the sidebar
+        <!-- The row over the middle is always shown in this view. #wk-mid-lead holds the toggle that hides and shows the list column
              (core.js applyLayout); the tabs of a task that has a PR, 「タスク」 (the worker's terminal below) and 「AI 下読み」
              (#task-read), are shown for a task only, see task-read-view.js. -->
-        <div class="wk-mid-row" id="wk-mid-row"><div class="wk-mid-lead" id="wk-mid-lead"><button type="button" class="tool-btn rail-toggle" id="rail-toggle" data-action="rail-toggle" aria-controls="nav-rail" aria-expanded="true" aria-label="サイドバーを隠す" title="サイドバーを隠す"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span><span class="rail-badge zero" id="rail-toggle-count" title="新着の数">0</span></button></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示" hidden></div></div>
+        <div class="wk-mid-row" id="wk-mid-row"><div class="wk-mid-lead" id="wk-mid-lead"><button type="button" class="tool-btn rail-toggle" id="rail-toggle" data-action="rail-toggle" aria-controls="side-list" aria-expanded="true" aria-label="一覧を隠す" title="一覧を隠す"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span><span class="rail-badge zero" id="rail-toggle-count" title="新着の数">0</span></button></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示" hidden></div></div>
         <div class="aide-back" id="aide-back" hidden></div>
         <div class="aide" id="aide" hidden>
           <header class="aide-head" id="aide-head"></header>
@@ -234,28 +215,13 @@
         <button type="button" class="aide-peek" id="aide-peek" hidden></button>
       </section>
     </div>
-    <!-- What waits on the person: the list is in the sidebar (#todo-list), the selected question's card here (todo-view.js). -->
+    <!-- What waits on the person: the list is in the list column (#todo-list), the selected question's card here (todo-view.js). -->
     <div id="todo-view"><section class="todo-card" id="todo-card" aria-label="選んだ質問"></section></div>
   </main>
-
-  <footer id="m3-bottom-sheet">
-    <button type="button" class="sheet-handle-bar" aria-expanded="false" data-action="sheet">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
-        <strong style="font-size:12px;">CLI連携コンソール</strong>
-        <span style="font-size:11px;color:var(--md-sys-color-on-surface-variant)">UI操作と <code>adj</code> コマンドの対応ログ</span>
-      </div>
-      <div class="sheet-pill"></div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span id="sheet-latest-cmd" style="font-family:var(--font-mono);font-size:11px;color:var(--md-sys-color-outline)">adj serve</span>
-        <span id="sheet-toggle-icon" style="font-size:11px;font-weight:700">▲ 開く</span>
-      </div>
-    </button>
-    <div class="sheet-content">
-      <ol id="log" style="list-style:none;display:flex;flex-direction:column;gap:4px;"></ol>
-    </div>
-  </footer>
 </div>
+
+<!-- What the page says it did, for a moment (toast.js). A popover, so it is shown above a modal dialog that is open. -->
+<div id="toasts" class="toasts" popover="manual" aria-live="polite"></div>
 
 <dialog id="form">
   <form method="dialog">

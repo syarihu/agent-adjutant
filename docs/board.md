@@ -25,7 +25,7 @@ adj server restart [--port <port>] [--open]
 ```
 
 - **Port allocation**: Defaults to `127.0.0.1:4577`, or any free port if 4577 is occupied.
-- **Switching repositories**: The unified page `/` provides a sidebar listing all repositories and parent-task hubs. Selecting "すべて" displays tasks across all boards.
+- **Switching repositories**: On the resident server, `/` opens 「いまの仕事」; the rail's ボード entry lists all repositories and parent-task hubs in the column beside it, and selecting "すべて" (`/?view=agent`) displays tasks across all boards.
 - **Automatic reconnection**: Existing browser tabs automatically reconnect if the port remains unchanged after `adj server restart`.
 - **Security & Tokens**: Bound strictly to `127.0.0.1`. Every request needs the token stored in `~/.local/state/adjutant/dashboard-token`. The page reads it from the `token` URL query it was opened with and sends it in the `X-Adjutant-Token` header; state-changing requests are refused unless the token comes in that header. Separately, state-changing requests and terminal WebSocket connections must carry a browser `Origin` header that matches the board's own origin.
 
@@ -64,7 +64,7 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 ## Views
 
-The sidebar has three tabs: **ボード (Board)**, **いまの仕事 (Work under way)** and **TODO**.
+The page is a rail of icons with the list of the place chosen in a column beside it. The rail has **いまの仕事 (Work under way)**, **TODO**, **レビュー (Review)** and **ボード (Board)**, with the organisation switch and a ＋ button (「依頼する」) above them and the notification settings and the theme below. `/` opens いまの仕事 on the resident server; `/?view=agent` is 「すべて」, and a board's own address (`/b/<slug>/`) opens that board. The list column's width is dragged between 240px and 560px and remembered. A board served alone has the rail and the board only.
 
 ### 1. いまの仕事 (Work Under Way: `?view=work`)
 
@@ -78,7 +78,7 @@ A unified 3-column operational view across all repositories:
 
 #### Organisation, repository and hierarchy
 The left list shows one organisation (a GitHub owner) at a time:
-- **Organisation switch**: the avatar at the top of the sidebar. Its menu lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Following a link to a row of another organisation switches to it.
+- **Organisation switch**: the avatar at the top of the rail. Its menu lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Following a link to a row of another organisation switches to it.
 - **Repository filter**: 「すべて」 or one repository of the organisation. With one chosen, the repository headings are left out.
 - **Hierarchy**: Repository → hub → sessions. A hub is a row heading its group; the tasks it runs are indented below it. A parent issue's hub shows the parent's number, title and `n / m マージ` progress.
 - **依頼する**: opens one dialog to ask a hub for a task: pick the repository (of the organisation) and the hub (the repository's own, or a parent task's), write what you want, and send it with 「渡す」 (Ctrl/⌘+Enter) or keep it with 「あとで（Backlog）」. An unsent text is kept for the next time. The new-task button and 「子タスクを足す」 open the same dialog; a board served alone keeps its own form.
@@ -130,8 +130,8 @@ An interactive assistant session (shown when no specific task is selected in 「
 
 ### 4. TODO (`?view=todo`)
 
-What waits on you, across every repository. The sidebar's TODO tab carries a badge with the count; the count is every open gate that is not parked plus every pull request you were asked to review, whether or not its AI pre-reading has started. Terminal-only permission prompts, parked tasks' gates and your own tasks' PR turns are not in it.
-- **Popover**: resting the pointer on the tab (or focusing it with the keyboard) opens a list under it (beside it in the icon rail). A quick confirmation is answered right there; any other row opens the TODO view with that item selected. It closes when the pointer and focus have left it, or on Escape, and never opens in the TODO view or over a dialog.
+What waits on you, across every repository. The rail's TODO entry carries a badge with the count; the count is every open gate that is not parked plus every pull request you were asked to review, whether or not its AI pre-reading has started. Terminal-only permission prompts, parked tasks' gates and your own tasks' PR turns are not in it.
+- **Popover**: resting the pointer on the entry (or focusing it with the keyboard) opens a list beside the rail. A quick confirmation is answered right there; any other row opens the TODO view with that item selected. It closes when the pointer and focus have left it, or on Escape, and never opens in the TODO view or over a dialog.
 - **Left**: 「あなたの番」, in the order it is best answered. First the quick confirmations, oldest first. Then 「読んで決める」: start checks, filing confirmations, research results and reports, plans, questions, what is to go to Jules, manual checks and diffs, oldest first within each kind. Then the pull requests you were asked to review, with how far their AI pre-reading has got.
 - **Right**: the selected question as the same card the dialog shows (answered where it stands, with the diff, the Issue body and the report opening over it), or for a pull request a short card with a button into its review. With nothing waiting it says 「あなたの番はありません」.
 

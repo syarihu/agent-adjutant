@@ -206,9 +206,7 @@ const orderedBoards = list => repoGroups(list).flatMap(r => [...(r.repo ? [r.rep
 
 function renderBoardRows() {
   const box = document.getElementById('board-rows');
-  const sub = document.getElementById('boards-sub');
   if (!multiBoard) {
-    if (sub) sub.textContent = repoName() || '';
     if (box) box.innerHTML = '';
     return;
   }
@@ -245,8 +243,6 @@ function renderBoardRows() {
     html += `<div class="repo-group${folded && withChildren ? ' collapsed' : ''}">${rows}</div>`;
   }
   const sig = html;
-  const subText = `${repos.length} リポジトリ · hub ${live.filter(b => b.hubPresent).length}`;
-  if (sub) sub.textContent = subText;
   // Not rebuilt for the same rows: that would drop the focus and a click in progress.
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
@@ -303,7 +299,7 @@ function openHubPanelOf(b) {
   go({ board: b.slug, view: nav.view === 'work' ? 'agent' : nav.view, task: ref, pane: 'term' });
 }
 
-/* The hub of the board on screen, which the title's 「hub」 button opens. */
+/* The hub of the board on screen, which the board head's 「hub」 button opens. */
 const ownHubId = () => selectedBoard()?.hubId || pageHub()?.id || 'hub';
 
 /* The hub panel draws from client-side markers (starting, resetting) as well as from state, which
@@ -325,9 +321,9 @@ function renderDocTitle() {
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
 }
 
-/* The name and state the top bar gives the screen. Only a board's own screen has its name in
-   the title; the other views keep the title `setView` gave them and add the path to it. */
-function renderTitle() {
+/* The board's head: its name and the state of its hub, and the hub's own buttons. A board's own screen is the only one that has
+   it; the tab's title (renderDocTitle) is the page's for every view. */
+function renderBoardHead() {
   // The hub's own buttons have no board to act on in 「すべて」 and 「いまの仕事」.
   const resync = document.getElementById('btn-resync');
   if (resync) resync.hidden = scopeAll() || view === 'work';
@@ -335,33 +331,16 @@ function renderTitle() {
   if (hubBtn) hubBtn.hidden = scopeAll() || view === 'work';
   markHubButtons();
   renderDocTitle();
-  const crumbs = document.getElementById('crumbs');
-  const title = document.getElementById('page-title');
-  const subtitle = document.getElementById('page-subtitle');
-  if (!crumbs) return;
-  const entry = selectedBoard();
-  const sep = '<span class="sep">›</span>';
-  let trail;
-  if (view === 'work') {
-    trail = ['いまの仕事'];
-  } else if (scopeAll()) {
-    trail = ['すべてのボード'];
-  } else if (entry) {
-    const [owner] = (entry.nwo || '').split('/');
-    trail = entry.hub ? [owner, repoNameOf(entry), boardName(entry)] : [owner, repoNameOf(entry)];
-  } else {
-    const [owner] = (state.repo || '').split('/');
-    trail = owner ? [owner, repoName()] : [];
-  }
-  crumbs.innerHTML = trail.map(esc).join(sep);
-  const ofBoard = view === 'board';
-  if (subtitle) subtitle.hidden = ofBoard;
-  if (!ofBoard || !title) return;
+  const title = document.getElementById('board-title');
+  if (!title || view !== 'board') return;
   if (scopeAll()) { title.textContent = 'すべて'; return; }
+  const entry = selectedBoard();
   const hubState = entry ? boardState(entry)
     : (state.hub?.present ? { tone: 'good' } : { tone: state.hub?.stale ? 'bad' : 'off' });
   const present = entry ? !!entry.hubPresent : !!state.hub?.present;
-  const name = entry ? boardName(entry) : (pageHub()?.parent ? (pageHub().key || '') : (repoName() || 'タスクボード'));
+  // A repository's board is named for the repository, a hub's board for the repository and the hub.
+  const name = entry ? (entry.hub ? `${repoNameOf(entry)} · ${boardName(entry)}` : boardName(entry))
+    : (pageHub()?.parent ? (pageHub().key || '') : (repoName() || 'タスクボード'));
   title.innerHTML = `${esc(name)} <span class="hub-pill ${present ? 'good' : hubState.tone === 'bad' ? 'bad' : 'off'}">${present ? 'hub 稼働中' : 'hub 停止中'}</span>`;
 }
 
@@ -1077,20 +1056,7 @@ function parkClick(e) {
   return true;
 }
 
-function note(line, isError, why) {
-  log.unshift({ line, isError, why });
-  log = log.slice(0, 5);
-  document.getElementById('log').innerHTML = log.map(l =>
-    `<li class="${l.isError ? 'err' : ''}"><b>${l.isError ? '!' : '$'}</b> ${esc(l.line)}` +
-    (l.why ? `   <span style="color:var(--muted)">— ${esc(l.why)}</span>` : '') + '</li>').join('');
-  const latestCmd = document.getElementById('sheet-latest-cmd');
-  if (latestCmd) {
-    latestCmd.textContent = line;
-    latestCmd.style.color = isError ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-outline)';
-  }
-}
-
 // The ball count belongs in the tab title: you should know it is your turn without
 // having to look at the page. The board's name follows it, so tabs of several boards differ.
 registerView('board-rows', { render: () => renderBoardRows() });
-registerView('title', { render: () => renderTitle() });
+registerView('title', { render: () => renderBoardHead() });

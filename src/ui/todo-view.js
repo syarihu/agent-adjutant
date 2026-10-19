@@ -136,6 +136,11 @@ function todoDrawBadge(items) {
   if (!badge) return;
   badge.textContent = items.count;
   badge.classList.toggle('zero', items.count === 0);
+  // The PRs waiting on you are the rail's レビュー.
+  const review = document.getElementById('review-count');
+  if (!review) return;
+  review.textContent = items.prs.length;
+  review.classList.toggle('zero', items.prs.length === 0);
 }
 
 function todoDrawList(items) {
@@ -271,17 +276,16 @@ const todoTabEl = () => document.getElementById('nav-todo');
 const todoPopEl = () => document.getElementById('todo-pop');
 const todoInside = el => !!el && (todoTabEl().contains(el) || todoPopEl().contains(el));
 
-/* Under the entry, or beside it when the sidebar is only icons; kept inside the window. */
+/* Beside the rail, with no gap the pointer would cross; kept inside the window. */
 function todoPlace() {
   const pop = todoPopEl();
   if (pop.hidden) return;
   const r = todoTabEl().getBoundingClientRect();
-  const icons = document.body.classList.contains('rail-icons');
   const w = Math.min(380, window.innerWidth - 16);
   pop.style.width = `${w}px`;
   const h = pop.offsetHeight;
-  const left = icons ? r.right + 8 : r.left;
-  const top = icons ? r.top : r.bottom + 4;
+  const left = r.right;
+  const top = r.top;
   pop.style.left = `${Math.max(8, Math.min(left, window.innerWidth - w - 8))}px`;
   pop.style.top = `${Math.max(8, Math.min(top, window.innerHeight - h - 8))}px`;
 }

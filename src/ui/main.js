@@ -42,11 +42,7 @@ function setView(v) {
   // The middle terminal is not kept behind another view, and the row that was open is left.
   if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); disposeTermSlot(aideTerm); }
 
-  // Navigation rail active states
-  // The sidebar's switch follows the view: 「いまの仕事」 and TODO are tabs of their own, every other view is ボード's.
-  for (const [id, on] of [['side-tab-boards', v !== 'work' && v !== 'todo'], ['nav-work', v === 'work'], ['nav-todo', v === 'todo']])
-    document.getElementById(id)?.setAttribute('aria-selected', String(on));
-  applyRailMode();
+  markRail();
   applyLayout();
 
   // The address follows the screen when something other than `go` moved it.
@@ -59,25 +55,7 @@ function setView(v) {
     }
   }
 
-  // Top App Bar title updates. The board's own are drawn by renderTitle.
-  const pageTitle = document.getElementById('page-title');
-  const pageSub = document.getElementById('page-subtitle');
-  if (pageTitle && pageSub) {
-    if (v === 'board') {
-      renderTitle();
-    } else if (v === 'work') {
-      pageTitle.textContent = 'いまの仕事';
-      pageSub.textContent = '全リポジトリの動いている仕事。左で選び、中央で話し、右で判定する';
-    } else if (v === 'todo') {
-      pageTitle.textContent = 'TODO';
-      pageSub.textContent = 'あなたの番。すぐ答えられるものから';
-    }
-  }
-
-  renderTitle();
-  // Filter chips are visible on board
-  const filterChips = document.querySelector('.filter-chip-group');
-  if (filterChips) filterChips.style.display = (v === 'board') ? 'flex' : 'none';
+  renderBoardHead();
 
   if (v === 'work') {
     renderWorkView();
@@ -88,17 +66,6 @@ function setView(v) {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     render();
   }
-}
-
-function toggleBottomSheet() {
-  const sheet = document.getElementById('m3-bottom-sheet');
-  if (!sheet) return;
-  sheet.classList.toggle('open');
-  const isOpen = sheet.classList.contains('open');
-  const icon = document.getElementById('sheet-toggle-icon');
-  if (icon) icon.textContent = isOpen ? '▼ 閉じる' : '▲ 開く';
-  const handleBar = sheet.querySelector('.sheet-handle-bar');
-  if (handleBar) handleBar.setAttribute('aria-expanded', String(isOpen));
 }
 
 async function refreshAll(base = BASE) {
@@ -121,10 +88,11 @@ function toggleTheme() {
 // entry per line: the_page_wires_no_inline_handlers reads the keys line by line.
 const ACTIONS = {
   'new-task': () => openForm(),
-  work: () => { if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
+  work: () => { setWorkTab('task'); if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
+  review: () => { setWorkTab('others'); if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
   todo: () => todoOpen(),
   boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
-  'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; if (prefs.railHidden) closeOrgMenu(); applyLayout(); },
+  'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; applyLayout(); },
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
@@ -132,7 +100,6 @@ const ACTIONS = {
   resync: () => refreshAll(),
   layout: el => setBoardLayout(el.dataset.layout),
   arrange: el => setBoardArrange(el.dataset.arrange),
-  sheet: () => toggleBottomSheet(),
   'handover-close': () => closeHandoverDialog(),
   'nudge-hub': () => nudgeHub(),
   'wake-hub': () => wakeHub(),
@@ -143,8 +110,6 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (el) ACTIONS[el.dataset.action](el);
 });
-
-note('adj serve', false, 'このボードの操作は既存の adj コマンドに対応しています');
 
 /* Whether this server serves several boards: the resident answers the list of them, a board
    served on its own does not know the route. */

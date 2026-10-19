@@ -1,38 +1,32 @@
 /* ── いまの仕事: the list, the terminal of the selected session, and (the body's own task panel) the right column ── */
-/* The sidebar's width is the person's to set; the narrow window's icon rail (shell.css) is more specific and wins. */
-body { --rail-w: var(--rail-w-set, 300px); }
-/* The task panel stays beside 「いまの仕事」's terminal, so the terminal is never covered; the sidebar's list gives way instead:
-   it narrows up to 1400px (to 30% of the window, never under the sidebar's minimum) and is fixed at that minimum up to 1024px,
+/* The list column's width is the person's to set (#list-resize). */
+/* The task panel stays beside 「いまの仕事」's terminal, so the terminal is never covered; the list column gives way instead:
+   it narrows up to 1400px (to 30% of the window, never under 240px) and is fixed at that minimum up to 1024px,
    where the terminal also keeps a lower floor. */
 @media (max-width: 1400px) {
-  body.view-work { --rail-w: max(260px, min(var(--rail-w-set, 300px), 30vw)); }
+  body.view-work { --list-w: max(240px, min(var(--list-w-set, 330px), 30vw)); }
   /* The width is the window's here, so the handle would move nothing. */
-  body.view-work #rail-resize { display: none; }
+  body.view-work #list-resize { display: none; }
 }
 @media (max-width: 1024px) {
-  body.view-work { --rail-w: 260px; }
+  body.view-work { --list-w: 240px; }
 }
 @media (min-width: 721px) and (max-width: 1024px) {
-  body.view-work:not(.panel-pop) #task-panel { max-width: calc(100vw - var(--rail-w) - 240px); }
+  body.view-work:not(.panel-pop) #task-panel { max-width: calc(100vw - var(--rail-w) - var(--list-w) - 240px); }
 }
-/* On a phone-width window the sidebar's list sits above the terminal, as the work view's list did before it moved into the sidebar. */
+/* On a phone-width window the list sits above the terminal (shell.css puts it there); the work view gives it more height. */
 @media (max-width: 720px) {
-  body.view-work { flex-direction: column; }
-  body.view-work #nav-rail { width: auto; height: 60vh; overflow-y: auto; flex: none; border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-  body.view-work #nav-rail .wk-list { min-height: 220px; }
-  body.view-work #app-main { flex: 1; min-height: 0; }
+  body.view-work #side-list { height: 60vh; }
+  body.view-work #side-list .wk-list { min-height: 220px; }
 }
-/* Hidden by the toggle at the head of the middle (#rail-toggle): only in this view, whose middle has the toggle to bring it back. */
-body.view-work.rail-hidden #nav-rail { display: none; }
-body.view-work.rail-hidden { --rail-w: 0px; }
-#nav-rail { position: relative; }
-.rail-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 3; touch-action: none; }
-.rail-resize:hover, .rail-resize:focus-visible, body.wk-dragging .rail-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
-body.rail-icons .rail-resize { display: none; }
-/* The sidebar shows the board list or 「いまの仕事」's list, by the tab. */
+/* Hidden by the toggle at the head of the middle (#rail-toggle): only in this view, whose middle has the toggle to bring it back. The rail stays. */
+body.view-work.rail-hidden #side-list { display: none; }
+body.view-work.rail-hidden { --list-w: 0px; }
+.list-resize { position: absolute; top: 0; bottom: 0; right: 0; width: 6px; cursor: col-resize; z-index: 3; touch-action: none; }
+.list-resize:hover, .list-resize:focus-visible, body.wk-dragging .list-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+/* The column shows the board list, 「いまの仕事」's list or the TODO's, by the rail's entry. */
 body.view-work #side-boards, body:not(.view-work) #wk-list { display: none; }
 body.wk-dragging { user-select: none; cursor: col-resize; }
-.single-board #nav-work { display: none; }
 /* Completions and failures come from the work document, which a board served alone has none of. */
 .single-board .notify-multi { display: none; }
 .notify-kinds label { display: block; margin: 4px 0; }
@@ -48,22 +42,17 @@ body.view-work #task-panel { order: 3; border-right: 0; border-left: 1px solid v
 body.view-work .tp-head-btns [data-tp-place] { display: none; }
 
 .wk-list { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-/* In the sidebar: out to its edges (it has side padding), and the rest of its height. */
-#nav-rail .wk-list { flex: 1; margin: 0 -12px; }
+/* In the list column: the rest of its height. */
+#side-list .wk-list { flex: 1; min-height: 0; }
 .wk-list-head { position: relative; padding: 10px 14px 8px; gap: 6px; color: var(--md-sys-color-primary); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-/* The switch between the two lists takes the row; each half has its own count, and the second its dot. */
-.wk-tab-switch { flex: 1; min-width: 0; }
-.wk-tab-switch .m3-seg-tab { flex: 1; justify-content: center; padding: 4px 10px; font-size: 12.5px; position: relative; white-space: nowrap; }
-.wk-tab-switch .m3-seg-tab[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.wk-tab-switch .rail-badge { margin-left: 0; padding: 0 6px; font-size: 10.5px; }
 .ov-stale-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--md-sys-color-warning); flex: none; }
 .ov-stale-dot[hidden] { display: none; }
 .ov-sync-btn:focus-visible, .ov-chip:focus-visible, .ov-act:focus-visible, .org-btn:focus-visible, .org-item:focus-visible, .wk-req-btn:focus-visible, .wk-repo-filter select:focus-visible, .wk-hub-start:focus-visible {
   outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px;
 }
-/* The tabs take a line, and what belongs to the tasks' list (the actions on new rows) the one under it. */
+/* What belongs to the tasks' list: the actions on new rows. The row is not there when they are not. */
 .wk-list-head { flex-wrap: wrap; }
-.wk-tab-switch { flex-basis: 100%; }
+.wk-list-head:has(> #wk-list-tools[hidden]) { display: none; }
 .wk-list-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .wk-list-tools[hidden] { display: none; }
 /* Where a task is asked for, and the repository the list is narrowed to. */
@@ -82,8 +71,10 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
   background: var(--md-sys-color-surface-container-high); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-sm);
 }
 
-/* The organisation switch, in the place of the sidebar's badge: its avatar, with the count of what waits in the others. */
-.org-switch { position: relative; flex: none; }
+/* The organisation switch, at the top of the rail: its avatar and name, with the count of what waits in the others. */
+.org-switch { position: relative; flex: none; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.org-name:empty { display: none; }
+.org-name { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
 .org-btn { position: relative; display: inline-flex; border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: var(--md-shape-corner-md); }
 .org-btn[hidden], .org-menu[hidden], .brand-badge[hidden] { display: none; }
 .org-ava-box { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; overflow: hidden;
@@ -331,9 +322,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-ask-bar button .material-symbols-outlined, .qc-quick button[data-wk-fold] .material-symbols-outlined { color: inherit; }
 .wk-ask-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .wk-ask-scroll .qc { display: flex; flex-direction: column; }
-/* The foot is a `footer`, which shell.css holds to 96px and scrolls; the card's buttons need the room. None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
+/* None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
 .wk-ask-scroll .qc > * { flex: none; }
-.wk-ask-scroll .qc-foot { max-height: none; overflow: visible; position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
+.wk-ask-scroll .qc-foot { position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
 /* In a window too short for the foot beside the card, the foot scrolls with it, so that every button can be reached. */
 @media (max-height: 760px) { .wk-ask-scroll .qc-foot { position: static; } }
 .wk-ask-scroll .qc-foot .gate-comment { width: 100%; min-height: 44px; max-height: 20vh; resize: vertical; }

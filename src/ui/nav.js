@@ -7,7 +7,8 @@
      /b/<slug>/?task=session:<id>                          one board, a session with no task in the panel
      /b/<slug>/?task=gate:<slug>/<id>                      one board, a gate in the panel (`gate:<id>` on a board
                                                            served alone)
-     /                                                     すべて, every board
+     /                                                     いまの仕事, every board (the view DEFAULT_MULTI_VIEW names)
+     /?view=agent                                          すべて, every board
      /?view=todo                                           TODO, every board: what waits on you, and the question selected
      /?view=work                                           いまの仕事, every board; nothing selected, so the
                                                            middle is the aide (副官, aide.js)
@@ -39,7 +40,7 @@ const scopeAll = () => multiBoard && nav.board === 'all' && nav.view !== 'work';
 /* No board is chosen: 「すべて」, or the work view with nothing selected. What would be sent to a board is asked for one. */
 const noBoard = () => multiBoard && (!nav.board || nav.board === 'all');
 /* The view `/` opens on a server that serves several boards. A constant so that one change moves it. */
-const DEFAULT_MULTI_VIEW = 'agent';
+const DEFAULT_MULTI_VIEW = 'work';
 
 function parseUrl(loc = location) {
   const q = new URLSearchParams(loc.search);
@@ -52,8 +53,8 @@ function parseUrl(loc = location) {
   // `/` on a server with several boards opens the view its constant names; a board's own address, the one before.
   if (multiBoard && out.board === 'all') out.view = DEFAULT_MULTI_VIEW;
   const v = q.get('view');
-  // `view=agent`, from before エージェント became the default, lands here by falling through.
-  if (v === 'human') out.view = v;
+  // `/` on a resident server is the work view, so 「すべて」 has to be asked for by name.
+  if (v === 'human' || v === 'agent') out.view = v;
   // The work view reads every board of a resident server: a board served alone has none.
   if (v === 'work' && multiBoard) out.view = 'work';
   // The TODO reads every board too, and is on none of them.
@@ -75,6 +76,8 @@ function urlOf(n = nav) {
   const path = n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
   if (n.view === 'human' || n.view === 'work' || n.view === 'todo') url += `&view=${n.view}`;
+  // 「すべて」 is what `/` no longer opens.
+  else if (n.view === 'agent' && multiBoard && path === '/') url += '&view=agent';
   if (n.task) url += `&task=${encodeURIComponent(n.task)}`;
   if (n.task && n.pane !== 'detail') url += `&pane=${n.pane}`;
   return url;

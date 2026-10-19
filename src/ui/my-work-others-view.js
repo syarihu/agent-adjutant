@@ -78,6 +78,8 @@ async function refreshOthers(force = false) {
   }
   renderWorkBadge();
   renderOthersStaleDot();
+  // The rail's レビュー count is the TODO's PRs, which these records carry.
+  todoFollow();
   if (view === 'work') renderOthersList(force);
   // The PR that is open follows its record, and one named by the address is opened once the records are here.
   prFollow();
@@ -94,12 +96,8 @@ function othersSelect(rec) {
 function openReviewNotified(notification) {
   try { notification?.close(); } catch {}
   window.focus();
-  prKeepTab();
-  prefs.workTab = 'others';
-  savePrefs();
+  setWorkTab('others');
   go({ board: 'all', view: 'work', task: null, pane: 'detail' });
-  renderWorkTabs();
-  renderOthersList();
 }
 
 /* One desktop notification for what a sync brought in, from the tab that synced; the tag makes the next sync's replace it. */
