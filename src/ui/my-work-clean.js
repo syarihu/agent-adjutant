@@ -22,17 +22,18 @@ function workCleanFacts(uncommitted, git) {
 /* The line under a merged row, and its button. `entry` is what `workClean.git` holds for the row (none: not read yet). The button is
    only for a read that found nothing to lose, and it is the row button's sibling, never inside it. */
 function workCleanLineHtml(r, entry, busy = false) {
-  const line = (text, button = '') => `<span class="wk-clean"><span class="wk-clean-line">${text}</span>${button}</span>`;
+  // A row that cannot be cleaned up says so in the error colour, with a warning icon.
+  const line = (text, button = '', bad = false) => `<span class="wk-clean${bad ? ' bad' : ''}"><span class="wk-clean-line">${bad ? '<span class="material-symbols-outlined" aria-hidden="true">warning</span>' : ''}${text}</span>${button}</span>`;
   if (!entry || (entry.reading && !entry.git && !entry.blocked)) return line('確認しています…');
-  if (entry.failed) return line(esc(`片付けられませんでした: ${entry.failed}`));
-  if (entry.error) return line('git の状態を確認できません');
+  if (entry.failed) return line(esc(`片付けられませんでした: ${entry.failed}`), '', true);
+  if (entry.error) return line('git の状態を確認できません', '', true);
   const f = workCleanFacts(r.s?.uncommitted, entry.git);
   const counts = `未コミット ${f.files ?? '?'} · 未 push ${f.unpushed ?? '?'}`;
-  if (entry.blocked && !entry.git) return line(esc(`片付けられません: ${(entry.reasons || []).map(x => x.detail).join('、')}`));
-  if (entry.blocked || !f.ok) return line(`${esc(counts)} — 片付けられません`);
+  if (entry.blocked && !entry.git) return line(esc(`片付けられません: ${(entry.reasons || []).map(x => x.detail).join('、')}`), '', true);
+  if (entry.blocked || !f.ok) return line(`${esc(counts)} — 片付けられません`, '', true);
   const name = baseName(r.s?.worktree) || r.s?.id || '';
   const label = `片付ける（${name}）`;
-  return line(esc(counts), `<button type="button" class="wk-clean-btn" data-wk-clean="${esc(r.key)}"${busy ? ' disabled' : ''} aria-label="${esc(label)}" title="${esc('worktree とブランチを消します')}">${busy ? '片付けています…' : '片付ける'}</button>`);
+  return line(esc(counts), `<button type="button" class="wk-clean-btn" data-wk-clean="${esc(r.key)}"${busy ? ' disabled' : ''} aria-label="${esc(label)}" title="${esc('worktree とブランチを消します')}"><span class="material-symbols-outlined" aria-hidden="true">cleaning_services</span>${busy ? '片付けています…' : '片付ける'}</button>`);
 }
 
 /* The row's own line, from what is held. */

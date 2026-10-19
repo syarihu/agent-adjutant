@@ -1,16 +1,7 @@
 /* ── いまの仕事: the list, the terminal of the selected session, and (the body's own task panel) the right column ── */
-/* The list column's width is the person's to set (#list-resize). */
-/* The task panel stays beside 「いまの仕事」's terminal, so the terminal is never covered; the list column gives way instead:
-   it narrows up to 1400px (to 30% of the window, never under 240px) and is fixed at that minimum up to 1024px,
-   where the terminal also keeps a lower floor. */
-@media (max-width: 1400px) {
-  body.view-work { --list-w: max(240px, min(var(--list-w-set, 330px), 30vw)); }
-  /* The width is the window's here, so the handle would move nothing. */
-  body.view-work #list-resize { display: none; }
-}
-@media (max-width: 1024px) {
-  body.view-work { --list-w: 240px; }
-}
+/* The list column's width is the person's to set (#list-resize), in this view as in the others; only the stacked layout below 720px
+   (shell.css) has no handle. */
+/* The task panel stays beside 「いまの仕事」's terminal, so the terminal is never covered: the panel gives way to the list's width. */
 @media (min-width: 721px) and (max-width: 1024px) {
   body.view-work:not(.panel-pop) #task-panel { max-width: calc(100vw - var(--rail-w) - var(--list-w) - 240px); }
 }
@@ -47,7 +38,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-list-head { position: relative; padding: 10px 14px 8px; gap: 6px; color: var(--md-sys-color-primary); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .ov-stale-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--md-sys-color-warning); flex: none; }
 .ov-stale-dot[hidden] { display: none; }
-.ov-sync-btn:focus-visible, .ov-chip:focus-visible, .ov-act:focus-visible, .org-btn:focus-visible, .org-item:focus-visible, .wk-req-btn:focus-visible, .wk-repo-filter select:focus-visible, .wk-hub-start:focus-visible {
+.ov-sync-btn:focus-visible, .ov-chip:focus-visible, .ov-act:focus-visible, .org-btn:focus-visible, .org-item:focus-visible, .wk-req-btn:focus-visible, .wk-repo-btn:focus-visible, .wk-repo-item:focus-visible, .wk-hub-start:focus-visible {
   outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px;
 }
 /* What belongs to the tasks' list: the actions on new rows. The row is not there when they are not. */
@@ -60,7 +51,7 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .list-ask[hidden] { display: none; }
 .list-ask .wk-req-btn { width: 100%; padding: 10px 14px; border-radius: 9999px; font-size: 13px; font-weight: 800; box-shadow: var(--md-elevation-1); }
 /* The repository the list is narrowed to. */
-.wk-ask { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; }
+.wk-ask { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; position: relative; z-index: 5; }
 .wk-ask[hidden] { display: none; }
 .wk-req-btn {
   flex: none; display: inline-flex; align-items: center; gap: 4px; border: 0; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 700;
@@ -68,12 +59,34 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 }
 .wk-req-btn .material-symbols-outlined { font-size: 18px; }
 .wk-req-btn:hover { filter: brightness(1.08); }
-.wk-repo-filter { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; color: var(--md-sys-color-on-surface-variant); }
-.wk-repo-filter .material-symbols-outlined { font-size: 18px; flex: none; }
-.wk-repo-filter select {
-  flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 5px 6px; color: var(--md-sys-color-on-surface);
-  background: var(--md-sys-color-surface-container-high); border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-sm);
+/* The menu opens over the list below, so its wrapper is above the stuck repository heading (z-index 2) there. */
+.wk-repo-filter { position: relative; flex: 1; min-width: 0; }
+.wk-repo-btn {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 6px 10px 6px 12px; cursor: pointer; text-align: left;
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface); font: inherit; font-size: 12.5px;
 }
+.wk-repo-btn:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, var(--md-sys-color-surface-container-low)); }
+.wk-repo-btn .material-symbols-outlined { flex: none; font-size: 16px; color: var(--md-sys-color-on-surface-variant); }
+.wk-repo-name { flex: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-repo-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60; max-height: min(60vh, 420px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px; padding: 4px; border-radius: 10px;
+  background: var(--md-sys-color-surface-container-lowest); border: 1px solid var(--md-sys-color-outline-variant); box-shadow: var(--md-elevation-3);
+}
+.wk-repo-menu[hidden] { display: none; }
+/* Opens on hover as the organisation switch does; the bridge is the wrapper's, as the menu scrolls and would clip it. */
+@media (hover: hover) {
+  .wk-repo-filter:not(.shut):hover > .wk-repo-menu:not(:empty) { display: flex; }
+  .wk-repo-filter:not(.shut):hover::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 6px; }
+}
+.wk-repo-item { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--md-sys-color-on-surface);
+  font: inherit; font-size: 12.5px; text-align: left; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.wk-repo-item:hover { background: var(--md-sys-color-surface-container-high); }
+.wk-repo-item[aria-checked="true"] { font-weight: 700; color: var(--md-sys-color-primary); }
+.wk-repo-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk-repo-check { flex: none; font-size: 16px; }
+.wk-repo-item[aria-checked="false"] .wk-repo-check { visibility: hidden; }
 
 /* The organisation switch, at the top of the rail: its avatar with the count of what waits in the others, and its name under it with ⇕.
    The menu opens beside it on hover or keyboard focus (org-switch.js); `.shut` keeps it closed after a choice while the pointer is still on it. */
@@ -116,6 +129,8 @@ body.view-work .tp-head-btns [data-tp-place] { display: none; }
 .wk-list-scroll[hidden] { display: none; }
 .wk-list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 12px; }
 .wk-empty { padding: 14px 8px; font-size: 12.5px; color: var(--md-sys-color-outline); }
+.wk-empty-none { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 30px 12px; text-align: center; color: var(--md-sys-color-on-surface-variant); }
+.wk-empty-none .material-symbols-outlined { font-size: 32px; }
 
 /* Headers: an owner, a repository, a parent issue, a box, a box's repository. They fold. */
 /* Each group is a card around its heading and rows, a step stronger per level and the same from the third on. */
@@ -216,10 +231,23 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-row:hover { background: var(--wk-hover); }
 .wk-row[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wk-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
+.wk-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
+.wk-sep { opacity: .7; }
+.wk-who { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.wk-agent-icon { font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
+.wk-agent-icon[data-agent="claude"] { color: var(--wk-agent-claude); }
+.wk-agent-icon[data-agent="codex"] { color: var(--wk-agent-codex); }
+.wk-agent-icon[data-agent="gemini"] { color: var(--wk-agent-gemini); }
+.wk-hk { font-weight: 700; color: var(--md-sys-color-tertiary); }
+.wk-row[aria-current="true"] .wk-hk { color: inherit; }
 .wk-row[aria-current="true"] .wk-agent, .wk-row[aria-current="true"] .wk-meta { color: inherit; }
-/* A title is never tinted: the state is the icon's. */
 .wk-title { overflow-wrap: anywhere; font-size: 12.5px; font-weight: 600; line-height: 1.35; }
+/* A row that waits on the person tints its title and the line that says what for: warning for a decision, error for a permission
+   its agent asks in the terminal; a finished row's title is the colour of its ✓. Scoped to the row's state class, so the other
+   lists that reuse .wk-row are untouched. */
+.wk-row.waiting .wk-title, .wk-row.waiting .wk-gate { color: var(--md-sys-color-warning); }
+.wk-row.permission .wk-title, .wk-row.permission .wk-line.ask { color: var(--md-sys-color-error); }
+.wk-row.done .wk-title { color: var(--md-sys-color-success); }
 .wk-tag { font-size: 10.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; margin-right: 6px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wk-meta { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); font-family: var(--font-mono); }
 .wk-meta .sub { font-family: inherit; color: var(--md-sys-color-tertiary); }
@@ -241,12 +269,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-band-row.wk-clean-row { flex-wrap: wrap; row-gap: 0; }
 .wk-clean-row .wk-row { flex: 1 1 0; }
 .wk-clean { flex-basis: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px 4px 32px; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
-.wk-clean-btn {
-  border: 1px solid var(--md-sys-color-outline); background: transparent; color: var(--md-sys-color-primary); cursor: pointer;
-  font: inherit; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap;
-}
-.wk-clean-btn:hover:not(:disabled) { background: var(--wk-hover); }
-.wk-clean-btn:disabled { opacity: .5; cursor: default; }
+.wk-clean-line { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 4px; }
+.wk-clean-line .material-symbols-outlined { font-size: 15px; flex: none; }
+.wk-clean.bad { color: var(--md-sys-color-error); }
 .wk-clean-btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
 /* A hub that heads a group: its row beside the fold button, the tasks it runs indented below it. */
 .wk-hubhead { display: flex; align-items: flex-start; min-width: 0; }
@@ -257,15 +282,19 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-parent-open[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wk-hubhead .wk-count, .wk-hubhead .wk-sum { order: 3; align-self: center; margin-right: 6px; }
 .wk-kids { margin-left: 14px; padding-left: 4px; border-left: 2px solid var(--wk-card-line); }
-/* Requests waiting unread in a hub's inbox, and the button that starts the hub that has not read them. */
-.wk-inbox-req { display: flex; align-items: center; gap: 4px; font-family: inherit; font-weight: 700; color: var(--md-sys-color-warning); }
+/* Requests waiting unread in a hub's inbox: a line of its own under the row, in the warning tone, with the button that starts the hub. */
+.wk-inbox-req { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 8px 4px 36px; padding: 4px 8px;
+  border-radius: 8px; font-size: 11.5px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .wk-inbox-req .material-symbols-outlined { font-size: 15px; }
-.wk-hub-start {
-  border: 1px solid var(--md-sys-color-outline); background: transparent; color: var(--md-sys-color-primary); cursor: pointer;
-  font: inherit; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap;
+.wk-inbox-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.wk-hub-start, .wk-clean-btn {
+  display: inline-flex; align-items: center; gap: 4px; border: 0; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 11.5px; font-weight: 700; padding: 3px 11px; border-radius: 9999px;
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
 }
-.wk-hub-start:hover:not(:disabled) { background: var(--wk-hover); }
-.wk-hub-start:disabled { opacity: .5; cursor: default; }
+.wk-hub-start:hover:not(:disabled), .wk-clean-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container)); }
+.wk-hub-start:disabled, .wk-clean-btn:disabled { opacity: .5; cursor: default; }
+.wk-hub-start .material-symbols-outlined, .wk-clean-btn .material-symbols-outlined { font-size: 15px; }
 /* A hub's row has its wake button where 新着 has its 既読, right-aligned so the two read alike. */
 .wk-hub-row { flex-wrap: wrap; row-gap: 0; }
 /* A zero basis, so the row never wraps its buttons below it: only the reason takes a line of its own. */
@@ -282,8 +311,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-act:hover, .wk-act:focus-visible { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
 .wk-act .material-symbols-outlined { font-size: 18px; }
 .wk-head .wk-act { flex: none; }
-.wk-gate { display: flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 800; color: var(--md-sys-color-warning); }
-.wk-gate .material-symbols-outlined { font-size: 15px; }
+.wk-gate { display: block; font-size: 11.5px; font-weight: 700; color: var(--md-sys-color-warning); overflow-wrap: anywhere; }
 .wk-ctx { display: inline-flex; align-items: center; gap: 4px; }
 .wk-ctx-bar { width: 38px; height: 4px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
 .wk-ctx-bar i { display: block; height: 100%; background: var(--md-sys-color-primary); }
@@ -292,7 +320,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 
 /* State icons: Material Symbols in the M3 roles. */
 .wk-glyph { flex: none; font-size: 20px; line-height: 1; margin-top: 1px; }
-.wk-glyph.waiting, .wk-glyph.permission { color: var(--md-sys-color-warning); }
+.wk-glyph.waiting { color: var(--md-sys-color-warning); }
+.wk-glyph.permission { color: var(--md-sys-color-error); }
+.wk-glyph.hubicon { animation: none; font-variation-settings: normal; }
 .wk-glyph.working, .wk-glyph.restarting { color: var(--md-sys-color-primary); animation: wk-spin 1.1s linear infinite; }
 .wk-glyph.done { color: var(--md-sys-color-success); font-variation-settings: 'FILL' 1; }
 .wk-glyph.seen { color: var(--md-sys-color-success); opacity: .45; }
