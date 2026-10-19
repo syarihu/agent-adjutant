@@ -1129,6 +1129,27 @@ test('opening the work view with nothing selected brings back the row selected l
   assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', 'garbage')).calls, [['row', 'b-1/first', true]]);
 });
 
+test('a row the page selected by itself does not replace the one the person selected', () => {
+  const first = { key: 'b-1/first', board: 'b-1', ref: 'first' };
+  const w = lastWorld({ nav: { board: 'all', task: null } });
+  w.store.set('adj.workLast.acme', '{"board":"b-1","task":"41"}');
+  w.c.work.firstTask = first;
+  // The remembered row is hidden, so the first session is selected; the memory stays.
+  w.c.selectWorkRow = r => { w.c.nav = { board: r.board, task: r.ref }; };
+  w.run('workRestoreSelection()');
+  w.run('workRemember()');
+  assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"41"}');
+  // So does an organisation switch.
+  w.c.nav = { board: 'all', task: null };
+  w.run('workSelectFirst()');
+  w.run('workRemember()');
+  assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"41"}');
+  // The person choosing a row is kept again.
+  w.c.nav = { board: 'b-1', task: '42' };
+  w.run('workRemember()');
+  assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"42"}');
+});
+
 test('the restore happens once, waits for the document, and leaves an address, a link in flight and the other tab alone', () => {
   const none = { board: 'all', task: null };
   const world = (over, setup = () => {}) => {

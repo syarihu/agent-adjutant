@@ -54,6 +54,7 @@ const work = {
   listedByKey: new Map(), // every row of the list as shown, folded groups included (rowsByKey holds the drawn ones only), by key
   firstTask: null,    // the first session with a task in the list as shown (workFirstTaskRow)
   restore: false,     // set when 「いまの仕事」 is opened with nothing selected: the selection last made is brought back once (workRestoreSelection)
+  autoSel: null,      // `board/ref` of a row the page selected by itself, which workRemember does not keep
 };
 /* The middle terminal: a second slot beside the panel's. It connects through the
    board that was selected, since `state` is that board's. */
@@ -1038,6 +1039,9 @@ function workRemember() {
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (!nwo) return;
+  // A row the page picked by itself (the fallback, an organisation switch) is not what the person selected.
+  if (work.autoSel === `${nav.board}/${nav.task}`) return;
+  work.autoSel = null;
   const login = orgOf(nwo);
   const cur = workLastRead(login);
   if (cur && cur.board === nav.board && cur.task === nav.task) return;
@@ -1067,13 +1071,17 @@ function workRestoreSelection() {
   const last = workResolveLast(workLastRead(currentOrg()));
   if (last?.parent) return selectWorkParent(last.parent, { replace: true });
   const row = last || work.firstTask;
-  if (row) selectWorkRow(row, { replace: true });
+  if (!row) return;
+  if (!last) work.autoSel = `${row.board}/${row.ref}`;
+  selectWorkRow(row, { replace: true });
 }
 
 /* Another organisation was chosen: its first session with a task is selected, or nothing, which shows the empty middle. */
 function workSelectFirst() {
-  if (work.firstTask) selectWorkRow(work.firstTask);
-  else go({ board: 'all', view: 'work', task: null, pane: 'detail' });
+  if (work.firstTask) {
+    work.autoSel = `${work.firstTask.board}/${work.firstTask.ref}`;
+    selectWorkRow(work.firstTask);
+  } else go({ board: 'all', view: 'work', task: null, pane: 'detail' });
 }
 
 function renderWorkList() {
