@@ -92,6 +92,10 @@
   --wk-card-line-2: color-mix(in srgb, var(--md-sys-color-outline) 25%, var(--md-sys-color-outline-variant));
   --wk-card-line-3: color-mix(in srgb, var(--md-sys-color-outline) 50%, var(--md-sys-color-outline-variant));
   --wk-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+  /* The terminal icon of a session's agent (my-work.css), by its binary. */
+  --wk-agent-claude: #e0703e;
+  --wk-agent-codex: #10a37f;
+  --wk-agent-gemini: #4c8df6;
 }
 
 @media (prefers-color-scheme: dark) {

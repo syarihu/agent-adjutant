@@ -14,3 +14,8 @@ test('no rule of a .wk-group, .wk-head or .wk-body sets overflow, contain or tra
     assert.doesNotMatch(body, /(^|[;\s])(overflow(-[xy])?|contain|transform)\s*:/, `${selector.trim()} must not set overflow, contain or transform`);
   }
 });
+
+test('the list column keeps the width the person set in 「いまの仕事」 at every width', () => {
+  assert.doesNotMatch(css, /view-work\s+#list-resize\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(css, /view-work\s*\{\s*--list-w:\s*(240px|max\()/);
+});

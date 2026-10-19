@@ -24,10 +24,10 @@ const ctx = vm.createContext({
   STATE_ORDER: { working: 0, waiting: 1, done: 2 }, stampSecs: () => 0,
   // What the page's other files give: a session's state is its own `state` here, and a board is served as it is named.
   sessionState: s => s.waiting && !s.went ? 'waiting' : s.state, gateFirst: s => !!s.waiting && !s.went, restingState: s => s.rest || 'stopped', workBoardOf: (repo, board) => board, answeredGates: new Map(), HUB_REF: 'hub:', PARENT_REF: 'parent:', nav: { task: null }, workCleanable: () => false, workCleanRowHtml: () => '',
-  workRepos: () => [], SESS_REF: 'sess:', work: { doc: null }, esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: st => `<g ${st}>`,
+  workRepos: () => [], SESS_REF: 'sess:', work: { doc: null }, esc: x => String(x), pad2: n => String(n).padStart(2, '0'), when: x => `W(${x})`, workGlyphHtml: (st, extra = '', icon = null) => `<g ${st}${icon ? ` ${icon}` : ''}>`,
   // What a row's own markup reads from the page's other files.
   sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, workNewest: () => null, WORK_PR_NOW: {}, agentStateOf: () => 'working',
-  requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: (t, passed) => passed ? 'who-passed' : 'who', WORK_SUBAGENTS_SHOWN: 4,
+  requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: (kind, t, passed) => passed ? 'who-passed' : 'who', WORK_SUBAGENTS_SHOWN: 4,
 });
 vm.runInContext([
   cutActions(/^const hubWake = [^\n]*;/m),
@@ -71,7 +71,17 @@ vm.runInContext([
   cut(/^const workHubWord = [^\n]*;/m),
   cut(/^function workRepoHubChips[\s\S]*?^}/m),
   cut(/^function workPlaceHubChips[\s\S]*?^}/m),
+  cut(/^const WORK_GLYPH = \{[\s\S]*?^\};/m),
   cut(/^const workPercent = [^\n]*;/m),
+  cut(/^const WORK_AGENT_TONE = [^\n]*;/m),
+  cut(/^const workAgentTone = [^\n]*;/m),
+  cut(/^const workHubKind = [^\n]*;/m),
+  cut(/^const workIdleLabel = [^\n]*;/m),
+  cut(/^const WORK_GATE_WAIT = \{[\s\S]*?^\};/m),
+  cut(/^const workGateWait = [^\n]*;/m),
+  cut(/^function workRepoMenuHtml[\s\S]*?^}/m),
+  cut(/^const workRepoLabel = [^\n]*;/m),
+  cut(/^const WORK_EMPTY_HTML = [^\n]*;/m),
   cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
   cut(/^const workMergedEnd = [^\n]*;/m),
   cut(/^function workTurnRowHtml[\s\S]*?^}/m),
@@ -558,11 +568,12 @@ const outsideRow = html => html.replace(/<button type="button" class="wk-row[\s\
 test('a hub row carries what a session row does, with the inbox counts in place of the branch', () => {
   const html = itemHtml(hubItem({ unseen: 2, seen: 4 }, {}), 'tree');
   const rowPart = html.match(/<button type="button" class="wk-row[\s\S]*?<\/button>/)[0];
-  assert.ok(rowPart.includes('data-wk="b-own/hub:own"') && rowPart.includes('<g idle>'));
-  assert.ok(rowPart.includes('claude · opus') && rowPart.includes('42%') && rowPart.includes('wk-line tree') && rowPart.includes('└ x'));
+  assert.ok(rowPart.includes('data-wk="b-own/hub:own"') && rowPart.includes('<g idle hub>'));
+  assert.ok(rowPart.includes('リポジトリ hub') && rowPart.includes('claude · opus') && rowPart.includes('Context: 42%') && rowPart.includes('data-agent="claude"') && rowPart.includes('wk-line tree') && rowPart.includes('wk-line tree') && rowPart.includes('└ x'));
   assert.ok(rowPart.includes('<said>did a thing\nmore</said>'));
   assert.ok(rowPart.includes('受信箱 未確認 2') && rowPart.includes('確認済み 4'));
-  assert.ok(rowPart.includes('<span class="wk-tag">hub</span>'));
+  assert.ok(!rowPart.includes('wk-tag'));
+  assert.ok(rowPart.includes('動いていない') === false && rowPart.includes('待機中'));
   const withBranch = itemHtml(hubItem({}, { s: { present: true, branch: 'feat/x', agentSession: {} } }), 'tree');
   assert.ok(!withBranch.includes('feat/x'));
 });
@@ -578,8 +589,8 @@ test('a hub row has no inbox spans for empty counts, and names a parent-task hub
   const quiet = itemHtml(hubItem({ unseen: 0, seen: 0 }), 'tree');
   assert.ok(!quiet.includes('受信箱') && !quiet.includes('確認済み'));
   const parent = hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }, { key: 'b-p1/hub:p1', id: 'b-p1/hub:p1' });
-  assert.ok(itemHtml(parent, 'tree', true).includes('<span class="wk-tag">hub #9</span>'));
-  assert.ok(itemHtml(parent, 'tree', false).includes('<span class="wk-tag">hub</span>') && !itemHtml(parent, 'tree', false).includes('#9'));
+  assert.ok(itemHtml(parent, 'tree', true).includes('親 hub #9'));
+  assert.ok(itemHtml(parent, 'tree', false).includes('親 hub') && !itemHtml(parent, 'tree', false).includes('#9'));
   assert.ok(!itemHtml(hubItem({ unseen: 0 }), 'tree', true).includes('undefined'));
 });
 
@@ -660,7 +671,7 @@ test('a parent-task hub no parent group takes is tagged with its key in the own 
   const [repoNode] = treeOf([], new Map([[repoA, [stray]]]));
   const [none] = repoNode.items;
   assert.strictEqual(none.items[0].named, true);
-  assert.ok(run('workItemHtml(r, "tree", n)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }), key: none.items[0].row.key }, n: none.items[0].named }).includes('hub #9'));
+  assert.ok(run('workItemHtml(r, "tree", n)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#9', slug: 'b-p1', unseen: 0 }), key: none.items[0].row.key }, n: none.items[0].named }).includes('親 hub #9'));
 });
 
 test('a hub row puts the wake reason on a line of its own, outside the buttons and the row', () => {
@@ -753,11 +764,14 @@ test('a hub says how many requests it has not read, with the newest one\'s subje
   assert.strictEqual(run('workRequestsHtml(c)', { c: hub({}) }), '');
   const inbox = [{ kind: 'report', seen: false, counted: true, subject: 'a report' }, { kind: 'request', seen: false, counted: false, subject: 'the hub\'s own' }, { kind: 'request', seen: false, counted: true, subject: 'newest <b>' }, { kind: 'request', seen: false, counted: true, subject: 'older' }, { kind: 'request', seen: true, subject: 'read' }];
   const line = run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 2, inbox }) });
-  assert.ok(line.includes('未読の依頼 2') && line.includes('「newest <b>」') && !line.includes('older') && !line.includes('a report') && !line.includes('own'));
+  assert.ok(line.includes('未読の依頼 2') && line.includes('「newest <b>」') && !line.includes('older') && !line.includes('a report') && !line.includes('the hub'));
   // The listed inbox keeps only the newest few, so the count can be more than it names.
   const far = run('workRequestsHtml(c)', { c: hub({ requestsUnseen: 3, inbox: [{ kind: 'report', seen: false, subject: 's' }] }) });
   assert.ok(far.includes('未読の依頼 3') && !far.includes('「'));
-  assert.ok(run('workRowHtml(r)', { r: hub({ requestsUnseen: 2, inbox }) }).includes('未読の依頼 2'));
+  // The box is the row's sibling, so the row button itself does not say it.
+  const item = hub({ requestsUnseen: 2, inbox });
+  assert.ok(!run('workRowHtml(r)', { r: item }).includes('未読の依頼'));
+  assert.ok(outsideRow(run('workItemHtml(r, "tree", false)', { r: item })).includes('未読の依頼 2'));
 });
 
 test('「hub を起動」 is beside a hub that is not running and has unread requests, and says why when it cannot', () => {
@@ -772,8 +786,11 @@ test('「hub を起動」 is beside a hub that is not running and has unread req
   assert.ok(away.includes('disabled') && away.includes('このサーバーにありません'));
   const noKey = html(hub('stopped', { parent: true, key: null }, { wakeBase: '/b/p' }));
   assert.ok(noKey.includes('disabled') && noKey.includes('キーが分からない'));
-  // A sibling of the row button, in the buttons beside it, never inside it.
-  assert.ok(outsideRow(itemHtml(hub('stopped', {}, { wakeBase: '/b/own' }), 'tree')).includes('data-wk-start'));
+  // A sibling of the row button, inside the box of unread requests and not in the buttons beside the row.
+  const item = itemHtml(hub('stopped', {}, { wakeBase: '/b/own' }), 'tree');
+  assert.ok(outsideRow(item).includes('data-wk-start'));
+  assert.match(item, /<span class="wk-inbox-req">[\s\S]*data-wk-start[\s\S]*<\/span>/);
+  assert.ok(!/<span class="wk-acts">[^]*?data-wk-start/.test(item.replace(/<span class="wk-inbox-req">[\s\S]*$/, '')));
 });
 
 test('a poll that only changes words does not change the shape, and a hub that heads a group is part of it', () => {
@@ -901,10 +918,75 @@ test('an unmerged row has its uncommitted diff at the end of the meta', () => {
   assert.ok(/<span class="wk-end"><span class="add">\+3<\/span> <span class="del">-1<\/span><\/span>/.test(html));
 });
 
-test('a row reads agent, title, meta, what it runs, the hub\'s unread requests, then the sub-agents', () => {
+test('a row reads agent, title, meta, what it runs, then the sub-agents; the hub\'s unread requests are under the row', () => {
   const hub = hubItem({ unseen: 1, requestsUnseen: 1 }, { st: 'working', s: { present: true, agent: 'claude', agentSession: { activity: 'doing it', subagents: [{ type: 'sub' }] } } });
   const html = rowOf(hub);
   const at = x => { const i = html.indexOf(x); assert.ok(i >= 0, x); return i; };
-  const order = [at('class="wk-agent"'), at('class="wk-title"'), at('class="wk-meta"'), at('doing it'), at('未読の依頼'), at('wk-line tree')];
+  const order = [at('class="wk-agent"'), at('class="wk-title"'), at('class="wk-meta"'), at('doing it'), at('wk-line tree')];
   assert.deepStrictEqual(order, [...order].sort((a, b) => a - b));
+  const whole = itemHtml(hub);
+  assert.ok(whole.indexOf('未読の依頼') > whole.indexOf('</button>'));
+});
+
+/* ── the rows say what they wait for, and how long they have been idle (#759) ── */
+test('the two kinds of waiting have their own icons', () => {
+  assert.ok(/waiting: \['hourglass_top'/.test(src) && /permission: \['front_hand'/.test(src));
+  const glyphs = vm.runInContext('WORK_GLYPH', ctx);
+  assert.strictEqual(glyphs.waiting[0], 'hourglass_top');
+  assert.strictEqual(glyphs.permission[0], 'front_hand');
+});
+
+test('a gate says what it waits for by its kind, and a row waiting on a decision carries it without an icon', () => {
+  const w = kind => run('workGateWait(kind)', { kind });
+  assert.strictEqual(w('plan'), '計画の確認を待っています');
+  assert.strictEqual(w('diff'), '差分の確認を待っています');
+  assert.strictEqual(w('result'), '調査結果の確認を待っています');
+  assert.strictEqual(w('nothing'), 'gateの確認を待っています');
+  const html = itemHtml({ ...hubItem(), isHub: false, id: 'k', key: 'k', st: 'waiting', s: { present: true, agent: 'claude', waiting: { kind: 'plan' }, agentSession: {} } }, 'tree');
+  assert.ok(html.includes('class="wk-row waiting"') && html.includes('<span class="wk-gate">who</span>') && !html.includes('pending_actions'));
+});
+
+test('a row whose agent asks for a permission has the command in the error line', () => {
+  const [state, text] = [ctx.agentStateOf, ctx.requestText];
+  ctx.agentStateOf = () => 'permission';
+  ctx.requestText = () => 'Bash: npm test';
+  try {
+    const html = itemHtml({ ...hubItem(), isHub: false, id: 'k', key: 'k', st: 'permission', s: { present: true, agent: 'claude', agentSession: { request: { tool: 'Bash' } } } }, 'tree');
+    assert.ok(html.includes('class="wk-row permission"') && html.includes('<span class="wk-line ask">Bash: npm test</span>'));
+  } finally {
+    ctx.agentStateOf = state;
+    ctx.requestText = text;
+  }
+});
+
+test('an agent is drawn in the colour family of its binary', () => {
+  const tone = agent => run('workAgentTone(agent)', { agent });
+  assert.deepStrictEqual(['claude', 'codex', 'gemini', 'agy', 'unknown', null].map(tone), ['claude', 'codex', 'gemini', 'gemini', 'other', 'other']);
+});
+
+test('a row says how long it has been idle unless it is running', () => {
+  const row = st => itemHtml({ ...hubItem(), isHub: false, id: 'k', key: 'k', st, s: { present: true, agent: 'claude', agentSession: { updatedAt: 1 } } }, 'tree');
+  assert.ok(!row('working').includes('idle'));
+  for (const st of ['idle', 'waiting', 'done']) assert.ok(row(st).includes('idle 0m'), st);
+  const label = mins => run('workIdleLabel(mins)', { mins });
+  assert.deepStrictEqual([59, 185, 3000].map(label), ['idle 59m', 'idle 3h', 'idle 2d']);
+});
+
+test('a hub that is not running says so in words on its row', () => {
+  assert.ok(itemHtml({ ...hubItem(), st: 'stopped', word: undefined }, 'tree').includes('動いていない'));
+});
+
+test('the repository menu lists the organisation, then each repository, the chosen one checked', () => {
+  const html = run('workRepoMenuHtml(["acme/A", "acme/b"], "acme/a")');
+  const items = html.match(/<button[\s\S]*?<\/button>/g);
+  assert.strictEqual(items.length, 3);
+  assert.ok(items[0].includes('data-wk-repo=""') && items[0].includes('すべてのリポジトリ') && items[0].includes('aria-checked="false"'));
+  assert.ok(items[1].includes('data-wk-repo="acme/a"') && items[1].includes('aria-checked="true"'));
+  assert.strictEqual(run('workRepoLabel([], "")'), 'すべてのリポジトリ');
+  assert.strictEqual(run('workRepoLabel(["acme/A"], "acme/a")'), 'acme/A');
+});
+
+test('an organisation with nothing in it says how to start', () => {
+  const html = run('WORK_EMPTY_HTML');
+  assert.ok(html.includes('inbox') && html.includes('この組織にはまだセッションがありません') && html.includes('「依頼する」から始められます'));
 });

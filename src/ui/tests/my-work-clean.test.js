@@ -63,21 +63,26 @@ test('line: reading says so, a failed read says the state cannot be confirmed, a
   for (const html of [line(undefined), line({ reading: true, git: null })]) assert.ok(html.includes('確認しています…') && !html.includes('<button'));
   const failed = line({ error: 'boom' });
   assert.ok(failed.includes('git の状態を確認できません') && !failed.includes('<button'));
+  assert.ok(failed.includes('class="wk-clean bad"') && failed.includes('warning'));
+  for (const html of [line(undefined), line({ reading: true, git: null })]) assert.ok(!html.includes('bad'));
 });
 
 test('line: the button only when nothing would be lost; otherwise the counts and 片付けられません', () => {
   const line = git => run('workCleanLineHtml(r, e)', { r: row(), e: { git } });
   const ok = line(clean);
-  assert.ok(ok.includes('未コミット 0 · 未 push 0') && ok.includes('data-wk-clean="b1/t1"') && ok.includes('>片付ける<'));
+  assert.ok(ok.includes('未コミット 0 · 未 push 0') && ok.includes('data-wk-clean="b1/t1"') && ok.includes('>片付ける<') && ok.includes('cleaning_services') && !ok.includes('bad'));
   const dirty = line({ ...clean, uncommitted: { files: 2, untracked: 1 } });
   assert.ok(dirty.includes('未コミット 3') && dirty.includes('片付けられません') && !dirty.includes('<button'));
+  assert.ok(dirty.includes('class="wk-clean bad"') && dirty.includes('warning'));
   const unpushed = line({ ...clean, unpushed: { count: 2 } });
   assert.ok(unpushed.includes('未 push 2') && !unpushed.includes('<button'));
   // A clean-up the server refused after the read has no button either, whatever the read said.
   const blocked = run('workCleanLineHtml(r, e)', { r: row(), e: { git: clean, blocked: true } });
   assert.ok(blocked.includes('片付けられません') && !blocked.includes('<button'));
+  assert.ok(blocked.includes('class="wk-clean bad"') && blocked.includes('warning'));
   assert.ok(run('workCleanLineHtml(r, e)', { r: row(), e: { blocked: true, reasons: [{ detail: '2 untracked path(s)' }] } }).includes('2 untracked path(s)'));
   assert.ok(run('workCleanLineHtml(r, e)', { r: row(), e: { failed: '<b>x</b>' } }).includes('&lt;b&gt;x&lt;/b&gt;'));
+  assert.ok(run('workCleanLineHtml(r, e)', { r: row(), e: { failed: 'x' } }).includes('class="wk-clean bad"'));
 });
 
 test('line: the button is outside any row button and is dimmed while the press is out', () => {

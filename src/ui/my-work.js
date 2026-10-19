@@ -21,7 +21,7 @@ const WORK_PROGRESS = {
 };
 /* The icon of a state: Material Symbols name, then the label read aloud. Colours are the stylesheet's (my-work.css). */
 const WORK_GLYPH = {
-  waiting: ['front_hand', '確認待ち'],
+  waiting: ['hourglass_top', '確認待ち'],
   permission: ['front_hand', '入力待ち'],
   working: ['progress_activity', '作業中'],
   restarting: ['progress_activity', '再起動中'],
@@ -617,16 +617,26 @@ async function refreshWork(force = false) {
 
 /* ── the list ── */
 
-const workGlyphHtml = (st, extra = '') => {
-  const [icon, label] = WORK_GLYPH[st] || WORK_GLYPH.idle;
-  return `<span class="material-symbols-outlined wk-glyph ${st}${extra}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon}</span>`;
+const workGlyphHtml = (st, extra = '', icon = null) => {
+  const [glyph, label] = WORK_GLYPH[st] || WORK_GLYPH.idle;
+  return `<span class="material-symbols-outlined wk-glyph ${st}${extra}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon || glyph}</span>`;
 };
 
 const workPercent = n => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
-/* One row, top to bottom: the state with the agent, its model and context; the title; the branch and how long ago the state changed,
+/* The colour family of an agent's terminal icon, by the binary that runs it; one this page does not know is neutral. */
+const WORK_AGENT_TONE = { claude: 'claude', 'claude-code': 'claude', codex: 'codex', agy: 'gemini', antigravity: 'gemini', gemini: 'gemini' };
+const workAgentTone = agent => WORK_AGENT_TONE[String(agent || '').toLowerCase()] || 'other';
+
+/* What kind of hub a row is, on its first line: a parent-task hub is named by its key where the group is not that parent's. */
+const workHubKind = (r, named = false) => r.hub?.parent ? (named && r.hub.key ? `親 hub ${r.hub.key}` : '親 hub') : 'リポジトリ hub';
+
+/* How long a session has gone without its agent working, as the row says it. */
+const workIdleLabel = mins => `idle ${mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.floor(mins / 60)}h` : `${Math.floor(mins / 1440)}d`}`;
+
+/* One row, top to bottom: the state with the agent, its model and context (a hub's first, its kind); the title; the branch and how long the session has been idle,
    with the diff at the right end (or 「#N マージ」 once the PR is merged: an Issue or PR number is not shown before that, #751); what it asks,
-   what it is running, what it said and the gate; a hub's unread requests; the sub-agents. A hub is a row too,
+   what it is running, what it said and the gate; the sub-agents. A hub is a row too,
    with what its inbox holds in place of a branch; `named` says which parent task's hub it is, where that is not the group's. A hub
    that heads a parent's group is that parent's row: `parent` puts the parent's number and title where the hub's would be, and how far its
    children have got in the meta. */
@@ -634,14 +644,19 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   const { s, st, data, task } = r;
   const a = s.present ? s.agentSession || {} : {};
   const ctx = a.contextPercent != null ? workPercent(a.contextPercent) : null;
-  const agent = [esc(s.agent), a.model ? esc(a.model) : ''].filter(Boolean).join(' · ');
-  const bar = ctx == null ? '' : `<span class="wk-ctx${ctx >= 90 ? ' crit' : ctx >= 70 ? ' warn' : ''}" title="コンテキスト ${ctx}%"><span class="wk-ctx-bar"><i style="width:${ctx}%"></i></span>${ctx}%</span>`;
+  const who = [esc(s.agent), a.model ? esc(a.model) : ''].filter(Boolean).join(' · ');
+  const ctxHtml = ctx == null ? '' : `<span class="wk-ctx${ctx >= 90 ? ' crit' : ctx >= 70 ? ' warn' : ''}" title="コンテキスト ${ctx}%">Context: ${ctx}%<span class="wk-ctx-bar"><i style="width:${ctx}%"></i></span></span>`;
+  const agentLine = [
+    r.isHub ? `<span class="wk-hk">${esc(workHubKind(r, named))}</span>` : '',
+    who ? `<span class="wk-who"><span class="material-symbols-outlined wk-agent-icon" data-agent="${workAgentTone(s.agent)}" aria-hidden="true">terminal</span>${who}</span>` : '',
+    ctxHtml,
+  ].filter(Boolean).join('<span class="wk-sep" aria-hidden="true">·</span>');
   const label = sessionLabel(s, false, data);
   const title = task?.title || label.text;
   const merged = workMerged(r);
   const prNumber = merged ? (task ? prRefNumber(task.pr) : s.branchPr?.number) : null;
   const since = a.updatedAt ?? s.phaseAt;
-  const age = since != null && data.now != null ? agoLabel(minutesSince(since, data.now)) : '';
+  const idle = st !== 'working' && st !== 'restarting' && since != null && data.now != null ? workIdleLabel(minutesSince(since, data.now)) : '';
   const subs = s.present ? (a.subagents || []) : [];
   const u = s.uncommitted;
   const diff = u && (u.insertions || u.deletions) ? `<span class="add">+${Number(u.insertions) || 0}</span> <span class="del">-${Number(u.deletions) || 0}</span>` : '';
@@ -651,7 +666,8 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
     ...(parent ? workParentMeta(parent) : []),
     s.branch && !r.isHub ? esc(s.branch) : '',
     ...inbox,
-    age ? esc(age) : '',
+    idle ? esc(idle) : '',
+    r.isHub ? esc(r.word || workHubWord(st)) : '',
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (merged ? workMergedEnd(prNumber) : diff ? `<span class="wk-end">${diff}</span>` : '');
   // The gate is first unless the worker went on past it; its line is drawn either way, for it can still be answered.
   const first = gateFirst(s, data);
@@ -664,12 +680,12 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
-  const gate = s.waiting ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(s.waiting.kind)[0])} · ${esc(workGateWho(task, !first))}</span>` : '';
+  const gate = s.waiting ? `<span class="wk-gate">${esc(workGateWho(s.waiting.kind, task, !first))}</span>` : '';
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
-    ${workGlyphHtml(st)}<span class="wk-main">
-      ${agent || bar ? `<span class="wk-agent">${agent}${bar}</span>` : ''}
-      <span class="wk-title">${r.isHub ? `<span class="wk-tag">${esc(named && r.hub?.parent && r.hub.key ? `hub ${r.hub.key}` : 'hub')}</span>${hubTitleMarkHtml(r.hub)}` : ''}${esc(parent ? workParentName(parent) || title : title)}</span>
-      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${gate}${doing}${said}${parked}${r.isHub ? workRequestsHtml(r) : ''}${tree}
+    ${r.isHub ? workGlyphHtml(st, ' hubicon', 'hub') : workGlyphHtml(st)}<span class="wk-main">
+      ${agentLine ? `<span class="wk-agent">${agentLine}</span>` : ''}
+      <span class="wk-title">${r.isHub ? hubTitleMarkHtml(r.hub) : ''}${esc(parent ? workParentName(parent) || title : title)}</span>
+      ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${gate}${doing}${said}${parked}${tree}
     </span></button>`;
 }
 
@@ -687,14 +703,15 @@ function workParentMeta(p) {
   return [bar, `${merged} / ${total} マージ`, p.stacked ? '<span class="wk-stack">stack</span>' : ''].filter(Boolean);
 }
 
-/* The line of a hub's row that says requests are waiting unread, with the newest one's subject when the listed part of the
-   inbox has one (it keeps the newest few; the count is of the whole inbox). Text only: the row is one button. */
+/* The box under a hub's row that says requests are waiting unread, with the newest one's subject when the listed part of the
+   inbox has one (it keeps the newest few; the count is of the whole inbox), and 「hub を起動」 when the hub is not running. A sibling
+   of the row button, so the start button is never inside it. */
 function workRequestsHtml(c) {
   const n = Number(c.hub?.requestsUnseen) || 0;
   if (!n) return '';
   const newest = (c.hub.inbox || []).find(m => m.kind === 'request' && !m.seen && m.counted);
   const subject = newest ? `: 「${esc(String(newest.subject || '').split('\n')[0])}」` : '';
-  return `<span class="wk-line wk-inbox-req"><span class="material-symbols-outlined" aria-hidden="true">mark_email_unread</span>未読の依頼 ${n}${subject}</span>`;
+  return `<span class="wk-inbox-req"><span class="material-symbols-outlined" aria-hidden="true">mark_email_unread</span><span class="wk-inbox-text">未読の依頼 ${n}${subject}</span>${workHubStartButtonHtml(c)}</span>`;
 }
 
 /* What a hub's inbox holds, as the spans of a row's meta: the messages it has not read, and the ones it has; none for an empty count. */
@@ -719,8 +736,21 @@ function workParkedHtml(r) {
   return item ? `<span class="wk-line parked">${esc(workParkedText(item, r.data?.now ?? null))}</span>` : '';
 }
 
-/* The words after a gate's kind on a row: whose turn it is, or that it is parked (the gate stays open and answerable). */
-const workGateWho = (task, passed = false) => parkOf(task) ? `置いている — ${parkLabel(parkOf(task))}` : passed ? 'あなたの判定待ち（答えないまま進行中）' : 'あなたの判定待ち';
+/* What a row waiting on the person's decision says it waits for, by the gate's kind. */
+const WORK_GATE_WAIT = {
+  plan: '計画の確認を待っています',
+  diff: '差分の確認を待っています',
+  verify: '動作確認を待っています',
+  result: '調査結果の確認を待っています',
+  dispatch: '着手の確認を待っています',
+  issue: '起票の確認を待っています',
+  question: '質問への答えを待っています',
+  relay: 'Jules に回す指摘の確認を待っています',
+};
+const workGateWait = kind => WORK_GATE_WAIT[kind] || `${kindOf(kind)[0]}の確認を待っています`;
+/* The line of a gate on a row: what it waits for, marked when the worker went on past it, or that it is parked (the gate stays open and answerable). */
+const workGateWho = (kind, task, passed = false) => parkOf(task) ? `置いている — ${parkLabel(parkOf(task))}`
+  : `${workGateWait(kind)}${passed ? '（答えないまま進行中）' : ''}`;
 
 /* A row for something that waits on the person and has no session row of its own: a task whose PR is theirs, or whose gate
    opened with nothing running, or a session the list does not show. */
@@ -729,22 +759,23 @@ function workTurnRowHtml(r, cell = '', band = false) {
   const title = r.task?.title || (e.session ? sessionLabel(e.session, false, r.data).text : e.gateTitle || r.ref);
   const prNumber = workMerged(r) && r.task ? prRefNumber(r.task.pr) : null;
   const newest = workNewest(r);
-  const age = newest && r.data.now != null ? agoLabel(minutesSince(newest, r.data.now)) : '';
-  const meta = [workAwayChip(r.away), age ? esc(age) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (workMerged(r) ? workMergedEnd(prNumber) : '');
+  const idle = newest && r.data.now != null ? workIdleLabel(minutesSince(newest, r.data.now)) : '';
+  const meta = [workAwayChip(r.away), idle ? esc(idle) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (workMerged(r) ? workMergedEnd(prNumber) : '');
   const gate = r.live.find(i => i.kind === 'gate');
   const pr = r.live.find(i => i.kind === 'pr');
-  const lines = (gate ? `<span class="wk-gate"><span class="material-symbols-outlined" aria-hidden="true">pending_actions</span>${esc(kindOf(gate.gate)[0])} · ${esc(workGateWho(r.task))}</span>` : '')
+  const lines = (gate ? `<span class="wk-gate">${esc(workGateWho(gate.gate, r.task))}</span>` : '')
     + (pr ? `<span class="wk-line ask">${esc(WORK_PR_NOW[pr.turn] || 'PR があなたの番です')}</span>` : '');
   const st = r.st === 'parked' ? 'parked' : 'waiting';
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell}>
-    ${workGlyphHtml(st)}<span class="wk-main">
-      <span class="wk-title">${r.isHub ? '<span class="wk-tag">hub</span>' : ''}${esc(title)}</span>
+    ${r.isHub ? workGlyphHtml(st, ' hubicon', 'hub') : workGlyphHtml(st)}<span class="wk-main">
+      ${r.isHub ? '<span class="wk-agent"><span class="wk-hk">hub</span></span>' : ''}
+      <span class="wk-title">${esc(title)}</span>
       ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${lines}${gate ? '' : workParkedHtml(r)}
     </span></button>`;
 }
 
 /* A row as the list draws it in `place`: a new row has its 既読 button beside it, wherever it sits, and the row itself stays one
-   button, so selecting is the same everywhere. A hub's row has its wake and start buttons there too, siblings of the row (they are
+   button, so selecting is the same everywhere. A hub's row has its wake button there too, and its start button in the box of unread requests under it, siblings of the row (they are
    buttons, and one button is not put inside another). */
 function workItemHtml(r, place, named = false, parent = null) {
   const band = r.cls === 'new';
@@ -755,9 +786,9 @@ function workItemHtml(r, place, named = false, parent = null) {
   const clean = workCleanable(r);
   if (!band && !hub && !clean) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
-  const acts = (band ? act('data-wk-aide', 'support_agent', '副官に聞く') + act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + workHubStartButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
+  const acts = (band ? act('data-wk-aide', 'support_agent', '副官に聞く') + act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
   const row = r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', band, named, parent);
-  return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}${clean ? ' wk-clean-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${clean ? workCleanRowHtml(r) : ''}${hub ? workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
+  return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}${clean ? ' wk-clean-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${clean ? workCleanRowHtml(r) : ''}${hub ? workRequestsHtml(r) + workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
 }
 
 /* How many rows are in each state, for a header that is folded. */
@@ -784,7 +815,7 @@ function workHubWakeButtonHtml(c) {
   return `<button type="button" class="wk-hub-wake" data-wk-wake="${esc(c.key)}" data-wake-slug="${esc(c.hub.slug)}"${off ? ' disabled' : ''} aria-label="${esc(label)}" title="${esc(off || label)}"><span class="material-symbols-outlined" aria-hidden="true">notifications_active</span>${unseen}</button>`;
 }
 
-/* 「hub を起動」 beside a hub's row that is not running while requests wait unread in its inbox: it can only be started from
+/* 「hub を起動」 in the box of unread requests under a hub's row that is not running (it only shows while they wait): it can only be started from
    the board that owns it, and a parent-task hub only when its key is known. Disabled, it says why. */
 function workHubStartButtonHtml(c) {
   if (!(Number(c.hub?.requestsUnseen) > 0) || !['stopped', 'none'].includes(c.st)) return '';
@@ -977,6 +1008,9 @@ function renderWorkList() {
   for (const box of wk('wk-list').querySelectorAll('[data-wk-advance]')) box.checked = !!prefs.reviewNext;
 }
 
+/* What the list says when the organisation has nothing in it. */
+const WORK_EMPTY_HTML = '<div class="wk-empty wk-empty-none"><span class="material-symbols-outlined" aria-hidden="true">inbox</span><span>この組織にはまだセッションがありません。<br>「依頼する」から始められます。</span></div>';
+
 function drawWorkList() {
   const root = wk('wk-groups');
   if (!root) return;
@@ -1040,7 +1074,7 @@ function drawWorkList() {
   const at = document.activeElement;
   const held = root.contains(at) ? workHeldSel(at) : null;
   const heldCell = held ? at.closest?.('[data-wk-cell]')?.dataset.wkCell : null;
-  root.innerHTML = rows.length || turns.length || notes.length || chips.length ? html : '<div class="wk-empty">この組織にはいま動いている仕事はありません。「依頼する」から始められます</div>';
+  root.innerHTML = rows.length || turns.length || notes.length || chips.length ? html : WORK_EMPTY_HTML;
   scroll.scrollTop = top;
   workRefocus(root, held, heldCell);
 }
@@ -1051,19 +1085,97 @@ function workRepoChoice() {
   return prefs.workRepo && org?.repos.some(r => r.toLowerCase() === prefs.workRepo) ? prefs.workRepo : '';
 }
 
-/* The repository filter: 「すべて」 and each repository of the selected organisation, the one chosen selected. Drawn again only when its options change, so a poll does not close it. */
+/* The items of the repository menu: the whole organisation, then each repository, the chosen one checked. Pure, for the tests. */
+function workRepoMenuHtml(repos, choice) {
+  const item = (value, label) => `<button type="button" class="wk-repo-item" role="menuitemradio" aria-checked="${value === choice}" data-wk-repo="${esc(value)}" tabindex="-1"><span class="wk-repo-item-name">${esc(label)}</span><span class="material-symbols-outlined wk-repo-check" aria-hidden="true">check</span></button>`;
+  return item('', 'すべてのリポジトリ') + repos.map(r => item(r.toLowerCase(), r)).join('');
+}
+const workRepoLabel = (repos, choice) => repos.find(r => r.toLowerCase() === choice) || 'すべてのリポジトリ';
+
+/* The button says the repository chosen; the menu is drawn again only when its items change, so a poll does not close or refocus it. */
 function renderWorkRepoFilter() {
-  const select = wk('wk-repo-filter');
-  if (!select) return;
+  const btn = wk('wk-repo-btn'), menu = wk('wk-repo-menu');
+  if (!btn || !menu) return;
   const org = orgList(boards, work.doc).find(o => o.login === currentOrg());
   const repos = org ? org.repos : [];
-  const sig = JSON.stringify(repos);
-  if (select.dataset.sig !== sig) {
-    select.dataset.sig = sig;
-    select.innerHTML = `<option value="">すべて</option>${repos.map(r => `<option value="${esc(r.toLowerCase())}">${esc(r)}</option>`).join('')}`;
-  }
-  select.value = workRepoChoice();
+  const choice = workRepoChoice();
+  const name = workRepoLabel(repos, choice);
+  wk('wk-repo-name').textContent = name;
+  btn.setAttribute('aria-label', `リポジトリ: ${name}`);
+  btn.title = `リポジトリ: ${name}`;
+  const sig = JSON.stringify([repos, choice]);
+  if (menu.dataset.sig === sig) return;
+  menu.dataset.sig = sig;
+  const held = menu.contains(document.activeElement) ? document.activeElement.dataset.wkRepo : null;
+  menu.innerHTML = workRepoMenuHtml(repos, choice);
+  if (held != null) workRepoItems().find(b => b.dataset.wkRepo === held)?.focus({ preventScroll: true });
 }
+
+const workRepoItems = () => [...wk('wk-repo-menu').querySelectorAll('[role="menuitemradio"]')];
+let workRepoDismissed = false;
+
+/* Open, as the organisation menu does: the keyboard goes into it only when asked. */
+function openWorkRepoMenu({ focus = true } = {}) {
+  wk('wk-repo-menu').hidden = false;
+  wk('wk-repo-btn').setAttribute('aria-expanded', 'true');
+  if (focus) (workRepoItems().find(b => b.getAttribute('aria-checked') === 'true') || workRepoItems()[0])?.focus();
+}
+
+/* Shut. `refocus` gives the keyboard back to the button and keeps the hover (`.shut`, until the pointer leaves) and the focus from opening it again. */
+function closeWorkRepoMenu(refocus = false) {
+  const menu = wk('wk-repo-menu');
+  if (!menu) return;
+  if (refocus) {
+    workRepoDismissed = true;
+    wk('wk-repo-filter').classList.add('shut');
+  }
+  if (!menu.hidden) {
+    menu.hidden = true;
+    wk('wk-repo-btn').setAttribute('aria-expanded', 'false');
+  }
+  if (refocus) wk('wk-repo-btn').focus();
+}
+
+function chooseWorkRepo(value) {
+  closeWorkRepoMenu(true);
+  if (value === workRepoChoice()) return;
+  prefs.workRepo = value;
+  savePrefs();
+  renderWorkBadge();
+  renderWorkList();
+}
+
+wk('wk-repo-btn').addEventListener('click', () => { if (wk('wk-repo-menu').hidden) openWorkRepoMenu(); else closeWorkRepoMenu(true); });
+wk('wk-repo-btn').addEventListener('focus', () => {
+  if (wk('wk-repo-btn').matches(':focus-visible') && !workRepoDismissed && wk('wk-repo-menu').hidden) openWorkRepoMenu({ focus: false });
+});
+wk('wk-repo-btn').addEventListener('blur', () => { workRepoDismissed = false; });
+wk('wk-repo-btn').addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openWorkRepoMenu({ focus: true }); }
+  else if (e.key === 'Escape' && !wk('wk-repo-menu').hidden) { e.preventDefault(); e.stopPropagation(); closeWorkRepoMenu(true); }
+});
+wk('wk-repo-filter').addEventListener('pointerleave', () => wk('wk-repo-filter').classList.remove('shut'));
+document.addEventListener('focusout', e => {
+  if (wk('wk-repo-menu').hidden) return;
+  // A null target is a redraw or a click on nothing: the pointer handler below has the clicks.
+  if (e.relatedTarget && !e.relatedTarget.closest('#wk-repo-filter')) closeWorkRepoMenu();
+});
+wk('wk-repo-menu').addEventListener('click', e => {
+  const b = e.target.closest('[data-wk-repo]');
+  if (b) chooseWorkRepo(b.dataset.wkRepo);
+});
+wk('wk-repo-menu').addEventListener('keydown', e => {
+  const items = workRepoItems();
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeWorkRepoMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1) + items.length) % items.length].focus();
+  } else if (e.key === 'Tab') closeWorkRepoMenu();
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#wk-repo-menu, #wk-repo-btn')) closeWorkRepoMenu();
+});
 
 /* What the person's selection is marked on. */
 function markWorkSelection() {
@@ -1450,12 +1562,6 @@ async function workHubStart(c) {
 }
 
 wk('wk-list').addEventListener('change', e => {
-  if (e.target.matches('#wk-repo-filter')) {
-    prefs.workRepo = e.target.value;
-    savePrefs();
-    renderWorkBadge();
-    return renderWorkList();
-  }
   if (!e.target.matches('[data-wk-advance]')) return;
   prefs.reviewNext = e.target.checked;
   savePrefs();

@@ -52,7 +52,10 @@
       <span class="aide-pin-main"><span class="aide-pin-name">副官</span><span class="aide-pin-sub" id="aide-pin-sub"></span></span>
       <span class="rail-badge zero" id="aide-pin-count" title="判断待ちの数">0</span></button></div>
     <div class="wk-ask" id="wk-ask">
-      <label class="wk-repo-filter"><span class="material-symbols-outlined" aria-hidden="true">folder</span><select id="wk-repo-filter" aria-label="リポジトリ"></select></label>
+      <div class="wk-repo-filter" id="wk-repo-filter">
+        <button type="button" class="wk-repo-btn" id="wk-repo-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="wk-repo-menu"><span class="material-symbols-outlined" aria-hidden="true">folder</span><span class="wk-repo-name" id="wk-repo-name">すべてのリポジトリ</span><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>
+        <div class="wk-repo-menu" id="wk-repo-menu" role="menu" aria-label="リポジトリ" hidden></div>
+      </div>
     </div>
     <div class="pane-head wk-list-head">
       <span class="wk-list-tools" id="wk-list-tools">
