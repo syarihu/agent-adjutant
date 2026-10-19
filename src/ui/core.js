@@ -699,17 +699,20 @@ function minuteSessions(sessions, now, mode) {
 async function refresh(force = false) {
   // The work view's list is its own document; the selected board's state below is what the panel and
   // the terminal read, and there is none while nothing is selected.
-  // The TODO reads the work document and the state of each board that has a gate; the review records are read too, for the rail's レビュー count.
+  // The TODO reads the work document and the state of each board that has a gate; the review records are read on the
+  // side, for the rail's レビュー count, and the TODO does not wait for them.
   if (view === 'todo') {
-    await Promise.all([refreshWork(force), refreshOthers(force)]);
+    refreshOthers(force);
+    await refreshWork(force);
     await todoLoadBoards(force);
     todoFollow();
     return;
   }
   if (view === 'work') {
-    // The popover over the list follows the documents too.
-    if (todo.popOpen) Promise.all([refreshWork(force), refreshOthers(force)]).then(todoPoll);
-    else { refreshWork(force); refreshOthers(force); }
+    // The popover over the list follows the work document too.
+    refreshOthers(force);
+    if (todo.popOpen) refreshWork(force).then(todoPoll);
+    else refreshWork(force);
     // The aide is read only while its pane is on screen: each read runs a process check.
     if (!nav.task) refreshAide(force);
     // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).
