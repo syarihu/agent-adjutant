@@ -1,6 +1,7 @@
 /* ── The organisation switch at the head of the sidebar ────────────────────────────────────────────
-   One button (the organisation's avatar, with how many things wait in the others) and a menu of the organisations. What it
-   selects is `currentOrg()` (org.js); the list in 「いまの仕事」 and the request dialog read that. */
+   One button (the organisation's avatar, with how many things wait in the others, and its name under it) and a menu of the
+   organisations. The menu opens on hover (CSS only), on keyboard focus of the button, and on a tap. What it selects is
+   `currentOrg()` (org.js); the list in 「いまの仕事」 and the request dialog read that. */
 
 /* Not `wk` (my-work.js): this file is read before it, and binds its listeners as it loads. */
 const orgEl = id => document.getElementById(id);
@@ -8,6 +9,8 @@ const orgMenuItems = () => [...orgEl('org-menu').querySelectorAll('[role="menuit
 const orgInitial = name => ([...String(name || '')][0] || '?').toUpperCase();
 /* Avatars that failed to load: not asked for again when the switch is drawn again. */
 const orgBadAvatars = new Set();
+/* The menu was closed with the keyboard on the button: focusing it again must not open the menu again, until focus has left. */
+let orgDismissed = false;
 
 /* The avatar: the initial, with the picture over it when GitHub gave one. A picture that fails is taken off (`orgWatchAvatars`),
    which leaves the initial. */
@@ -37,7 +40,8 @@ function renderOrgSwitch() {
     closeOrgMenu();
     btn.hidden = true;
     orgEl('org-fallback').hidden = false;
-    orgEl('org-name').textContent = '';
+    orgEl('org-menu').innerHTML = '';
+    btn.dataset.sig = '';
     return;
   }
   const current = currentOrg();
@@ -47,38 +51,46 @@ function renderOrgSwitch() {
   const others = [...counts].filter(([login]) => login !== now.login).reduce((n, [, v]) => n + v, 0);
   orgEl('org-fallback').hidden = true;
   btn.hidden = false;
-  orgEl('org-name').textContent = now.name;
   const sig = JSON.stringify([now.login, others, orgs.map(o => [o.login, o.name, orgIcon(o.login), counts.get(o.login) || 0]), [...orgBadAvatars]]);
   if (btn.dataset.sig === sig) return;
   btn.dataset.sig = sig;
   const label = `組織: ${now.name}（ほかの組織で待っているもの ${others} 件）`;
   btn.setAttribute('aria-label', label);
   btn.title = label;
-  btn.innerHTML = `${orgAvatarHtml(now)}<span class="rail-badge org-badge${others ? '' : ' zero'}">${others}</span>`;
+  btn.innerHTML = `<span class="org-ava-wrap">${orgAvatarHtml(now)}<span class="rail-badge org-badge${others ? '' : ' zero'}">${others}</span></span>`
+    + `<span class="org-n"><span class="org-short">${esc(now.name)}</span><span class="material-symbols-outlined" aria-hidden="true">unfold_more</span></span>`;
   // The menu keeps the keyboard focus through a redraw while it is open.
   const held = menu.contains(document.activeElement) ? document.activeElement.dataset.org : null;
   menu.innerHTML = orgs.map(o => {
     const n = counts.get(o.login) || 0;
     const kind = orgIcon(o.login)?.kind === 'user' ? '<span class="org-tag">個人</span>' : '';
-    return `<button type="button" class="org-item" role="menuitemradio" aria-checked="${o.login === now.login}" data-org="${esc(o.login)}" tabindex="-1">${orgAvatarHtml(o)}<span class="org-item-name">${esc(o.name)}${kind}</span><span class="org-item-count${n ? '' : ' zero'}" title="${esc(`待っているもの ${n} 件`)}">${n}</span></button>`;
+    return `<button type="button" class="org-item" role="menuitemradio" aria-checked="${o.login === now.login}" data-org="${esc(o.login)}" tabindex="-1">${orgAvatarHtml(o)}<span class="org-item-name">${esc(o.name)}${kind}</span><span class="org-item-count${n ? '' : ' zero'}" title="${esc(`待っているもの ${n} 件`)}">${n}</span><span class="material-symbols-outlined org-check" aria-hidden="true">check</span></button>`;
   }).join('');
   orgWatchAvatars(btn);
   orgWatchAvatars(menu);
   if (held != null) orgMenuItems().find(b => b.dataset.org === held)?.focus({ preventScroll: true });
 }
 
-function openOrgMenu() {
+/* Open. The keyboard goes into the menu only when asked: focusing the button opens it without taking the focus away. */
+function openOrgMenu({ focus = true } = {}) {
   orgEl('org-menu').hidden = false;
   orgEl('org-btn').setAttribute('aria-expanded', 'true');
-  (orgMenuItems().find(b => b.getAttribute('aria-checked') === 'true') || orgMenuItems()[0])?.focus();
+  if (focus) (orgMenuItems().find(b => b.getAttribute('aria-checked') === 'true') || orgMenuItems()[0])?.focus();
 }
 
-/* Shut. `refocus` gives the keyboard back to the button, for when the menu was used from the keyboard or chosen from. */
+/* Shut. `refocus` gives the keyboard back to the button, for when the menu was used from the keyboard or chosen from; it also
+   keeps the hover from opening the menu again (`.shut`, until the pointer leaves) and the focus from doing so (`orgDismissed`). */
 function closeOrgMenu(refocus = false) {
   const menu = orgEl('org-menu');
-  if (!menu || menu.hidden) return;
-  menu.hidden = true;
-  orgEl('org-btn').setAttribute('aria-expanded', 'false');
+  if (!menu) return;
+  if (refocus) {
+    orgDismissed = true;
+    orgEl('org-switch').classList.add('shut');
+  }
+  if (!menu.hidden) {
+    menu.hidden = true;
+    orgEl('org-btn').setAttribute('aria-expanded', 'false');
+  }
   if (refocus) orgEl('org-btn').focus();
 }
 
@@ -93,6 +105,20 @@ function chooseOrg(login) {
 }
 
 orgEl('org-btn').addEventListener('click', () => { if (orgEl('org-menu').hidden) openOrgMenu(); else closeOrgMenu(true); });
+orgEl('org-btn').addEventListener('focus', () => {
+  if (orgEl('org-btn').matches(':focus-visible') && !orgDismissed && orgEl('org-menu').hidden) openOrgMenu({ focus: false });
+});
+orgEl('org-btn').addEventListener('blur', () => { orgDismissed = false; });
+orgEl('org-btn').addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openOrgMenu({ focus: true }); }
+  else if (e.key === 'Escape' && !orgEl('org-menu').hidden) { e.preventDefault(); e.stopPropagation(); closeOrgMenu(true); }
+});
+orgEl('org-switch').addEventListener('pointerleave', () => orgEl('org-switch').classList.remove('shut'));
+document.addEventListener('focusout', e => {
+  if (orgEl('org-menu').hidden) return;
+  // A null target is a redraw or a click on nothing: the pointer handler below has the clicks.
+  if (e.relatedTarget && !e.relatedTarget.closest('#org-switch')) closeOrgMenu();
+});
 orgEl('org-menu').addEventListener('click', e => {
   const b = e.target.closest('[data-org]');
   if (b) chooseOrg(b.dataset.org);

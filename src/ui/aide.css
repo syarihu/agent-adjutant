@@ -84,6 +84,7 @@
 
 /* The row at the top of the list. */
 .aide-pin-wrap { flex: none; padding: 8px 12px 4px; }
+.aide-pin-wrap[hidden] { display: none; }
 .aide-pin { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 14px; font: inherit; text-align: left; cursor: pointer;
   color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-lowest); }
 .aide-pin:hover { background: var(--wk-hover); }

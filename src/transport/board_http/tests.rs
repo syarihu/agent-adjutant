@@ -1501,6 +1501,27 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }
     assert_eq!(UI_HTML.matches("id=\"rail-toggle-count\"").count(), 1);
+    // 「依頼する」 is one button at the top of the list column, routed through the page's `data-action` handler; the usage is pinned under the lists.
+    assert!(UI_HTML.contains(
+        "<button type=\"button\" class=\"wk-req-btn\" id=\"wk-req-btn\" data-action=\"new-task\">"
+    ));
+    assert_eq!(UI_HTML.matches("id=\"wk-req-btn\"").count(), 1);
+    {
+        let at = |piece: &str| {
+            UI_HTML
+                .find(piece)
+                .unwrap_or_else(|| panic!("the page lacks {piece}"))
+        };
+        assert!(at("id=\"list-ask\"") < at("id=\"wk-list\""));
+        assert!(
+            at("id=\"todo-list\"") < at("id=\"wk-rate\"")
+                && at("id=\"wk-rate\"") < at("id=\"list-resize\"")
+        );
+    }
+    assert!(UI_HTML.contains("body.view-todo #wk-rate { display: none; }"));
+    // The organisation switch shows its name under the avatar with ⇕, and opens on hover.
+    assert!(UI_HTML.contains("unfold_more"));
+    assert!(!UI_HTML.contains("id=\"org-name\""));
     // A board served alone has no list of boards to read the work from.
     assert!(UI_HTML
         .contains(".single-board #nav-work, .single-board #nav-todo, .single-board #nav-review { display: none; }"));

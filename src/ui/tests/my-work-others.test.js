@@ -436,11 +436,11 @@ test('read-all marks only the new records, hidden or not, with the document\'s n
 });
 
 /* The list is drawn by my-work-others-view.js too: its function is cut out, with the row and the hub drawn as stubs. */
-function listOf(doc, { repo = '', stage = '', marks = {} } = {}) {
+function listOf(doc, { repo = '', stage = '', marks = {}, hub = '' } = {}) {
   const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const cut = (src, re) => { const m = src.match(re); assert.ok(m); return m[0]; };
   Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
-    othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => '', othersNotes: () => [], othersRowHtml: () => '<row>' });
+    othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => hub, othersNotes: () => [], othersRowHtml: () => '<row>' });
   vm.runInContext(cut(read('my-work.js'), /^function workReadAllButtonHtml[\s\S]*?^}/m), ctx);
   vm.runInContext(cut(read('my-work-others-view.js'), /^function othersListHtml[\s\S]*?^}/m), ctx);
   return ctx.othersListHtml();
@@ -536,4 +536,9 @@ test('a row marks where its AI 下読み stands', () => {
   assert.ok(rowOf(rec(1, { state: 'ai-ready', ai: ready })).includes('ov-stage ov-stage-done">下読み済み'));
   assert.ok(rowOf(rec(1)).includes('ov-stage ov-stage-none">未下読み'));
   assert.ok(rowOf(rec(1, { state: 'ai-reading', ai: { status: 'running', launchedAt: stamp(T0) } })).includes('ov-stage ov-stage-reading">下読み中'));
+});
+
+test('the 「レビュー」 list starts with the code-review hub, above the sync row', () => {
+  const html = listOf(listDoc([rec(1)]), { hub: '<hub-state>' });
+  assert.ok(html.startsWith('<hub-state>') && html.indexOf('<hub-state>') < html.indexOf('ov-sync-row'));
 });
