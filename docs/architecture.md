@@ -511,7 +511,10 @@ first. A diff over 2000 rows is drawn file by file as each comes near the screen
 - **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
   time the person acted on it (`ai.startedAt`). A record in `waiting-on-author` or `done` is never new. The marks are
   `{ "<record id>": { read } }`, in server seconds, in the browser's local storage under `adj.seenOthers`. The rail's いまの仕事 badge counts the
-  new rows of its list, and the page title those of both lists, whatever the repository and AI 下読み chips narrow the list to.
+  new rows of its list, and the page title those of both lists, whatever the repository and AI 下読み chips and 「終わったものを除く」 narrow the list to.
+- **Finished PRs.** 「終わったものを除く」 (on by default, `prefs.othersHideDone` in the page's saved prefs) leaves out every `done` record, whatever its
+  `doneReason`; the chips and their counts are made from what is left, a repository left with none has no group or chip (a saved repository chip falls back to すべて and is kept),
+  and an empty list says how many are hidden, with 「終わったものも表示」. The rail's レビュー count and 新着 are not narrowed by it.
 - **Notification.** The tab whose sync answered 200 with a non-empty `arrived` rings 「レビュー依頼」 once, with the tag `adj-review-<lastSync.at>`:
   the PR's title for one, 「レビュー依頼 N 件」 for several. A push alone is not in `arrived`, so it does not ring. It is a choice in the page's
   notification dialog, on by default.

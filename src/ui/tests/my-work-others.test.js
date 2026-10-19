@@ -14,7 +14,7 @@ const plain = x => JSON.parse(JSON.stringify(x));
 const othersWaiting = vm.runInContext('othersWaiting', ctx);
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersSyncWords, othersHubStopText, othersGroups, othersRepoChips,
   othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
-  othersOutOfReviewLine, othersReadMode, othersReadAllPatches, othersAiStage, othersEffectiveStage, othersStageChips } = ctx;
+  othersOutOfReviewLine, othersReadMode, othersReadAllPatches, othersAiStage, othersEffectiveStage, othersStageChips, othersHidesDone, othersShown } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -436,10 +436,10 @@ test('read-all marks only the new records, hidden or not, with the document\'s n
 });
 
 /* The list is drawn by my-work-others-view.js too: its function is cut out, with the row and the hub drawn as stubs. */
-function listOf(doc, { repo = '', stage = '', marks = {}, hub = '' } = {}) {
+function listOf(doc, { repo = '', stage = '', marks = {}, hub = '', hideDone } = {}) {
   const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const cut = (src, re) => { const m = src.match(re); assert.ok(m); return m[0]; };
-  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
+  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage, othersHideDone: hideDone }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
     othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => hub, othersNotes: () => [], othersRowHtml: () => '<row>' });
   vm.runInContext(cut(read('my-work.js'), /^function workReadAllButtonHtml[\s\S]*?^}/m), ctx);
   vm.runInContext(cut(read('my-work-others-view.js'), /^function othersListHtml[\s\S]*?^}/m), ctx);
@@ -541,4 +541,85 @@ test('a row marks where its AI 下読み stands', () => {
 test('the 「レビュー」 list starts with the code-review hub, above the sync row', () => {
   const html = listOf(listDoc([rec(1)]), { hub: '<hub-state>' });
   assert.ok(html.startsWith('<hub-state>') && html.indexOf('<hub-state>') < html.indexOf('ov-sync-row'));
+});
+
+const finished = (n, reason, extra = {}) => rec(n, { state: 'done', doneReason: reason, ...extra });
+const doneRows = () => [finished(10, 'merged'), finished(11, 'closed'), finished(12, 'withdrawn'), finished(13, 'approved')];
+const rowCount = html => (html.match(/<row>/g) || []).length;
+
+test('finished PRs are left out unless the saved choice is off', () => {
+  for (const v of [undefined, true, null, 'x', 0]) assert.strictEqual(othersHidesDone(v), true);
+  assert.strictEqual(othersHidesDone(false), false);
+});
+
+test('hiding finished PRs drops every done record and keeps the rest', () => {
+  const rows = [...doneRows(), rec(1), rec(2, { state: 'waiting-on-author' }), rec(3, { state: 'ai-ready' }), rec(4, { state: 'something-new' })];
+  assert.deepStrictEqual(plain(othersShown(rows, true).map(r => r.number)), [1, 2, 3, 4]);
+  assert.strictEqual(othersShown(rows, false).length, 8);
+  assert.deepStrictEqual(plain(othersShown(null, true)), []);
+  assert.deepStrictEqual(plain(othersShown(null, false)), []);
+});
+
+test('a repository whose PRs are all finished has no group, no chip and is not an effective repository', () => {
+  const rows = [rec(1), finished(2, 'merged', { repo: 'Gone/App', id: 'gone/app#2' })];
+  const shown = othersShown(rows, true);
+  assert.deepStrictEqual(plain(othersGroups(shown, '', '', NOW).map(g => g.key)), ['acme/widget']);
+  assert.deepStrictEqual(plain(othersRepoChips(shown).map(c => c.key)), ['acme/widget']);
+  assert.strictEqual(othersEffectiveRepo(shown, 'gone/app'), '');
+  assert.strictEqual(othersEffectiveRepo(rows, 'gone/app'), 'gone/app');
+});
+
+test('the AI 下読み chips count a finished unread row only while it is shown', () => {
+  const rows = [rec(1), finished(2, 'merged')];
+  const none = shown => othersStageChips(shown, '', NOW).find(c => c.key === 'none').count;
+  assert.strictEqual(none(othersShown(rows, true)), 1);
+  assert.strictEqual(none(othersShown(rows, false)), 2);
+});
+
+test('the list has the toggle, pressed by default, and draws finished rows only when it is off', () => {
+  const doc = listDoc([rec(1), finished(2, 'merged')]);
+  const on = listOf(doc);
+  assert.ok(/data-ov-done aria-pressed="true"[^>]*>終わったものを除く/.test(on));
+  assert.strictEqual(rowCount(on), 1);
+  const off = listOf(doc, { hideDone: false });
+  assert.ok(/data-ov-done aria-pressed="false"[^>]*>終わったものを除く/.test(off));
+  assert.strictEqual(rowCount(off), 2);
+  assert.ok(!listOf(listDoc([])).includes('data-ov-done'));
+});
+
+test('a list of only finished PRs says how many are hidden and offers to show them', () => {
+  const doc = listDoc([finished(2, 'merged')]);
+  const html = listOf(doc);
+  assert.ok(html.includes('終わっていない PR はありません。終わった PR 1 件を隠しています'));
+  assert.ok(/class="ov-sync-btn lite" data-ov-done aria-pressed="false">[\s\S]*終わったものも表示/.test(html));
+  assert.strictEqual(rowCount(html), 0);
+  const off = listOf(doc, { hideDone: false });
+  assert.strictEqual(rowCount(off), 1);
+  assert.ok(!off.includes('PR はありません'));
+});
+
+test('a stage with only finished rows says so with the count hidden, and a stage with nothing keeps the old text', () => {
+  const doc = listDoc([rec(1, { state: 'ai-ready', ai: ready }), finished(2, 'closed'), finished(3, 'approved')]);
+  const html = listOf(doc, { stage: 'none' });
+  assert.ok(html.includes('「未」の PR はありません。終わった PR 2 件を隠しています'));
+  assert.ok(html.includes('終わったものも表示'));
+  assert.ok(/data-ov-stage="none" aria-pressed="true">未 <span class="ov-chip-count">0<\/span>/.test(html));
+  const empty = listOf(listDoc([rec(1)]), { stage: 'reading' });
+  assert.ok(empty.includes('「下読み中」の PR はありません') && !empty.includes('隠しています') && !empty.includes('終わったものも表示'));
+});
+
+test('a saved repository whose PRs are all finished falls back to すべて, and the hidden count uses that repository', () => {
+  const doc = listDoc([rec(1, { state: 'ai-ready', ai: ready }), finished(2, 'merged', { repo: 'Gone/App', id: 'gone/app#2' }), finished(3, 'merged')]);
+  const html = listOf(doc, { repo: 'gone/app', stage: 'none' });
+  // すべて repositories: the two finished rows are hidden, not the one of the saved repository only.
+  assert.ok(html.includes('「未」の PR はありません。終わった PR 2 件を隠しています'));
+  assert.ok(/data-ov-repo="" aria-pressed="true"/.test(html));
+});
+
+test('hiding finished PRs changes neither the rail\'s count nor 新着', () => {
+  const rows = [rec(1), finished(2, 'merged')];
+  assert.deepStrictEqual(othersWaiting(rows).map(r => r.number), [1]);
+  const doc = listDoc([finished(2, 'merged', { events: { requested: stamp(T0), rerequested: null, aiReady: null, pushed: null } }), rec(3, { state: 'waiting-on-author' })]);
+  assert.strictEqual(othersNewIds(rows, {}).length, 1);
+  assert.ok(!listOf(doc).includes('data-ov-read-all') === (othersNewIds(doc.records, {}).length === 0));
 });

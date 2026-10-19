@@ -180,6 +180,13 @@ function othersStageChips(records, repoFilter, nowSecs) {
   return [{ key: '', label: 'すべて', count: here.length }, ...OTHERS_STAGES.map(([key, label]) => ({ key, label, count: count(key) }))];
 }
 
+/* Whether finished PRs (`done`, whatever the reason: merged, closed, withdrawn or approved) are left out of the list: `pref` is the
+   saved choice, on unless it was turned off (`false`). */
+function othersHidesDone(pref) { return pref !== false; }
+/* The records the list shows: all of them, or with `hide` none that is done. The chips and the groups are made from these; the rail's
+   count (`othersWaiting`) and 新着 are not narrowed by it. */
+function othersShown(records, hide) { return hide ? (records || []).filter(r => r.state !== 'done') : (records || []); }
+
 const OTHERS_DONE_WORD = { approved: '承認しました', merged: 'マージされました', closed: '閉じられました', withdrawn: '依頼が取り下げられました' };
 
 /* Where a queued read stands: its 1-based place among the records waiting, by when it was asked, then id. 0 when `records`
