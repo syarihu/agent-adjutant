@@ -182,7 +182,7 @@ Cards automatically advance across board columns based on worker phases and GitH
 | Merged | Nobody | Done |
 | Closed without merge | You (decision) | PR Review (閉じられた) |
 
-The resident server polls GitHub notification events (`GET /notifications`) with `If-Modified-Since` and queries updated PRs in single GraphQL batches. Cards refresh every 5 minutes as a fallback. Manual refresh is available via `adjutant task refresh` or clicking "PR確認".
+The resident server polls GitHub notification events (`GET /notifications`) with `If-Modified-Since` and queries updated PRs in single GraphQL batches. Cards refresh every 5 minutes as a fallback. Manual refresh is available via `adjutant task refresh` or clicking "PR確認". A refresh also corrects the PR state kept on done tasks, and moving a card to done reads its PR once.
 
 ---
 
