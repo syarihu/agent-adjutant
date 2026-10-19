@@ -237,24 +237,6 @@
     <!-- What waits on the person: the list is in the sidebar (#todo-list), the selected question's card here (todo-view.js). -->
     <div id="todo-view"><section class="todo-card" id="todo-card" aria-label="選んだ質問"></section></div>
   </main>
-
-  <footer id="m3-bottom-sheet">
-    <button type="button" class="sheet-handle-bar" aria-expanded="false" data-action="sheet">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="material-symbols-outlined" style="font-size:16px;">terminal</span>
-        <strong style="font-size:12px;">CLI連携コンソール</strong>
-        <span style="font-size:11px;color:var(--md-sys-color-on-surface-variant)">UI操作と <code>adj</code> コマンドの対応ログ</span>
-      </div>
-      <div class="sheet-pill"></div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span id="sheet-latest-cmd" style="font-family:var(--font-mono);font-size:11px;color:var(--md-sys-color-outline)">adj serve</span>
-        <span id="sheet-toggle-icon" style="font-size:11px;font-weight:700">▲ 開く</span>
-      </div>
-    </button>
-    <div class="sheet-content">
-      <ol id="log" style="list-style:none;display:flex;flex-direction:column;gap:4px;"></ol>
-    </div>
-  </footer>
 </div>
 
 <!-- What the page says it did, for a moment (toast.js). A popover, so it is shown above a modal dialog that is open. -->

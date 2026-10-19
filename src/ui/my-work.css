@@ -331,9 +331,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-ask-bar button .material-symbols-outlined, .qc-quick button[data-wk-fold] .material-symbols-outlined { color: inherit; }
 .wk-ask-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .wk-ask-scroll .qc { display: flex; flex-direction: column; }
-/* The foot is a `footer`, which shell.css holds to 96px and scrolls; the card's buttons need the room. None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
+/* None of the card's parts shrinks: the foot would be squeezed to a box smaller than its buttons and cut them off. */
 .wk-ask-scroll .qc > * { flex: none; }
-.wk-ask-scroll .qc-foot { max-height: none; overflow: visible; position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
+.wk-ask-scroll .qc-foot { position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--md-sys-color-surface); border-top: 1px solid var(--md-sys-color-outline-variant); }
 /* In a window too short for the foot beside the card, the foot scrolls with it, so that every button can be reached. */
 @media (max-height: 760px) { .wk-ask-scroll .qc-foot { position: static; } }
 .wk-ask-scroll .qc-foot .gate-comment { width: 100%; min-height: 44px; max-height: 20vh; resize: vertical; }

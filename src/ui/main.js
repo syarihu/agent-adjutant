@@ -90,17 +90,6 @@ function setView(v) {
   }
 }
 
-function toggleBottomSheet() {
-  const sheet = document.getElementById('m3-bottom-sheet');
-  if (!sheet) return;
-  sheet.classList.toggle('open');
-  const isOpen = sheet.classList.contains('open');
-  const icon = document.getElementById('sheet-toggle-icon');
-  if (icon) icon.textContent = isOpen ? '▼ 閉じる' : '▲ 開く';
-  const handleBar = sheet.querySelector('.sheet-handle-bar');
-  if (handleBar) handleBar.setAttribute('aria-expanded', String(isOpen));
-}
-
 async function refreshAll(base = BASE) {
   const line = 'adj refresh';
   try {
@@ -132,7 +121,6 @@ const ACTIONS = {
   resync: () => refreshAll(),
   layout: el => setBoardLayout(el.dataset.layout),
   arrange: el => setBoardArrange(el.dataset.arrange),
-  sheet: () => toggleBottomSheet(),
   'handover-close': () => closeHandoverDialog(),
   'nudge-hub': () => nudgeHub(),
   'wake-hub': () => wakeHub(),
