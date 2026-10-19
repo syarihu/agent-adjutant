@@ -31,14 +31,13 @@ function orgList(boardList, doc) {
 }
 
 /* How many things wait on the person per organisation, as the TODO counts them: `items` is what the TODO gathered over every
-   organisation (`todoItems`, todo.js: the gates to answer and the pull requests to review), each counted in the organisation of its
+   organisation (`todoItems`, todo.js: the gates to answer), each counted in the organisation of its
    repository, when that organisation is one of `orgs` (`orgList`). The result is login -> n. The badge and the menu read this, so what the TODO lists after switching is what they said. */
 function orgWaitCounts(items, orgs) {
   const counts = new Map();
   // Only the organisations that can be picked: a count the menu has no entry for would point at nothing.
   const add = nwo => { const login = orgOf(nwo); if (orgs.some(o => o.login === login)) counts.set(login, (counts.get(login) || 0) + 1); };
   for (const w of [...(items?.quick || []), ...(items?.read || [])]) add(w.nwo);
-  for (const r of items?.prs || []) add(r.repo);
   return counts;
 }
 

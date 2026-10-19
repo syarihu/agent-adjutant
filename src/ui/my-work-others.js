@@ -40,6 +40,8 @@ const OTHERS_SEEN_KEY = 'adj.seenOthers';
 const OTHERS_EVENTS = ['requested', 'rerequested', 'aiReady', 'pushed'];
 /* The states in which the PR is waiting on the person. */
 const OTHERS_LIVE = ['requested', 'ai-reading', 'ai-ready', 'pushed'];
+/* The records that wait on the person's review, in the repositories `inScope` keeps: the rail's レビュー count. */
+const othersWaiting = (records, inScope = () => true) => (records || []).filter(r => OTHERS_LIVE.includes(r.state) && inScope(r.repo));
 
 /* What the record has for the person, with when each began: its events, those that have a time. None for a PR that waits
    on its author or is done, and for a state this page does not know. */

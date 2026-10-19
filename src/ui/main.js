@@ -160,7 +160,8 @@ async function boot() {
   // The server holds no clock, so the page carries one: it asks, nothing pushes.
   setInterval(refresh, 2000);
   // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
-  Promise.all([refreshWork(), refreshOthers()]).then(todoPoll);
-  setInterval(() => { refreshBoards(); if (view !== 'work') Promise.all([refreshWork(), refreshOthers()]).then(todoPoll); }, 10000);
+  refreshOthers();
+  refreshWork().then(todoPoll);
+  setInterval(() => { refreshBoards(); if (view !== 'work') { refreshOthers(); refreshWork().then(todoPoll); } }, 10000);
 }
 boot();

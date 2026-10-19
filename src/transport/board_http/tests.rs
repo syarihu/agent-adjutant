@@ -1418,6 +1418,9 @@ fn the_page_has_the_todo_entry_popover_and_view() {
     assert!(at("function registerQuestionSource") < at("function todoFollow"));
     // The one place that narrows the TODO.
     assert_eq!(UI_HTML.matches("const todoInScope").count(), 1);
+    // Review requests are the レビュー entry's, not the TODO's.
+    assert!(!UI_HTML.contains("data-todo-pr-open"));
+    assert!(!UI_HTML.contains("function todoPrCardHtml"));
 }
 
 #[test]
