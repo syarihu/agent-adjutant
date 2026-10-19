@@ -378,7 +378,6 @@ function renderPrPanel() {
   cls.add('panel-open', 'panel-right');
   cls.remove('panel-pop');
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
-  applyRailMode();
   panelShown = null;
   panelScrolledFor = null;
   const reveal = tp('tp-term').hidden;

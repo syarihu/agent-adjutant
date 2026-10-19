@@ -206,9 +206,7 @@ const orderedBoards = list => repoGroups(list).flatMap(r => [...(r.repo ? [r.rep
 
 function renderBoardRows() {
   const box = document.getElementById('board-rows');
-  const sub = document.getElementById('boards-sub');
   if (!multiBoard) {
-    if (sub) sub.textContent = repoName() || '';
     if (box) box.innerHTML = '';
     return;
   }
@@ -245,8 +243,6 @@ function renderBoardRows() {
     html += `<div class="repo-group${folded && withChildren ? ' collapsed' : ''}">${rows}</div>`;
   }
   const sig = html;
-  const subText = `${repos.length} リポジトリ · hub ${live.filter(b => b.hubPresent).length}`;
-  if (sub) sub.textContent = subText;
   // Not rebuilt for the same rows: that would drop the focus and a click in progress.
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;

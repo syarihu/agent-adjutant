@@ -94,12 +94,8 @@ function othersSelect(rec) {
 function openReviewNotified(notification) {
   try { notification?.close(); } catch {}
   window.focus();
-  prKeepTab();
-  prefs.workTab = 'others';
-  savePrefs();
+  setWorkTab('others');
   go({ board: 'all', view: 'work', task: null, pane: 'detail' });
-  renderWorkTabs();
-  renderOthersList();
 }
 
 /* One desktop notification for what a sync brought in, from the tab that synced; the tag makes the next sync's replace it. */

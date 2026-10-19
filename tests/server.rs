@@ -81,9 +81,10 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         tab("agent") < tab("human"),
         "the view tabs are not ordered agent, human"
     );
-    // 要対応 is not in the sidebar: the sidebar has 「いまの仕事」 and the boards.
-    assert!(!page.contains("id=\"nav-review\""));
+    // 要対応 is not in the rail: the rail has 「いまの仕事」, the PRs to review and the boards.
     assert!(page.contains("id=\"nav-work\""));
+    assert!(page.contains("id=\"nav-review\""));
+    assert!(page.contains("id=\"nav-boards\""));
     // 着手を促す is the hub panel's, not the title bar's.
     assert!(!page.contains("id=\"btn-nudge\""));
 

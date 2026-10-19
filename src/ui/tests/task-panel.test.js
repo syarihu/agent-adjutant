@@ -23,7 +23,7 @@ const el = (extra = {}) => {
     setPointerCapture() {},
   };
 };
-const els = { 'nav-rail': el({ offsetWidth: 56 }), 'task-panel': el({ offsetWidth: 600 }), 'tp-resize': el() };
+const els = { 'nav-rail': el({ offsetWidth: 76 }), 'side-list': el({ offsetWidth: 330 }), 'task-panel': el({ offsetWidth: 600 }), 'tp-resize': el() };
 const classes = new Set();
 const saved = { n: 0 };
 const ctx = vm.createContext({
@@ -77,7 +77,7 @@ test('docked right but without panel-right: the class wins, the handle is on the
   setSide('right', false);
   assert.strictEqual(key('ArrowRight'), 624);
   assert.strictEqual(key('ArrowLeft'), 576);
-  assert.strictEqual(drag(1000), 1000 - 56);
+  assert.strictEqual(drag(1000), 1000 - 406);
 });
 
 test('the width is saved after a key step and after a drag', () => {
