@@ -78,6 +78,8 @@ async function refreshOthers(force = false) {
   }
   renderWorkBadge();
   renderOthersStaleDot();
+  // The rail's レビュー count is the TODO's PRs, which these records carry.
+  todoFollow();
   if (view === 'work') renderOthersList(force);
   // The PR that is open follows its record, and one named by the address is opened once the records are here.
   prFollow();

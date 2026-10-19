@@ -14,6 +14,8 @@
   z-index: 70;
 }
 #toasts:popover-open { display: flex; }
+/* Without the Popover API it is a plain fixed box, under a modal dialog. */
+@supports not selector(:popover-open) { #toasts:not(:empty) { display: flex; } }
 .toast {
   display: flex;
   align-items: flex-start;

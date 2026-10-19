@@ -76,8 +76,9 @@ prefs.listWidth = Math.min(560, Math.max(240, Number(prefs.listWidth) || 330));
 delete prefs.railWidth;
 delete prefs.workListWidth;
 delete prefs.workGroup;
-// Which list 「いまの仕事」 shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
-if (prefs.workTab !== 'others') prefs.workTab = 'task';
+// Which list the work view shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
+// The page opens on 「いまの仕事」 whichever rail entry was last chosen: `/` is いまの仕事, not レビュー.
+prefs.workTab = 'task';
 prefs.othersRepo = typeof prefs.othersRepo === 'string' ? prefs.othersRepo.toLowerCase() : '';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
