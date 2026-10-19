@@ -144,6 +144,16 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
       ws.send(encoder.encode(text));
       return true;
     },
+    // Text pasted the way a person's paste is: xterm turns line breaks into CR and wraps the text in
+    // the bracketed-paste markers when the terminal asked for them (under tmux it always does, and tmux
+    // passes them on only to a program that asked). False when the socket is not open.
+    paste(text) {
+      if (!term || !ws || ws.readyState !== WebSocket.OPEN) return false;
+      term.paste(text);
+      return true;
+    },
+    // The Enter key alone.
+    enter() { return this.type('\r'); },
     fit: scheduleFit,
     // The last lines on screen, for a panel to show once the pane behind them is gone. Read
     // before `dispose`, which takes the buffer with it.

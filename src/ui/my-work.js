@@ -1116,10 +1116,12 @@ function setWorkTermPart(name, el, html) {
   el.innerHTML = html;
 }
 
-function workTermHeadHtml(sel, free = null) {
+/* The title and the line under it. A worker's line says its branch, agent and model, and the task; `agent` is that session as the
+   board lists it. */
+function workTermTitleHtml(sel, free = null, agent = '') {
   if (!sel && free) {
     const label = sessionLabel(free);
-    return `<div class="wk-term-title">${esc(label.text)}</div><div class="wk-term-sub">${esc([free.branch, free.worktree && baseName(free.worktree)].filter(Boolean).join(' · '))}</div>`;
+    return `<div class="wk-term-title">${esc(label.text)}</div><div class="wk-term-sub">${esc([free.branch, agent, free.worktree && baseName(free.worktree)].filter(Boolean).join(' · '))}</div>`;
   }
   if (!sel) return '';
   if (sel.parent) {
@@ -1129,16 +1131,30 @@ function workTermHeadHtml(sel, free = null) {
   const r = sel.row;
   const data = { now: work.doc?.now, repo: sel.repo.nwo, hubs: sel.repo.hubs || [], sessions: [] };
   const title = r.task?.title || (r.session ? sessionLabel(r.session, false, data).text : r.task?.id || '');
-  const sub = [r.session?.branch, r.task?.id, sel.repo.nwo].filter(Boolean).join(' · ');
+  const sub = [r.session?.branch, agent, r.task?.id, sel.repo.nwo].filter(Boolean).join(' · ');
   return `<div class="wk-term-title">${esc(title)}</div><div class="wk-term-sub">${esc(sub)}</div>`;
 }
 
-/* The questions waiting on the person for a task, a line each under the heading over its terminal: a quick one is answered there, any other
-   opens its card (question-dialog.js). Matched by the task's id and board, never by the worktree. */
-function workTermQuestionsHtml(task) {
-  if (!task) return '';
-  const gates = (state.gates || []).filter(g => g.task === task.id && g.wait !== false && (!task._slug || g._slug === task._slug) && !answeredGates.has(gateKey(g)));
-  return questionStripHtml(gates, questionCtxOf);
+/* The heading over the terminal. It is pinned: nothing in it depends on the questions, so its height never moves the terminal.
+   A hub's has its status in one line; the buttons are at the right end (a task's Issue and PR, then `workTermHeadActsHtml`, clicked in
+   work-term-view.js). `own` is the session as the board lists it, `hub` the hub when the row is one. */
+function workTermHeadHtml(sel, free = null, own = null, hub = null, task = null) {
+  const agent = own ? [own.agent, own.agentSession?.model].filter(Boolean).join(' · ') : '';
+  let main = workTermTitleHtml(sel, free, agent);
+  if (!main) return '';
+  if (hub) {
+    const hs = hubSessionOf(hub);
+    const [text, cls] = hubStatusOf(hub, hs);
+    main += workHubStatusLineHtml(text, cls, hubCountsOf(hub));
+  }
+  const linked = !!own && linkedWorktree(own);
+  // A task's Issue and PR open on GitHub, as the panel's head has them.
+  const acts = (task ? ghHeadLinksHtml(task) : '') + workTermHeadActsHtml({
+    task: !!task, hub: !!hub, ide: linked,
+    close: linked && own.kind === 'worker' && !!own.present,
+    closeWhy: own && restartingNow(own) ? '再起動しています' : '',
+  });
+  return acts ? `<div class="wk-head-main">${main}</div><span class="wk-head-acts">${acts}</span>` : main;
 }
 
 /* The terminal of what is selected, in the middle. A session of the board that was selected is the page's
@@ -1149,7 +1165,12 @@ function renderWorkTerm() {
   renderAide();
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
   // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
-  if (isPrRef(nav.task)) return renderPrRead(othersById(prIdOfRef(nav.task)));
+  if (isPrRef(nav.task)) {
+    setWorkTermPart('ask', wk('wk-term-ask'), '');
+    setWorkTermPart('fabs', wk('wk-term-fabs'), '');
+    setWorkTermPart('askStatus', wk('wk-term-ask-status'), '');
+    return renderPrRead(othersById(prIdOfRef(nav.task)));
+  }
   const sel = workSelected();
   // A worktree with no process (the hub's 「動いていない worktree」) is no row of the list, but the board lists it.
   const free = !sel && isSessRef(nav.task) ? sessOfRef(nav.task) : null;
@@ -1158,18 +1179,25 @@ function renderWorkTerm() {
   const s = own || ds;
   // A task with a PR has a second view, its read-through (task-read-view.js): the worker's terminal is kept behind it.
   const task = isTaskRef(nav.task) ? taskById(nav.task) || null : null;
+  // The hub of a hub's row, or of a parent's: its status and its detail dialog are the heading's, and its terminal is the middle.
+  const hub = ds?.kind === 'hub' ? (state.hubs || []).find(h => h.id === ds.id) || null : null;
   const { reading, revealed } = renderTaskReadTabs(task);
-  setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free) + workTermQuestionsHtml(task));
+  setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free, own, hub, task));
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
   // Not mounted while it is hidden behind the read-through: a hidden host has no size, and the terminal would tell the window 80x24. One already mounted is kept.
   syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
-  setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true) : '');
+  setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true, own.kind === 'hub' ? ['close', 'hub-start'] : ['close']) : '');
   const ph = wk('wk-term-ph');
-  ph.hidden = !!workTerm.term;
+  const hubUp = !!hub && hubSessionOf(hub).present;
+  const hubStarting = !!hub && !hubUp && (hubStartingNow(hub) || workHubStartPending(hub));
+  const stopped = workStoppedHubShown({ isHub: !!hub, present: hubUp, starting: hubStarting, reading });
+  // A hub on its way up has a dead terminal behind, if one was mounted: covered, rather than shown dead.
+  const coming = hubStarting && !reading;
+  ph.hidden = !!workTerm.term && !stopped && !coming;
   const loaded = state.now != null;
-  const text = workTerm.term ? ''
+  const text = coming ? '<div class="tp-muted">起動しています…</div>' : workTerm.term ? ''
     : !nav.task || nav.board === 'all' ? ''
       : !work.doc ? '<div class="tp-muted">読み込み中…</div>'
       : free ? termPlaceholderHtml(free)
@@ -1178,24 +1206,31 @@ function renderWorkTerm() {
           : !loaded ? '<div class="tp-muted">接続しています…</div>'
             : !own ? '<div class="tp-muted">このボードにはこのセッションが見えないため、ターミナルを開けません</div>'
               : termPlaceholderHtml(own);
-  setWorkTermPart('ph', ph, text);
+  setWorkTermPart('ph', ph, stopped ? workHubStoppedBlock(hub) : text);
+  renderWorkTermOverlays({ sel, own, task, hub, reading, stopped });
   // Sized while it was hidden, which a terminal skips: asked again now that it has a size.
   if (revealed) workTerm.term?.fit();
   if (reading) renderTaskReadMiddle(task);
+  workTermDialogsFollow();
 }
 
-/* The bar over the middle terminal: the session's own actions, as the panel's terminal bar has them. */
-wk('wk-term-bar').addEventListener('click', e => {
+/* The bar over the middle terminal: the session's own actions, as the panel's terminal bar has them. Heard on the pane, which holds the
+   button over a stopped hub's terminal as well. */
+wk('wk-term-pane').addEventListener('click', e => {
   const b = e.target.closest('[data-sess-act], [data-tp-reconnect]');
   if (!b || b.disabled) return;
-  const id = workSelected()?.session?.id || (isSessRef(nav.task) ? sessIdOfRef(nav.task) : null);
-  const s = id ? (state.sessions || []).find(x => x.id === id) : null;
+  const sel = workSelected();
+  const id = sel?.session?.id || (isSessRef(nav.task) ? sessIdOfRef(nav.task) : null);
+  // A stopped hub may have no session in the state: it is only as alive as its record says (`hubSessionOf`).
+  const hub = sel?.session?.kind === 'hub' ? (state.hubs || []).find(x => x.id === id) : null;
+  const s = id ? (state.sessions || []).find(x => x.id === id) || (hub ? hubSessionOf(hub) : null) : null;
   if (!s) return;
   if (b.dataset.tpReconnect != null) {
     workTerm.reconnect = true;
     return renderWorkTerm();
   }
   // A session resumed or started from here is connected to once its window exists (syncTermSlot).
+  if (b.dataset.sessAct === 'hub-start' && hub) return workStartHub(hub);
   if (b.dataset.sessAct === 'resume' || b.dataset.sessAct === 'hub-start') workTerm.reconnect = true;
   runSessionAction(b.dataset.sessAct, s);
 });

@@ -121,6 +121,11 @@ fn the_page_has_one_question_dialog_with_the_card_and_the_stack() {
     assert!(at("function questionCardHtml") < at("function dialogStackCore"));
     assert!(at("function dialogStackCore") < at("function openQuestionDialog"));
     assert!(at("function openQuestionDialog") < at("function renderWorkTerm"));
+    assert!(at("function questionStripHtml") < at("function workTermAskHtml("));
+    assert!(at("function workTermAskHtml(") < at("function renderWorkTerm("));
+    assert!(at("function renderWorkTerm(") < at("function renderWorkTermOverlays("));
+    // What is laid over the middle terminal pastes through the terminal's own paste, so the agent reads one event.
+    assert!(UI_HTML.contains("term.paste("));
     assert!(at("function choicesHtml") < at("function questionCardHtml"));
     // The card's own buttons are plain buttons with `data-qc-*` or `data-act`: no new `data-action` name reaches main.js.
     assert!(!UI_HTML.contains("data-action=\"qc-"));
@@ -212,6 +217,12 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     let pane = at("id=\"wk-term-pane\"");
     let read = at("id=\"task-read\"");
     assert!(!UI_HTML[pane..read].contains("</section>"));
+    // What is laid over the terminal is one each, inside the pane and beside the host, not in it: the terminal clears its host.
+    for id in ["id=\"wk-term-ask\"", "id=\"wk-term-fabs\""] {
+        assert_eq!(UI_HTML.matches(id).count(), 1, "{id}");
+        assert!(pane < at(id) && at(id) < read, "{id}");
+        assert!(at("id=\"wk-term-host\"") < at(id), "{id}");
+    }
     assert!(at(".prd-bar {") < at(".wk-mid-row {"));
     // The tabs control panels that name them back.
     for piece in [
@@ -1672,7 +1683,7 @@ fn the_panel_head_links_the_task_issue_and_pr() {
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     assert!(!bar.contains("ghHeadLinksHtml") && !bar.contains("ghBarLinksHtml"));
-    assert!(UI_HTML.contains("termBarHtml(own, workTerm, true)"));
+    assert!(UI_HTML.contains("termBarHtml(own, workTerm, true, "));
     assert!(!UI_HTML.contains("ghBarLinksHtml"));
     assert!(!UI_HTML.contains("tp-bar-link"));
 }
