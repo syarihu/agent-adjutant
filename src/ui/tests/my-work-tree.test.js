@@ -1044,7 +1044,7 @@ function lastWorld(over = {}) {
     view: 'work', prefs: { workTab: 'task' }, nav: { board: 'b-1', task: '41' }, pendingGate: null, pendingTask: null,
     isPrRef: x => String(x).startsWith('pr:'), isGateRef: x => String(x).startsWith('gate:'), isParentRef: x => String(x).startsWith('parent:'), parentKeyOfRef: x => x.slice(7),
     orgOf: nwo => (String(nwo).includes('/') ? String(nwo).split('/')[0].toLowerCase() : ''), currentOrg: () => 'acme', orgScope: () => ({}), workRepoChoice: () => '',
-    workInShown: () => true, workParentOf: key => (key === '#2' ? { key, repo: { nwo: 'acme/a' } } : null),
+    workInShown: () => true, workParentOf: key => (key === '#2' ? { key, repo: { nwo: 'acme/a' } } : null), workParentBoard: () => 'b-p',
     workSelected: () => ({ repo: { nwo: 'Acme/a' } }),
     work: { doc: {}, restore: true, listedByKey: new Map(), hubsByKey: new Map(), firstTask: null },
     selectWorkRow: (r, o) => calls.push(['row', r.key, !!o?.replace]), selectWorkParent: (k, o) => calls.push(['parent', k, !!o?.replace]),
@@ -1088,6 +1088,12 @@ test('the selection is kept for the organisation of its row, only when it change
   w.c.workSelected = () => ({ repo: { nwo: 'solo' } });
   w.run('workRemember()');
   assert.ok(w.store.has('adj.workLast.-'));
+  // A task whose session has ended is not kept either.
+  w.c.workSelected = () => ({ repo: { nwo: 'Acme/a' } });
+  w.c.work.listedByKey = new Map([['b-1/44', { key: 'b-1/44', turn: true }]]);
+  w.c.nav.task = '44';
+  w.run('workRemember()');
+  assert.ok(![...w.store.values()].some(v => v.includes('"44"')));
   // A selection the document cannot resolve is not kept.
   w.c.workSelected = () => null;
   w.c.nav.task = '43';
@@ -1125,6 +1131,8 @@ test('opening the work view with nothing selected brings back the row selected l
   // A parent is selected through its own route, when the organisation still has it.
   assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-p","task":"parent:#2"}')).calls, [['parent', '#2', true]]);
   assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-p","task":"parent:#9"}')).calls, [['row', 'b-1/first', true]]);
+  // The same key on another board is another parent.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-q","task":"parent:#2"}')).calls, [['row', 'b-1/first', true]]);
   // A stored value that is no address is none.
   assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', 'garbage')).calls, [['row', 'b-1/first', true]]);
 });

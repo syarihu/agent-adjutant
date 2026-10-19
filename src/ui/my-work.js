@@ -1042,6 +1042,8 @@ function workRemember() {
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (!nwo) return;
   if (work.autoSel) return;
+  // A task whose session has ended is not a session to come back to (workResolveLast passes over it).
+  if (work.listedByKey.get(`${nav.board}/${nav.task}`)?.turn) return;
   const login = orgOf(nwo);
   const cur = workLastRead(login);
   if (cur && cur.board === nav.board && cur.task === nav.task) return;
@@ -1054,7 +1056,8 @@ function workResolveLast(last) {
   if (!last) return null;
   if (isParentRef(last.task)) {
     const p = workParentOf(parentKeyOfRef(last.task));
-    return p && workInShown(p.repo.nwo, orgScope(), workRepoChoice()) ? { parent: p.key } : null;
+    // The parent is opened by its key alone (selectWorkParent), so it is restored only when that key finds the board remembered.
+    return p && workParentBoard(p) === last.board && workInShown(p.repo.nwo, orgScope(), workRepoChoice()) ? { parent: p.key } : null;
   }
   // A turn row is the task left behind with no session running: the session selected last is gone.
   const row = work.listedByKey.get(`${last.board}/${last.task}`);
