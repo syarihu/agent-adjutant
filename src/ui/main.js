@@ -40,7 +40,7 @@ function setView(v) {
   // The TODO has no task panel of its own: the one left open on the board is closed.
   if (v === 'todo' && selectedTaskId) hideTaskPanelState();
   // The middle terminal is not kept behind another view, and the row that was open is left.
-  if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); disposeTermSlot(aideTerm); }
+  if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
 
   markRail();
   applyLayout();

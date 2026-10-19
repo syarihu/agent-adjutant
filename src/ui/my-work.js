@@ -786,7 +786,7 @@ function workItemHtml(r, place, named = false, parent = null) {
   const clean = workCleanable(r);
   if (!band && !hub && !clean) return r.turn ? workTurnRowHtml(r, cell) : workRowHtml(r, cell);
   const act = (attr, icon, label) => `<button type="button" class="wk-act" ${attr}="${esc(r.id)}" title="${esc(label)}" aria-label="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">${icon}</span></button>`;
-  const acts = (band ? act('data-wk-aide', 'support_agent', '副官に聞く') + act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
+  const acts = (band ? act('data-wk-read', 'done', '既読にする') : '') + (hub ? workHubWakeButtonHtml(r) + hubTitleReadButtonHtml(r.hub, r.wakeBase) : '');
   const row = r.turn ? workTurnRowHtml(r, '', true) : workRowHtml(r, '', band, named, parent);
   return `<div class="wk-band-row${hub ? ' wk-hub-row' : ''}${clean ? ' wk-clean-row' : ''}"${cell}>${row}${acts ? `<span class="wk-acts">${acts}</span>` : ''}${clean ? workCleanRowHtml(r) : ''}${hub ? workRequestsHtml(r) + workHubWhyHtml(r) + hubTitleWhyHtml(r.hub, 'wk-hub-why') : ''}</div>`;
 }
@@ -947,8 +947,6 @@ function workShape(items, folded) {
 const workHeldSel = el => el?.dataset?.wk != null ? `[data-wk="${CSS.escape(el.dataset.wk)}"]`
   : el?.dataset?.wkRead != null ? `[data-wk-read="${CSS.escape(el.dataset.wkRead)}"]`
   : el?.dataset?.wkReadAll != null ? '[data-wk-read-all]'
-  : el?.dataset?.wkAide != null ? `[data-wk-aide="${CSS.escape(el.dataset.wkAide)}"]`
-  : el?.dataset?.wkAideAll != null ? '[data-wk-aide-all]'
   : el?.dataset?.wkAdvance != null ? '[data-wk-advance]'
   : el?.dataset?.wkFold != null ? `[data-wk-fold="${CSS.escape(el.dataset.wkFold)}"]`
   : el?.dataset?.wkClean != null ? `[data-wk-clean="${CSS.escape(el.dataset.wkClean)}"]`
@@ -1001,7 +999,6 @@ function renderWorkList() {
   renderWorkRepoFilter();
   renderWorkTools();
   drawWorkList();
-  renderAidePin();
   // Whatever redrew the list (a fold, the other grouping) must not lose the mark.
   markWorkSelection();
   // The box is set apart from the markup, so a toggle does not redraw the list.
@@ -1279,8 +1276,6 @@ function workTermHeadHtml(sel, free = null, own = null, hub = null, task = null)
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
   if (view !== 'work') return;
-  // With nothing selected the middle is the aide's (aide.js); it also draws the way back over a row and hides itself under a PR.
-  renderAide();
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
   // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
   if (isPrRef(nav.task)) {
@@ -1355,10 +1350,7 @@ wk('wk-term-pane').addEventListener('click', e => {
 
 /* The one place the middle terminal is asked to take the keyboard: 「ターミナルで話す」. */
 function focusWorkTerm() {
-  if (!nav.task) {
-    if (aideTerm.term) aideTerm.term.focus();
-    else note('副官のターミナルは開いていません', true, '「副官を起動」を押すと開きます');
-  } else if (workTerm.term) workTerm.term.focus();
+  if (workTerm.term) workTerm.term.focus();
   else note('ターミナルは開いていません', true, '左の一覧から、セッションのある仕事を選んでください');
 }
 
@@ -1490,8 +1482,6 @@ function renderWorkTabs() {
   wk('ov-scroll').hidden = !others;
   // What belongs to the tasks' list only: the place to ask for a task, the filter and the actions on new rows.
   wk('wk-ask').hidden = others;
-  // 「レビュー」's list starts with the code-review hub's state (#751), so the aide's row is the tasks' list's only.
-  document.querySelector('.aide-pin-wrap').hidden = others;
   renderWorkTools();
   renderOthersStaleDot();
 }
@@ -1499,15 +1489,6 @@ function renderWorkTabs() {
 wk('wk-list').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
-  if (e.target.closest('[data-wk-aide-all]')) return aideAsk(AIDE_ASK_ALL);
-  if ((b = e.target.closest('[data-wk-aide]'))) {
-    const { rows, turns } = workListRows();
-    // A hub in 新着 is a chip, not one of the rows.
-    const r = [...rows, ...turns, ...(work.hubsByKey?.values() || [])].find(x => x.id === b.dataset.wkAide);
-    if (!r) return;
-    const gate = (r.live || []).find(i => i.kind === 'gate');
-    return aideAsk(aideAskRowText({ nwo: r.nwo, title: aideRowTitle(r), taskId: r.task?.id, kindLabel: gate ? kindOf(gate.gate)[0] : '' }));
-  }
   if ((b = e.target.closest('[data-wk-read]'))) return workMarkRow(b.dataset.wkRead, { read: workServerNow(), left: workServerNow() });
   if ((b = e.target.closest('[data-wk-fold]'))) {
     const at = prefs.workFolded.indexOf(b.dataset.wkFold);

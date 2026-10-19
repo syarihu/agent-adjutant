@@ -341,7 +341,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-rate-err { color: var(--md-sys-color-error); }
 
 /* The middle: the terminal of what is selected, never behind a tab. */
-.wk-term { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--md-sys-color-surface); }
+.wk-term { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--md-sys-color-surface); }
 .wk-term-head { flex: none; padding: 8px 14px; border-bottom: 1px solid var(--md-sys-color-outline-variant); min-height: 20px; }
 .wk-term-head:empty { display: none; }
 .wk-term-title { font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
@@ -382,8 +382,6 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 /* The two buttons at the bottom right, clear of the terminal's scrollbar; the box around them lets the pointer through to the terminal. */
 .wk-term-fabs { position: absolute; right: 20px; bottom: 12px; z-index: 2; display: flex; gap: 8px; pointer-events: none; }
 .wk-term-fabs:empty { display: none; }
-/* The aide's peek button holds that corner of the middle (aide.css): while it is shown the two buttons sit above it. */
-.wk-term:has(.aide-peek:not([hidden])) .wk-term-fabs { bottom: 68px; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .wk-fab {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--md-sys-color-outline-variant);

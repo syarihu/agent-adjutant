@@ -127,9 +127,9 @@ fn the_page_has_one_question_dialog_with_the_card_and_the_stack() {
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
-    // The card is built from the aide's evidence and the gate's buttons, so those come first; the work view draws the strip.
+    // The card is built from the gate's evidence and the gate's buttons, so those come first; the work view draws the strip.
     let at = |piece: &str| UI_HTML.find(piece).unwrap();
-    assert!(at("function aideEvidenceParts") < at("function questionCardHtml"));
+    assert!(at("function gateEvidenceParts") < at("function questionCardHtml"));
     assert!(at("function questionCardHtml") < at("function dialogStackCore"));
     assert!(at("function dialogStackCore") < at("function openQuestionDialog"));
     assert!(at("function openQuestionDialog") < at("function renderWorkTerm"));

@@ -42,7 +42,7 @@ const workIsStartCheck = (g, hub) => !!hub && g.kind === 'dispatch' && !g.quick;
    element, so a click on the button is answered as it is anywhere else. With a comment typed in the form the button is left out,
    for it would send the answer without it. */
 function workAskFoldedHtml(g, key, draft, expand = true) {
-  const line = aideFocusLine(g.focus) || aideFocusLine(g.title);
+  const line = gateFocusLine(g.focus) || gateFocusLine(g.title);
   const first = !draft && (g.options || [])[0];
   const button = first && BUTTONS[first] ? BUTTONS[first](g) : '';
   return `<div class="qc-quick wk-ask-folded" data-qc-gate="${esc(key)}">${qcIcon('bolt')}<span class="qc-kind">${esc(kindOf(g.kind)[0])}</span>`

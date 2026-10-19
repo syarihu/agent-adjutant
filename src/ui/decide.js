@@ -186,7 +186,7 @@ function gateDockHtml(g) {
 
 /* The box at the top of a gate being judged: what it is, how long it has waited, why it stopped. */
 /* `opts.focus` false leaves out the 確認してほしい点 the box carries, for a page that has it as a card of its own; `opts.expand` false
-   leaves out the 拡大 button, for a page that is not the panel (the aide's display area). */
+   leaves out the 拡大 button, for a page that is not the panel (the question card). */
 function gateWaitHeadHtml(g, opts = {}) {
   const record = g.wait === false;
   const [label] = kindOf(g.kind);
@@ -487,8 +487,8 @@ function outboxNote(done, data) {
 const sentComment = (g, decision, choice, comment) => String(comment ?? '').trim()
   || (decision === 'choice' ? String((g.choices || []).find(c => c.id === choice)?.comment ?? '').trim() : decision === 'close' ? 'タブで解決済み' : '') || '';
 
-/* Send a decision for `g` and note it: the one place an answer leaves the page, for the panel (`answer`) and for the aide's display
-   area, which has no `state` of the board to look the gate up in. `comment` is what the person typed; a choice that has a draft
+/* Send a decision for `g` and note it: the one place an answer leaves the page, for the panel (`answer`) and for the question card,
+   which has no `state` of the board to look the gate up in. `comment` is what the person typed; a choice that has a draft
    sends it when nothing was typed. True when the answer went. */
 async function answerGate(g, decision, choice, comment) {
   const text = sentComment(g, decision, choice, comment);
@@ -546,7 +546,7 @@ function talk(id) {
   note('gate は開いたままです', false, 'タブで確認後、「解決済みとして閉じる」を押してください');
 }
 
-/* Close `g` as resolved, with no message to the worker: for the panel (`closeGate`) and the aide's display area. True when it went. */
+/* Close `g` as resolved, with no message to the worker: for the panel (`closeGate`) and the question card. True when it went. */
 async function closeGateOf(g, comment) {
   const line = `adj gate close --id ${g.id}` + (comment ? ` --comment '${comment}'` : '');
   const key = gateKey(g);

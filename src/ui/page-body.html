@@ -47,10 +47,6 @@
   </div>
 
   <section class="wk-list" id="wk-list" aria-label="いまの仕事の一覧">
-    <div class="aide-pin-wrap"><button type="button" class="aide-pin" id="aide-pin" title="副官を開く">
-      <span class="aide-ava" aria-hidden="true"><span class="material-symbols-outlined">support_agent</span></span>
-      <span class="aide-pin-main"><span class="aide-pin-name">副官</span><span class="aide-pin-sub" id="aide-pin-sub"></span></span>
-      <span class="rail-badge zero" id="aide-pin-count" title="判断待ちの数">0</span></button></div>
     <div class="wk-ask" id="wk-ask">
       <div class="wk-repo-filter" id="wk-repo-filter">
         <button type="button" class="wk-repo-btn" id="wk-repo-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="wk-repo-menu"><span class="material-symbols-outlined" aria-hidden="true">folder</span><span class="wk-repo-name" id="wk-repo-name">すべてのリポジトリ</span><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>
@@ -59,7 +55,6 @@
     </div>
     <div class="pane-head wk-list-head">
       <span class="wk-list-tools" id="wk-list-tools">
-        <button type="button" class="wk-act aide-ask" data-wk-aide-all title="副官に聞く（新着を上から順に）" aria-label="副官に聞く（新着を上から順に）"><span class="material-symbols-outlined" aria-hidden="true">support_agent</span></button>
         <button type="button" class="wk-act" data-wk-read-all title="新着をすべて既読にする" aria-label="新着をすべて既読にする"><span class="material-symbols-outlined" aria-hidden="true">done_all</span></button>
         <label class="wk-next" title="判定を返したら、新着の次の行を開く"><input type="checkbox" data-wk-advance><span>処理したら次へ</span></label>
       </span>
@@ -179,8 +174,8 @@
         </section>
       </div>
     </div>
-    <!-- The work under way in every repository: the selected session's terminal here (with nothing selected, the aide:
-         aide.js), the list in the list column (#wk-list), and (the task panel, which is the body's own) what to judge. Nothing
+    <!-- The work under way in every repository: the selected session's terminal here (with nothing selected, an empty state),
+         the list in the list column (#wk-list), and (the task panel, which is the body's own) what to judge. Nothing
          here is drawn from the board's state: the list is /api/work, and only the panel and the terminal read the board
          that was selected. -->
     <div id="work-view">
@@ -189,18 +184,6 @@
              (core.js applyLayout); the tabs of a task that has a PR, 「タスク」 (the worker's terminal below) and 「AI 下読み」
              (#task-read), are shown for a task only, see task-read-view.js. -->
         <div class="wk-mid-row" id="wk-mid-row"><div class="wk-mid-lead" id="wk-mid-lead"><button type="button" class="tool-btn rail-toggle" id="rail-toggle" data-action="rail-toggle" aria-controls="side-list" aria-expanded="true" aria-label="一覧を隠す" title="一覧を隠す"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span><span class="rail-badge zero" id="rail-toggle-count" title="新着の数">0</span></button></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示" hidden></div></div>
-        <div class="aide-back" id="aide-back" hidden></div>
-        <div class="aide" id="aide" hidden>
-          <header class="aide-head" id="aide-head"></header>
-          <div class="aide-split">
-            <div class="aide-talk">
-              <div class="aide-term-host" id="aide-term-host"></div>
-              <div class="aide-term-ph" id="aide-term-ph"></div>
-              <div class="aide-scope" id="aide-scope" role="group" aria-label="対象"></div>
-            </div>
-            <div class="aide-display" id="aide-display" role="region" aria-label="表示領域" tabindex="0"></div>
-          </div>
-        </div>
         <div class="wk-term-head" id="wk-term-head"></div>
         <div class="tp-pane tp-term wk-term-pane" id="wk-term-pane" role="tabpanel" aria-labelledby="wk-mid-tab-task">
           <div class="tp-term-bar" id="wk-term-bar"></div>
@@ -216,7 +199,6 @@
           <div class="tp-term-ph" id="wk-term-ph"></div>
         </div>
         <div class="task-read" id="task-read" role="tabpanel" aria-labelledby="wk-mid-tab-ai" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
-        <button type="button" class="aide-peek" id="aide-peek" hidden></button>
       </section>
     </div>
     <!-- What waits on the person: the list is in the list column (#todo-list), the selected question's card here (todo-view.js). -->
@@ -584,30 +566,6 @@
       <button type="submit" value="close" class="btn-m3-danger">
         <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">close</span>
         <span>下読みを閉じる</span>
-      </button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="aide-reset-dialog">
-  <form method="dialog">
-    <div class="head">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-error);">warning</span>
-        <span>副官をリセット</span>
-      </div>
-      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="キャンセル" aria-label="キャンセル">
-        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
-      </button>
-    </div>
-    <div class="body close-help">
-      <p>副官は作業の途中です。リセットすると、いまの作業は止まり、新しいセッションで起動し直します。表示領域はそのまま残ります。</p>
-    </div>
-    <div class="foot">
-      <button type="submit" value="cancel" class="btn-m3-text" autofocus>キャンセル</button>
-      <button type="submit" value="reset" class="btn-m3-danger">
-        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">restart_alt</span>
-        <span>リセット</span>
       </button>
     </div>
   </form>

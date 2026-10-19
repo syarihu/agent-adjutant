@@ -399,7 +399,7 @@ function prDiffShellHtml(e, res) {
 }
 
 const PRD_ANN_LABEL = { tr: '訳', ex: '解説' };
-/* `opts.plain` leaves out the buttons, for a place that only reads (the aide's display area); the default is the diff's own. */
+/* `opts.plain` leaves out the buttons, for a place that only reads (the question card's evidence); the default is the diff's own. */
 function prdAnnHtml(idx, ann, at, readerOpen = true, opts = {}) {
   const kind = ann.kind === 'tr' ? 'tr' : 'ex';
   const acts = kind === 'ex' && !opts.plain

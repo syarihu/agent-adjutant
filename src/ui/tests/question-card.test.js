@@ -16,7 +16,7 @@ const cut = (src, re) => {
 
 const ctx = vm.createContext({ TextEncoder, TextDecoder });
 const run = (code, name) => vm.runInContext(code, ctx, { filename: name });
-for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js', 'aide-display.js']) run(read(file), file);
+for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js', 'gate-evidence.js']) run(read(file), file);
 const decide = read('decide.js');
 run([
   cut(decide, /^const gateRef = [^\n]*\n/m),
