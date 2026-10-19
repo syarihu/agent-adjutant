@@ -1052,7 +1052,9 @@ function workResolveLast(last) {
     const p = workParentOf(parentKeyOfRef(last.task));
     return p && workInShown(p.repo.nwo, orgScope(), workRepoChoice()) ? { parent: p.key } : null;
   }
-  return work.listedByKey.get(`${last.board}/${last.task}`) || work.hubsByKey.get(`${last.board}/${last.task}`) || null;
+  // A turn row is the task left behind with no session running: the session selected last is gone.
+  const row = work.listedByKey.get(`${last.board}/${last.task}`);
+  return (row && !row.turn ? row : null) || work.hubsByKey.get(`${last.board}/${last.task}`) || null;
 }
 
 /* Opening 「いまの仕事」 with nothing selected (`work.restore`, set by setView): the session selected last in this organisation, else the

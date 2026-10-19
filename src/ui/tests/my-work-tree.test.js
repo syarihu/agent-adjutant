@@ -1113,6 +1113,11 @@ test('opening the work view with nothing selected brings back the row selected l
   // Gone, hidden by the filter or never remembered: the first session with a task.
   assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-1","task":"99"}')).calls, [['row', 'b-1/first', true]]);
   assert.deepStrictEqual(open().calls, [['row', 'b-1/first', true]]);
+  // Its session ended and only the task is left in the list: gone too.
+  assert.deepStrictEqual(open(w => {
+    w.store.set('adj.workLast.acme', '{"board":"b-1","task":"41"}');
+    w.c.work.listedByKey.set('b-1/41', { key: 'b-1/41', turn: true });
+  }).calls, [['row', 'b-1/first', true]]);
   // The memory of another organisation is not this one's.
   assert.deepStrictEqual(open(w => w.store.set('adj.workLast.other', '{"board":"b-1","task":"41"}')).calls, [['row', 'b-1/first', true]]);
   // No session with a task at all: the empty middle stays.
