@@ -368,18 +368,23 @@ function othersListHtml() {
   const records = doc.records || [];
   const lastSync = doc.lastSync;
   const stale = othersStale(lastSync, nowEst);
-  const repo = othersEffectiveRepo(records, prefs.othersRepo);
+  const hideDone = othersHidesDone(prefs.othersHideDone);
+  const shown = othersShown(records, hideDone);
+  const repo = othersEffectiveRepo(shown, prefs.othersRepo);
   const stage = othersEffectiveStage(prefs.othersStage);
   const marks = othersMarks();
   const hubView = othersHubView(doc.hub, records);
   const never = !lastSync?.at;
 
-  const chips = records.length ? [{ key: '', label: 'すべて' }, ...othersRepoChips(records)] : [];
+  const chips = records.length ? [{ key: '', label: 'すべて' }, ...othersRepoChips(shown)] : [];
   const chipsHtml = chips.length
     ? `<div class="ov-chips" role="group" aria-label="リポジトリで絞り込む">${chips.map(c => `<button type="button" class="ov-chip" data-ov-repo="${esc(c.key)}" aria-pressed="${c.key === repo}">${esc(c.label)}</button>`).join('')}</div>` : '';
-  const stageChips = records.length ? othersStageChips(records, repo, nowEst) : [];
+  const stageChips = records.length ? othersStageChips(shown, repo, nowEst) : [];
   const stageChipsHtml = stageChips.length
     ? `<div class="ov-chips" role="group" aria-label="AI 下読みで絞り込む">${stageChips.map(c => `<button type="button" class="ov-chip" data-ov-stage="${esc(c.key)}" aria-pressed="${c.key === stage}">${esc(c.label)} <span class="ov-chip-count">${c.count}</span></button>`).join('')}</div>` : '';
+  // The toggle stays while everything is hidden, since it is what brings the rows back.
+  const doneToggleHtml = records.length
+    ? `<button type="button" class="ov-chip" data-ov-done aria-pressed="${hideDone}" title="マージ・クローズ・取り下げ・承認で終わった PR を隠します">終わったものを除く</button>` : '';
   const alerts = [
     ...(others.error ? [{ alert: true, text: '最新の状態を読めませんでした（表示は前回のものです）' }] : []),
     ...othersNotes(lastSync),
@@ -391,15 +396,22 @@ function othersListHtml() {
   } else if (!records.length) {
     body = '<div class="wk-empty">あなたにレビューを頼んでいる PR はありません</div>';
   } else {
-    const groups = othersGroups(records, repo, stage, nowEst);
-    body = !groups.length ? `<div class="wk-empty">「${esc(stageChips.find(c => c.key === stage).label)}」の PR はありません</div>` : groups.map(g => `<section class="wk-group" aria-label="${esc(g.label)}">
+    const groups = othersGroups(shown, repo, stage, nowEst);
+    if (!groups.length) {
+      // Counted over all the records with the repository that applies above, so the number is of what the toggle would bring back.
+      const hiddenN = hideDone ? othersGroups(records, repo, stage, nowEst).reduce((n, g) => n + g.rows.length, 0) : 0;
+      const showBtn = '<button type="button" class="ov-sync-btn lite" data-ov-done><span class="material-symbols-outlined" aria-hidden="true">visibility</span>終わったものも表示</button>';
+      const label = stage ? stageChips.find(c => c.key === stage)?.label || '' : '';
+      const text = stage ? `「${label}」の PR はありません` : '終わっていない PR はありません';
+      body = `<div class="wk-empty">${esc(text)}${hiddenN > 0 ? `。終わった PR ${hiddenN} 件を隠しています<br>${showBtn}` : ''}</div>`;
+    } else body = groups.map(g => `<section class="wk-group" aria-label="${esc(g.label)}">
       <div class="wk-head repo"><span class="wk-head-main"><span class="wk-head-name">${esc(g.label)}${g.unregistered ? ' <span class="ov-unreg" title="adj に登録していないリポジトリです（同じオーナーなので依頼だけ出ます）">未登録</span>' : ''}</span></span><span class="wk-count">${g.rows.length}</span></div>
       <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, records)).join('')}</div>
     </section>`).join('');
   }
   // Every new row counts, the ones the repository and AI 下読み chips hide too (as 「タスク」 marks every new entry whatever is folded).
   const readAllHtml = othersNewIds(records, marks).length ? workReadAllButtonHtml('data-ov-read-all') : '';
-  return `${othersHubHtml(hubView)}<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${stageChipsHtml}${readAllHtml}</div>${alerts}${body}`;
+  return `${othersHubHtml(hubView)}<div class="ov-sync-row">${othersSyncButtonHtml(lastSync, nowEst, stale)}${chipsHtml}${stageChipsHtml}${doneToggleHtml}${readAllHtml}</div>${alerts}${body}`;
 }
 
 /* How to find again what has the keyboard focus after a redraw: the control by its own data, else (a button that has gone, as
@@ -416,6 +428,7 @@ function othersHeldSel(el) {
   if (d.ovSplit != null) return [q('ov-split', d.ovSplit), rowOf(d.ovSplit)];
   if (d.ovRepo != null) return [q('ov-repo', d.ovRepo)];
   if (d.ovStage != null) return [q('ov-stage', d.ovStage)];
+  if (d.ovDone != null) return ['[data-ov-done]'];
   if (d.ovReadAll != null) return ['[data-ov-read-all]', '.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   if (d.ovSync != null) return ['.ov-sync-row [data-ov-sync]', '[data-ov-sync]'];
   return [];
@@ -424,7 +437,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || prefs.workTab !== 'others') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, prefs.othersHideDone, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');
@@ -449,6 +462,11 @@ wk('ov-groups').addEventListener('click', e => {
   }
   if ((b = e.target.closest('[data-ov-stage]'))) {
     prefs.othersStage = othersEffectiveStage(b.dataset.ovStage);
+    savePrefs();
+    return renderOthersList();
+  }
+  if (e.target.closest('[data-ov-done]')) {
+    prefs.othersHideDone = !othersHidesDone(prefs.othersHideDone);
     savePrefs();
     return renderOthersList();
   }
