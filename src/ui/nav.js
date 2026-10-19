@@ -11,7 +11,7 @@
      /?view=agent                                          すべて, every board
      /?view=todo                                           TODO, every board: what waits on you, and the question selected
      /?view=work                                           いまの仕事, every board; nothing selected, so the
-                                                           middle is the aide (副官, aide.js)
+                                                           middle is the empty state
      /b/<slug>/?view=work&task=<ref>&pane=detail           いまの仕事 with a row selected: the board of
                                                            the row's task, hub or parent (<ref> may also
                                                            be parent:<key>)

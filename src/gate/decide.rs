@@ -1,12 +1,12 @@
 //! Deciding a gate the way the board's buttons do: the one operation behind
-//! `POST /api/gates/<id>` and the aide's `adjutant_gate_answer`.
+//! `POST /api/gates/<id>` and the `adjutant_gate_answer` tool.
 //!
 //! What a decision comes to — closing, or answering, with the comment that goes with it — was
 //! spread over the page (the comment a choice sends) and the handler (close against answer). It
-//! is here so that a second caller (the aide, and later an answer to a wait from its row) sends
+//! is here so that a second caller (the MCP tool, and later an answer to a wait from its row) sends
 //! exactly what the buttons send. The board's route (`Offered::Any`) behaves as it always did and
 //! only works out the comment; the stricter refusals, all made before anything is written, are for
-//! the aide's route (`Offered::Only`).
+//! the tool's route (`Offered::Only`).
 
 use super::answer::answer_with;
 use super::*;

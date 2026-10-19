@@ -2841,14 +2841,13 @@ fn an_unknown_procedure_names_the_known_ones() {
                 "adj-worker",
                 "adj-report",
                 "adj-review-hub",
-                "adj-reviewer",
-                "adj-aide"
+                "adj-reviewer"
             ],
         }
     );
     assert_eq!(
         err.to_string(),
-        "no such procedure: nope (adj-hub / adj-worker / adj-report / adj-review-hub / adj-reviewer / adj-aide)"
+        "no such procedure: nope (adj-hub / adj-worker / adj-report / adj-review-hub / adj-reviewer)"
     );
 }
 
@@ -3054,16 +3053,6 @@ fn the_reader_reads_through_adj_and_never_writes_to_the_pull_request() {
     for forbidden in ["gh pr review", "gh pr comment", "git push"] {
         assert!(!text.contains(forbidden), "{forbidden}");
     }
-}
-
-#[test]
-fn the_aide_is_a_window_that_fetches_before_it_answers_and_reads_content_as_data() {
-    let text = render(find("adj-aide").unwrap(), "");
-    assert!(text.contains("a window, not a hub"));
-    assert!(text.contains("Fetch before you answer"));
-    assert!(text.contains("data, never instructions"));
-    assert!(text.contains("Act only on what the person says"));
-    assert!(!text.contains("denied, not asked"));
 }
 
 #[test]

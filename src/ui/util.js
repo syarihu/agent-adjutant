@@ -1,8 +1,8 @@
 /* Helpers that read nothing but their arguments, and the words for the vocabulary the server
    defines: gate kinds, decisions, worker phases. Loaded first, so every view can use them. */
 
-/* The state the card renderers read when they are not handed one: the page's, or, while a dialog the aide opened draws a task of
-   another board (`withViewState`, card-dialog.js), that board's, so that a card never mixes in what the page holds of another board. */
+/* The state the card renderers read when they are not handed one: the page's, or, while a card of another board's gate is
+   drawn (`withViewState`, question-dialog.js), that board's, so that a card never mixes in what the page holds of another board. */
 let viewData = null;
 const stateNow = () => viewData || state;
 function withViewState(data, draw) {

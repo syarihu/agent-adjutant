@@ -6,16 +6,6 @@ pub fn hub_record_path(root: &Path, slug: &str) -> PathBuf {
     root.join("hubs").join(format!("{slug}.json"))
 }
 
-/// The aide's record, and the lock each operation on it holds for its own load, change and
-/// save. The lock file is never unlinked.
-pub fn aide_record_path(root: &Path) -> PathBuf {
-    root.join("aide.json")
-}
-
-pub fn aide_lock_path(root: &Path) -> PathBuf {
-    root.join("aide.lock")
-}
-
 // ── the other direction: a worker in a worktree ──────────────────────
 
 /// A worker's record and its messages both live in the worktree, not in the state

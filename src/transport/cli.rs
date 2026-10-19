@@ -15,7 +15,6 @@ use crate::registry::{self, Context, context, context_as, context_without_hub, r
 use crate::transport::wording::wake_note_sentence;
 
 mod agent_sessions;
-mod aide;
 mod args;
 mod close;
 mod config;
@@ -39,7 +38,6 @@ pub mod tmux;
 mod worker;
 
 pub use agent_sessions::run as agent_sessions;
-pub use aide::aide_run;
 pub use close::close;
 use config::settings_for;
 pub use config::{hub_name, show_config};

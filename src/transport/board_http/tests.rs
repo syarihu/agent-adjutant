@@ -127,9 +127,9 @@ fn the_page_has_one_question_dialog_with_the_card_and_the_stack() {
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
-    // The card is built from the aide's evidence and the gate's buttons, so those come first; the work view draws the strip.
+    // The card is built from the gate's evidence and the gate's buttons, so those come first; the work view draws the strip.
     let at = |piece: &str| UI_HTML.find(piece).unwrap();
-    assert!(at("function aideEvidenceParts") < at("function questionCardHtml"));
+    assert!(at("function gateEvidenceParts") < at("function questionCardHtml"));
     assert!(at("function questionCardHtml") < at("function dialogStackCore"));
     assert!(at("function dialogStackCore") < at("function openQuestionDialog"));
     assert!(at("function openQuestionDialog") < at("function renderWorkTerm"));
@@ -1795,7 +1795,6 @@ mod others_drafts {
             waits: Default::default(),
             owner_icons: Default::default(),
             work_cache: Default::default(),
-            aide: Default::default(),
         }
     }
 
@@ -1846,64 +1845,18 @@ mod others_drafts {
     }
 
     #[test]
-    fn the_aide_is_none_until_it_is_opened_and_a_get_never_starts_one() {
+    fn the_aide_routes_are_gone() {
         let sandbox = crate::testing::Sandbox::new("{}");
         let r = resident(&sandbox.state());
-        let (status, body) = call(&r, "GET", "/api/aide");
-        assert_eq!(status, 200, "{body}");
-        assert_eq!(body["state"], "none");
-        assert_eq!(body["sessionId"], Value::Null);
-        assert_eq!(body["startable"], false);
-        assert!(!sandbox.state().join("aide.json").exists());
-    }
-
-    #[test]
-    fn the_display_is_empty_until_the_aide_shows_something_and_then_says_what_it_showed() {
-        let sandbox = crate::testing::Sandbox::new("{}");
-        let r = resident(&sandbox.state());
-        let (status, body) = call(&r, "GET", "/api/aide/display");
-        assert_eq!(status, 200, "{body}");
-        assert_eq!(body["topic"], Value::Null);
-        assert_eq!(body["parts"], json!([]));
-        assert_eq!(body["earlier"], json!([]));
-        assert!(!sandbox.state().join("aide-display.json").exists());
-
-        crate::board::aide::show(&sandbox.state(), crate::board::aide::ShowRequest::Waits).unwrap();
-        let (status, body) = call(&r, "GET", "/api/aide/display");
-        assert_eq!(status, 200, "{body}");
-        assert_eq!(body["topic"]["key"], "waits");
-        assert_eq!(body["parts"][0]["kind"], "waits");
-        assert_eq!(body["parts"][0]["ref"], Value::Null);
-        assert_eq!(body["parts"][0]["topic"], "waits");
-    }
-
-    #[test]
-    fn a_display_file_that_cannot_be_read_is_an_error_not_an_empty_area() {
-        let sandbox = crate::testing::Sandbox::new("{}");
-        std::fs::create_dir_all(sandbox.state()).unwrap();
-        std::fs::write(sandbox.state().join("aide-display.json"), "garbage").unwrap();
-        let r = resident(&sandbox.state());
-        let (status, body) = call(&r, "GET", "/api/aide/display");
-        assert_eq!(status, 500, "{body}");
-        assert!(
-            body["error"]
-                .as_str()
-                .unwrap()
-                .contains("aide-display.json")
-        );
-    }
-
-    #[test]
-    fn opening_or_resetting_the_aide_without_tmux_is_refused_before_anything_happens() {
-        let sandbox =
-            crate::testing::Sandbox::new(r#"{"defaults":{"terminal":{"preset":"iterm2"}}}"#);
-        let r = resident(&sandbox.state());
-        for path in ["/api/aide/open", "/api/aide/reset"] {
-            let (status, body) = call(&r, "POST", path);
-            assert_eq!(status, 409, "{path}: {body}");
-            assert_eq!(body["why"], "not-startable", "{path}");
+        for (method, path) in [
+            ("GET", "/api/aide"),
+            ("GET", "/api/aide/display"),
+            ("POST", "/api/aide/open"),
+            ("POST", "/api/aide/reset"),
+        ] {
+            let (status, _) = call(&r, method, path);
+            assert_eq!(status, 404, "{method} {path}");
         }
-        assert!(!sandbox.state().join("aide.json").exists());
     }
 
     #[test]

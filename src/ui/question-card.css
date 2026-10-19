@@ -118,3 +118,8 @@
 .qc-quick-text { white-space: pre-line; }
 .qc-quick .pick, .qc-strip button { padding: 4px 14px; font-size: 12.5px; }
 .qc-quick .qc-chips { margin: 0; }
+
+/* A few lines of a gate's diff as evidence, drawn with the diff view's own rows (.prd-*), without its file frame. */
+.qc-excerpt { font: 12px/1.65 var(--font-mono); overflow-x: auto; max-height: 260px; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); }
+.qc-ev-file { padding: 2px 8px; font: 11.5px/1.6 var(--font-mono); background: var(--md-sys-color-surface-container); }

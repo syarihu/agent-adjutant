@@ -54,8 +54,6 @@ function historyOf(task, base = baseOf(task), data = state) {
 /* Redraws what shows a task's history: the task panel open on it. The panel
    keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
-  // A dialog opened by the aide holds a task of its own, which the panel does not show.
-  if (cardDialog.scope && cardDialog.mode === 'task' && cardDialog.subject === id) cardDialogFollow();
   if ((view === 'board' || view === 'work') && selectedTaskId === id) renderTaskPanel();
 }
 
@@ -95,7 +93,7 @@ function gatesOf(task, data = state, base = baseOf(task)) {
    none for the first. */
 const claimSeq = g => +(/-(\d+)$/.exec(g.id)?.[1] || 1);
 
-/* `data` is the state whose open gates are looked in: this page's, or another board's (the aide's 「拡大」). */
+/* `data` is the state whose open gates are looked in: this page's, or another board's (a gate of another board's, in the TODO). */
 const isWaiting = (g, data = stateNow()) => (data.gates || []).some(x => gateRef(x) === gateRef(g));
 
 /* The gate a tab shows: the one picked from 経過, else the one waiting, else the latest. `pick`

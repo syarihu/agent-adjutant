@@ -6,7 +6,7 @@ use crate::task::{Kind, NewTask, Status};
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_request",
-        "description": "Pass a request for work to a hub, the way the board's 「依頼」 form does: a task record is written (queued, its words unread) and handed to the hub's inbox, which reads it and asks the person on a gate before it starts anything. Call it ONLY after the person has said yes in the chat to exactly what will be sent: which repository, which hub and its parent, and the words. `board` is the hub's `slug` from adjutant_work (`repos[].hubs[].slug`, or for a parent `repos[].parents[].hub`), `repo` its owner/name; the two must agree or nothing is written. `parent` is the parent's URL (`repos[].parents[].url`) and is required for a hub of a parent (refused without it), and is left out for the repository's own hub. The confirmation you show the person must name the hub and the parent (the answer's `hubName` and `hubKey` say which hub it was), so a mismatch between them is caught there. `body` is the person's own words, as they said them; do not add a plan or a reading. A hub that is not running is not an error: the request waits in its inbox (`present: false`). The code-review hub keeps no tasks and is refused (a PR to read goes through 「AI 下読み」). The answer says the task's id, which adjutant_show kind=request shows with its progress.",
+        "description": "Pass a request for work to a hub, the way the board's 「依頼」 form does: a task record is written (queued, its words unread) and handed to the hub's inbox, which reads it and asks the person on a gate before it starts anything. Call it ONLY after the person has said yes in the chat to exactly what will be sent: which repository, which hub and its parent, and the words. `board` is the hub's `slug` from adjutant_work (`repos[].hubs[].slug`, or for a parent `repos[].parents[].hub`), `repo` its owner/name; the two must agree or nothing is written. `parent` is the parent's URL (`repos[].parents[].url`) and is required for a hub of a parent (refused without it), and is left out for the repository's own hub. The confirmation you show the person must name the hub and the parent (the answer's `hubName` and `hubKey` say which hub it was), so a mismatch between them is caught there. `body` is the person's own words, as they said them; do not add a plan or a reading. A hub that is not running is not an error: the request waits in its inbox (`present: false`). The code-review hub keeps no tasks and is refused (a PR to read goes through 「AI 下読み」). The answer says the task's id; 「いまの仕事」 shows its progress.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -37,9 +37,9 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let parent = text_param(args, "parent");
     let board = text_param(args, "board").ok_or("a request needs `board`: the hub's slug")?;
     // Said before the board is looked up: the review hub is not in the address book, and "no such
-    // board" would send the aide looking for a spelling that does not exist.
+    // board" would send the caller looking for a spelling that does not exist.
     if board == crate::kernel::identity::REVIEW_SLUG {
-        return Err("the code-review hub keeps no tasks and takes no request: a PR to be read goes through 「AI 下読み」 (adjutant_show kind=reviews)".to_string());
+        return Err("the code-review hub keeps no tasks and takes no request: a PR to be read goes through 「AI 下読み」 (adjutant_reviews)".to_string());
     }
     let ctx = board_context(args)?;
     if ctx.repo.is_review() {
@@ -81,6 +81,5 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
         "task": { "id": task.id, "title": task.title, "status": task.status },
         "present": present,
         "woken": woken,
-        "show": { "kind": "request", "board": ctx.repo.slug, "id": task.id },
     }))
 }

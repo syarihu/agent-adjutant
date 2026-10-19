@@ -1391,7 +1391,7 @@ fn a_gate_opened_with_no_options_takes_only_its_choices_and_closing() {
 }
 
 #[test]
-fn a_record_is_not_closed_from_the_aide_only_sent_back() {
+fn a_record_is_not_closed_from_the_mcp_tool_only_sent_back() {
     let (_sandbox, ctx) = hub();
     let id = "20260922T041500Z-diff";
     let mut g = gate_with_a_draft(&ctx, id, Kind::Diff, false);

@@ -38,6 +38,25 @@ function workBetterSession(a, b) {
   return (a.agentSession?.updatedAt || a.phaseAt || 0) > (b.agentSession?.updatedAt || b.phaseAt || 0);
 }
 
+/* The open gates of the work document, oldest first. `entries` is `workEntries(doc, isGateDone)`, which leaves out the ones
+   answered on this page. A task that is parked is set aside on purpose, so its gate is not a wait. `id` is the gate's ref as
+   `gateRef` names it (`<board>/<gate id>`), `board` its board's slug and `gateId` its own id; `entryId` is the entry the gate
+   is on and `parent` the key of its task's parent. */
+function workWaits(entries) {
+  const out = [];
+  for (const e of entries || []) {
+    if ((e.items || []).some(i => i.kind === 'parked')) continue;
+    for (const g of e.gates || []) {
+      const cut = String(g.key).lastIndexOf('/');
+      out.push({ key: g.key, id: g.key, board: String(g.key).slice(0, Math.max(cut, 0)), gateId: String(g.key).slice(cut + 1), entryId: e.id,
+        parent: e.task?.parent || null, kind: g.gate, since: g.since, nwo: e.nwo, title: e.task?.title || e.gateTitle || g.title || e.ref, taskId: e.task?.id || null });
+    }
+  }
+  // A gate with no time is last, not first: nothing says it has waited.
+  const at = w => (Number.isFinite(w.since) ? w.since : Infinity);
+  return out.sort((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1));
+}
+
 /* The rows of the work document as entries, one to a row id (`<board>/<ref>`, the board the server says owns
    it): the task, or `hub:<id>`, or `session:<id>`. A task or parent-task hub that waits on the person with no
    session is an entry too, so what has nothing running is not lost. `isGateDone` says of `<slug>/<id>` whether

@@ -73,12 +73,19 @@ A unified 3-column operational view across all repositories:
 - **Middle Column**: The embedded tmux terminal of the currently selected session or hub, under a pinned heading: the title, the branch and agent, the Issue and PR links, and buttons at the right end (「タスク詳細」, 「IDE」 and 「セッションを閉じる」 for a task's worker; 「hub の詳細」 for a hub). Everything below is laid over the terminal and takes no room from it, so a question coming or going never resizes the terminal.
   - **Questions** slide down over the terminal's top. A quick confirmation (`quick`) is answered in its line; any other is one line with 「開いて答える」, which opens the question card. A hub's start check (a `dispatch` question that is not quick) is a form over the top half of the terminal, with its answer buttons always in view; it folds to one line.
   - **Two buttons at the bottom right.** 「最後のメッセージ」 shows the agent's last message as rendered Markdown (the whole text when the board still has it). 「書いて送る」 opens a wide box; its text is pasted into the terminal as one paste, and 「送ったら Enter も押す」 presses Enter after it (⌘Enter or Ctrl+Enter sends). The draft is kept per session while the page is open. The text goes in as one paste: an agent that reads bracketed paste (Claude Code does) gets it as one input, while a program that does not gets the lines as if typed.
+  - **With nothing selected** the middle is an empty state in place of the terminal: the `terminal` icon, 「セッションを選んでください」 and 「左の一覧から選ぶと、ここにターミナルが出ます。」. It shows whenever the address names no session: when the organisation has no session with a task, or after the selection was cleared.
   - **A hub** has no right column here: its status and counts are one line in the heading, and 「hub の詳細」 opens the rest (queue, inbox, idle worktrees, actions) in a dialog. A stopped hub shows 「hub を起動」 over its terminal (its start check, if any, is one line above it); while the start request is out, the block says 「起動しています…」 and has no button.
-- **Right Column**: The task detail panel, aide pane, or AI review summary. Not shown for a hub.
+- **Right Column**: The task detail panel or the AI review summary. Not shown for a hub.
+
+#### Which session is selected when
+- **Opening いまの仕事** (the first load, `/`, coming back from another view such as TODO, or Back) with nothing selected selects the session selected last, remembered per browser and per organisation (`localStorage`, one key to an organisation: `adj.workLast.<owner>`). A session that is gone, or that the repository filter hides, falls back to the organisation's first session with a task; with none, the empty state shows. A session in a folded group is still selected. The address is replaced, so Back does not return to the empty one. Choosing a row, and following a link, are remembered the same way; a row the page selects by itself (this fallback, or an organisation switch) is not, and clearing the selection forgets nothing.
+- **First session with a task** is the first row of the list as drawn that has a task and a session, merged or not, never a hub and never a task with nothing running. Only when every such row is inside a folded group is a folded group looked into.
+- **Switching organisation** selects that organisation's first session with a task (not the one remembered for it), or shows the empty state when it has none.
+- 「レビュー」 selects nothing by itself.
 
 #### Organisation, repository and hierarchy
 The left list shows one organisation (a GitHub owner) at a time:
-- **Organisation switch**: the avatar at the top of the rail, with the organisation's name and ⇕ under it. Its menu opens on hover or keyboard focus (or a tap), marks the current organisation with ✓ and lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Following a link to a row of another organisation switches to it.
+- **Organisation switch**: the avatar at the top of the rail, with the organisation's name and ⇕ under it. Its menu opens on hover or keyboard focus (or a tap), marks the current organisation with ✓ and lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Choosing an organisation selects its first session with a task. Following a link to a row of another organisation switches to it.
 - **Repository filter**: 「すべて」 or one repository of the organisation. With one chosen, the repository headings are left out.
 - **Hierarchy**: Repository → hub → sessions. A hub is a row heading its group; the tasks it runs are indented below it. A parent issue's hub shows the parent's number, title and `n / m マージ` progress.
 - **依頼する**: opens one dialog to ask a hub for a task: pick the repository (of the organisation) and the hub (the repository's own, or a parent task's), write what you want, and send it with 「渡す」 (Ctrl/⌘+Enter) or keep it with 「あとで（Backlog）」. An unsent text is kept for the next time. The new-task button and 「子タスクを足す」 open the same dialog; a board served alone keeps its own form.
@@ -118,17 +125,9 @@ Switches the left list to review requests from other people across repositories:
 - Request a read: `adj review request --pr <URL|owner/repo#N>` (or click on the PR row).
 - Concurrent readers: Up to 3 run concurrently in isolated temporary directories without mutating repository state.
 
-### 3. 副官 (The Aide)
-
-An interactive assistant session (shown when no specific task is selected in 「いまの仕事」):
-- Start/reset via `POST /api/aide/open` or clicking "副官に聞く".
-- Runs Claude Code in `<state>/aide` using your own global configuration, augmented with read-only tools, `adjutant_show`, and two action tools: `adjutant_request` (delegates work requests to a hub) and `adjutant_gate_answer` (answers gates on your behalf).
-- **Display Area (`adjutant_show`)**: The aide can render gates, wait lists, PR pre-reads, diff snippets, active requests (`request`), and task statuses directly into the adjacent display pane.
-- **Answering gates through the aide**: Clicking 「副官に答えを伝える」 on a waiting gate or 「この判断」 pre-fills `[gate <board>/<id>] ` in the prompt. The aide reads your instruction (e.g. 「B で」), previews the proposed decision, and answers the gate once you confirm.
-
 ---
 
-### 4. TODO (`?view=todo`)
+### 3. TODO (`?view=todo`)
 
 What waits on you, across every repository. The rail's TODO entry carries a badge with the count; the count is every open gate that is not parked. Pull requests you were asked to review are not in it: they are under 「レビュー」, whose rail entry has its own count. Terminal-only permission prompts, parked tasks' gates and your own tasks' PR turns are not in it.
 - **Popover**: resting the pointer on the entry (or focusing it with the keyboard) opens a list beside the rail. A quick confirmation is answered right there; any other row opens the TODO view with that item selected. It closes when the pointer and focus have left it, or on Escape, and never opens in the TODO view or over a dialog.

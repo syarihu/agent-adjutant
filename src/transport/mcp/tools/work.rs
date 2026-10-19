@@ -5,7 +5,7 @@ use super::text_param;
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_work",
-        "description": "What 「いまの仕事」 shows, for every repository the resident server serves: per repository the hubs, parents, session rows with their task and state, and `turns` (open gates waiting on the person, each with the `slug` of its board). Read only. This is the machine-wide view, not the repository of any directory, and it needs the resident server running (`adj server start`). Pass a gate's `slug` and `id` to adjutant_gate_read or adjutant_show.",
+        "description": "What 「いまの仕事」 shows, for every repository the resident server serves: per repository the hubs, parents, session rows with their task and state, and `turns` (open gates waiting on the person, each with the `slug` of its board). Read only. This is the machine-wide view, not the repository of any directory, and it needs the resident server running (`adj server start`). Pass a gate's `slug` and `id` to adjutant_gate_read.",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -99,56 +99,6 @@ pub const DEFAULT_REVIEWER_RUNNER: &str = "claude -n {name} --session-id {sessio
 /// Code makes of it (`mcp__adjutant__<tool>`).
 pub const MCP_SERVER_NAME: &str = "adjutant";
 
-/// The session name of the aide (`claude -n`). It cannot be taken for a hub: every hub slug
-/// but the code-review hub's ends in `-<16 hex>`, and the reader's names start `adjutant-read-`.
-pub const AIDE_NAME: &str = "adjutant-aide";
-
-/// The tools the aide may use without being asked: the one list the later tools extend. It is a
-/// minimum on top of the person's own permissions, not everything the aide can do.
-///
-/// Everything on this list reads, except `adjutant_show`, which writes only the aide's own display
-/// state (`aide-display.json`) and never a record another session acts on. Reading is not scoped
-/// to a directory the way the reader's is, because the aide serves the whole machine and has to
-/// read any checkout. A tool that writes anything else, or sends, would run with no prompt in a
-/// session that reads arbitrary files, so it needs its own change, which revisits the unscoped
-/// `Read` as well.
-///
-/// `adjutant_pending` stays off the list because reading marks a message as looked at and
-/// acknowledging archives it; `adjutant_refresh`, `send`, `tell`, `gate_open`, `gate_close` and
-/// `outbox` write. `adjutant_request` and `adjutant_gate_answer` send, so they stay off it too:
-/// they are asked about under the person's own permission rules, on top of the confirmation the
-/// aide's procedure takes in the chat before it calls either.
-pub const AIDE_TOOLS: &[&str] = &[
-    "mcp__adjutant__adjutant_skill",
-    "mcp__adjutant__adjutant_config",
-    "mcp__adjutant__adjutant_hub_status",
-    "mcp__adjutant__adjutant_work",
-    "mcp__adjutant__adjutant_gate_read",
-    "mcp__adjutant__adjutant_show",
-    "mcp__adjutant__adjutant_reviews",
-    "Read",
-    "Grep",
-    "Glob",
-    "Bash(adj skill:*)",
-];
-
-/// What the aide is told on startup, in the shape of `HUB_STARTUP_PROMPT`.
-pub const AIDE_STARTUP_PROMPT: &str = "Fetch the adj-aide procedure with adjutant_skill name=adj-aide (or `adj skill adj-aide` if that is not available), and act as the aide it describes.";
-
-/// The aide: the one session of the machine that belongs to no repository. It is fixed, with
-/// no config key.
-///
-/// The aide is a window the person talks to all day, so it starts as any session they open: their
-/// settings files, instructions, MCP servers, permission mode and rules load, and a prompt is
-/// answered in its pane. The reader is held to reading because it reads hostile PRs unattended;
-/// the aide is meant to act only on what the person types in front of it, under their own
-/// permission rules. On top of that it gets `--mcp-config`
-/// with adjutant's server, only when the person's config does not already name it (`{mcpConfig}`),
-/// `AIDE_TOOLS` allowed without asking, and the settings file (`{settings}`) with the hooks and a
-/// status line. Both `--mcp-config` and `--allowedTools` take any number of values, so each is
-/// followed by another flag and the prompt or the settings path cannot be read as one more value.
-const AIDE_RUNNER: &str = "claude -n {name} {mcpConfig} --allowedTools {tools} --session-id {sessionId} {settings} {prompt}";
-
 /// What the code-review hub is told on startup, in the shape of `HUB_STARTUP_PROMPT`.
 pub const REVIEW_HUB_STARTUP_PROMPT: &str = "Fetch the adj-review-hub procedure with adjutant_skill name=adj-review-hub (or `adj skill adj-review-hub` if that is not available), and start the code-review hub as it says.";
 
@@ -224,61 +174,6 @@ pub fn reviewer_command(
         prompt,
         settings,
     )
-}
-
-/// The `--mcp-config` value of the aide: adjutant's server, given when the person's own config
-/// does not name it, `adj mcp` of `exe`. Inline JSON, which Claude Code takes in place of a file.
-pub fn aide_mcp_config(exe: &str) -> String {
-    serde_json::json!({
-        "mcpServers": { MCP_SERVER_NAME: { "command": exe, "args": ["mcp"] } }
-    })
-    .to_string()
-}
-
-/// Whether the person's Claude Code config (`.claude.json`) already names adjutant's server for a
-/// session in `dir`: at user scope, or at local scope for that directory. The aide is then given
-/// no `--mcp-config` of its own, so the person's entry is the one used and no second entry under
-/// the same name shows a conflict.
-pub fn names_adjutant_server(claude_json: &serde_json::Value, dir: &str) -> bool {
-    let has = |v: Option<&serde_json::Value>| v.and_then(|s| s.get(MCP_SERVER_NAME)).is_some();
-    has(claude_json.get("mcpServers"))
-        || has(claude_json
-            .get("projects")
-            .and_then(|p| p.get(dir))
-            .and_then(|p| p.get("mcpServers")))
-}
-
-/// The command line that starts the aide session `session`. `mcp_config` is `None` when the
-/// person's config already names adjutant's server. `settings` is the file of hooks and status
-/// line; the launch always passes one (no file, no start), and `None` is for tests.
-pub fn aide_command(
-    env: &[(String, String)],
-    session: &str,
-    mcp_config: Option<&str>,
-    settings: Option<&str>,
-) -> String {
-    let flag = settings_flag(settings);
-    let mut template = settings_template(AIDE_RUNNER, settings);
-    let mcp_flag = match mcp_config {
-        Some(config) => format!("--mcp-config {}", sh_quote(config)),
-        None => {
-            template = drop_placeholder(&template, "mcpConfig");
-            String::new()
-        }
-    };
-    let tools = AIDE_TOOLS.join(",");
-    let command = render(
-        &template,
-        &[
-            ("name", Sub::Quoted(AIDE_NAME)),
-            (SESSION_PLACEHOLDER, Sub::Quoted(session)),
-            ("mcpConfig", Sub::Raw(&mcp_flag)),
-            ("tools", Sub::Quoted(&tools)),
-            ("prompt", Sub::Quoted(AIDE_STARTUP_PROMPT)),
-            (SETTINGS_PLACEHOLDER, Sub::Raw(&flag)),
-        ],
-    );
-    with_env(env, command)
 }
 
 /// The command line that reopens the hub session `session`.
@@ -526,18 +421,11 @@ pub fn runner_for_procedure(settings: &config::Settings, procedure: &str) -> Opt
     match procedure {
         "adj-hub" | "adj-review-hub" => settings.hub_runner.clone(),
         "adj-reviewer" => settings.reviewer_runner.clone(),
-        // The aide's line is fixed (`aide_command`), not a configured runner.
-        "adj-aide" => None,
         _ => settings.agent_runner.clone(),
     }
 }
 
 pub fn resolve_runner_for(cwd: Option<&Path>, procedure: &str) -> Option<String> {
-    // Always rendered for Claude Code: it must not fall through to the `agentRunner` of whatever
-    // repository the caller stands in.
-    if procedure == "adj-aide" {
-        return None;
-    }
     // The review procedures run outside any repository.
     let hub =
         matches!(procedure, "adj-review-hub" | "adj-reviewer").then_some(identity::REVIEW_HUB_ID);
@@ -702,101 +590,6 @@ mod tests {
             "{args}"
         );
         assert!(args.ends_with("<--settings></h.json><go>"), "{args}");
-    }
-
-    #[test]
-    fn the_aide_line_loads_the_persons_settings_and_allows_its_tools_without_asking() {
-        let tools = AIDE_TOOLS.join(",");
-        for settings in [None, Some("/state/hooks.json")] {
-            for mcp in [None, Some(aide_mcp_config("/bin/adj"))] {
-                let out = aide_command(&[], SID, mcp.as_deref(), settings);
-                assert!(out.starts_with("claude -n adjutant-aide "), "{out}");
-                assert!(out.contains(&format!("--session-id {SID}")), "{out}");
-                for dropped in [
-                    "--setting-sources",
-                    "--strict-mcp-config",
-                    "--permission-mode",
-                ] {
-                    assert!(!out.contains(dropped), "{dropped} in {out}");
-                }
-                assert!(
-                    out.contains(&format!("--allowedTools '{tools}' --session-id")),
-                    "{out}"
-                );
-                assert_eq!(out.contains("--mcp-config"), mcp.is_some(), "{out}");
-                assert_eq!(out.contains("--settings"), settings.is_some(), "{out}");
-                assert!(!out.contains("  "), "{out}");
-                assert!(out.ends_with(&sh_quote(AIDE_STARTUP_PROMPT)), "{out}");
-                // Nothing that writes is allowed without asking.
-                for off in ["Edit", "Write", "Bash(gh", "Bash(git", "adj send"] {
-                    assert!(!out.contains(off), "{off} in {out}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn the_aide_mcp_config_and_tools_each_reach_the_agent_as_one_argument() {
-        let mcp = aide_mcp_config("/a b/adj");
-        let tools = AIDE_TOOLS.join(",");
-        for given in [Some(mcp.as_str()), None] {
-            let line = aide_command(&[], SID, given, Some("/h.json"));
-            let script =
-                format!("claude() {{ for a in \"$@\"; do printf '<%s>' \"$a\"; done; }}; {line}");
-            let out = std::process::Command::new("sh")
-                .args(["-c", &script])
-                .output()
-                .unwrap();
-            let args = String::from_utf8_lossy(&out.stdout).to_string();
-            let expected = match given {
-                Some(mcp) => {
-                    format!("<--mcp-config><{mcp}><--allowedTools><{tools}><--session-id>")
-                }
-                None => format!("<-n><adjutant-aide><--allowedTools><{tools}><--session-id>"),
-            };
-            assert!(args.contains(&expected), "{args}");
-            assert!(
-                args.ends_with(&format!("<--settings></h.json><{AIDE_STARTUP_PROMPT}>")),
-                "{args}"
-            );
-            assert!(!args.contains("<--setting-sources>"), "{args}");
-        }
-        let parsed: serde_json::Value = serde_json::from_str(&mcp).unwrap();
-        assert_eq!(parsed["mcpServers"]["adjutant"]["command"], "/a b/adj");
-        assert_eq!(parsed["mcpServers"]["adjutant"]["args"][0], "mcp");
-    }
-
-    #[test]
-    fn the_persons_own_adjutant_server_is_found_at_user_or_local_scope() {
-        use serde_json::json;
-        let user = json!({"mcpServers": {"adjutant": {}}});
-        let local = json!({"projects": {"/s/aide": {"mcpServers": {"adjutant": {}}}}});
-        assert!(names_adjutant_server(&user, "/s/aide"));
-        assert!(names_adjutant_server(&local, "/s/aide"));
-        assert!(!names_adjutant_server(&local, "/s/other"));
-        assert!(!names_adjutant_server(
-            &json!({"mcpServers": {"other": {}}}),
-            "/s/aide"
-        ));
-        assert!(!names_adjutant_server(&json!({}), "/s/aide"));
-        assert!(!names_adjutant_server(&json!(null), "/s/aide"));
-    }
-
-    #[test]
-    fn the_aide_startup_prompt_is_not_a_slash_command() {
-        assert!(!AIDE_STARTUP_PROMPT.trim_start().starts_with('/'));
-        assert!(AIDE_STARTUP_PROMPT.contains("adjutant_skill name=adj-aide"));
-        assert!(AIDE_STARTUP_PROMPT.contains("`adj skill adj-aide`"));
-    }
-
-    #[test]
-    fn the_aide_procedure_has_no_configured_runner() {
-        assert_eq!(resolve_runner_for(None, "adj-aide"), None);
-        let settings = config::Settings {
-            agent_runner: Some("codex exec {prompt}".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(runner_for_procedure(&settings, "adj-aide"), None);
     }
 
     #[test]

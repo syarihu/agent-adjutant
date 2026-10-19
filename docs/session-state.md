@@ -352,10 +352,7 @@ A session has one status line. If adjutant injected one through `--settings`, it
 user's, so it does not. Instead `adj hook claude --status-line` reads the same stdin a status line
 command gets and records `model`, `contextPercent` and `rateLimits` into the row, without creating
 one. It prints nothing, so a user who wants these fields adds one line to their own status line
-script, piping its stdin to it. Without it the rows simply lack those fields. The one exception is
-the aide (shown as 副官): its context use is shown on the board, so adj gives it a settings file of
-its own with a status line that runs this command, which replaces the user's own status line in
-that one window.
+script, piping its stdin to it. Without it the rows simply lack those fields.
 
 The row keeps `model` as the display name (the id when there is none), `contextPercent` as a whole
 number, and `rateLimits` as `{ fiveHour, sevenDay }`, each `{ usedPercent, resetsAt }` with

@@ -240,7 +240,7 @@ heavy collection to a sub-agent.
    | `kind` | Written by | What the hub does |
    | --- | --- | --- |
    | `report` | a worker | Run "When a request arrives" from Step 0 |
-   | `request` | a person (the dashboard or the aide) | Run "A request from the dashboard" (it says where to start) |
+   | `request` | a person (the dashboard, or a session through `adjutant_request`) | Run "A request from the dashboard" (it says where to start) |
    | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
    | `file-issue` | a person (the dashboard, linking a running session to a new task) | "A linked task that needs an issue" |
    | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
@@ -2085,9 +2085,9 @@ they asked for it to be started. Reply in one line with what was not done and ho
 
 What a person handed over from the board. **It goes through the same procedure as a worker's
 `report`; only the two ends differ.** There is **nobody to ask back** — the requester is a person at
-the board's form, or the aide passing on what they said in its chat; neither is a session with an
+the board's form, or a session passing on what they said through `adjutant_request`; neither is a session with an
 address, so do not `adjutant_tell` it. The record is the reply: what needs the person is asked on the
-board, and the board (and the aide's `request` part) shows how far the request got from the record.
+board, and the board shows how far the request got from the record.
 
 **Read the `## Read first` line.** When it says `yes`, the person wrote what they want done in their
 own words and chose nothing else: the lines from `## Kind` to `## Start` are the record's defaults,
@@ -2204,7 +2204,7 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   "4. Start the worker", so the brief's Task line has its URL. If the record's `executor` is `jules` (the body's
   `## Implementer` line says so too), take "5. Hand it to Jules" in place of "4. Start the worker": no
   brief is written, and the handover note goes into the planning sub-agent's brief instead.
-  **There is nobody to ask back either** — neither the board nor the aide has an address
+  **There is nobody to ask back either** — the board has no address
   `adjutant_tell` could use; the record is the reply. If something is missing, write it in Step 5's `--note` and leave it.
 - **If the request says the title is not read yet (`## Title`), run `adj task fetch-issue --id
   {task_id}` before `adj task brief`**: the issue could not be read when it was handed over, and

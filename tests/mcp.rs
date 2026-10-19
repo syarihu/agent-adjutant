@@ -56,7 +56,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
     assert_eq!(replies.len(), 5, "{replies:#?}");
 
     assert_eq!(replies[0]["result"]["serverInfo"]["name"], "adjutant");
-    assert_eq!(replies[1]["result"]["prompts"].as_array().unwrap().len(), 6);
+    assert_eq!(replies[1]["result"]["prompts"].as_array().unwrap().len(), 5);
     let procedure = replies[2]["result"]["messages"][0]["content"]["text"]
         .as_str()
         .unwrap();
@@ -65,7 +65,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
         !procedure.starts_with("---"),
         "frontmatter leaked into the procedure"
     );
-    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 16);
+    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 15);
 
     let hub = tool_result(&replies[4]);
     assert_eq!(hub["hubName"], HUB);

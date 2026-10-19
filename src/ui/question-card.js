@@ -2,7 +2,7 @@
    One gate as one card that reads top to bottom: あなたの依頼, 調べたこと, 計画, then the question as the heading, the choices one to a
    row, the comment box and the buttons. These functions take the gate and what surrounds it and return markup, touching neither the
    page nor the network, so `src/ui/tests/question-card.test.js` runs them under `node --test`. Loaded after util.js (`esc`, `md`,
-   `kindOf`), decide.js (`BUTTONS`, `choicesHtml`, `gateRef`) and aide-display.js (`aideEvidenceParts`, `aideFocusLine`), and before
+   `kindOf`), decide.js (`BUTTONS`, `choicesHtml`, `gateRef`) and gate-evidence.js (`gateEvidenceParts`, `gateFocusLine`), and before
    my-work.js. What the card needs from the page comes in as `ctx`, never from a global that holds state, so a second board can
    build its own:
      { task, plan, read, nwo, key, issue: { number, url, hasBody }, now, ticked }
@@ -121,10 +121,10 @@ function qcDiffHtml(g, ctx) {
   if ((g.reviewRounds || []).length) chips.push(`セルフレビュー ${g.reviewRounds.length} 巡`);
   if (fixed) chips.push(`修正済み ${fixed}`);
   h += qcChips([...chips, ...(g.facts || [])]);
-  const evidence = aideEvidenceParts(g.diff, g.findings, ctx.read || null);
+  const evidence = gateEvidenceParts(g.diff, g.findings, ctx.read || null);
   if (evidence.html) {
     const note = evidence.annotated ? `<div class="qc-note">AI 下読みの注釈（${esc(prSha7(ctx.read.sha))} 時点）</div>` : '';
-    h += qcSub('visibility', '見てほしいところ') + `${note}<div class="aide-excerpt">${evidence.html}</div>`;
+    h += qcSub('visibility', '見てほしいところ') + `${note}<div class="qc-excerpt">${evidence.html}</div>`;
   }
   return h + qcFindingsHtml(g);
 }
@@ -226,7 +226,7 @@ function questionCardArticleHtml(g, ctx = {}) {
 function quickRowHtml(g, ctx = {}) {
   // The whole question, not its first line: a quick row has no card to open for the rest. A list that has the card beside it
   // (`ctx.firstLine`) shows the first line only.
-  const line = ctx.firstLine ? aideFocusLine(g.focus) || aideFocusLine(g.title) : mdPlain(g.focus).trim() || mdPlain(g.title).trim();
+  const line = ctx.firstLine ? gateFocusLine(g.focus) || gateFocusLine(g.title) : mdPlain(g.focus).trim() || mdPlain(g.title).trim();
   const choices = g.choices || [];
   const lead = choices.findIndex(c => c.recommended);
   const buttons = choices.length
@@ -241,7 +241,7 @@ function questionStripHtml(gates, ctx = {}) {
   return (gates || []).map(g => {
     const c = typeof ctx === 'function' ? ctx(g) : ctx;
     if (g.quick) return quickRowHtml(g, c);
-    const line = aideFocusLine(g.focus) || aideFocusLine(g.title);
+    const line = gateFocusLine(g.focus) || gateFocusLine(g.title);
     return `<div class="qc-strip">${qcIcon('front_hand')}<span class="qc-kind">${esc(kindOf(g.kind)[0])}</span><span class="qc-strip-text">${esc(line)}</span>`
       + `<button type="button" class="btn-m3-tonal" data-qc-open-gate="${esc(qcKey(g, c))}">開いて答える</button></div>`;
   }).join('');
