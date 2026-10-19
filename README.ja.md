@@ -124,8 +124,8 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 
 エージェント環境（`adjutant mcp`）内では、以下のプロンプトとツールが提供されます。
 
-- **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスク着手〜完了）、`adj-report`（作業中のバグ報告）、`adj-review-hub`、`adj-reviewer`、`adj-aide`。
-- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_show`、`adjutant_request`、`adjutant_gate_answer`。
+- **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスク着手〜完了）、`adj-report`（作業中のバグ報告）、`adj-review-hub`、`adj-reviewer`。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_request`、`adjutant_gate_answer`。
 
 ---
 
@@ -163,7 +163,7 @@ MCP 経由で配信される手順書ではツールの個別許可リストを�
 
 詳細な機能ガイドは [`docs/`](docs/) 配下に用意されています。
 
-- [**Web ボードと常駐サーバー**](docs/board.ja.md) ([English](docs/board.md)): ボードの各ビュー、「いまの仕事」、AI 下読み（PR レビュー支援）、副官、REST API、launchd による常駐化設定。
+- [**Web ボードと常駐サーバー**](docs/board.ja.md) ([English](docs/board.md)): ボードの各ビュー、「いまの仕事」、AI 下読み（PR レビュー支援）、REST API、launchd による常駐化設定。
 - [**Jules へのタスク委譲**](docs/jules.ja.md) ([English](docs/jules.md)): Google Jules へのタスク割り当て、サブエージェントによる設計書作成、レビュー指摘の自動転送。
 - [**設定とランタイム詳細**](docs/configuration.ja.md) ([English](docs/configuration.md)): tmux 連携の詳細、wake の仕組み、ランナーテンプレート、セッションのライフサイクル管理。
 - [**アーキテクチャとレイヤ構成**](docs/architecture.md): クレートの内部モジュール構成、レイヤ規則、状態保存の仕組み。

@@ -124,8 +124,8 @@ You can answer gates on the web board, in the worker's terminal (`adj gate close
 
 When running inside an agent session (`adjutant mcp`), adjutant exposes tools and prompts:
 
-- **Prompts**: `adj-hub` (hub orchestration), `adj-worker` (task execution), `adj-report` (bug reporting to hub), `adj-review-hub`, `adj-reviewer`, `adj-aide`.
-- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_show`, `adjutant_request`, `adjutant_gate_answer`.
+- **Prompts**: `adj-hub` (hub orchestration), `adj-worker` (task execution), `adj-report` (bug reporting to hub), `adj-review-hub`, `adj-reviewer`.
+- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_request`, `adjutant_gate_answer`.
 
 ---
 
@@ -163,7 +163,7 @@ Crucial checkpoints (approving implementation plans, filing issues, reviewing di
 
 Comprehensive guides are available in the [`docs/`](docs/) directory:
 
-- [**Web Board & Resident Server**](docs/board.md) ([日本語](docs/board.ja.md)): Board views, 「いまの仕事」, AI 下読み (PR review), 副官 (Aide), REST API, and launchd setup.
+- [**Web Board & Resident Server**](docs/board.md) ([日本語](docs/board.ja.md)): Board views, 「いまの仕事」, AI 下読み (PR review), REST API, and launchd setup.
 - [**Jules Integration**](docs/jules.md) ([日本語](docs/jules.ja.md)): Delegating tasks to Google Jules, automated design planning, and review comment relay.
 - [**Configuration & Runtime**](docs/configuration.md) ([日本語](docs/configuration.ja.md)): Deep dive into tmux presets, wake hooks, runner templates, and session lifecycles.
 - [**Architecture & Layering**](docs/architecture.md): Internal crate modules, architectural rules, and state storage design.

@@ -582,9 +582,9 @@ JSON
 | `sections` | What you found or planned, in order: `{ "heading", "body", "stage" }`, the heading picked to fit, the body markdown, `stage` `found` (the default) or `plan`. A `result` needs these or a `body` |
 | `quick` | `true` for a fixed confirmation answered with one press. It needs `choices`, and carries no `body`, `diff`, `run`, `steps`, `sections`, `findings`, `commands` or `manual` |
 
-**`focus` is required on every gate that waits; `adj gate open` refuses one without it.** The aide's
-display area shows it as the question, so a gate with no `focus` would reach the person with
-nothing asked. A record (`"wait": false`) needs none. Do not put a 懸念点, 迷っていること or
+**`focus` is required on every gate that waits; `adj gate open` refuses one without it.** The question
+card (in the TODO, and over the terminal in 「いまの仕事」) shows it as the question, so a gate with no
+`focus` would reach the person with nothing asked. A record (`"wait": false`) needs none. Do not put a 懸念点, 迷っていること or
 分からなかったこと section in `sections`: that is `unsure`.
 
 - `facts` are what is true whatever the decision (number of rounds, the `verify` result, lines).
