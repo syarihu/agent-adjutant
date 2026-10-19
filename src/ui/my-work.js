@@ -51,6 +51,9 @@ const work = {
   open: null,         // the row the person has open: { nwo, id, nav, at } (`at`: the server's time it was opened), the mark `left` is written when it is left (it feeds 離れていた間に only; leaving does not read the row)
   entries: new Map(), // the rows' entries by id (my-work-seen.js), as last drawn
   newOrder: [],       // the ids of the rows of 新着 in the order the list last drew them
+  listedByKey: new Map(), // every row of the list as shown, folded groups included (rowsByKey holds the drawn ones only), by key
+  firstTask: null,    // the first session with a task in the list as shown (workFirstTaskRow)
+  restore: false,     // set when 「いまの仕事」 is opened with nothing selected: the selection last made is brought back once (workRestoreSelection)
 };
 /* The middle terminal: a second slot beside the panel's. It connects through the
    board that was selected, since `state` is that board's. */
@@ -995,6 +998,82 @@ function workNewOrder(items, folded = new Set()) {
   return out;
 }
 
+/* The first session with a task in the tree, in the order the list draws it: the first row that has a task and a session, not a hub's
+   and not a task with nothing running, merged or not. What a folded group holds is not drawn, so the rows outside the folded groups
+   come first; only when none of them qualifies is a folded group looked into. */
+function workFirstTaskRow(items, folded = new Set()) {
+  const find = (list, intoFolded) => {
+    for (const it of list) {
+      if (it.row) {
+        if (it.row.task && !it.row.turn && !it.row.isHub) return it.row;
+        continue;
+      }
+      if (folded.has(it.key) && !intoFolded) continue;
+      const found = find(it.items, intoFolded);
+      if (found) return found;
+    }
+    return null;
+  };
+  return find(items, false) || find(items, true);
+}
+
+/* What the person selected last in an organisation is kept in this browser, one key to an organisation (`adj.workLast.<login>`,
+   the owner-less one under ORG_NONE_KEY): `{ board, task }`, the address of the row. Only a changed selection is written, and an
+   empty one clears nothing. A value that is not an address reads as none. */
+const WORK_LAST_PREFIX = 'adj.workLast.';
+const workLastKey = login => WORK_LAST_PREFIX + (login || ORG_NONE_KEY);
+function workParseLast(raw) {
+  try {
+    const v = JSON.parse(raw || '');
+    return v && typeof v.board === 'string' && v.board && typeof v.task === 'string' && v.task ? { board: v.board, task: v.task } : null;
+  } catch { return null; }
+}
+function workLastRead(login) {
+  try { return workParseLast(localStorage.getItem(workLastKey(login))); } catch { return null; }
+}
+
+/* Keep the row the address selects as the one of its organisation: only a row of 「いまの仕事」, not a PR or a bare gate. */
+function workRemember() {
+  if (view !== 'work' || prefs.workTab !== 'task' || !nav.task || !nav.board || nav.board === 'all' || isPrRef(nav.task) || isGateRef(nav.task)) return;
+  const sel = workSelected();
+  const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
+  if (!nwo) return;
+  const login = orgOf(nwo);
+  const cur = workLastRead(login);
+  if (cur && cur.board === nav.board && cur.task === nav.task) return;
+  try { localStorage.setItem(workLastKey(login), JSON.stringify({ board: nav.board, task: nav.task })); } catch {}
+}
+
+/* What a remembered address is in the list as shown: a row (or a hub) of it, or a parent of the organisation, else null. Rows
+   hidden by the repository filter are not in it; a row inside a folded group is. */
+function workResolveLast(last) {
+  if (!last) return null;
+  if (isParentRef(last.task)) {
+    const p = workParentOf(parentKeyOfRef(last.task));
+    return p && workInShown(p.repo.nwo, orgScope(), workRepoChoice()) ? { parent: p.key } : null;
+  }
+  return work.listedByKey.get(`${last.board}/${last.task}`) || work.hubsByKey.get(`${last.board}/${last.task}`) || null;
+}
+
+/* Opening 「いまの仕事」 with nothing selected (`work.restore`, set by setView): the session selected last in this organisation, else the
+   first session with a task, else the empty middle. Once, as soon as the list is drawn, and not over a link the page is still resolving.
+   The address is replaced, so Back does not return to the empty one. */
+function workRestoreSelection() {
+  if (!work.restore || !work.doc || view !== 'work') return;
+  work.restore = false;
+  if (nav.task || prefs.workTab !== 'task' || pendingGate || pendingTask) return;
+  const last = workResolveLast(workLastRead(currentOrg()));
+  if (last?.parent) return selectWorkParent(last.parent, { replace: true });
+  const row = last || work.firstTask;
+  if (row) selectWorkRow(row, { replace: true });
+}
+
+/* Another organisation was chosen: its first session with a task is selected, or nothing, which shows the empty middle. */
+function workSelectFirst() {
+  if (work.firstTask) selectWorkRow(work.firstTask);
+  else go({ board: 'all', view: 'work', task: null, pane: 'detail' });
+}
+
 function renderWorkList() {
   renderWorkRepoFilter();
   renderWorkTools();
@@ -1004,6 +1083,9 @@ function renderWorkList() {
   // The box is set apart from the markup, so a toggle does not redraw the list.
   for (const box of wk('wk-list').querySelectorAll('[data-wk-advance]')) box.checked = !!prefs.reviewNext;
 }
+
+/* What the middle says with nothing selected. */
+const WORK_MIDDLE_EMPTY_HTML = '<div class="wk-mid-empty-in"><span class="material-symbols-outlined" aria-hidden="true">terminal</span><strong>セッションを選んでください</strong><span>左の一覧から選ぶと、ここにターミナルが出ます。</span></div>';
 
 /* What the list says when the organisation has nothing in it. */
 const WORK_EMPTY_HTML = '<div class="wk-empty wk-empty-none"><span class="material-symbols-outlined" aria-hidden="true">inbox</span><span>この組織にはまだセッションがありません。<br>「依頼する」から始められます。</span></div>';
@@ -1036,6 +1118,8 @@ function drawWorkList() {
   const tree = workTreeByParent(listed, chipsByRepo, repos, { headings: !choice });
   const folded = new Set(prefs.workFolded);
   work.newOrder = workNewOrder(tree, folded);
+  work.firstTask = workFirstTaskRow(tree, folded);
+  work.listedByKey = new Map(listed.map(r => [r.key, r]));
   // A merged row's git state is read in the background, a minute at a time; the list is drawn again with each answer.
   for (const r of listed) if (workCleanable(r)) workCleanWant(r);
   const cells = new Map();
@@ -1276,6 +1360,11 @@ function workTermHeadHtml(sel, free = null, own = null, hub = null, task = null)
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
   if (view !== 'work') return;
+  // With nothing selected the middle is the empty state in the place of the terminal and the read-through.
+  const empty = !nav.task;
+  wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
+  setWorkTermPart('empty', wk('wk-mid-empty'), empty ? WORK_MIDDLE_EMPTY_HTML : '');
+  wk('wk-mid-empty').hidden = !empty;
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
   // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
   if (isPrRef(nav.task)) {
@@ -1376,6 +1465,7 @@ function workFollowOrg() {
 
 function syncWorkSelection() {
   workFollowOrg();
+  workRemember();
   renderOrgSwitch();
   workTrack();
   markWorkSelection();
@@ -1391,6 +1481,8 @@ function renderWorkView() {
   renderOthersList();
   renderWorkRate();
   syncWorkSelection();
+  // Not in this call: the selection goes through `go`, which draws the screen again.
+  if (work.restore) queueMicrotask(workRestoreSelection);
 }
 
 /* ── choosing ── */
@@ -1429,10 +1521,10 @@ function selectWorkRow(r, { replace = false, gate: wanted = null } = {}) {
   workTrack();
 }
 
-function selectWorkParent(key) {
+function selectWorkParent(key, { replace = false } = {}) {
   const p = workParentOf(key);
   if (!p) return;
-  go({ board: workParentBoard(p), view: 'work', task: PARENT_REF + p.key, pane: 'detail' }, { replace: nav.task === PARENT_REF + p.key });
+  go({ board: workParentBoard(p), view: 'work', task: PARENT_REF + p.key, pane: 'detail' }, { replace: replace || nav.task === PARENT_REF + p.key });
 }
 
 /* "Mark all read": every row that is new is read as of now (and `left`, so that 離れていた間に starts there too). */

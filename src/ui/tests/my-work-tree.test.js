@@ -82,6 +82,7 @@ vm.runInContext([
   cut(/^function workRepoMenuHtml[\s\S]*?^}/m),
   cut(/^const workRepoLabel = [^\n]*;/m),
   cut(/^const WORK_EMPTY_HTML = [^\n]*;/m),
+  cut(/^const WORK_MIDDLE_EMPTY_HTML = [^\n]*;/m),
   cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
   cut(/^const workMergedEnd = [^\n]*;/m),
   cut(/^function workTurnRowHtml[\s\S]*?^}/m),
@@ -92,6 +93,10 @@ vm.runInContext([
   cut(/^function workHubWhyHtml[\s\S]*?^}/m),
   cut(/^const workNewest = [^\n]*;/m),
   cut(/^function workNewOrder[\s\S]*?^}/m),
+  cut(/^function workFirstTaskRow[\s\S]*?^}/m),
+  cut(/^const WORK_LAST_PREFIX = [^\n]*;/m),
+  cut(/^const workLastKey = [^\n]*;/m),
+  cut(/^function workParseLast[\s\S]*?^}/m),
   cut(/^function workFoldButton[\s\S]*?^}/m),
   cut(/^function workHubGroupName[\s\S]*?^}/m),
   cut(/^function workHiddenHubWaits[\s\S]*?^}/m),
@@ -989,4 +994,173 @@ test('the repository menu lists the organisation, then each repository, the chos
 test('an organisation with nothing in it says how to start', () => {
   const html = run('WORK_EMPTY_HTML');
   assert.ok(html.includes('inbox') && html.includes('この組織にはまだセッションがありません') && html.includes('「依頼する」から始められます'));
+});
+
+test('the middle with nothing selected says to pick a session, with the terminal icon', () => {
+  const html = run('WORK_MIDDLE_EMPTY_HTML');
+  assert.ok(html.includes('>terminal</span>'));
+  assert.ok(html.includes('<strong>セッションを選んでください</strong>'));
+  assert.ok(html.includes('左の一覧から選ぶと、ここにターミナルが出ます。'));
+});
+
+/* ── the first session with a task, and the selection kept per organisation ── */
+
+const leaf = (key, extra = {}) => ({ row: { key, task: { id: key }, ...extra }, place: 'tree' });
+const group = (key, items) => ({ key, items });
+const firstOf = (tree, folded = []) => run('workFirstTaskRow(tree, folded)', { tree, folded: new Set(folded) })?.key ?? null;
+
+test('the first session with a task is the first row in list order that has a task, a session and is no hub', () => {
+  const tree = [group('repo:a', [
+    group('none:a', [leaf('hub-row', { isHub: true }), leaf('idle-task', { turn: true }), leaf('bare', { task: null }), leaf('t1'), leaf('t2')]),
+    group('parent:a/#2', [leaf('t3')]),
+  ])];
+  assert.strictEqual(firstOf(tree), 't1');
+  assert.strictEqual(firstOf([]), null);
+});
+
+test('a merged row is not skipped, and a row of a folded group is left for last', () => {
+  const merged = { prState: 'merged', id: 'm' };
+  assert.strictEqual(firstOf([leaf('m', { task: merged }), leaf('t1')]), 'm');
+  const tree = [group('g1', [leaf('in-folded')]), group('g2', [leaf('in-open')])];
+  assert.strictEqual(firstOf(tree, ['g1']), 'in-open');
+  // Every group folded: the first row inside them, so the empty middle is not shown over a list that has sessions.
+  assert.strictEqual(firstOf(tree, ['g1', 'g2']), 'in-folded');
+  // A nested folded group is skipped inside an open one.
+  assert.strictEqual(firstOf([group('o', [group('f', [leaf('x')]), leaf('y')])], ['f']), 'y');
+});
+
+test('what was selected last reads back only as an address of a board and a task', () => {
+  const parse = raw => plain(run('workParseLast(raw)', { raw }));
+  assert.deepStrictEqual(parse('{"board":"b","task":"41"}'), { board: 'b', task: '41' });
+  assert.deepStrictEqual(parse('{"board":"b","task":"41","extra":1}'), { board: 'b', task: '41' });
+  for (const bad of ['', 'x', 'null', '[]', '{"board":"b"}', '{"board":"","task":"1"}', '{"board":1,"task":"1"}']) assert.strictEqual(parse(bad), null, bad);
+});
+
+function lastWorld(over = {}) {
+  const store = new Map();
+  const calls = [];
+  const c = vm.createContext({
+    ORG_NONE_KEY: '-', localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, v); } },
+    view: 'work', prefs: { workTab: 'task' }, nav: { board: 'b-1', task: '41' }, pendingGate: null, pendingTask: null,
+    isPrRef: x => String(x).startsWith('pr:'), isGateRef: x => String(x).startsWith('gate:'), isParentRef: x => String(x).startsWith('parent:'), parentKeyOfRef: x => x.slice(7),
+    orgOf: nwo => (String(nwo).includes('/') ? String(nwo).split('/')[0].toLowerCase() : ''), currentOrg: () => 'acme', orgScope: () => ({}), workRepoChoice: () => '',
+    workInShown: () => true, workParentOf: key => (key === '#2' ? { key, repo: { nwo: 'acme/a' } } : null),
+    workSelected: () => ({ repo: { nwo: 'Acme/a' } }),
+    work: { doc: {}, restore: true, listedByKey: new Map(), hubsByKey: new Map(), firstTask: null },
+    selectWorkRow: (r, o) => calls.push(['row', r.key, !!o?.replace]), selectWorkParent: (k, o) => calls.push(['parent', k, !!o?.replace]),
+    go: p => calls.push(['go', p.task]),
+    ...over,
+  });
+  vm.runInContext([
+    cut(/^const WORK_LAST_PREFIX = [^\n]*;/m), cut(/^const workLastKey = [^\n]*;/m), cut(/^function workParseLast[\s\S]*?^}/m), cut(/^function workLastRead[\s\S]*?^}/m),
+    cut(/^function workRemember[\s\S]*?^}/m), cut(/^function workResolveLast[\s\S]*?^}/m), cut(/^function workRestoreSelection[\s\S]*?^}/m), cut(/^function workSelectFirst[\s\S]*?^}/m),
+  ].join('\n'), c);
+  return { c, store, calls, run: code => vm.runInContext(code, c) };
+}
+
+test('the selection is kept for the organisation of its row, only when it changed, and an empty one clears nothing', () => {
+  const w = lastWorld();
+  w.run('workRemember()');
+  assert.deepStrictEqual([...w.store], [['adj.workLast.acme', '{"board":"b-1","task":"41"}']]);
+  // The same selection writes nothing.
+  w.store.set('adj.workLast.acme', JSON.stringify({ board: 'b-1', task: '41' }));
+  let writes = 0;
+  const set = w.c.localStorage.setItem;
+  w.c.localStorage.setItem = (k, v) => { writes++; set(k, v); };
+  w.run('workRemember()');
+  assert.strictEqual(writes, 0);
+  // Nothing selected, a PR, a bare gate, the board "all" and the other tab leave it as it is.
+  for (const nav of [{ board: 'all', task: null }, { board: 'b-1', task: null }, { board: 'b-1', task: 'pr:o/r#1' }, { board: 'b-1', task: 'gate:b-1/g' }, { board: 'all', task: '41' }]) {
+    w.c.nav = nav;
+    w.run('workRemember()');
+  }
+  w.c.nav = { board: 'b-1', task: '41' };
+  w.c.prefs.workTab = 'others';
+  w.c.nav.task = '42';
+  w.run('workRemember()');
+  assert.strictEqual(writes, 0);
+  assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"41"}');
+  // A row of another organisation is kept under that organisation; the owner-less one under the none key.
+  w.c.prefs.workTab = 'task';
+  w.c.workSelected = () => ({ parent: { repo: { nwo: 'Other/r' } } });
+  w.run('workRemember()');
+  assert.strictEqual(w.store.get('adj.workLast.other'), '{"board":"b-1","task":"42"}');
+  w.c.workSelected = () => ({ repo: { nwo: 'solo' } });
+  w.run('workRemember()');
+  assert.ok(w.store.has('adj.workLast.-'));
+  // A selection the document cannot resolve is not kept.
+  w.c.workSelected = () => null;
+  w.c.nav.task = '43';
+  w.run('workRemember()');
+  assert.ok(![...w.store.values()].some(v => v.includes('"43"')));
+});
+
+test('opening the work view with nothing selected brings back the row selected last, else the first session with a task, else nothing', () => {
+  const row = key => ({ key });
+  const open = (setup = () => {}) => {
+    const w = lastWorld({ nav: { board: 'all', task: null } });
+    w.c.work.listedByKey = new Map([['b-1/41', row('b-1/41')]]);
+    w.c.work.hubsByKey = new Map([['b-1/hub:own', row('b-1/hub:own')]]);
+    w.c.work.firstTask = row('b-1/first');
+    setup(w);
+    w.run('workRestoreSelection()');
+    return w;
+  };
+  // The remembered row, replacing the empty address so Back is not trapped.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-1","task":"41"}')).calls, [['row', 'b-1/41', true]]);
+  // A hub is a row to select too.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-1","task":"hub:own"}')).calls, [['row', 'b-1/hub:own', true]]);
+  // Gone, hidden by the filter or never remembered: the first session with a task.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-1","task":"99"}')).calls, [['row', 'b-1/first', true]]);
+  assert.deepStrictEqual(open().calls, [['row', 'b-1/first', true]]);
+  // The memory of another organisation is not this one's.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.other', '{"board":"b-1","task":"41"}')).calls, [['row', 'b-1/first', true]]);
+  // No session with a task at all: the empty middle stays.
+  assert.deepStrictEqual(open(w => { w.c.work.firstTask = null; }).calls, []);
+  // A parent is selected through its own route, when the organisation still has it.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-p","task":"parent:#2"}')).calls, [['parent', '#2', true]]);
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', '{"board":"b-p","task":"parent:#9"}')).calls, [['row', 'b-1/first', true]]);
+  // A stored value that is no address is none.
+  assert.deepStrictEqual(open(w => w.store.set('adj.workLast.acme', 'garbage')).calls, [['row', 'b-1/first', true]]);
+});
+
+test('the restore happens once, waits for the document, and leaves an address, a link in flight and the other tab alone', () => {
+  const none = { board: 'all', task: null };
+  const world = (over, setup = () => {}) => {
+    const w = lastWorld({ nav: { ...none }, ...over });
+    w.c.work.firstTask = { key: 'b-1/first' };
+    setup(w);
+    return w;
+  };
+  // No document yet: nothing is done and the flag stays for the next draw.
+  const early = world({}, w => { w.c.work.doc = null; });
+  early.run('workRestoreSelection()');
+  assert.deepStrictEqual(early.calls, []);
+  assert.strictEqual(early.c.work.restore, true);
+  // Once: the person who empties the middle afterwards is not sent back.
+  const once = world();
+  once.run('workRestoreSelection()');
+  once.run('workRestoreSelection()');
+  assert.strictEqual(once.calls.length, 1);
+  assert.strictEqual(once.c.work.restore, false);
+  // Nothing asked for: no flag.
+  const idle = world({}, w => { w.c.work.restore = false; });
+  idle.run('workRestoreSelection()');
+  assert.deepStrictEqual(idle.calls, []);
+  // An address, an old link still being resolved, and the other tab: nothing selected, and the flag is spent.
+  for (const [over, setup] of [[{ nav: { board: 'b-1', task: '41' } }], [{ pendingGate: 'b-1/g' }], [{ pendingTask: '41' }], [{ prefs: { workTab: 'others' } }], [{ view: 'todo' }]]) {
+    const w = world(over, setup);
+    w.run('workRestoreSelection()');
+    assert.deepStrictEqual(w.calls, [], JSON.stringify(over));
+  }
+});
+
+test('choosing an organisation selects its first session with a task, or empties the middle', () => {
+  const w = lastWorld();
+  w.c.work.firstTask = { key: 'b-1/first' };
+  w.run('workSelectFirst()');
+  assert.deepStrictEqual(w.calls, [['row', 'b-1/first', false]]);
+  const none = lastWorld();
+  none.run('workSelectFirst()');
+  assert.deepStrictEqual(none.calls, [['go', null]]);
 });

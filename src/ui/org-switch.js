@@ -94,11 +94,12 @@ function closeOrgMenu(refocus = false) {
   if (refocus) orgEl('org-btn').focus();
 }
 
-/* Choose an organisation. A selection in another one is cleared, as nothing of it is in the list any more. */
+/* Choose an organisation. In 「いまの仕事」 its first session with a task is selected. Elsewhere a selection in another one is cleared, as nothing of it is in the list any more. */
 function chooseOrg(login) {
   closeOrgMenu(true);
   if (login === currentOrg()) return;
   setCurrentOrg(login);
+  if (view === 'work' && prefs.workTab === 'task') return workSelectFirst();
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (nwo && orgOf(nwo) !== currentOrg()) go({ board: 'all', view: 'work', task: null, pane: 'detail' });

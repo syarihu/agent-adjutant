@@ -39,6 +39,8 @@ function setView(v) {
   document.body.classList.toggle('view-todo', v === 'todo');
   // The TODO has no task panel of its own: the one left open on the board is closed.
   if (v === 'todo' && selectedTaskId) hideTaskPanelState();
+  // Opening 「いまの仕事」 with nothing selected brings back the selection last made (workRestoreSelection).
+  if (prev !== 'work' && v === 'work') work.restore = !nav.task;
   // The middle terminal is not kept behind another view, and the row that was open is left.
   if (prev === 'work' && v !== 'work') { workLeave(); disposeTermSlot(workTerm); }
 
