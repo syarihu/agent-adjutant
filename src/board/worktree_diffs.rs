@@ -161,9 +161,10 @@ fn read_all(weak: &Weak<WorktreeDiffs>, paths: &[String]) {
         if weak.strong_count() == 0 {
             return;
         }
-        let deadline = Instant::now() + Duration::from_secs(DIFF_GIT_SECS);
-        let counts = uncommitted_of(Path::new(path), deadline);
-        let unpushed = unpushed_of(Path::new(path), deadline);
+        // Each read has its own time: a slow count of the files does not time out the other.
+        let deadline = || Instant::now() + Duration::from_secs(DIFF_GIT_SECS);
+        let counts = uncommitted_of(Path::new(path), deadline());
+        let unpushed = unpushed_of(Path::new(path), deadline());
         match weak.upgrade() {
             Some(diffs) => diffs.store(path, Instant::now(), counts, unpushed),
             None => return,
