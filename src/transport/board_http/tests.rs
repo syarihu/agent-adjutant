@@ -355,7 +355,7 @@ fn the_hub_terminal_bar_leads_with_the_reset() {
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     let gap = bar.find("tp-bar-gap").unwrap();
-    assert!(bar.contains("actions ? hubResetButton(s) : null"));
+    assert!(bar.contains("const reset = hubResetButton(s);"));
     let reset = bar.find("actionButtonHtml(reset)").unwrap();
     let again = bar.find("data-tp-reconnect").unwrap();
     let acts = bar.find("sessionButtons(s).bar").unwrap();
@@ -1726,7 +1726,9 @@ fn the_panel_head_links_the_task_issue_and_pr() {
     let bar = UI_HTML.split("function termBarHtml").nth(1).unwrap();
     let bar = &bar[..bar.find("\n\u{7d}\n").unwrap()];
     assert!(!bar.contains("ghHeadLinksHtml") && !bar.contains("ghBarLinksHtml"));
-    assert!(UI_HTML.contains("termBarHtml(own, workTerm, true, "));
+    // The work view has no bar over its terminal: the heading says the state, and its buttons are elsewhere.
+    assert!(!UI_HTML.contains("termBarHtml(own, workTerm"));
+    assert!(!UI_HTML.contains("wk-term-bar"));
     assert!(!UI_HTML.contains("ghBarLinksHtml"));
     assert!(!UI_HTML.contains("tp-bar-link"));
 }

@@ -1,7 +1,7 @@
 /* ── Over the middle terminal in 「いまの仕事」: the page's half (the markup is work-term.js) ─────────────────────────────────────
    Draws what slides down over the terminal's top (the questions of what is selected), the two floating buttons, and the block over a
-   stopped hub; wires the heading's buttons; and opens the dialogs behind them: 「最後のメッセージ」, 「書いて送る」 and a hub's
-   detail. All of it is laid over the terminal and none of it takes room from it, so a question coming or going never resizes the
+   stopped hub; wires the heading's buttons and its ⋯ menu; and opens the dialogs behind them: 「最後のメッセージ」, 「書いて送る」,
+   a hub's detail and a parent's detail. All of it is laid over the terminal and none of it takes room from it, so a question coming or going never resizes the
    terminal. Drawing never moves the focus: only a click does. Loaded after my-work.js, whose `renderWorkTerm` calls it. */
 
 /* The start check folded to its one line, by `gateKey`; kept while the page is. A form starts open. */
@@ -79,7 +79,7 @@ function drawWorkFabs(own, hub, reading) {
   setWorkTermPart('fabs', wk('wk-term-fabs'), html);
 }
 
-/* Called by `renderWorkTerm` once the head, the bar and the terminal are in place. */
+/* Called by `renderWorkTerm` once the head and the terminal are in place. */
 function renderWorkTermOverlays({ sel = null, own, task, hub, reading, stopped = false }) {
   const gates = reading ? [] : workTermAskGates(task, own, hub);
   const merged = workTermMergedAsk(sel, gates, reading);
@@ -164,14 +164,88 @@ wk('wk-term-head').addEventListener('click', e => {
     const task = isTaskRef(nav.task) ? taskById(nav.task) : null;
     return task ? openTaskDetail(task, b) : undefined;
   }
+  if (act === 'parent') {
+    const p = workSelectedParent(workSelected());
+    return p ? openWorkParentDetail(p, b) : undefined;
+  }
   if (!s) return;
   if (act === 'hubinfo') {
     const hub = (state.hubs || []).find(h => h.id === s.id);
     return hub ? openWorkHubInfo(hub, b) : undefined;
   }
-  // The same two the session's menu and bar have, with the same checks.
+  // The same two the session's buttons have, with the same checks.
   if (act === 'ide' && linkedWorktree(s)) return runSessionAction('ide', s);
   if (act === 'close' && s.kind === 'worker' && linkedWorktree(s)) return runSessionAction('close', s);
+});
+
+/* ── the ⋯ menu of a worker's heading ── */
+
+const workMoreEl = () => wk('wk-term-head').querySelector('.wk-more');
+const workMoreItems = () => [...(workMoreEl()?.querySelectorAll('.wk-more-item:not(:disabled)') || [])];
+
+/* Open, as the repository menu is: the keyboard goes into it only when asked. */
+function openWorkMore({ focus = true } = {}) {
+  const box = workMoreEl();
+  if (!box) return;
+  box.querySelector('.wk-more-menu').hidden = false;
+  box.querySelector('[data-wk-more]').setAttribute('aria-expanded', 'true');
+  if (focus) workMoreItems()[0]?.focus();
+}
+
+/* Shut. `refocus` gives the keyboard back to the button. */
+function closeWorkMore(refocus = false) {
+  const box = workMoreEl();
+  if (!box) return;
+  const menu = box.querySelector('.wk-more-menu');
+  const btn = box.querySelector('[data-wk-more]');
+  if (!menu.hidden) {
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  }
+  if (refocus) btn.focus();
+}
+
+/* A choice in the menu: the session's own action, with the same checks as the panel's buttons had. */
+function workMoreAct(b) {
+  const s = workTermSession();
+  if (!s) return;
+  const act = b.dataset.wkMoreAct;
+  if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
+  if (act === 'goto-board') return s.task ? go({ board: b.dataset.board, view: 'work', task: s.task, pane: 'detail' }) : undefined;
+  if (['restart', 'open', 'copy', 'cleanup'].includes(act)) return runSessionAction(act, s);
+}
+
+wk('wk-term-head').addEventListener('click', e => {
+  const toggle = e.target.closest('[data-wk-more]');
+  if (toggle) {
+    // A press from the keyboard (no pointer, so no click count) goes into the menu, as the arrow keys do.
+    if (workMoreEl().querySelector('.wk-more-menu').hidden) openWorkMore({ focus: e.detail === 0 }); else closeWorkMore(true);
+    return;
+  }
+  const item = e.target.closest('[data-wk-more-act]');
+  if (!item || item.disabled) return;
+  closeWorkMore(true);
+  workMoreAct(item);
+});
+wk('wk-term-head').addEventListener('keydown', e => {
+  const box = e.target.closest?.('.wk-more');
+  if (!box) return;
+  const items = workMoreItems();
+  const shut = box.querySelector('.wk-more-menu').hidden;
+  if (e.target.matches('[data-wk-more]')) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openWorkMore({ focus: true }); }
+    else if (e.key === 'Escape' && !shut) { e.preventDefault(); e.stopPropagation(); closeWorkMore(true); }
+    return;
+  }
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeWorkMore(true); }
+  else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items.length) {
+    e.preventDefault();
+    items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1) + items.length) % items.length].focus();
+  } else if (e.key === 'Tab') closeWorkMore();
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('.wk-more')) closeWorkMore();
 });
 
 /* ── the floating buttons ── */
@@ -363,6 +437,7 @@ function openWorkHubInfo(hub, opener) {
 /* The dialog follows the page's state: its body is drawn again only when its markup changed and the focus is not in it, keeping where
    it was scrolled to and which sections were open. A hub the board no longer lists leaves it as it was, with a notice. */
 function workTermDialogsFollow() {
+  workParentDetailFollow();
   const info = workHubInfo;
   if (!info || !dialogStack.isOpen() || info.gone || nav.board !== info.board) return;
   const layer = dialogStack.layerEl(info.key);
@@ -414,6 +489,60 @@ questionDialogEl().addEventListener('click', e => {
     return go({ board: nav.board, view: 'work', task: queued.dataset.tpTask, pane: 'detail' });
   }
   hubPanelClick(e, hub);
+});
+
+/* ── a parent's detail ── */
+
+/* The parent dialog that is open: { key, board, parentKey, parent (as last drawn), head, body (as drawn), gone }. */
+let workParentInfo = null;
+
+function openWorkParentDetail(p, opener) {
+  const key = `parent:${nav.board}/${p.key}`;
+  if (dialogStack.has(key)) return;
+  if (dialogStack.isOpen()) dialogStack.closeAll();
+  const { head, body } = parentDetailParts(p);
+  workParentInfo = { key, board: nav.board, parentKey: p.key, parent: p, head, body, gone: false };
+  dialogStack.push({
+    key, cls: 'td-layer', head, body, opener,
+    onClose: layer => { tocPinned.delete(layer.key); if (workParentInfo?.key === layer.key) workParentInfo = null; },
+  });
+  tocWire(dialogStack.layerEl(key));
+}
+
+/* The same follow as the hub dialog's: drawn again only when its markup changed (task-detail-view.js keeps the place, the open sections
+   and the current entry). A parent the work document no longer lists is marked once and left as it was. */
+function workParentDetailFollow() {
+  const info = workParentInfo;
+  if (!info || !dialogStack.isOpen() || info.gone || nav.board !== info.board) return;
+  const layer = dialogStack.layerEl(info.key);
+  if (!layer) return;
+  const p = workParentOf(info.parentKey);
+  if (!p) {
+    // A document not read yet lists nothing: not the parent being gone.
+    if (!work.doc) return;
+    info.gone = true;
+    layer.querySelectorAll('.qd-body button').forEach(x => { x.disabled = true; });
+    layer.querySelector('.qd-head')?.insertAdjacentHTML('afterend', '<p class="qd-gone" role="status">この親タスクは、いまの一覧にありません（最後に表示した内容です）</p>');
+    return;
+  }
+  info.parent = p;
+  // Under another layer the dialog has no box: it is drawn when it is on top again, at the next render.
+  if (layer.hidden) return;
+  tocRedraw(layer, info, parentDetailParts(p));
+}
+
+questionDialogEl().addEventListener('click', e => {
+  const layer = e.target.closest?.('.qd-layer');
+  const b = layer?.dataset.qdKey?.startsWith('parent:') ? e.target.closest('[data-pd-act]') : null;
+  const info = workParentInfo;
+  if (!b || b.disabled || !info || layer.dataset.qdKey !== info.key) return;
+  if (info.board !== nav.board) return note('親タスクの詳細', true, '別のボードに移ったため、ここからは操作できません');
+  const p = workParentOf(info.parentKey) || info.parent;
+  if (b.dataset.pdAct === 'next') return nudgeHub(`/b/${p.hub}`);
+  if (b.dataset.pdAct === 'add-child') {
+    dialogStack.closeAll();
+    openChildForm(p.url, p.hub);
+  }
 });
 
 /* ── a stopped hub ── */

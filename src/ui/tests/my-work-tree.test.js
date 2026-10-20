@@ -28,6 +28,7 @@ const ctx = vm.createContext({
   // What a row's own markup reads from the page's other files.
   sessionLabel: () => ({ text: 'the title' }), sessionTip: () => '', agoLabel: () => '', minutesSince: () => 0, prRefNumber: () => null, workNewest: () => null, WORK_PR_NOW: {}, agentStateOf: () => 'working',
   requestText: () => '', workAwayChip: () => '', workParkedHtml: () => '', workSaidHtml: m => `<said>${m}</said>`, kindOf: () => ['gate'], workGateWho: (kind, t, passed) => passed ? 'who-passed' : 'who', WORK_SUBAGENTS_SHOWN: 4,
+  httpUrl: u => (/^https?:\/\//i.test(u || '') ? u : null),
 });
 vm.runInContext([
   cutActions(/^const hubWake = [^\n]*;/m),
@@ -61,7 +62,8 @@ vm.runInContext([
   cut(/^function workSegments[\s\S]*?^}/m),
   cut(/^const workParentName = [^\n]*;/m),
   cut(/^function workParentMeta[\s\S]*?^}/m),
-  cut(/^function workParentOpenHtml[\s\S]*?^}/m),
+  cut(/^function parentDetailGroups[\s\S]*?^}/m),
+  cut(/^function workSelectedParent[\s\S]*?^}/m),
   cut(/^function workRequestsHtml[\s\S]*?^}/m),
   cut(/^function workHubStartButtonHtml[\s\S]*?^}/m),
   cut(/^function workRowOrder[\s\S]*?^}/m),
@@ -819,16 +821,59 @@ test('the new rows inside a folded group are not in the order 「処理したら
   assert.deepStrictEqual(order(['repo:a']), []);
 });
 
-test('a parent\'s hub head has a button of its own to the parent\'s overview, beside the row and not inside it', () => {
+test('a parent\'s hub head has no button of its own to the parent: the heading over the terminal opens its detail', () => {
   const node = { key: 'parent:a/#2', kind: 'parent', parent: { key: '#2', number: 2, title: 'Ship it' }, rows: [], items: [], hubs: [], head: chip('p1', true, '#2', 'b-p1') };
   const head = run('workHeadHtml(node, false)', { node });
-  assert.ok(head.includes('data-wk-parent="#2"') && head.includes('aria-label="親タスクの概要（#2 Ship it）"'));
-  assert.ok(!head.includes('wk-row'));
-  const current = run('workHeadHtml(node, false)', { node: { ...node, parent: { ...node.parent } }, });
-  assert.ok(!current.includes('aria-current'));
-  const none = (extra, kind = 'parent') => run('workHeadHtml(node, false)', { node: { ...node, kind, parent: { ...node.parent, ...extra } } });
-  assert.ok(!none({ missing: true }).includes('data-wk-parent'));
-  assert.ok(!none({}, 'hub').includes('data-wk-parent'));
+  assert.ok(!head.includes('data-wk-parent') && !head.includes('account_tree') && !head.includes('wk-row'));
+});
+
+// The context's `esc` is a pass-through; the escaping of the strings here is the thing under test, so the page's own is put in for the call.
+const realEsc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const groupsOf = (p, extra = {}) => {
+  const was = ctx.esc;
+  try { return plain(run('parentDetailGroups(p, args)', { p, args: extra, esc: realEsc })); } finally { ctx.esc = was; }
+};
+const baseParent = { key: '#2', number: 2, title: 'Ship it', hub: 'b-p1', url: 'https://github.com/acme/a/issues/2', merged: 1, total: 3, stacked: true,
+  children: [{ id: 'a', hub: 'b-x', progress: 'merged', title: 'First <1>', branch: 'adj/a' }, { id: 'b', hub: 'b-x', progress: 'working', title: 'Second', on: 'a', base: 'main' }] };
+
+test('a parent\'s detail has the overview, 離れていた間に and the actions, in that order', () => {
+  const groups = groupsOf(baseParent);
+  assert.deepStrictEqual(groups.map(g => [g.key, g.label, g.icon]), [['overview', '概要', 'info'], ['away', '離れていた間に', 'history'], ['actions', '操作', 'bolt']]);
+});
+
+test('the overview links the issue, says how many are merged, and lists every child with its progress, state and branch', () => {
+  const [over] = groupsOf(baseParent, { rowOf: c => (c.id === 'b' ? { task: { title: 'Row title' } } : null), stateOf: c => (c.id === 'b' ? 'working' : null) });
+  assert.ok(over.html.includes('href="https://github.com/acme/a/issues/2"') && over.html.includes('target="_blank"') && over.html.includes('rel="noopener noreferrer"') && over.html.includes('GitHub で開く'));
+  assert.ok(over.html.includes('wk-ov-bar') && over.html.includes('1 / 3 マージ'));
+  assert.strictEqual(over.html.split('<li>').length - 1, 3);
+  assert.ok(over.html.includes('First &lt;1&gt;') && !over.html.includes('First <1>'));
+  assert.ok(over.html.includes('Row title') && !over.html.includes('>Second<'));
+  assert.ok(over.html.includes('<g working>') && over.html.includes('adj/a'));
+  assert.ok(over.html.includes('main ←'));
+  assert.ok(over.html.indexOf('main ←') < over.html.indexOf('First'));
+});
+
+test('a parent with no children says so, and a parent that is not a stack has no base line', () => {
+  const [over] = groupsOf({ ...baseParent, children: [], merged: 0, total: 0, stacked: false });
+  assert.ok(over.html.includes('子タスクはまだありません') && !over.html.includes('<li>'));
+  const [flat] = groupsOf({ ...baseParent, stacked: false });
+  assert.ok(!flat.html.includes('main ←'));
+});
+
+test('the away group holds what it is given, or a muted line when there is nothing', () => {
+  assert.ok(groupsOf(baseParent, { away: '<ol class="x"></ol>' })[1].html === '<ol class="x"></ol>');
+  assert.ok(groupsOf(baseParent)[1].html.includes('離れていた間の動きはありません'));
+});
+
+test('「次を着手させる」 is off when the hub\'s board is not served, and 「子タスクを足す」 needs an http URL', () => {
+  const on = groupsOf(baseParent, { served: true })[2].html;
+  assert.ok(on.includes('data-pd-act="next"') && !on.includes('disabled') && on.includes('adj send --kind next (着手を促す)'));
+  assert.ok(on.includes('data-pd-act="add-child"') && on.includes('子タスクを足す'));
+  const off = groupsOf(baseParent, { served: false })[2].html;
+  assert.ok(off.includes('disabled') && off.includes('title="この hub のボードはこのサーバーにありません"'));
+  const noUrl = groupsOf({ ...baseParent, url: 'javascript:alert(1)' })[2].html;
+  assert.ok(!noUrl.includes('add-child') && !noUrl.includes('子タスクを足す'));
+  assert.ok(!groupsOf({ ...baseParent, url: 'javascript:alert(1)' })[0].html.includes('href='));
 });
 
 test('a task on a parent-task hub\'s board is grouped under the parent that hub runs, with or without a parent of its own', () => {
@@ -1205,4 +1250,22 @@ test('choosing an organisation selects its first session with a task, or empties
   const none = lastWorld();
   none.run('workSelectFirst()');
   assert.deepStrictEqual(none.calls, [['go', null]]);
+});
+
+test('the parent a selection opens: its own, or the one a parent-task hub runs, never the repository hub\'s board', () => {
+  const pick = sel => { const p = run('workSelectedParent(sel)', { sel }); return p ? p.key : null; };
+  const parents = [{ key: '#1', hub: 'b-1' }, { key: '#2', hub: 'b-1' }, { key: '#3', hub: 'b-p' }, { key: '#4', hub: 'b-m', missing: true }];
+  const repo = { nwo: 'o/r', parents, hubs: [{ id: 'hub', parent: false, key: null, slug: 'b-1' }, { id: 'hub-3', parent: true, key: '#3', slug: 'b-p' }, { id: 'hub-m', parent: true, key: '#4', slug: 'b-m' }] };
+  const hubRow = (id, board) => ({ repo, row: { board, session: { id, kind: 'hub' } }, session: { id, kind: 'hub' } });
+  // The repository's own hub runs the board the parents' tasks live on, and is no parent's.
+  assert.strictEqual(pick(hubRow('hub', 'b-1')), null);
+  assert.strictEqual(pick(hubRow('hub-3', 'b-p')), '#3');
+  // A parent-task hub the document does not list, with a key of its own.
+  assert.strictEqual(pick({ repo, row: { board: 'b-1', session: { id: 'hub-x', kind: 'hub', key: '#2' } } }), '#2');
+  // The address of a parent, and one the document marks missing.
+  assert.strictEqual(pick({ parent: { key: '#1', hub: 'b-1', repo } }), '#1');
+  assert.strictEqual(pick(hubRow('hub-m', 'b-m')), null);
+  // A worker's row has no parent to open here.
+  assert.strictEqual(pick({ repo, row: { board: 'b-1', session: { id: 'w', kind: 'worker' } } }), null);
+  assert.strictEqual(pick(null), null);
 });
