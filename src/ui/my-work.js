@@ -882,15 +882,6 @@ function workTitleToolsHtml(p) {
   return `<span class="hub-title-tools">${hubTitleMarkHtml(h, false)}${hubTitleReadButtonHtml(h, workHubBase(h.slug))}${hubTitleWhyHtml(h)}</span>`;
 }
 
-/* The button on the hub that heads a parent's group that opens the parent's overview, which the parent's own heading used to open. A
-   sibling of the hub's row (a button is not put inside another); none for a group that is not a parent's or whose parent the document does not list. */
-function workParentOpenHtml(node) {
-  if (node.kind !== 'parent' || node.parent.missing) return '';
-  const label = `親タスクの概要（${workParentName(node.parent)}）`;
-  const current = nav.task === PARENT_REF + node.parent.key;
-  return `<button type="button" class="wk-act wk-parent-open" data-wk-parent="${esc(node.parent.key)}"${current ? ' aria-current="true"' : ''} aria-label="${esc(label)}" title="${esc(label)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span></button>`;
-}
-
 /* A node's header. A folded one says how many rows are in each state, and shows the hubs it runs as chips (opened, they are rows below). */
 function workHeadHtml(node, folded) {
   const sum = folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : '';
@@ -899,7 +890,7 @@ function workHeadHtml(node, folded) {
   // A count of task rows: a heading with none says nothing.
   const count = node.rows.length ? `<span class="wk-count">${node.rows.length}</span>` : '';
   // A group the hub heads has the hub's row for a heading: this is the fold button and the count, and, while it is folded, how many rows are in each state.
-  if (node.head) return `${fold(node.key, node.kind === 'parent' ? workParentName(node.parent) : 'hub')}${folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : ''}${count}${workParentOpenHtml(node)}`;
+  if (node.head) return `${fold(node.key, node.kind === 'parent' ? workParentName(node.parent) : 'hub')}${folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : ''}${count}`;
   if (node.kind === 'parent') {
     const p = node.parent;
     const segs = workSegments(p);
@@ -1328,12 +1319,12 @@ function setWorkTermPart(name, el, html) {
   el.innerHTML = html;
 }
 
-/* The title and the line under it. A worker's line says its branch, agent and model, and the task; `agent` is that session as the
-   board lists it. */
-function workTermTitleHtml(sel, free = null, agent = '') {
+/* The title and the line under it. A worker's line says its branch, agent and model, its state in one word, and the task; `agent` is
+   that session as the board lists it, and `stateWord` its state ('' for none, and for a hub, whose status line says it). */
+function workTermTitleHtml(sel, free = null, agent = '', stateWord = '') {
   if (!sel && free) {
     const label = sessionLabel(free);
-    return `<div class="wk-term-title">${esc(label.text)}</div><div class="wk-term-sub">${esc([free.branch, agent, free.worktree && baseName(free.worktree)].filter(Boolean).join(' · '))}</div>`;
+    return `<div class="wk-term-title">${esc(label.text)}</div><div class="wk-term-sub">${esc([free.branch, agent, stateWord, free.worktree && baseName(free.worktree)].filter(Boolean).join(' · '))}</div>`;
   }
   if (!sel) return '';
   if (sel.parent) {
@@ -1343,16 +1334,52 @@ function workTermTitleHtml(sel, free = null, agent = '') {
   const r = sel.row;
   const data = { now: work.doc?.now, repo: sel.repo.nwo, hubs: sel.repo.hubs || [], sessions: [] };
   const title = r.task?.title || (r.session ? sessionLabel(r.session, false, data).text : r.task?.id || '');
-  const sub = [r.session?.branch, agent, r.task?.id, sel.repo.nwo].filter(Boolean).join(' · ');
+  const sub = [r.session?.branch, agent, stateWord, r.task?.id, sel.repo.nwo].filter(Boolean).join(' · ');
   return `<div class="wk-term-title">${esc(title)}</div><div class="wk-term-sub">${esc(sub)}</div>`;
 }
 
+/* The parent a selection is about, with its repository, or null: the parent itself (`parent:<key>`), or a hub's row when that hub is a
+   parent-task hub, paired with its parent as the list pairs them (`hubParent` in `workTree`: by the hub's key, else the one parent its
+   board runs). The repository's own hub runs no parent of its own, though its board can be a parent's `hub`. One the document marks
+   missing has nothing to open. */
+function workSelectedParent(sel) {
+  let p = sel?.parent || null;
+  const s = sel?.row?.session;
+  if (!p && s?.kind === 'hub') {
+    const h = (sel.repo.hubs || []).find(x => x.id === s.id) || { parent: !!s.key, key: s.key ?? null, slug: sel.row.board };
+    const runs = h.parent ? (sel.repo.parents || []).filter(x => x.hub === (h.slug || sel.row.board)) : [];
+    p = runs.find(x => x.key === h.key) || (runs.length === 1 ? runs[0] : null);
+  }
+  return p && !p.missing ? { ...p, repo: p.repo || sel.repo } : null;
+}
+
+/* The entries of a worker's ⋯ menu, from the buttons the session has (so a label, a title and a reason it cannot are said once, in
+   `sessionButtons`) and the link and board entries of a session with no task. The heading has 「セッションを閉じる」 and 「IDE」, so
+   they are not here; nor is 「再開」, which is in the placeholder over a stopped terminal. */
+function workTermMoreItems(s) {
+  if (!s || s.kind === 'hub') return [];
+  const btns = sessionButtons(s);
+  const pick = (list, act) => list.find(b => b.act === act);
+  const items = [];
+  if (!s.task && sessionState(s) !== 'none') {
+    // Linking writes the task and tells the worker, which a session that is not running cannot read.
+    const off = s.present ? {} : { disabled: true, title: 'セッションが動いていないため、タスクにも既存のタスクへの紐づけもできません' };
+    items.push({ act: 'link-new', icon: 'add_task', label: 'タスクにする…', ...off }, { act: 'link-existing', icon: 'link', label: '既存のタスクに紐づける…', ...off });
+  }
+  const b = boardOfSession(s);
+  const elsewhere = s.task && !b.own && b.slug && boards.some(x => x.slug === b.slug) ? b.slug : null;
+  if (elsewhere) items.push({ act: 'goto-board', icon: 'open_in_new', label: 'そのボードで開く', attrs: ` data-board="${esc(elsewhere)}"` });
+  items.push(...[pick(btns.bar, 'restart'), pick(btns.bar, 'open'), pick(btns.menu, 'copy'), pick(btns.menu, 'cleanup')].filter(Boolean));
+  return items;
+}
+
 /* The heading over the terminal. It is pinned: nothing in it depends on the questions, so its height never moves the terminal.
-   A hub's has its status in one line; the buttons are at the right end (a task's Issue and PR, then `workTermHeadActsHtml`, clicked in
-   work-term-view.js). `own` is the session as the board lists it, `hub` the hub when the row is one. */
+   A hub's has its status in one line; the buttons are at the right end (a task's Issue and PR, then `workTermHeadActsHtml`, and a
+   worker's ⋯ menu, clicked in work-term-view.js). `own` is the session as the board lists it, `hub` the hub when the row is one. */
 function workTermHeadHtml(sel, free = null, own = null, hub = null, task = null) {
   const agent = own ? [own.agent, own.agentSession?.model].filter(Boolean).join(' · ') : '';
-  let main = workTermTitleHtml(sel, free, agent);
+  const stateWord = own && own.kind !== 'hub' ? STATE_LABEL[sessionState(own)] || '' : '';
+  let main = workTermTitleHtml(sel, free, agent, stateWord);
   if (!main) return '';
   if (hub) {
     const hs = hubSessionOf(hub);
@@ -1362,12 +1389,26 @@ function workTermHeadHtml(sel, free = null, own = null, hub = null, task = null)
   const linked = !!own && linkedWorktree(own);
   // A task's Issue and PR open on GitHub, as the panel's head has them.
   const acts = (task ? ghHeadLinksHtml(task) : '') + workTermHeadActsHtml({
-    task: !!task, hub: !!hub, ide: linked,
+    task: !!task, parent: !!workSelectedParent(sel), hub: !!hub, ide: linked,
     close: linked && own.kind === 'worker' && !!own.present,
     closeWhy: own && restartingNow(own) ? '再起動しています' : '',
-  });
+  }) + workTermMoreHtml(workTermMoreItems(own));
   return acts ? `<div class="wk-head-main">${main}</div><span class="wk-head-acts">${acts}</span>` : main;
 }
+
+/* Over the terminal whose connection ended while its session is still there: why it is covered, and the way back. */
+const workReconnectHtml = () => '<div class="tp-ph-head">ターミナルの接続が切れました</div>'
+  + `<div><button type="button" class="btn-m3-tonal" data-tp-reconnect>${qcIcon('sync')}<span>再接続</span></button></div>`;
+
+/* Over the terminal of a session that has none: what the board view's placeholder says, and 「再開」 for a stopped worker that can be
+   resumed, so the person can pick up where the terminal was. */
+function workPlaceholderHtml(s) {
+  const resume = hasSession(s) && canResume(s) ? sessionButtons(s).bar.find(b => b.act === 'resume') : null;
+  return termPlaceholderHtml(s) + (resume ? `<div>${actionButtonHtml(resume)}</div>` : '');
+}
+
+/* The selection the heading was last drawn for. */
+let workHeadFor = null;
 
 /* The terminal of what is selected, in the middle. A session of the board that was selected is the page's
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
@@ -1397,30 +1438,44 @@ function renderWorkTerm() {
   // The hub of a hub's row, or of a parent's: its status and its detail dialog are the heading's, and its terminal is the middle.
   const hub = ds?.kind === 'hub' ? (state.hubs || []).find(h => h.id === ds.id) || null : null;
   const { reading, revealed } = renderTaskReadTabs(task);
+  // The ⋯ menu stays open, with the keyboard where it was, when the heading of the same selection is drawn again under it (a poll
+  // changes the state word); another selection's heading starts with it shut.
+  const moreMenu = wk('wk-term-head').querySelector('.wk-more-menu');
+  const headFor = `${nav.board}/${nav.task}`;
+  const moreOpen = !!moreMenu && !moreMenu.hidden && workHeadFor === headFor;
+  workHeadFor = headFor;
+  const moreFocus = moreOpen ? document.activeElement?.closest?.('#wk-term-head [data-wk-more-act]')?.dataset.wkMoreAct : null;
   setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free, own, hub, task));
+  if (moreOpen && typeof openWorkMore === 'function' && wk('wk-term-head').querySelector('.wk-more-menu')?.hidden) {
+    openWorkMore({ focus: false });
+    if (moreFocus) wk('wk-term-head').querySelector(`[data-wk-more-act="${CSS.escape(moreFocus)}"]:not(:disabled)`)?.focus();
+  }
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
   // Not mounted while it is hidden behind the read-through: a hidden host has no size, and the terminal would tell the window 80x24. One already mounted is kept.
   syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
-  setWorkTermPart('bar', wk('wk-term-bar'), s && own && hasSession(own) ? termBarHtml(own, workTerm, true, own.kind === 'hub' ? ['close', 'hub-start'] : ['close']) : '');
   const ph = wk('wk-term-ph');
   const hubUp = !!hub && hubSessionOf(hub).present;
   const hubStarting = !!hub && !hubUp && (hubStartingNow(hub) || workHubStartPending(hub));
   const stopped = workStoppedHubShown({ isHub: !!hub, present: hubUp, starting: hubStarting, reading });
   // A hub on its way up has a dead terminal behind, if one was mounted: covered, rather than shown dead.
   const coming = hubStarting && !reading;
-  ph.hidden = !!workTerm.term && !stopped && !coming;
+  // The connection ended: the placeholder covers the dead screen. Over a session that is still ready it offers the reconnect; over one
+  // that stopped it says so, with 「再開」 where that is possible.
+  const closed = !!workTerm.term && workTerm.ended != null && !reading;
+  const again = closed && !!own && boardTerminalReady(own);
+  ph.hidden = !!workTerm.term && !stopped && !coming && !closed;
   const loaded = state.now != null;
-  const text = coming ? '<div class="tp-muted">起動しています…</div>' : workTerm.term ? ''
+  const text = coming ? '<div class="tp-muted">起動しています…</div>' : again ? workReconnectHtml() : workTerm.term && !closed ? ''
     : !nav.task || nav.board === 'all' ? ''
       : !work.doc ? '<div class="tp-muted">読み込み中…</div>'
-      : free ? termPlaceholderHtml(free)
+      : free ? workPlaceholderHtml(free)
       : !sel ? '<div class="tp-muted">選んだ仕事は、いまの一覧にありません</div>'
         : !ds ? `<div class="tp-muted">${sel.parent ? 'この親 Issue を動かしている hub のセッションが見つかりません' : 'この仕事にはセッションがありません'}</div>`
           : !loaded ? '<div class="tp-muted">接続しています…</div>'
             : !own ? '<div class="tp-muted">このボードにはこのセッションが見えないため、ターミナルを開けません</div>'
-              : termPlaceholderHtml(own);
+              : workPlaceholderHtml(own);
   setWorkTermPart('ph', ph, stopped ? workHubStoppedBlock(hub) : text);
   renderWorkTermOverlays({ sel, own, task, hub, reading, stopped });
   // Sized while it was hidden, which a terminal skips: asked again now that it has a size.
@@ -1429,8 +1484,7 @@ function renderWorkTerm() {
   workTermDialogsFollow();
 }
 
-/* The bar over the middle terminal: the session's own actions, as the panel's terminal bar has them. Heard on the pane, which holds the
-   button over a stopped hub's terminal as well. */
+/* The buttons over the middle terminal's placeholder: 再接続, 再開, and a stopped hub's own. Heard on the pane. */
 wk('wk-term-pane').addEventListener('click', e => {
   const b = e.target.closest('[data-sess-act], [data-tp-reconnect]');
   if (!b || b.disabled) return;
@@ -1717,12 +1771,10 @@ function renderWorkAway(sel) {
   el.hidden = !html;
 }
 
-/* The same for a parent, over its children, into the overview's #tp-parent-away. A child is the entry of a task whose parent
-   this is; a merged child with no row is read from its PR's time and the mark its row had, which is pruned a week after
-   it merges. Opening a parent writes no marks: each child is judged by its own. */
-function renderParentAway(p) {
-  const el = tp('tp-parent-away');
-  if (!el) return;
+/* The same for a parent, over its children, as the markup of its detail's 離れていた間に ('' when there is nothing). A child is the
+   entry of a task whose parent this is; a merged child with no row is read from its PR's time and the mark its row had, which is
+   pruned a week after it merges. Opening a parent writes no marks: each child is judged by its own. */
+function workParentAwayHtml(p) {
   const marks = workMarks(p.repo.nwo);
   const entries = [...work.entries.values()].filter(e => e.nwo === p.repo.nwo && !e.isHub && e.task?.parent === p.key);
   const kids = entries.map(e => ({ title: e.task.title || e.ref, entry: e, mark: marks[e.id] }));
@@ -1731,92 +1783,62 @@ function renderParentAway(p) {
     kids.push({ title: c.title || `#${c.id}`, entry: null, mark: marks[`${c.hub}/${c.id}`], mergedAt: awaySecs(c.prTurnAt) });
   }
   const m = workParentAway(kids, workServerNow());
-  const html = m ? `<div class="m3-filled-card wk-away-card">${workAwayHtml({ ...m, left: null }, workServerNow())}</div>` : '';
-  if (el.dataset.sig !== html) {
-    el.dataset.sig = html;
-    el.innerHTML = html;
-  }
-  el.hidden = !html;
+  return m ? workAwayHtml({ ...m, left: null }, workServerNow(), false) : '';
 }
 
-/* ── the parent in the panel ── */
+/* ── the parent's detail dialog ── */
 
-/* The parent's overview, in the panel's place: how far it is, the stack, and what can be done to it. */
-function parentOverviewHtml(p) {
-  const segs = workSegments(p);
+const workRepoName = nwo => (nwo || '').split('/').pop() || nwo;
+
+/* The groups of a parent's detail for `tocDialogHtml`: 概要 (the issue, how far it is, every child), 離れていた間に and 操作. The page
+   gives what it knows as arguments: `rowOf(child)` the child's row or null, `stateOf(child)` its session's state or null, `away` the
+   markup of 離れていた間に ('' for none), `served` whether this server has the parent's hub's board. */
+function parentDetailGroups(p, { rowOf = () => null, stateOf = () => null, away = '', served = true } = {}) {
+  const children = p.children || [];
   const merged = p.merged || 0;
-  const total = Math.max(p.total || 0, (p.children || []).length);
+  const total = Math.max(p.total || 0, children.length);
+  const link = httpUrl(p.url);
+  const inStack = c => !!c.on || children.some(x => x.on === c.id && x.onHub === c.hub);
+  const root = p.stacked ? children.find(inStack) : null;
+  const step = c => {
+    const st = stateOf(c);
+    const [cls, label] = WORK_PROGRESS[c.progress] || WORK_PROGRESS['not-started'];
+    return `<li><span class="seg ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>${st ? workGlyphHtml(st) : ''}<span>${esc(rowOf(c)?.task?.title || c.title || `#${c.id}`)}</span>${c.branch ? `<span class="base">${esc(c.branch)}</span>` : ''}</li>`;
+  };
+  const list = children.length
+    ? `<ul class="wk-stack-list">${root?.base ? `<li><span class="base">${esc(root.base)} ←</span></li>` : ''}${children.map(step).join('')}</ul>`
+    : '<p class="tp-muted">子タスクはまだありません</p>';
+  const overview = `<div class="wk-overview">${link ? `<p><a href="${esc(link)}" target="_blank" rel="noopener noreferrer">GitHub で開く</a></p>` : ''}`
+    + `<div class="wk-ov-bar"><span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span><span class="wk-ov-n">${merged} / ${total} マージ</span></div>`
+    + `${list}</div>`;
+  const nextWhy = served ? '' : 'この hub のボードはこのサーバーにありません';
+  const actions = `<div class="tp-gate-actions"><button type="button" class="btn-m3-tonal" data-pd-act="next"${nextWhy ? ' disabled' : ''} title="${esc(nextWhy || 'adj send --kind next (着手を促す)')}">`
+    + `<span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">bolt</span><span>次を着手させる</span></button>`
+    + (link ? `<button type="button" class="btn-m3-tonal" data-pd-act="add-child"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">add</span><span>子タスクを足す</span></button>` : '')
+    + '</div>';
+  return [
+    { key: 'overview', icon: 'info', label: '概要', html: overview },
+    { key: 'away', icon: 'history', label: '離れていた間に', html: away || '<p class="tp-muted">離れていた間の動きはありません</p>' },
+    { key: 'actions', icon: 'bolt', label: '操作', html: actions },
+  ];
+}
+
+/* The head and the body of the detail of the parent `p` (with its repository), as the page has it now. */
+function parentDetailParts(p) {
   const rowOf = c => (p.repo?.rows || []).find(r => r.board === c.hub && r.task?.id === c.id) || null;
   const stateOf = c => {
     const r = rowOf(c);
-    return r ? sessionState(r.session, { now: work.doc?.now, repo: p.repo.nwo, hubs: p.repo.hubs || [], sessions: [] }) : null;
+    return r?.session ? sessionState(r.session, { now: work.doc?.now, repo: p.repo.nwo, hubs: p.repo.hubs || [], sessions: [] }) : null;
   };
-  const inStack = c => !!c.on || (p.children || []).some(x => x.on === c.id && x.onHub === c.hub);
-  const chain = p.stacked ? (p.children || []).filter(inStack) : [];
-  const root = chain[0];
-  const step = c => {
-    const r = rowOf(c);
-    const st = stateOf(c);
-    const [cls, label] = WORK_PROGRESS[c.progress] || WORK_PROGRESS['not-started'];
-    return `<li><span class="seg ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>${st ? workGlyphHtml(st) : ''}<span>${esc(r?.task?.title || c.title || `#${c.id}`)}</span>${c.branch ? `<span class="base">${esc(c.branch)}</span>` : ''}</li>`;
-  };
-  const stack = chain.length
-    ? `<div class="m3-filled-card">${secTitle('stack')}<ul class="wk-stack-list">${root?.base ? `<li><span class="base">${esc(root.base)} ←</span></li>` : ''}${chain.map(step).join('')}</ul></div>` : '';
-  const served = boards.some(b => b.slug === p.hub);
-  const nextWhy = served ? '' : 'この hub のボードはこのサーバーにありません';
-  const canAdd = !!httpUrl(p.url);
-  return `<div class="wk-overview">
-    <div class="m3-filled-card">${secTitle('進み具合')}
-      <div class="wk-ov-bar"><span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span><span class="wk-ov-n">${merged} / ${total} マージ</span></div>
-      <div class="tp-muted">${esc((p.children || []).length ? `このボードが知っている子 ${(p.children || []).length} 件` : '子タスクはまだありません')}</div>
-    </div>
-    ${stack}
-    <div id="tp-parent-away" hidden></div>
-    <div class="m3-filled-card">${secTitle('操作')}<div class="tp-gate-actions">
-      <button type="button" class="btn-m3-tonal" data-wk-next${nextWhy ? ' disabled' : ''} title="${esc(nextWhy || 'adj send --kind next (着手を促す)')}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">bolt</span><span>次を着手させる</span></button>
-      ${canAdd ? `<button type="button" class="btn-m3-tonal" data-add-child="${esc(p.url)}" data-add-child-board="${esc(p.hub)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">add</span><span>子タスクを足す</span></button>` : ''}
-    </div></div>
-  </div>`;
-}
-
-function parentHeadHtml(p) {
-  const link = httpUrl(p.url);
-  return `<div class="tp-head-main">
-      <div class="tp-badges"><span class="tp-key">親 Issue</span>${p.repo ? `<span class="origin-chip" title="${esc(p.repo.nwo)}"><span class="material-symbols-outlined" aria-hidden="true">folder</span><span>${esc(workRepoName(p.repo.nwo))}</span></span>` : ''}</div>
-      <h2 class="tp-title">${esc(`${p.number ? `#${p.number} ` : ''}${p.title || p.key}`)}</h2>
-    </div>
-    ${panelBtnsHtml(link ? `<a class="btn-m3-text tp-jump" href="${esc(link)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く">GitHub</a>` : '')}`;
-}
-const workRepoName = nwo => (nwo || '').split('/').pop() || nwo;
-
-/* The panel when it holds no task, hub or session of its board: a parent's overview, or a line saying the board the
-   row opened on does not have what the list showed. */
-function renderWorkPanelOnly(parent) {
-  tp('tp-tabs').hidden = true;
-  tp('tp-detail').hidden = false;
-  tp('tp-term').hidden = true;
-  panelShown = null;
-  setPanelPart('head', tp('tp-head'), parent ? parentHeadHtml(parent)
-    : `<div class="tp-head-main"><h2 class="tp-title">この仕事</h2></div>${panelBtnsHtml('')}`);
-  setPanelPart('tabs', tp('tp-tabs'), '');
-  setPanelPart('links', tp('tp-links'), '');
-  setPanelPart('gate', tp('tp-gate'), '');
-  setPanelPart('rest', tp('tp-rest'), parent ? parentOverviewHtml(parent)
-    : `<div class="m3-filled-card"><div class="tp-muted">${isGateRef(selectedTaskId) ? 'この確認待ちは、もう片付いています' : 'この仕事は、いまの一覧にありません'}</div></div>`);
-  if (parent) renderParentAway(parent);
-  renderHandForm(null);
-  tp('tp-form').hidden = true;
-}
-
-/* The panel's clicks when it holds no task of its own board: a parent's buttons. */
-function workPanelClick(e) {
-  const hit = sel => e.target.closest(sel);
-  let b;
-  if (hit('[data-tp-close]')) return closeTaskPanel();
-  const p = parentOfRef(selectedTaskId);
-  if (!p) return;
-  if ((b = hit('[data-wk-next]'))) return b.disabled ? undefined : nudgeHub(`/b/${p.hub}`);
-  if ((b = hit('[data-add-child]'))) return openChildForm(b.dataset.addChild, b.dataset.addChildBoard);
+  const merged = p.merged || 0;
+  const total = Math.max(p.total || 0, (p.children || []).length);
+  return tocDialogHtml({
+    sub: [workRepoName(p.repo?.nwo), p.number ? `親 Issue #${p.number}` : '', p.stacked ? 'stack' : ''],
+    title: `${p.number ? `#${p.number} ` : ''}${p.title || p.key}`,
+    now: `${merged} / ${total} マージ`,
+    groups: parentDetailGroups(p, { rowOf, stateOf, away: workParentAwayHtml(p), served: boards.some(b => b.slug === p.hub) }),
+    idPrefix: 'pd',
+  });
 }
 
 /* ── widths ── */

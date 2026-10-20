@@ -30,7 +30,7 @@ run('const workMerged = r => (r.task ? r.task.prState === "merged" : r.s?.branch
 run(read('my-work-clean.js'), 'my-work-clean.js');
 run(read('work-term.js'), 'work-term.js');
 const api = vm.runInContext(
-  '({ workSendableText, workSendBody, workSendTooLong, workTermGatesOf, workTermAskHtml, workTermMergedHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
+  '({ workSendableText, workSendBody, workSendTooLong, workTermGatesOf, workTermAskHtml, workTermMergedHtml, workTermHeadActsHtml, workTermMoreHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
 
 const keyOf = g => `s/${g.id}`;
 const ctxOf = g => ({ task: null, nwo: 'acme/widget', key: keyOf(g), issue: { number: '', url: '', hasBody: false } });
@@ -197,4 +197,31 @@ test('the dirty line warns with the two counts, has no clean-up button and a but
   assert.ok(html.includes('warning') && html.includes('aria-hidden="true"') && html.includes('>ターミナルで確かめる<') && html.includes('data-wk-ask-act="check"'));
   assert.ok(!html.includes('cleanup') && !html.includes('data-wk-ask-act="keep"') && !html.includes('qc-chip'));
   assert.ok(html.includes('data-wk-ask-board="b&lt;1"') && html.includes('data-wk-ask-sid="s&quot;1"'));
+});
+
+test('the heading of a parent has 「親タスクの詳細」 before 「hub の詳細」, and none otherwise', () => {
+  const both = api.workTermHeadActsHtml({ parent: true, hub: true });
+  assert.ok(both.includes('data-wk-term-act="parent"') && both.includes('account_tree') && both.includes('親タスクの詳細'));
+  assert.ok(both.indexOf('親タスクの詳細') < both.indexOf('hub の詳細'));
+  assert.ok(!api.workTermHeadActsHtml({ hub: true }).includes('親タスクの詳細'));
+  assert.ok(!api.workTermHeadActsHtml({ task: true }).includes('data-wk-term-act="parent"'));
+});
+
+test('the ⋯ menu lists its items in the order given, disabled ones carry their titles, and no items give no button', () => {
+  assert.equal(api.workTermMoreHtml([]), '');
+  assert.equal(api.workTermMoreHtml(), '');
+  const html = api.workTermMoreHtml([
+    { act: 'link-new', icon: 'add_task', label: 'タスクにする…', disabled: true, title: 'セッションが動いていません' },
+    { act: 'goto-board', icon: 'open_in_new', label: 'そのボードで開く', attrs: ' data-board="b&lt;1"' },
+    { act: 'copy', icon: 'content_copy', label: 'パスをコピー <x>' },
+  ]);
+  assert.ok(html.includes('aria-label="ほかの操作"') && html.includes('aria-haspopup="menu"') && html.includes('aria-expanded="false"') && html.includes('more_horiz'));
+  assert.ok(html.includes('role="menu"') && html.includes('hidden'));
+  assert.equal(count(html, 'role="menuitem"'), 3);
+  assert.ok(html.indexOf('data-wk-more-act="link-new"') < html.indexOf('data-wk-more-act="goto-board"') && html.indexOf('data-wk-more-act="goto-board"') < html.indexOf('data-wk-more-act="copy"'));
+  const first = html.slice(html.indexOf('data-wk-more-act="link-new"'), html.indexOf('data-wk-more-act="goto-board"'));
+  assert.ok(first.includes(' disabled') && first.includes('title="セッションが動いていません"'));
+  const second = html.slice(html.indexOf('data-wk-more-act="goto-board"'), html.indexOf('data-wk-more-act="copy"'));
+  assert.ok(!second.includes(' disabled') && second.includes('data-board="b&lt;1"'));
+  assert.ok(html.includes('パスをコピー &lt;x&gt;') && !html.includes('<x>'));
 });

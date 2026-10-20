@@ -8,9 +8,11 @@
    a gate, the controls of the panel's footer. (`data-open` is not here: the timeline's are turned into openers or text below.) */
 const TASK_DETAIL_DROP = '[data-expand-open], [data-pick], [data-unpick], [data-record], [data-judge], [data-tp-gate], [data-fetch-issue], [data-add-child], [data-gate], .decide, .gate-comment, [data-act], .pick[data-choice], [data-qc-ide], [data-ide], [data-focus]';
 
-/* The detail that is open: { key, board, slug, id, task (as last drawn), head, body (as drawn), gone, pinned (the entry the person
-   chose, until they scroll by hand) }. */
+/* The detail that is open: { key, board, slug, id, task (as last drawn), head, body (as drawn), gone }. */
 let taskDetail = null;
+/* The entry of the table of contents the person chose, by layer key, until they scroll by hand. Any `.td-layer` (the task detail,
+   a parent's detail in work-term-view.js) keeps its own. */
+const tocPinned = new Map();
 /* The cards of the questions that are open over a detail, by layer key: the gate as it was. */
 const taskDetailCards = new Map();
 
@@ -86,36 +88,29 @@ function taskDetailFolds(root) {
 const taskDetailLayer = () => (taskDetail ? dialogStack.layerEl(taskDetail.key) : null);
 
 /* The entry of the table of contents that is current: the one for `key`. */
-function taskDetailMark(layer, key) {
+function tocMark(layer, key) {
   layer.querySelectorAll('[data-td-go]').forEach(b => {
     if (b.dataset.tdGo === key) b.setAttribute('aria-current', 'location'); else b.removeAttribute('aria-current');
   });
 }
 
 /* The entry that is current by where the body is scrolled to. */
-function taskDetailSpy(layer) {
+function tocSpy(layer) {
   const body = layer.querySelector('.qd-body');
   const groups = [...body.querySelectorAll('[data-td-group]')];
   if (!groups.length) return;
   const top = body.getBoundingClientRect().top;
   const tops = groups.map(g => g.getBoundingClientRect().top - top + body.scrollTop);
-  taskDetailMark(layer, groups[tocActiveKey(tops, body.scrollTop, body.clientHeight, body.scrollHeight)].dataset.tdGroup);
+  tocMark(layer, groups[tocActiveKey(tops, body.scrollTop, body.clientHeight, body.scrollHeight)].dataset.tdGroup);
 }
 
-function openTaskDetail(task, opener) {
-  const key = `detail:${nav.board}/${task.id}`;
-  if (dialogStack.has(key)) return;
-  if (dialogStack.isOpen()) dialogStack.closeAll();
-  const { head, body } = taskDetailParts(task);
-  taskDetail = { key, board: nav.board, slug: task._slug || '', id: task.id, task, head, body, gone: false, pinned: null };
-  dialogStack.push({
-    key, cls: 'td-layer', head, body, opener,
-    onClose: layer => { if (taskDetail?.key === layer.key) taskDetail = null; },
-  });
-  const layer = dialogStack.layerEl(key);
+/* Marks the entry that is on screen as the body of a `.td-layer` scrolls, until the person chooses one (the click handler below) and
+   scrolls by hand again. Called once, when the layer is pushed. */
+function tocWire(layer) {
+  const key = layer.dataset.qdKey;
   const scroller = layer.querySelector('.qd-body');
   // The person scrolling by hand takes the choice back from the entry they clicked.
-  const release = () => { if (taskDetail?.key === key) taskDetail.pinned = null; };
+  const release = () => { tocPinned.delete(key); };
   scroller.addEventListener('wheel', release, { passive: true });
   scroller.addEventListener('touchmove', release, { passive: true });
   // A drag on the scrollbar has the body itself as its target.
@@ -123,13 +118,61 @@ function openTaskDetail(task, opener) {
   scroller.addEventListener('keydown', e => { if (e.key !== 'Tab') release(); });
   let queued = false;
   scroller.addEventListener('scroll', () => {
-    if (queued || taskDetail?.key !== key || taskDetail.pinned) return;
+    if (queued || tocPinned.has(key)) return;
     queued = true;
     requestAnimationFrame(() => {
       queued = false;
-      if (taskDetail?.key === key && !taskDetail.pinned && layer.isConnected && !layer.hidden) taskDetailSpy(layer);
+      if (!tocPinned.has(key) && layer.isConnected && !layer.hidden) tocSpy(layer);
     });
   }, { passive: true });
+}
+
+/* A `.td-layer` drawn again with `parts` ({ head, body }) as its dialog's `info` ({ key, head, body }) had them: keeping where it was
+   scrolled to, which entry is current and which sections were open, and not while the focus is in something of the body other than the
+   body itself or the table of contents. */
+function tocRedraw(layer, info, parts) {
+  if (parts.head === info.head && parts.body === info.body) return;
+  const body = layer.querySelector('.qd-body');
+  const active = document.activeElement;
+  const inside = active !== body && body.contains(active);
+  const calm = inside && active.matches('[data-td-go], [data-td-group]');
+  if (inside && !calm) return;
+  const top = body.scrollTop;
+  const current = layer.querySelector('[data-td-go][aria-current]')?.dataset.tdGo;
+  const focusKey = calm ? (active.dataset.tdGo ?? active.dataset.tdGroup) : null;
+  const focusWas = calm ? (active.matches('[data-td-go]') ? 'go' : 'group') : '';
+  // The heading names the dialog (dialog-stack.js sets its id): a new one takes the id of the old.
+  const main = layer.querySelector('.qd-head-main');
+  const titleId = main.querySelector('h2')?.id;
+  main.innerHTML = parts.head;
+  if (titleId) main.querySelector('h2').id = titleId;
+  // What was unfolded or folded by hand stays so: each fold is known by its summary and which of that summary it is, so one that
+  // comes or goes does not move the others' state (only one with the very same summary, before it, would).
+  const folds = taskDetailFolds(body);
+  body.innerHTML = parts.body;
+  for (const [key, d] of taskDetailFolds(body)) if (folds.has(key)) d.open = folds.get(key).open;
+  body.scrollTop = top;
+  if (current) tocMark(layer, current);
+  // What was drawn can be taller or shorter now: the entry follows unless the person chose one.
+  if (!tocPinned.has(info.key)) tocSpy(layer);
+  if (focusKey != null) {
+    body.querySelector(focusWas === 'go' ? `[data-td-go="${CSS.escape(focusKey)}"]` : `[data-td-group="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+  }
+  info.head = parts.head;
+  info.body = parts.body;
+}
+
+function openTaskDetail(task, opener) {
+  const key = `detail:${nav.board}/${task.id}`;
+  if (dialogStack.has(key)) return;
+  if (dialogStack.isOpen()) dialogStack.closeAll();
+  const { head, body } = taskDetailParts(task);
+  taskDetail = { key, board: nav.board, slug: task._slug || '', id: task.id, task, head, body, gone: false };
+  dialogStack.push({
+    key, cls: 'td-layer', head, body, opener,
+    onClose: layer => { tocPinned.delete(layer.key); if (taskDetail?.key === layer.key) taskDetail = null; },
+  });
+  tocWire(dialogStack.layerEl(key));
 }
 
 /* The open detail as the page's state now has it. It is drawn again only when its markup changed, keeping where it was scrolled to
@@ -152,36 +195,7 @@ function taskDetailFollow() {
   // Under another layer (a card, the Issue) the detail has no box: a redraw there would lose where it was scrolled to and mark the
   // wrong entry. It is drawn when it is on top again, at the next render.
   if (layer.hidden) return;
-  const parts = taskDetailParts(task);
-  if (parts.head === info.head && parts.body === info.body) return;
-  const body = layer.querySelector('.qd-body');
-  const active = document.activeElement;
-  const inside = active !== body && body.contains(active);
-  const calm = inside && active.matches('[data-td-go], [data-td-group]');
-  if (inside && !calm) return;
-  const top = body.scrollTop;
-  const current = layer.querySelector('[data-td-go][aria-current]')?.dataset.tdGo;
-  const focusKey = calm ? (active.dataset.tdGo ?? active.dataset.tdGroup) : null;
-  const focusWas = calm ? (active.matches('[data-td-go]') ? 'go' : 'group') : '';
-  // The heading names the dialog (dialog-stack.js sets its id): a new one takes the id of the old.
-  const main = layer.querySelector('.qd-head-main');
-  const titleId = main.querySelector('h2')?.id;
-  main.innerHTML = parts.head;
-  if (titleId) main.querySelector('h2').id = titleId;
-  // What was unfolded or folded by hand stays so: each fold is known by its summary and which of that summary it is, so one that
-  // comes or goes does not move the others' state (only one with the very same summary, before it, would).
-  const folds = taskDetailFolds(body);
-  body.innerHTML = parts.body;
-  for (const [key, d] of taskDetailFolds(body)) if (folds.has(key)) d.open = folds.get(key).open;
-  body.scrollTop = top;
-  if (current) taskDetailMark(layer, current);
-  // What was drawn can be taller or shorter now: the entry follows unless the person chose one.
-  if (!info.pinned) taskDetailSpy(layer);
-  if (focusKey != null) {
-    body.querySelector(focusWas === 'go' ? `[data-td-go="${CSS.escape(focusKey)}"]` : `[data-td-group="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
-  }
-  info.head = parts.head;
-  info.body = parts.body;
+  tocRedraw(layer, info, taskDetailParts(task));
 }
 
 /* ── the table of contents and the layers over the detail ── */
@@ -205,14 +219,14 @@ function openTaskDetailCard(info, ref, opener) {
 questionDialogEl().addEventListener('click', e => {
   const go = e.target.closest?.('[data-td-go]');
   const info = taskDetail;
-  if (go && info && go.closest('.td-layer')) {
+  if (go && go.closest('.td-layer')) {
     const layer = go.closest('.td-layer');
     const body = layer.querySelector('.qd-body');
     const group = [...body.querySelectorAll('[data-td-group]')].find(x => x.dataset.tdGroup === go.dataset.tdGo);
     if (!group) return;
     const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    info.pinned = go.dataset.tdGo;
-    taskDetailMark(layer, info.pinned);
+    tocPinned.set(layer.dataset.qdKey, go.dataset.tdGo);
+    tocMark(layer, go.dataset.tdGo);
     group.scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
     group.focus({ preventScroll: true });
     return;

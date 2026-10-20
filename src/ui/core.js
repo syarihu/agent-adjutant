@@ -30,8 +30,8 @@ const SESS_REF = 'session:';
 const isSessRef = id => typeof id === 'string' && id.startsWith(SESS_REF);
 const sessIdOfRef = id => id.slice(SESS_REF.length);
 const sessOfRef = (id, data = state) => isSessRef(id) ? (data.sessions || []).find(s => s.id === sessIdOfRef(id)) || null : null;
-/* A parent issue opens in the work view as `parent:<key>`: its overview in the panel, the terminal
-   of the hub that runs it in the middle. The key is the one `parents[].key` carries. */
+/* A parent issue opens in the work view as `parent:<key>`: the terminal of the hub that runs it in the
+   middle, and its overview in a dialog opened from the heading over it (「親タスクの詳細」). The key is the one `parents[].key` carries. */
 const PARENT_REF = 'parent:';
 const isParentRef = id => typeof id === 'string' && id.startsWith(PARENT_REF);
 const parentKeyOfRef = id => id.slice(PARENT_REF.length);

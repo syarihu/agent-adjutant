@@ -244,7 +244,7 @@ function renderTaskPanelNow() {
     return renderPrPanel();
   } else if (typeof prLeft === 'function') prLeft();
   // A card the board no longer lists, a hub that left its list, or a session that is gone takes
-  // the panel with it. In the work view the panel stays and says so: the row was opened from a
+  // the panel with it. In the work view there is no panel for it: the middle says so, for the row was opened from a
   // list that may know more than the board it is on.
   // A parent is not gone while the work document that lists it has not been read.
   const gone = !!selectedTaskId && !task && !hub && !sess && !parent && !gateOf && !(isParentRef(selectedTaskId) && !work.doc);
@@ -253,7 +253,10 @@ function renderTaskPanelNow() {
   if (gone && state.now == null) return;
   // In the work view a hub has no right column: its heading over the terminal has its status, and 「hub の詳細」 the rest. Nor has a
   // task, whose details are in a dialog opened from the heading (task-detail-view.js); only its AI 下読み keeps its reader's panel here.
-  const shown = (!!((task && (view !== 'work' || taskReadActive(task))) || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work') && !(view === 'work' && hub);
+  // A parent (「親タスクの詳細」), a session with no task (the heading's ⋯ menu) and a row the list no longer has (the middle says so) have
+  // none either: the panel is left to the AI 下読み reader and to a gate that has no task card.
+  const shown = view === 'work' ? !!((task && taskReadActive(task)) || gateOf)
+    : (!!(task || hub || sess || parent || gateOf) || gone) && view === 'board';
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop());
@@ -269,10 +272,6 @@ function renderTaskPanelNow() {
   if (gateOf) {
     renderWorkAway(null);
     return renderGatePanel(gateOf);
-  }
-  if (parent || gone) {
-    renderWorkAway(null);
-    return renderWorkPanelOnly(parent);
   }
   // A task's 「AI 下読み」 tab: the panel is its reader's.
   if (taskReadActive(task)) return renderTaskReaderPanel(task);
@@ -907,19 +906,19 @@ function disposeTermSlot(slot) {
   Object.assign(slot, { taskId: null, sessionId: null, term: null, ended: null, endReason: null, reconnect: false });
 }
 
-/* `omit` names the session buttons (`act`) left out of the bar, for ones the page draws elsewhere. */
-function termBarHtml(s, slot = panelTerm, actions = true, omit = []) {
+/* The bar over the panel's terminal: the session's state, its last output and its own buttons. */
+function termBarHtml(s) {
   if (!s || !hasSession(s)) return '';
   const st = sessionState(s);
   const last = s.present ? lastOutputText(s) : null;
-  const again = slot.term && slot.ended != null && boardTerminalReady(s);
-  const reset = actions ? hubResetButton(s) : null;
+  const again = panelTerm.term && panelTerm.ended != null && boardTerminalReady(s);
+  const reset = hubResetButton(s);
   return `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(STATE_LABEL[st])}</span>`
     + (last ? `<span class="tp-muted">最後の出力: ${esc(last)}</span>` : '')
     + `<span class="tp-bar-gap"></span>`
     + (reset ? actionButtonHtml(reset) : '')
     + (again ? '<button type="button" class="btn-m3-tonal sess-act" data-tp-reconnect><span class="material-symbols-outlined" aria-hidden="true">sync</span><span>再接続</span></button>' : '')
-    + (actions ? sessionButtons(s).bar.filter(b => !omit.includes(b.act)).map(b => actionButtonHtml(b)).join('') : '');
+    + sessionButtons(s).bar.map(b => actionButtonHtml(b)).join('');
 }
 
 /* Over the host while there is no terminal in it: why not, and the last screen if this page saw
@@ -951,7 +950,7 @@ tp('task-panel').addEventListener('click', e => {
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;
   if (!task && !hub && !sess) {
     if (gateOfPanelRef(selectedTaskId)) return gatePanelClick(e);
-    return view === 'work' ? workPanelClick(e) : undefined;
+    return;
   }
   const hit = sel => e.target.closest(sel);
   let b;

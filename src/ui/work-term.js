@@ -76,14 +76,28 @@ function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(),
    is (`a` is `workMergedAsk`'s answer, in my-work-clean.js). The terminal names the session already, so the question does not. */
 const workTermMergedHtml = (a, { board, sid, busy = false } = {}) => workMergedAskHtml(a, { board, sid, busy });
 
-/* The buttons at the heading's right end. 「タスク詳細」 is for a task's row; 「IDE」 and 「セッションを閉じる」 for a worker with a
-   linked worktree (`closeWhy` is why the close is not possible just now, or ''); 「hub の詳細」 for a hub. */
-function workTermHeadActsHtml({ task = false, ide = false, close = false, closeWhy = '', hub = false } = {}) {
+/* The buttons at the heading's right end. 「タスク詳細」 is for a task's row; 「親タスクの詳細」 for a parent's hub (the selection is a
+   parent, or a hub that runs one); 「IDE」 and 「セッションを閉じる」 for a worker with a linked worktree (`closeWhy` is why the close is
+   not possible just now, or ''); 「hub の詳細」 for a hub. */
+function workTermHeadActsHtml({ task = false, parent = false, ide = false, close = false, closeWhy = '', hub = false } = {}) {
   const btn = (act, icon, label, extra = '') => `<button type="button" class="btn-m3-text" data-wk-term-act="${act}"${extra}>${qcIcon(icon)}<span>${esc(label)}</span></button>`;
   return (task ? btn('detail', 'description', 'タスク詳細') : '')
+    + (parent ? btn('parent', 'account_tree', '親タスクの詳細') : '')
     + (hub ? btn('hubinfo', 'info', 'hub の詳細') : '')
     + (ide ? btn('ide', 'code', 'IDE') : '')
     + (close ? btn('close', 'tab_close', 'セッションを閉じる', closeWhy ? ` disabled title="${esc(closeWhy)}"` : ' title="worker のタブを閉じます（worktree は残ります）"') : '');
+}
+
+/* The ⋯ button at the heading's right end and the small menu under it, for a worker's less common operations. `items` are
+   { act, icon, label, title, disabled, attrs }: a click on one is heard by work-term-view.js through `data-wk-more-act` (`attrs` is
+   extra attributes, already escaped). No items, no button. The menu starts shut; work-term-view.js opens and closes it. */
+function workTermMoreHtml(items = []) {
+  if (!items.length) return '';
+  const row = it => `<button type="button" class="wk-more-item" role="menuitem" tabindex="-1" data-wk-more-act="${esc(it.act)}"${it.attrs || ''}`
+    + `${it.title ? ` title="${esc(it.title)}"` : ''}${it.disabled ? ' disabled' : ''}>${qcIcon(it.icon)}<span>${esc(it.label)}</span></button>`;
+  return '<span class="wk-more">'
+    + `<button type="button" class="btn-m3-text wk-more-btn" data-wk-more aria-label="ほかの操作" title="ほかの操作" aria-haspopup="menu" aria-expanded="false">${qcIcon('more_horiz')}</button>`
+    + `<div class="wk-more-menu" role="menu" aria-label="ほかの操作" hidden>${items.map(row).join('')}</div></span>`;
 }
 
 /* A hub's status in one line under its title: the pill the panel's head had, and the counts the 詳細 tab had in its first card.
