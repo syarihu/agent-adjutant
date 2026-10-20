@@ -1202,6 +1202,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         for value in [&mut one, &mut listed_one] {
             value.as_object_mut().unwrap().remove("uncommitted");
             value.as_object_mut().unwrap().remove("uncommittedError");
+            value.as_object_mut().unwrap().remove("unpushed");
         }
         assert_eq!(one, listed_one, "{id}");
     }
@@ -1290,6 +1291,8 @@ fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Sess
         agent_session: None,
         uncommitted: None,
         uncommitted_error: None,
+        unpushed: None,
+        cleanup_kept_at: None,
         branch_pr: None,
         branch_pr_error: None,
     }

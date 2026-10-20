@@ -1,9 +1,10 @@
 /* ── TODO: what waits on the person, the pure half (src/ui/todo-view.js draws and wires it) ────────────────────────────────────
-   One list over every repository, in the order it is best answered: first the quick questions that one tap settles, then the ones
+   One list over every repository, in the order it is best answered: first the questions that one tap settles (a merged session to clean
+   up, a quick question of a worker), then the ones
    that have to be read before they are decided (a start check, a research result, a plan, a report, a diff). The pull requests the
    person was asked to review are not here: they are 「レビュー」's. These functions take the documents and return the list and its markup, touching neither the page
    nor the network, so `src/ui/tests/todo.test.js` runs them under `node --test`. Loaded after question-card.js (`quickRowHtml`,
-   `QUESTION_ASK_OF_KIND`), my-work-seen.js (`workEntries`, `workWaits`) and gate-evidence.js (`gateFocusLine`). */
+   `QUESTION_ASK_OF_KIND`), my-work-clean.js (`workMergedAskOf`, `workMergedAskHtml`), my-work-seen.js (`workEntries`, `workWaits`) and gate-evidence.js (`gateFocusLine`). */
 
 /* The order the gates to read are taken in: a start check, then the filing, the research or report, the plan, a question, what is
    to go to Jules, the check by hand, and the diff last. A kind not named here goes after them. */
@@ -16,17 +17,30 @@ const todoKindRank = kind => {
 const todoAt = item => (Number.isFinite(item.since) ? item.since : Infinity);
 const todoOldest = (a, b) => (todoAt(a) === todoAt(b) ? 0 : todoAt(a) < todoAt(b) ? -1 : 1);
 
-/* What waits on the person: `{ quick, read, count }`. `doc` is the work document; `isDone(key)` says a gate was answered in this
-   page, and `inScope(nwo)` whether a repository is one the list is for. Gates of a parked task are left out (`workWaits`). */
-function todoItems({ doc, isDone = () => false, inScope = () => true }) {
+/* What waits on the person: `{ clean, quick, read, count }`. `doc` is the work document; `isDone(key)` says a gate was answered in this
+   page, and `inScope(nwo)` whether a repository is one the list is for; `kept` is the keys of the sessions 「残す」 was pressed on and
+   the document does not yet say so for. Gates of a parked task are left out (`workWaits`). `clean` is a merged session the board asks
+   about by itself (`workMergedAskOf`, in my-work-clean.js): not a gate, so nothing reads a board for it. Oldest first by the time the session
+   reached its last phase (`phaseAt`), those with none after, by title. */
+function todoItems({ doc, isDone = () => false, inScope = () => true, kept = new Set() }) {
   const quickKeys = new Set();
   for (const repo of doc?.repos || []) {
     for (const t of repo.turns || []) for (const g of t.gates || []) if (g.quick) quickKeys.add(`${g.slug}/${g.id}`);
   }
-  const waits = workWaits(workEntries(doc, isDone)).filter(w => inScope(w.nwo)).map(w => ({ ...w, quick: quickKeys.has(w.key) }));
+  const entries = workEntries(doc, isDone);
+  const waits = workWaits(entries).filter(w => inScope(w.nwo)).map(w => ({ ...w, quick: quickKeys.has(w.key) }));
   const quick = waits.filter(w => w.quick).sort(todoOldest);
   const read = waits.filter(w => !w.quick).sort((a, b) => todoKindRank(a.kind) - todoKindRank(b.kind) || todoOldest(a, b));
-  return { quick, read, count: quick.length + read.length };
+  const clean = [];
+  for (const e of entries) {
+    if (!inScope(e.nwo)) continue;
+    const a = workMergedAskOf(e, { isDone, kept });
+    if (a?.ask !== 'clean') continue;
+    clean.push({ key: workAskKey(e.board, e.session.id), board: e.board, sessionId: e.session.id, nwo: e.nwo, title: a.title, text: workMergedAskText(a, true),
+      files: a.files, unpushed: a.unpushed, since: e.session.phaseAt });
+  }
+  clean.sort((a, b) => todoOldest(a, b) || a.title.localeCompare(b.title));
+  return { clean, quick, read, count: clean.length + quick.length + read.length };
 }
 
 /* The boards to read now: those of the gates listed, read for the first time, or longer ago than `freshMs`, or before a listed gate
@@ -82,6 +96,14 @@ function todoQuickRowHtml(item, g, ctx = {}, now = Date.now() / 1000, error = nu
   return `<div class="todo-quick" data-todo-key="${esc(item.key)}">${quickRowHtml(g, { ...ctx, key: item.key, firstLine: true })}<div class="todo-task">${esc(item.title)}</div>${stale}${from}</div>`;
 }
 
+/* A merged session asked about, as a row of its own: the question and its two buttons, and the repository it is in. Not a gate: it has no
+   board to wait for. */
+function todoCleanRowHtml(item, busy = false) {
+  const ask = { ask: 'clean' };
+  return `<div class="todo-quick todo-clean" data-todo-key="${esc(item.key)}">${workMergedAskHtml(ask, { board: item.board, sid: item.sessionId, text: item.text, busy })}`
+    + `<div class="todo-from">${esc(item.nwo)}</div></div>`;
+}
+
 /* A gate to read as a button that selects it: what kind, which task, what is asked (the worker's own words, else the kind's fixed question). */
 function todoReadRowHtml(item, g, sel, now = Date.now() / 1000, gone = false) {
   const [label, color] = kindOf(item.kind);
@@ -92,14 +114,16 @@ function todoReadRowHtml(item, g, sel, now = Date.now() / 1000, gone = false) {
     + `<span class="todo-from">${esc(item.nwo)} · ${esc(todoWaited(item.since, now))}</span></button>`;
 }
 
-/* The whole list: the quick rows, then (only when there is something to read) a separator and the gates to read.
-   `gateOf(key)` is the gate once its board has been read, `errorOf(key)` why that read failed, `goneOf(key)` whether the board was read and does not list it, `ctxOf(g)` the card's context, `sel` the selected key. */
-function todoListHtml(items, { gateOf = () => null, errorOf = () => null, goneOf = () => false, ctxOf = () => ({}), sel = null, now = Date.now() / 1000, emptyOk = true } = {}) {
+/* The whole list: the merged sessions asked about and the quick rows (one tap settles them), then (only when there is something to read) a
+   separator and the gates to read. `gateOf(key)` is the gate once its board has been read, `errorOf(key)` why that read failed, `goneOf(key)` whether the board was read and does not list it, `ctxOf(g)` the card's context, `sel` the selected key, `busyOf(key)` whether a request of a merged session's buttons is out. */
+function todoListHtml(items, { gateOf = () => null, errorOf = () => null, goneOf = () => false, ctxOf = () => ({}), busyOf = () => false, sel = null, now = Date.now() / 1000, emptyOk = true } = {}) {
   // Nothing waiting is only said when the work document was read whole.
   if (!items.count) return emptyOk ? '<p class="todo-empty">あなたの番はありません</p>' : '';
+  const clean = (items.clean || []).map(c => todoCleanRowHtml(c, busyOf(c.key))).join('');
   const quick = items.quick.map(w => { const g = gateOf(w.key); return todoQuickRowHtml(w, g, g ? ctxOf(g) : {}, now, errorOf(w.key), goneOf(w.key)); }).join('');
   const heavy = items.read.length > 0;
-  return quick
-    + (heavy && items.quick.length ? '<h3 class="todo-sep">読んで決める</h3>' : heavy ? '<h3 class="todo-sep first">読んで決める</h3>' : '')
+  const oneTap = (items.clean || []).length + items.quick.length > 0;
+  return clean + quick
+    + (heavy && oneTap ? '<h3 class="todo-sep">読んで決める</h3>' : heavy ? '<h3 class="todo-sep first">読んで決める</h3>' : '')
     + items.read.map(w => todoReadRowHtml(w, gateOf(w.key), sel, now, goneOf(w.key))).join('');
 }

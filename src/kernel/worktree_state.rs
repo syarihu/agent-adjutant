@@ -154,18 +154,8 @@ pub fn worktree_git_state(
         },
     };
     if head.is_some() {
-        let range: &[&str] = match against_upstream {
-            true => &["@{u}..HEAD"],
-            false => &["HEAD", "--not", "--remotes"],
-        };
-        let mut count = vec!["rev-list", "--count"];
-        count.extend(range);
-        let counted = git(&count)?;
-        unpushed.count = counted
-            .ok()
-            .then(|| counted.stdout.trim().parse().ok())
-            .flatten()
-            .ok_or("git could not count the unpushed commits")?;
+        let range = unpushed_range(against_upstream);
+        unpushed.count = count_unpushed(&git, against_upstream)?;
         if unpushed.count > 0 {
             let limit = format!("-n{UNPUSHED_LISTED}");
             let mut log = vec!["log", "--format=%h%x09%s", &limit];
@@ -195,6 +185,68 @@ pub fn worktree_git_state(
         unpushed,
         merged,
     }))
+}
+
+/// The revisions that name the commits only here: after the upstream when it is the branch's
+/// own counterpart, else those no remote-tracking ref has.
+fn unpushed_range(against_upstream: bool) -> &'static [&'static str] {
+    match against_upstream {
+        true => &["@{u}..HEAD"],
+        false => &["HEAD", "--not", "--remotes"],
+    }
+}
+
+/// How many commits are only here. A count git did not give is an error, never 0.
+fn count_unpushed(
+    git: &impl Fn(&[&str]) -> Result<GitOut, String>,
+    against_upstream: bool,
+) -> Result<usize, String> {
+    let mut count = vec!["rev-list", "--count"];
+    count.extend(unpushed_range(against_upstream));
+    let counted = git(&count)?;
+    counted
+        .ok()
+        .then(|| counted.stdout.trim().parse().ok())
+        .flatten()
+        .ok_or_else(|| "git could not count the unpushed commits".to_string())
+}
+
+/// What `worktree` holds that no remote has, as a count and nothing else of
+/// `worktree_git_state`: cheap enough to ask for every session on a poll. Counted the same way
+/// (against the upstream that tracks the branch's own name, else against every remote); a
+/// worktree with no commit has none. `Ok(None)` when the directory is gone.
+pub fn unpushed_of(worktree: &Path, deadline: std::time::Instant) -> Result<Option<usize>, String> {
+    if !worktree.is_dir() {
+        return Ok(None);
+    }
+    let git = |args: &[&str]| git_until(args, worktree, deadline);
+    let head = git(&["rev-parse", "-q", "--verify", "HEAD"])?;
+    match head.code {
+        Some(0) => {}
+        Some(1) if head.stdout.trim().is_empty() => return Ok(Some(0)),
+        _ => return Err("git could not read HEAD".to_string()),
+    }
+    let branch = git(&["symbolic-ref", "-q", "--short", "HEAD"])?;
+    let branch = match branch.code {
+        Some(0) => Some(branch.stdout.trim().to_string()).filter(|b| !b.is_empty()),
+        Some(1) => None,
+        _ => return Err("git could not read the branch".to_string()),
+    };
+    let mut against_upstream = false;
+    if let Some(name) = &branch {
+        let merge = git(&["config", "--get", &format!("branch.{name}.merge")])?;
+        match merge.code {
+            Some(0) => {
+                let upstream = git(&["rev-parse", "--abbrev-ref", "@{u}"])?;
+                against_upstream = upstream.ok()
+                    && !upstream.stdout.trim().is_empty()
+                    && merge.stdout.trim().strip_prefix("refs/heads/") == Some(name.as_str());
+            }
+            Some(1) => {}
+            _ => return Err("git could not read the branch's upstream".to_string()),
+        }
+    }
+    count_unpushed(&git, against_upstream).map(Some)
 }
 
 /// The files and lines `git` finds that no commit has. `has_head` is whether HEAD names a

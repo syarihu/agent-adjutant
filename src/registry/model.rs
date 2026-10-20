@@ -186,6 +186,8 @@ pub struct WorkerRecord {
     pub task: Option<String>,
     pub phase: Option<String>,
     pub phase_at: Option<i64>,
+    /// When the person chose to keep this session instead of cleaning it up (seconds, UTC).
+    pub cleanup_kept_at: Option<i64>,
     /// Entries as they are, readable or not, so a rewrite keeps one this version cannot read.
     pub phases: Option<Vec<Value>>,
     /// Every key not read into a field above: unknown ones, known ones that are null or of
@@ -210,6 +212,7 @@ impl WorkerRecord {
             task: lift(&mut fields, "task", text),
             phase: lift(&mut fields, "phase", text),
             phase_at: lift(&mut fields, "phaseAt", Value::as_i64),
+            cleanup_kept_at: lift(&mut fields, "cleanupKeptAt", Value::as_i64),
             phases: lift(&mut fields, "phases", |v| v.as_array().cloned()),
             other: fields,
         })
@@ -240,6 +243,9 @@ impl WorkerRecord {
         }
         if let Some(at) = self.phase_at {
             fields.insert("phaseAt".to_string(), json!(at));
+        }
+        if let Some(at) = self.cleanup_kept_at {
+            fields.insert("cleanupKeptAt".to_string(), json!(at));
         }
         if let Some(phases) = &self.phases {
             fields.insert("phases".to_string(), Value::Array(phases.clone()));

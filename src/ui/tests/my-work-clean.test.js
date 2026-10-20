@@ -26,6 +26,10 @@ const ctx = vm.createContext({
   cleanupSummary: () => ({ text: 'removed', bad: false }),
   openCleanupDialog: (s, base, o) => calls.push(['dialog', s.id, base, o]),
   workIsSelected: r => !!r.selected,
+  prRefNumber: pr => /(\d+)$/.exec(pr || '')?.[1] || '',
+  qcIcon: n => `<span class="material-symbols-outlined" aria-hidden="true">${n}</span>`,
+  pageRows: [],
+  workRows: () => ctx.pageRows,
 });
 vm.runInContext([
   cut(/^const workClean = [^\n]*;/m),
@@ -38,6 +42,16 @@ vm.runInContext([
   cut(/^function workCleanWant[\s\S]*?^}/m),
   cut(/^function workCleanClicked[\s\S]*?^}/m),
   cut(/^async function workCleanUp[\s\S]*?^}/m),
+  cut(/^const workAsk = [^\n]*;/m),
+  cut(/^const workAskKey = [^\n]*;/m),
+  cut(/^function workMergedAsk\(r\)[\s\S]*?^}/m),
+  cut(/^const workEntryGated = [^\n]*;/m),
+  cut(/^function workMergedAskOf[\s\S]*?^}/m),
+  cut(/^function workAskPrune[\s\S]*?^}/m),
+  cut(/^const workMergedAskText = [^\n]*;/m),
+  cut(/^function workMergedAskHtml[\s\S]*?^}/m),
+  cut(/^async function workKeep[\s\S]*?^}/m),
+  cut(/^async function workAskPress[\s\S]*?^}/m),
 ].join('\n'), ctx);
 const run = (code, vars = {}) => { Object.assign(ctx, vars); return vm.runInContext(code, ctx); };
 const row = (extra = {}) => ({ key: 'b1/t1', board: 'b1', s: { id: 's1', kind: 'worker', worktree: '/w/tree', uncommitted: { files: 9, untracked: 9 } }, task: { id: 't1', prState: 'merged' }, ...extra });
@@ -158,4 +172,162 @@ test('the button\'s click finds its row by the key it carries and cleans that on
   await run('workCleanClicked(b, rows)', { b: { dataset: { wkClean: 'b1/t1' }, disabled: true }, rows: rowsByKey });
   await run('workCleanClicked(b, rows)', { b: { dataset: { wkClean: 'nowhere' }, disabled: false }, rows: rowsByKey });
   assert.strictEqual(calls.length, 0);
+});
+
+/* ── the board asks about a merged session from the document's facts ── */
+
+const merged = (extra = {}, task = { id: 't1', title: 'Retry <upload>', prState: 'merged', pr: 'https://github.com/acme/widget/pull/12' }) => ({
+  task, s: { id: 's1', kind: 'worker', worktree: '/w/tree', uncommitted: { files: 0, untracked: 0 }, unpushed: 0, ...extra },
+});
+const ask = r => plain(run('workMergedAsk(r)', { r }));
+
+test('ask: nothing to lose is clean, work to lose is dirty with both counts, and the PR number and title come from the task', () => {
+  assert.deepStrictEqual(ask(merged()), { ask: 'clean', files: 0, unpushed: 0, number: '12', title: 'Retry <upload>' });
+  assert.deepStrictEqual(ask(merged({ uncommitted: { files: 2, untracked: 1 } })).ask, 'dirty');
+  assert.deepStrictEqual(ask(merged({ uncommitted: { files: 2, untracked: 1 }, unpushed: 4 })), { ask: 'dirty', files: 3, unpushed: 4, number: '12', title: 'Retry <upload>' });
+  assert.strictEqual(ask(merged({ unpushed: 1 })).ask, 'dirty');
+  assert.strictEqual(ask(merged({ uncommitted: { files: 0, untracked: 5 } })).ask, 'dirty');
+});
+
+test('ask: a fact that is not known, or a read that failed, is no answer', () => {
+  assert.strictEqual(ask(merged({ unpushed: undefined })), null);
+  assert.strictEqual(ask(merged({ uncommitted: undefined })), null);
+  assert.strictEqual(ask(merged({ uncommitted: { files: 0 } })), null);
+  assert.strictEqual(ask(merged({ uncommittedError: 'git could not read HEAD' })), null);
+  assert.strictEqual(ask(merged({ unpushed: null })), null);
+});
+
+test('ask: only a merged worker session with a worktree; a branch PR stands in for a task\'s', () => {
+  assert.strictEqual(ask(merged({}, { id: 't1', prState: 'open' })), null);
+  assert.strictEqual(ask({ ...merged(), isHub: true }), null);
+  assert.strictEqual(ask(merged({ kind: 'hub' })), null);
+  assert.strictEqual(ask(merged({ worktree: '' })), null);
+  assert.strictEqual(ask(merged({ id: '' })), null);
+  const branch = merged({ branchPr: { state: 'merged', number: 7 }, taskTitle: 'From the record' }, null);
+  assert.deepStrictEqual(ask(branch), { ask: 'clean', files: 0, unpushed: 0, number: '7', title: 'From the record' });
+  assert.strictEqual(ask(merged({ branchPr: { state: 'open' } }, null)), null);
+  // An entry holds the session as `session`.
+  assert.strictEqual(ask({ task: merged().task, session: merged().s }).ask, 'clean');
+  // No number: the title is the session's, or the worktree's name.
+  assert.strictEqual(ask(merged({ branchPr: { state: 'merged' }, title: 'Own title' }, null)).title, 'Own title');
+  assert.strictEqual(ask(merged({ branchPr: { state: 'merged' } }, null)).title, 'tree');
+});
+
+test('ask text: the number when there is one, the title only where the session is not named already', () => {
+  const text = (a, titled) => run('workMergedAskText(a, titled)', { a, titled });
+  assert.strictEqual(text({ number: '12', title: 'T' }, false), 'PR #12 マージ済み。片付けてセッションを閉じる？');
+  assert.strictEqual(text({ number: '12', title: 'T' }, true), 'T: PR #12 マージ済み。片付けてセッションを閉じる？');
+  assert.strictEqual(text({ number: '', title: 'T' }, false), 'マージ済み。片付けてセッションを閉じる？');
+  assert.strictEqual(text({ number: '', title: 'T' }, true), 'T: マージ済み。片付けてセッションを閉じる？');
+});
+
+const entry = (extra = {}) => ({ board: 'b1', task: merged().task, session: merged().s, gates: [], ...extra });
+const asked = (e, kept = new Set(), isDone = () => false) => plain(run('workMergedAskOf(e, { kept, isDone })', { e, kept, isDone }));
+
+test('asked: a gate of the entry, or one the session waits on, leaves only the gate; one answered here no longer does', () => {
+  assert.strictEqual(asked(entry()).ask, 'clean');
+  assert.strictEqual(asked(entry({ gates: [{ key: 'b1/g1' }] })), null);
+  const waiting = { ...merged().s, waiting: { slug: 'b1', id: 'g1' } };
+  assert.strictEqual(asked(entry({ session: waiting })), null);
+  assert.strictEqual(asked(entry({ session: waiting }), new Set(), key => key === 'b1/g1').ask, 'clean');
+  // The dirty line is a question to nobody, but a gate is still the only thing asked.
+  assert.strictEqual(asked(entry({ session: { ...merged().s, unpushed: 1 }, gates: [{ key: 'b1/g1' }] })), null);
+});
+
+test('asked: 「残す」 hides the clean question, by the record or by the page until the document says it, and not the dirty line', () => {
+  assert.strictEqual(asked(entry({ session: { ...merged().s, cleanupKeptAt: 1700000000 } })), null);
+  assert.strictEqual(asked(entry(), new Set(['clean:b1/s1'])), null);
+  assert.strictEqual(asked(entry(), new Set(['clean:b2/s1'])).ask, 'clean');
+  assert.strictEqual(asked(entry({ session: { ...merged().s, unpushed: 2, cleanupKeptAt: 1 } })).ask, 'dirty');
+  assert.strictEqual(asked(entry({ session: { ...merged().s, unpushed: 2 } }), new Set(['clean:b1/s1'])).ask, 'dirty');
+});
+
+test('prune: a kept key goes once the document carries it or the session is gone, and stays while the document says nothing yet', () => {
+  const doc = { repos: [{ rows: [{ board: 'b1', session: { id: 's1' } }, { board: 'b1', session: { id: 's2', cleanupKeptAt: 5 } }] }] };
+  const kept = new Set(['clean:b1/s1', 'clean:b1/s2', 'clean:b1/s3', 'clean:b2/s1']);
+  run('workAskPrune(kept, doc)', { kept, doc });
+  assert.deepStrictEqual([...kept], ['clean:b1/s1']);
+  run('workAskPrune(kept, null)', { kept, doc: null });
+  assert.deepStrictEqual([...kept], ['clean:b1/s1']);
+});
+
+test('markup: the question has both buttons and both chips; the dirty line has no clean-up button and a way to the terminal; everything is escaped', () => {
+  const a = { ask: 'clean', title: 'T', number: '12' };
+  const html = run('workMergedAskHtml(a, o)', { a, o: { board: 'b"1', sid: 's<1', text: '<T>: ok' } });
+  assert.ok(html.includes('data-wk-ask-act="cleanup"') && html.includes('>片付ける<') && html.includes('data-wk-ask-act="keep"') && html.includes('>残す<'));
+  assert.ok(html.includes('未コミット 0') && html.includes('未 push 0') && html.includes('qc-chip ok') && html.includes('cleaning_services'));
+  assert.ok(html.includes('&lt;T&gt;: ok') && html.includes('data-wk-ask-board="b&quot;1"') && html.includes('data-wk-ask-sid="s&lt;1"'));
+  assert.ok(html.includes('btn-m3-primary') && html.includes('btn-m3-tonal') && html.split('<button type="button"').length === 3);
+  assert.ok(!html.includes('disabled'));
+  assert.ok(run('workMergedAskHtml(a, o)', { a, o: { board: 'b1', sid: 's1', busy: true } }).split(' disabled').length === 3);
+  const dirty = run('workMergedAskHtml(a, o)', { a: { ask: 'dirty', files: 3, unpushed: 2 }, o: { board: 'b1', sid: 's1' } });
+  assert.ok(dirty.includes('マージ済みですが、消えると困る変更があります（未 push 2 · 未コミット 3）') && dirty.includes('warning') && dirty.includes('aria-hidden'));
+  assert.ok(dirty.includes('>ターミナルで確かめる<') && dirty.includes('data-wk-ask-act="check"') && dirty.includes('btn-m3-text'));
+  assert.ok(!dirty.includes('cleanup') && !dirty.includes('>片付ける<') && !dirty.includes('qc-chip'));
+});
+
+const pageRow = (extra = {}) => ({ key: 'b1/t1', board: 'b1', hubSlug: 'srv1', ...merged(), ...extra });
+
+test('keep: posts to the session on its own board, hides the question at once, and the failure is a note that leaves it', async () => {
+  calls.length = 0;
+  run('workAsk.kept.clear(); workAsk.busy.clear()');
+  ctx.pageRows = [pageRow()];
+  reply = { kept: true };
+  await run('workAskPress("keep", "srv1", "s1")');
+  assert.deepStrictEqual(plain(calls.filter(c => c[0] === 'api')), [['api', '/b/b1', '/api/sessions/s1/keep', 'POST', '{}']]);
+  assert.deepStrictEqual([...run('workAsk.kept')], ['clean:srv1/s1']);
+  assert.strictEqual(run('workAsk.busy.size'), 0);
+  calls.length = 0;
+  run('workAsk.kept.clear()');
+  reply = new Error('no such session: s1');
+  await run('workAskPress("keep", "srv1", "s1")');
+  assert.ok(calls.some(c => c[0] === 'note' && c[1] === true));
+  assert.strictEqual(run('workAsk.kept.size'), 0);
+  assert.strictEqual(run('workAsk.busy.size'), 0);
+});
+
+test('press: the row is found by the board and the session id only; a session that is gone is a note; a press in flight blocks a second', async () => {
+  calls.length = 0;
+  run('workAsk.kept.clear(); workAsk.busy.clear()');
+  ctx.pageRows = [pageRow({ hubSlug: 'srv2', board: 'b2', s: { ...merged().s, id: 's2' } }), pageRow({ s: { ...merged().s, id: 's2' } })];
+  reply = { kept: true };
+  await run('workAskPress("keep", "srv1", "s2")');
+  assert.deepStrictEqual(plain(calls.filter(c => c[0] === 'api')), [['api', '/b/b1', '/api/sessions/s2/keep', 'POST', '{}']]);
+  calls.length = 0;
+  await run('workAskPress("keep", "srv1", "gone")');
+  assert.deepStrictEqual(plain(calls.map(c => c[0])), ['note']);
+  calls.length = 0;
+  run('workAsk.busy.add("clean:srv1/s2")');
+  await run('workAskPress("keep", "srv1", "s2")');
+  assert.strictEqual(calls.length, 0);
+  run('workAsk.busy.clear()');
+});
+
+test('press: 「片付ける」 from the document\'s facts posts the same clean-up as the row, with no read of the row\'s own; a dirty one posts nothing', async () => {
+  calls.length = 0;
+  run('workClean.git.clear(); workClean.busy.clear(); workAsk.busy.clear()');
+  reply = { removed: true };
+  ctx.pageRows = [pageRow({ selected: true })];
+  await run('workAskPress("cleanup", "srv1", "s1")');
+  assert.deepStrictEqual(plain(calls.filter(c => c[0] === 'api')), [['api', '/b/b1', '/api/sessions/s1/cleanup', 'POST', '{}']]);
+  assert.ok(calls.some(c => c[0] === 'go') && calls.some(c => c[0] === 'refreshWork'));
+  calls.length = 0;
+  ctx.pageRows = [pageRow({ s: { ...merged().s, unpushed: 1 } })];
+  await run('workAskPress("cleanup", "srv1", "s1")');
+  assert.strictEqual(calls.filter(c => c[0] === 'api').length, 0);
+});
+
+test('press: a clean-up the server refuses marks the row blocked and opens the dialog; the row\'s busy set stops a second press from any button', async () => {
+  calls.length = 0;
+  run('workClean.git.clear(); workClean.busy.clear(); workAsk.busy.clear()');
+  reply = { removed: false, git: clean, reasons: [{ detail: 'x' }] };
+  ctx.pageRows = [pageRow()];
+  await run('workAskPress("cleanup", "srv1", "s1")');
+  assert.deepStrictEqual(plain(calls.find(c => c[0] === 'dialog')), ['dialog', 's1', '/b/b1', { blocked: true }]);
+  assert.strictEqual(run('workClean.git.get("b1/s1").blocked'), true);
+  calls.length = 0;
+  run('workClean.busy.add("b1/s1")');
+  await run('workCleanUp(r, { facts: true })', { r: pageRow() });
+  assert.strictEqual(calls.length, 0);
+  run('workClean.busy.clear(); workClean.git.clear()');
 });

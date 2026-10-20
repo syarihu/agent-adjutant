@@ -116,7 +116,10 @@
 .qc-quick .material-symbols-outlined, .qc-strip .material-symbols-outlined { font-size: 16px; color: var(--md-sys-color-warning); }
 .qc-quick-text, .qc-strip-text { min-width: 0; overflow-wrap: anywhere; }
 .qc-quick-text { white-space: pre-line; }
-.qc-quick .pick, .qc-strip button { padding: 4px 14px; font-size: 12.5px; }
+.qc-quick .pick, .qc-strip button, .qc-quick .qc-quick-act { padding: 4px 14px; font-size: 12.5px; }
+/* The line over a merged session that has work to lose: a warning, not a question. */
+.qc-quick.bad { border-left-color: var(--md-sys-color-error); }
+.qc-quick.bad .material-symbols-outlined { color: var(--md-sys-color-error); }
 .qc-quick .qc-chips { margin: 0; }
 
 /* A few lines of a gate's diff as evidence, drawn with the diff view's own rows (.prd-*), without its file frame. */

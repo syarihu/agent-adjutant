@@ -29,6 +29,18 @@ function workTermAskGates(task, own, hub) {
   return workTermGatesOf({ ...base, sessGates, hub: !!hub });
 }
 
+/* The merged session the board asks about for what is selected, as { a, board, sid }, or null: only where no gate is drawn (the worker's own
+   clean-up gate is the only question then), and from the work document's entry, which holds the gates of a task on boards the page does not
+   read. */
+function workTermMergedAsk(sel, gates, reading) {
+  if (reading || gates.length || !sel?.row || !sel.session) return null;
+  workAskPrune(workAsk.kept, work.doc);
+  const isDone = key => answeredGates.has(key);
+  const e = workEntries(work.doc, isDone).find(x => x.board === sel.row.board && x.session?.id === sel.session.id);
+  const a = e ? workMergedAskOf(e, { isDone, kept: workAsk.kept }) : null;
+  return a ? { a, board: e.board, sid: e.session.id } : null;
+}
+
 /* Drawn as the stage's top layer; the same markup is not drawn twice, and the slide plays only when it comes in from nothing. */
 function drawWorkAsk(html) {
   const el = workAskEl();
@@ -68,22 +80,36 @@ function drawWorkFabs(own, hub, reading) {
 }
 
 /* Called by `renderWorkTerm` once the head, the bar and the terminal are in place. */
-function renderWorkTermOverlays({ own, task, hub, reading, stopped = false }) {
+function renderWorkTermOverlays({ sel = null, own, task, hub, reading, stopped = false }) {
   const gates = reading ? [] : workTermAskGates(task, own, hub);
+  const merged = workTermMergedAsk(sel, gates, reading);
   // Over a stopped hub the start check is one line, so the block with 「hub を起動」 under it is in reach.
-  drawWorkAsk(workTermAskHtml(gates, {
-    ctxOf: questionCtxOf, keyOf: gateKey, hub: !!hub, folded: workAskFolded, draftOf: key => questionDrafts.get(key) || '', foldAll: stopped,
-  }));
+  drawWorkAsk(merged ? workTermMergedHtml(merged.a, { board: merged.board, sid: merged.sid, busy: workAsk.busy.has(workAskKey(merged.board, merged.sid)) })
+    : workTermAskHtml(gates, {
+      ctxOf: questionCtxOf, keyOf: gateKey, hub: !!hub, folded: workAskFolded, draftOf: key => questionDrafts.get(key) || '', foldAll: stopped,
+    }));
   // What the placeholder says starts below what slides down over it.
   const ph = wk('wk-term-ph');
   const askBox = workAskEl().getBoundingClientRect();
   ph.style.paddingTop = !ph.hidden && askBox.height ? `${Math.ceil(askBox.bottom - ph.getBoundingClientRect().top + 12)}px` : '';
   drawWorkFabs(own, hub, reading);
   // Only the count is announced: the questions themselves are read where they are, and a redraw must not read the form out again.
-  setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : '');
+  setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : merged?.a.ask === 'clean' ? '確認待ちが 1 件あります' : '');
+}
+
+/* A press on the merged session's line: 「ターミナルで確かめる」 puts the cursor in the terminal; the other two are the TODO's, run on the same facts. */
+function workTermAskClick(b) {
+  if (b.disabled) return;
+  if (b.dataset.wkAskAct === 'check') return workTerm.term?.focus();
+  b.disabled = true;
+  workAskPress(b.dataset.wkAskAct, b.dataset.wkAskBoard, b.dataset.wkAskSid)
+    .then(() => refreshWork(true))
+    .then(() => renderWorkTerm());
 }
 
 workAskEl().addEventListener('click', e => {
+  const merged = e.target.closest('[data-wk-ask-act]');
+  if (merged) return workTermAskClick(merged);
   const fold = e.target.closest('[data-wk-fold]');
   if (fold) {
     const key = fold.dataset.wkFold;

@@ -43,6 +43,7 @@ pub fn register_worker(
         task: said(task),
         phase: None,
         phase_at: None,
+        cleanup_kept_at: None,
         phases: (!carried.is_empty()).then_some(carried),
         other,
     };

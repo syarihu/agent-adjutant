@@ -25,9 +25,12 @@ run([
 ].join('\n'), 'decide.js');
 run(cut(read('session-actions.js'), /^const actionButtonHtml = [^\n]*\n[^\n]*\n[^\n]*\n/m), 'session-actions.js');
 run(read('question-card.js'), 'question-card.js');
+// my-work-clean.js is loaded whole (it only defines); the two page helpers it asks of my-work.js and task-view.js are stood in for.
+run('const workMerged = r => (r.task ? r.task.prState === "merged" : r.s?.branchPr?.state === "merged"); const prRefNumber = pr => /(\\d+)$/.exec(pr || "")?.[1] || "";', 'page.js');
+run(read('my-work-clean.js'), 'my-work-clean.js');
 run(read('work-term.js'), 'work-term.js');
 const api = vm.runInContext(
-  '({ workSendableText, workSendBody, workSendTooLong, workTermGatesOf, workTermAskHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
+  '({ workSendableText, workSendBody, workSendTooLong, workTermGatesOf, workTermAskHtml, workTermMergedHtml, workTermHeadActsHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);
 
 const keyOf = g => `s/${g.id}`;
 const ctxOf = g => ({ task: null, nwo: 'acme/widget', key: keyOf(g), issue: { number: '', url: '', hasBody: false } });
@@ -176,4 +179,22 @@ test('a send over the cap is too long, counted in UTF-8 bytes', () => {
 test('the start check of a stopped hub is drawn as its one line whatever was folded', () => {
   const html = api.workTermAskHtml([dispatch], { ctxOf, keyOf, hub: true, foldAll: true });
   assert.ok(html.includes('wk-ask-folded') && !html.includes('wk-ask-form') && !html.includes('data-wk-fold'));
+});
+
+test('a merged session\'s line over the terminal asks without naming the session, with both chips and both buttons', () => {
+  const html = api.workTermMergedHtml({ ask: 'clean', title: 'Task <1>', number: '12', files: 0, unpushed: 0 }, { board: 'b1', sid: 's1' });
+  assert.ok(html.includes('PR #12 マージ済み。片付けてセッションを閉じる？') && !html.includes('Task'));
+  assert.ok(html.includes('未コミット 0') && html.includes('未 push 0'));
+  assert.ok(html.includes('data-wk-ask-act="cleanup"') && html.includes('data-wk-ask-act="keep"') && html.includes('cleaning_services'));
+  assert.ok(html.includes('data-wk-ask-board="b1"') && html.includes('data-wk-ask-sid="s1"') && !html.includes(' disabled'));
+  assert.ok(api.workTermMergedHtml({ ask: 'clean', number: '' }, { board: 'b1', sid: 's1' }).includes('<b class="qc-quick-text">マージ済み。片付けて'));
+  assert.ok(api.workTermMergedHtml({ ask: 'clean', number: '12' }, { board: 'b1', sid: 's1', busy: true }).includes(' disabled'));
+});
+
+test('the dirty line warns with the two counts, has no clean-up button and a button that looks in the terminal; the ids are escaped', () => {
+  const html = api.workTermMergedHtml({ ask: 'dirty', title: 'T', number: '12', files: 2, unpushed: 3 }, { board: 'b<1', sid: 's"1' });
+  assert.ok(html.includes('マージ済みですが、消えると困る変更があります（未 push 3 · 未コミット 2）'));
+  assert.ok(html.includes('warning') && html.includes('aria-hidden="true"') && html.includes('>ターミナルで確かめる<') && html.includes('data-wk-ask-act="check"'));
+  assert.ok(!html.includes('cleanup') && !html.includes('data-wk-ask-act="keep"') && !html.includes('qc-chip'));
+  assert.ok(html.includes('data-wk-ask-board="b&lt;1"') && html.includes('data-wk-ask-sid="s&quot;1"'));
 });
