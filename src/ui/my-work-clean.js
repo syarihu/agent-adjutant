@@ -186,7 +186,7 @@ async function workAskPress(act, board, sid) {
   const key = workAskKey(board, sid);
   if (workAsk.busy.has(key)) return;
   const r = workRows().find(x => x.hubSlug === board && x.s.id === sid);
-  if (!r) return note('片付ける', true, 'このセッションは、もう一覧にありません');
+  if (!r) return note(act === 'keep' ? '残す' : '片付ける', true, 'このセッションは、もう一覧にありません');
   workAsk.busy.add(key);
   try {
     if (act === 'cleanup') await workCleanUp(r, { facts: true });

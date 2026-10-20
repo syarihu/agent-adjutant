@@ -125,21 +125,10 @@ pub fn worktree_git_state(
     // Only a branch that has commits can have an upstream. `config` exits 1 for a key that is
     // not there, which is the one answer that means "none"; any other failure, and a git that
     // did not answer in time, is an error rather than a branch with nothing to push.
-    let mut upstream = None;
-    let mut tracks_own_name = false;
-    if let (Some(_), Some(name)) = (&head, &branch) {
-        let merge = git(&["config", "--get", &format!("branch.{name}.merge")])?;
-        match merge.code {
-            Some(0) => {
-                // Absent when the remote-tracking branch it names is gone, which is a branch
-                // whose upstream was deleted, not one that is unreadable.
-                upstream = line(git(&["rev-parse", "--abbrev-ref", "@{u}"])?);
-                tracks_own_name = merge.stdout.trim().strip_prefix("refs/heads/") == Some(name);
-            }
-            Some(1) => {}
-            _ => return Err("git could not read the branch's upstream".to_string()),
-        }
-    }
+    let (upstream, tracks_own_name) = match (&head, &branch) {
+        (Some(_), Some(name)) => upstream_of(&git, name)?,
+        _ => (None, false),
+    };
     // Counted against the upstream only when it is the branch's own counterpart. A worktree
     // made with `worktree add -b x origin/main` has `origin/main` as its upstream, and against
     // that every commit not yet in main would count, and none would once it is merged.
@@ -232,21 +221,37 @@ pub fn unpushed_of(worktree: &Path, deadline: std::time::Instant) -> Result<Opti
         Some(1) => None,
         _ => return Err("git could not read the branch".to_string()),
     };
-    let mut against_upstream = false;
-    if let Some(name) = &branch {
-        let merge = git(&["config", "--get", &format!("branch.{name}.merge")])?;
-        match merge.code {
-            Some(0) => {
-                let upstream = git(&["rev-parse", "--abbrev-ref", "@{u}"])?;
-                against_upstream = upstream.ok()
-                    && !upstream.stdout.trim().is_empty()
-                    && merge.stdout.trim().strip_prefix("refs/heads/") == Some(name.as_str());
-            }
-            Some(1) => {}
-            _ => return Err("git could not read the branch's upstream".to_string()),
-        }
-    }
+    let against_upstream = match &branch {
+        Some(name) => matches!(upstream_of(&git, name)?, (Some(_), true)),
+        None => false,
+    };
     count_unpushed(&git, against_upstream).map(Some)
+}
+
+/// The upstream of the branch `name`, and whether it tracks the branch's own name. Only a
+/// branch that has commits can have one, so the caller asks only then. `config` exits 1 for a
+/// key that is not there, which is the one answer that means "none"; any other failure, and a
+/// git that did not answer in time, is an error rather than a branch with nothing to push.
+fn upstream_of(
+    git: &impl Fn(&[&str]) -> Result<GitOut, String>,
+    name: &str,
+) -> Result<(Option<String>, bool), String> {
+    let merge = git(&["config", "--get", &format!("branch.{name}.merge")])?;
+    match merge.code {
+        Some(0) => {
+            // Absent when the remote-tracking branch it names is gone, which is a branch
+            // whose upstream was deleted, not one that is unreadable.
+            let upstream = git(&["rev-parse", "--abbrev-ref", "@{u}"])?;
+            let upstream =
+                Some(upstream.stdout.trim().to_string()).filter(|l| upstream.ok() && !l.is_empty());
+            Ok((
+                upstream,
+                merge.stdout.trim().strip_prefix("refs/heads/") == Some(name),
+            ))
+        }
+        Some(1) => Ok((None, false)),
+        _ => Err("git could not read the branch's upstream".to_string()),
+    }
 }
 
 /// The files and lines `git` finds that no commit has. `has_head` is whether HEAD names a
