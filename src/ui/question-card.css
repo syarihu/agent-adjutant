@@ -121,6 +121,8 @@
 .qc-quick.bad { border-left-color: var(--md-sys-color-error); }
 .qc-quick.bad .material-symbols-outlined { color: var(--md-sys-color-error); }
 .qc-quick .qc-chips { margin: 0; }
+/* Buttons that answer one question wrap to the next line together, not one at a time. */
+.qc-quick-btns { display: inline-flex; gap: 8px; }
 
 /* A few lines of a gate's diff as evidence, drawn with the diff view's own rows (.prd-*), without its file frame. */
 .qc-excerpt { font: 12px/1.65 var(--font-mono); overflow-x: auto; max-height: 260px; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest);

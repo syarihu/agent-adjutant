@@ -162,7 +162,7 @@ function workMergedAskHtml(a, { board, sid, text = workMergedAskText(a), busy = 
   }
   return `<div class="qc-quick wk-merged-ask">${qcIcon('cleaning_services')}<b class="qc-quick-text">${esc(text)}</b>`
     + '<div class="qc-chips"><span class="qc-chip ok">未コミット 0</span><span class="qc-chip ok">未 push 0</span></div>'
-    + `<span class="qc-spacer"></span>${button('cleanup', 'btn-m3-primary', '片付ける')}${button('keep', 'btn-m3-tonal', '残す')}</div>`;
+    + `<span class="qc-spacer"></span><span class="qc-quick-btns">${button('cleanup', 'btn-m3-primary', '片付ける')}${button('keep', 'btn-m3-tonal', '残す')}</span></div>`;
 }
 
 /* 「残す」: hide the question on the server (the worker's record), and here until the document says it. A failure is said and leaves the
