@@ -24,8 +24,9 @@ function dialogStackCore() {
 /* The head of a layer: a line over the title, then the title. `sub` is markup the caller has escaped. */
 const dialogHeadHtml = ({ sub = '', title = '' }) => `${sub ? `<div class="qd-sub">${sub}</div>` : ''}<h2 class="qd-title">${esc(title)}</h2>`;
 
-/* `dialogStack.push({ key, head | { title, sub }, body, foot, gate, opener, onClose })`: `head`, `body` and `foot` are markup the caller
+/* `dialogStack.push({ key, head | { title, sub }, body, foot, gate, cls, opener, onClose })`: `head`, `body` and `foot` are markup the caller
    has escaped (`foot` is optional); `gate` is the key of the gate the layer answers, which its clicks find through `data-qc-gate`;
+   `cls` (optional) is a class added to the layer's section, which a stylesheet can use to shape the dialog for that layer;
    `opener` is the element focus returns to when everything closes (the focused one when left out); `onClose(layer)` runs when the layer
    goes, however it goes. */
 const dialogStack = (() => {
@@ -109,7 +110,7 @@ const dialogStack = (() => {
     const back = core.depth() > 0
       ? '<button type="button" class="m3-icon-button qd-back" data-qd-back aria-label="戻る" title="戻る"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span></button>' : '';
     const head = layer.head ?? dialogHeadHtml(layer);
-    holder().insertAdjacentHTML('beforeend', `<section class="qd-layer" data-qd-key="${esc(layer.key)}"${layer.gate ? ` data-qc-gate="${esc(layer.gate)}"` : ''}>`
+    holder().insertAdjacentHTML('beforeend', `<section class="qd-layer${layer.cls ? ` ${esc(layer.cls)}` : ''}" data-qd-key="${esc(layer.key)}"${layer.gate ? ` data-qc-gate="${esc(layer.gate)}"` : ''}>`
       + `<header class="qd-head">${back}<div class="qd-head-main">${head}</div>`
       + '<button type="button" class="m3-icon-button qd-x" data-qd-close aria-label="閉じる" title="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header>'
       + `<div class="qd-body" tabindex="0" role="region" aria-label="内容">${layer.body}</div>`

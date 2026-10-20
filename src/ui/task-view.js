@@ -51,10 +51,11 @@ function historyOf(task, base = baseOf(task), data = state) {
   return entry;
 }
 
-/* Redraws what shows a task's history: the task panel open on it. The panel
-   keeps what is being typed into its instruction box across a redraw (renderHandForm). */
+/* Redraws what shows a task's history: the task panel open on it, and the task detail dialog (the work view draws no panel for a task).
+   The panel keeps what is being typed into its instruction box across a redraw (renderHandForm). */
 function redrawHistoryOf(id) {
   if ((view === 'board' || view === 'work') && selectedTaskId === id) renderTaskPanel();
+  if (typeof taskDetailFollow === 'function') taskDetailFollow();
 }
 
 /* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the

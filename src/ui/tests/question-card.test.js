@@ -217,3 +217,19 @@ test('the strip has a line that opens the card for a heavy gate and the row itse
   assert.equal(count(h, 'data-qc-open-gate='), 1);
   assert.equal(questionStripHtml([], {}), '');
 });
+
+test('a read-only card has the choices with nothing to pick, and no foot', () => {
+  const g = { ...planGate, wait: false, decision: 'choice', choice: 'a', answeredAt: '20260922T051233Z' };
+  const c = card(g, { readOnly: true });
+  assert.equal(c.foot, '');
+  // It waits no more: the head says when it was answered.
+  assert.ok(c.head.includes('に回答') && !c.head.includes('から待ち'));
+  assert.ok(c.body.includes('Integers') && c.body.includes('Floats'));
+  assert.equal(count(c.body, 'data-choice='), 0);
+  assert.equal(count(c.body, 'data-gate='), 0);
+  assert.ok(c.body.includes('選ばれた案'));
+  // The same gate not read-only still has both.
+  const live = card(planGate);
+  assert.equal(count(live.body, 'data-choice='), 2);
+  assert.ok(live.foot.includes('gate-comment'));
+});

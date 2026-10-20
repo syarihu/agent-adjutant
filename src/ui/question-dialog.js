@@ -111,6 +111,19 @@ function questionDiffBodyHtml(diff) {
   }).join('');
 }
 
+/* The title and the body of the layer that reads a task's Issue, or null when no body is kept. `number` is the Issue's number, or ''. */
+function issueLayerOf(task, number) {
+  const snap = task?.issueSnapshot;
+  if (!snap?.body) return null;
+  const url = httpUrl(snap.url || task.issueUrl);
+  return {
+    title: `Issue${number ? ` #${number}` : ''} ${snap.title || ''}`.trim(),
+    body: `<div class="body">${md(snap.body)}</div>`
+      + (snap.truncated ? '<p class="qc-note">先頭のみ保存</p>' : '')
+      + (url ? `<a class="qc-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>GitHub で開く</span></a>` : ''),
+  };
+}
+
 /* `what` is the `data-qc-open` of the button: diff, issue or report. */
 function questionOpenLayer(what, root) {
   const key = root.closest('[data-qc-gate]')?.dataset.qcGate;
@@ -126,15 +139,9 @@ function questionOpenLayer(what, root) {
     return dialogStack.push({ ...layer, title: `差分 — ${title}（${files.length} ファイル · +${add} −${del}）`, body: questionDiffBodyHtml(g.diff) || '<p class="tp-muted">差分はありません</p>' });
   }
   if (what === 'issue') {
-    const snap = ctx.task?.issueSnapshot;
-    if (!snap?.body) return note('開く', true, 'Issue の本文は保存されていません');
-    const url = httpUrl(snap.url || ctx.task.issueUrl);
-    return dialogStack.push({
-      ...layer, title: `Issue${ctx.issue.number ? ` #${ctx.issue.number}` : ''} ${snap.title || ''}`.trim(),
-      body: `<div class="body">${md(snap.body)}</div>`
-        + (snap.truncated ? '<p class="qc-note">先頭のみ保存</p>' : '')
-        + (url ? `<a class="qc-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span><span>GitHub で開く</span></a>` : ''),
-    });
+    const issue = issueLayerOf(ctx.task, ctx.issue.number);
+    if (!issue) return note('開く', true, 'Issue の本文は保存されていません');
+    return dialogStack.push({ ...layer, ...issue });
   }
   if (what === 'report') return dialogStack.push({ ...layer, title: `レポート — ${title}`, body: `<div class="body">${md(g.body)}</div>` });
 }
