@@ -80,7 +80,7 @@ const workTermMergedHtml = (a, { board, sid, busy = false } = {}) => workMergedA
    linked worktree (`closeWhy` is why the close is not possible just now, or ''); 「hub の詳細」 for a hub. */
 function workTermHeadActsHtml({ task = false, ide = false, close = false, closeWhy = '', hub = false } = {}) {
   const btn = (act, icon, label, extra = '') => `<button type="button" class="btn-m3-text" data-wk-term-act="${act}"${extra}>${qcIcon(icon)}<span>${esc(label)}</span></button>`;
-  return (task ? btn('detail', 'open_in_full', 'タスク詳細') : '')
+  return (task ? btn('detail', 'description', 'タスク詳細') : '')
     + (hub ? btn('hubinfo', 'info', 'hub の詳細') : '')
     + (ide ? btn('ide', 'code', 'IDE') : '')
     + (close ? btn('close', 'tab_close', 'セッションを閉じる', closeWhy ? ` disabled title="${esc(closeWhy)}"` : ' title="worker のタブを閉じます（worktree は残ります）"') : '');

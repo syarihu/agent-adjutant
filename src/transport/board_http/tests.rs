@@ -123,7 +123,7 @@ fn the_page_has_one_question_dialog_with_the_card_and_the_stack() {
         "function openQuestionDialog",
         "function questionDialogFollow",
         "registerView('question-dialog'",
-        "'task-panel', 'question-dialog', 'todo-view', 'layout'",
+        "'task-panel', 'question-dialog', 'task-detail', 'todo-view', 'layout'",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
@@ -1381,7 +1381,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 10);
+    assert_eq!(names.len(), 11);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1773,6 +1773,24 @@ fn the_card_dialog_is_in_the_page_after_what_it_calls() {
     let render = UI_HTML.split("function renderTaskPanel()").nth(1).unwrap();
     let render = &render[..render.find("\n}\n").unwrap()];
     assert!(render.contains("renderTaskPanelNow()") && render.contains("cardDialogFollow"));
+}
+
+#[test]
+fn the_task_detail_is_in_the_page_after_what_it_calls() {
+    // The detail (task-detail-view.js) pushes layers on the dialog stack and draws what the gates, the question card and the
+    // panel's renderers draw; it is called when a button is pressed, but the stack is read when the page loads.
+    let at = |s: &str| UI_HTML.find(s).unwrap_or_else(|| panic!("missing: {s}"));
+    for needed in [
+        "const dialogStack",
+        "function gatesOf",
+        "function questionCardHtml",
+    ] {
+        assert!(at(needed) < at("function openTaskDetail"), "{needed}");
+    }
+    // Read when the scripts load: the question card's icon helper, and the dialog element and the view registry.
+    assert!(at("const qcIcon") < at("const TD_ICON = qcIcon"));
+    assert!(at("const questionDialogEl") < at("function openTaskDetail"));
+    assert!(at("function registerView") < at("registerView('task-detail'"));
 }
 
 // ── the drafts of a PR, and the terminal of its reader ──────────────

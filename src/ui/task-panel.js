@@ -251,8 +251,9 @@ function renderTaskPanelNow() {
   if (gone && view !== 'work') return dismissTaskPanel();
   // Until the board has answered once, what it lacks is not known to be missing.
   if (gone && state.now == null) return;
-  // In the work view a hub has no right column: its heading over the terminal has its status, and 「hub の詳細」 the rest.
-  const shown = (!!(task || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work') && !(view === 'work' && hub);
+  // In the work view a hub has no right column: its heading over the terminal has its status, and 「hub の詳細」 the rest. Nor has a
+  // task, whose details are in a dialog opened from the heading (task-detail-view.js); only its AI 下読み keeps its reader's panel here.
+  const shown = (!!((task && (view !== 'work' || taskReadActive(task))) || hub || sess || parent || gateOf) || gone) && (view === 'board' || view === 'work') && !(view === 'work' && hub);
   const cls = document.body.classList;
   panel.hidden = !shown;
   tp('tp-scrim').hidden = !(shown && panelPop());

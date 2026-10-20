@@ -182,7 +182,8 @@ function qcPlanHtml(g, ctx, body) {
 function qcHeadHtml(g, ctx) {
   const [label, color] = kindOf(g.kind);
   const where = [ctx.nwo, ctx.issue?.number ? `#${ctx.issue.number}` : ''].filter(Boolean).join(' · ');
-  const waited = g.openedAt ? `${ago(g.openedAt)}から待ち` : '';
+  // A card read as it was (`ctx.readOnly`) waits no more: it says when it was answered.
+  const waited = ctx.readOnly ? (g.answeredAt ? `${when(g.answeredAt)}に回答` : '') : g.openedAt ? `${ago(g.openedAt)}から待ち` : '';
   return `<div class="qd-sub"><span class="qc-kind"><i style="background:${esc(color)}"></i>${esc(label)}</span>`
     + `${where ? `<span class="qc-where">${esc(where)}</span>` : ''}${waited ? `<span class="qc-where">${esc(waited)}</span>` : ''}</div>`
     + `<h2 class="qd-title">${esc(ctx.task?.title || g.title || label)}</h2>`;
@@ -202,7 +203,8 @@ function qcFootHtml(g, ctx, draft) {
 }
 
 /* The card in three pieces for a dialog: the head (kind, where from, the task's title), the body that scrolls, and the foot that stays.
-   `ctx.draft` is the comment typed earlier. A record or an answered gate never opens as a card. */
+   `ctx.draft` is the comment typed earlier. A record never opens as a card; an answered gate opens read-only (`ctx.readOnly`: the
+   choices are drawn with nothing to pick and there is no foot), as the task detail shows what was asked at the time. */
 function questionCardHtml(g, ctx = {}) {
   const body = g.body && g.body !== ctx.task?.body ? g.body : '';
   const parts = [
@@ -210,9 +212,9 @@ function questionCardHtml(g, ctx = {}) {
     qcFoundHtml(g, ctx, body),
     qcPlanHtml(g, ctx, body),
     questionEarlierHtml(g, ctx),
-    `<section class="qc-ask-stage"><div class="qc-ask" role="heading" aria-level="3">${questionAskHtml(g, ctx)}</div>${choicesHtml(g, true, { expand: false, bare: true })}</section>`,
+    `<section class="qc-ask-stage"><div class="qc-ask" role="heading" aria-level="3">${questionAskHtml(g, ctx)}</div>${choicesHtml(g, !ctx.readOnly, { expand: false, bare: true })}</section>`,
   ];
-  return { head: qcHeadHtml(g, ctx), body: parts.join(''), foot: qcFootHtml(g, ctx, ctx.draft) };
+  return { head: qcHeadHtml(g, ctx), body: parts.join(''), foot: ctx.readOnly ? '' : qcFootHtml(g, ctx, ctx.draft) };
 }
 
 /* The card as one article, for a pane that holds it with no dialog around it. */

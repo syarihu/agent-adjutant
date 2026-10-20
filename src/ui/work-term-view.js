@@ -162,7 +162,7 @@ wk('wk-term-head').addEventListener('click', e => {
   const s = workTermSession();
   if (act === 'detail') {
     const task = isTaskRef(nav.task) ? taskById(nav.task) : null;
-    return task ? openCardDialogTask(task, b, null) : undefined;
+    return task ? openTaskDetail(task, b) : undefined;
   }
   if (!s) return;
   if (act === 'hubinfo') {
