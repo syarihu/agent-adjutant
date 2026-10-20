@@ -224,3 +224,51 @@ fn commits_ahead_of_the_upstream_are_counted_and_merging_follows_the_base() {
     assert_eq!(unknown.merged.merged, None);
     assert!(unknown.merged.reason.is_some());
 }
+
+#[test]
+fn the_unpushed_look_agrees_with_the_whole_git_state_and_is_none_for_a_gone_directory() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let _ = &sandbox;
+    let root = tempfile::tempdir().unwrap();
+    let origin = root.path().join("origin.git");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    run_git(
+        root.path(),
+        &["init", "-q", "--bare", "-b", "main", "origin.git"],
+    );
+    crate::testing::init_repo(&work, "main");
+    run_git(
+        &work,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    let deadline = || std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // No commit yet: nothing is only here.
+    assert_eq!(unpushed_of(&work, deadline()), Ok(Some(0)));
+
+    commit_file(&work, "a.txt", "1\n");
+    assert_eq!(unpushed_of(&work, deadline()), Ok(Some(1)));
+    run_git(&work, &["push", "-q", "-u", "origin", "main"]);
+    assert_eq!(unpushed_of(&work, deadline()), Ok(Some(0)));
+
+    // Against the upstream of a branch that tracks its own name.
+    run_git(&work, &["checkout", "-q", "-b", "feature"]);
+    commit_file(&work, "b.txt", "2\n");
+    run_git(&work, &["push", "-q", "-u", "origin", "feature"]);
+    commit_file(&work, "c.txt", "3\n");
+    assert_eq!(unpushed_of(&work, deadline()), Ok(Some(1)));
+    assert_eq!(state_of(&work, None).unpushed.count, 1);
+
+    // Against the remotes for one started from `origin/main`.
+    run_git(&work, &["checkout", "-q", "-b", "task", "origin/main"]);
+    commit_file(&work, "d.txt", "4\n");
+    assert_eq!(unpushed_of(&work, deadline()), Ok(Some(1)));
+    assert_eq!(state_of(&work, None).unpushed.count, 1);
+
+    run_git(&work, &["checkout", "-q", "--detach"]);
+    assert_eq!(
+        unpushed_of(&work, deadline()).unwrap(),
+        Some(state_of(&work, None).unpushed.count)
+    );
+    assert_eq!(unpushed_of(&work.join("nowhere"), deadline()), Ok(None));
+}

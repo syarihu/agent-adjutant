@@ -16,8 +16,8 @@ use super::handlers::{
     review_findings, start_parent_hub, update_task, wake_hub,
 };
 use super::sessions::{
-    clean_up_session, git_of_session, last_message_of_session, link_session, open_session,
-    restart_session, resume_session, start_session,
+    clean_up_session, git_of_session, keep_session_answer, last_message_of_session, link_session,
+    open_session, restart_session, resume_session, start_session,
 };
 use crate::board::Server;
 use crate::board::view::{Lines, state, task_history, task_read};
@@ -66,6 +66,9 @@ pub(super) enum Route<Id = String> {
     /// `GET <id>/message`: the whole last message, read when the expanded view opens.
     SessionMessage(Id),
     Session(Id, SessionAction),
+    /// `POST <id>/keep`: keep a finished session instead of cleaning it up. Answers with its
+    /// own statuses.
+    KeepSession(Id),
     StartParentHub,
     Hub(Id, HubAction),
     NudgeHub,
@@ -104,6 +107,7 @@ impl<Id> Route<Id> {
         matches!(
             self,
             Route::Session(..)
+                | Route::KeepSession(_)
                 | Route::TaskRead(_)
                 | Route::AskTaskRead(_)
                 | Route::HandToWorker(_)
@@ -212,6 +216,7 @@ impl<'a> Route<&'a str> {
             ("POST", "restart") => Route::Session(raw, SessionAction::Restart),
             ("POST", "open") => Route::Session(raw, SessionAction::Open),
             ("POST", "cleanup") => Route::Session(raw, SessionAction::CleanUp),
+            ("POST", "keep") => Route::KeepSession(raw),
             (_, "terminal") => Route::Terminal(raw),
             _ => return None,
         })
@@ -241,6 +246,7 @@ impl<'a> Route<&'a str> {
             Route::SessionGit(raw) => Route::SessionGit(decode_segment(raw)?),
             Route::SessionMessage(raw) => Route::SessionMessage(decode_segment(raw)?),
             Route::Session(raw, action) => Route::Session(decode_segment(raw)?, action),
+            Route::KeepSession(raw) => Route::KeepSession(decode_segment(raw)?),
             Route::Hub(raw, action) => Route::Hub(decode_segment(raw)?, action),
             Route::Terminal(raw) => Route::Terminal(decode_segment(raw)?),
             Route::Page => Route::Page,
@@ -311,6 +317,10 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::LinkSession(id) => reply(out, link_session(server, &id, &req.body)),
         Route::SessionGit(id) => reply(out, git_of_session(server, &id)),
         Route::SessionMessage(id) => reply(out, last_message_of_session(server, &id)),
+        Route::KeepSession(id) => {
+            let (status, answer) = keep_session_answer(server, &id);
+            http::json(out, status, &answer.to_string())
+        }
         Route::Session(id, action) => reply(
             out,
             match action {

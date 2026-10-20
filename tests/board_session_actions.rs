@@ -813,6 +813,57 @@ fn cleanup_refuses_the_main_checkout_a_hub_and_a_worktree_a_queued_task_waits_in
 }
 
 #[test]
+fn keeping_a_session_writes_the_choice_into_its_record_and_the_work_document_carries_it() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let worktree = session_worktree(&fixture, "kept-one", None, None, dead_pid());
+    let resident = Resident::start(&fixture);
+    let url = sessions_url("/worker-kept-one/keep");
+
+    let answer = reply_of(resident.post(&url, "{}"), 200);
+    assert_eq!(answer, serde_json::json!({"kept": true}));
+    let record: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(worktree.join(".claude").join("adjutant-worker.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(record["cleanupKeptAt"].as_i64().is_some(), "{record}");
+    // The rest of the record is as it was.
+    assert_eq!(record["title"], "kept-one", "{record}");
+    // Nothing was removed.
+    assert!(worktree.is_dir());
+    let session = state_of(&resident)["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "worker-kept-one")
+        .cloned()
+        .unwrap();
+    assert!(session["cleanupKeptAt"].as_i64().is_some(), "{session}");
+}
+
+#[test]
+fn keeping_a_session_is_refused_for_an_unknown_one_a_hub_and_a_record_that_cannot_be_read() {
+    let fixture = Fixture::new(QUIET);
+    cleanup_config(&fixture);
+    let worktree = session_worktree(&fixture, "broken", None, None, dead_pid());
+    let resident = Resident::start(&fixture);
+
+    let (status, body) = resident.post(&sessions_url("/worker-nobody/keep"), "{}");
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("no such session"), "{body}");
+    let (status, body) = resident.post(&sessions_url("/hub/keep"), "{}");
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("only a worker"), "{body}");
+
+    // A record that cannot be read is not rewritten.
+    let record = worktree.join(".claude").join("adjutant-worker.json");
+    std::fs::write(&record, "{ not json }").unwrap();
+    let (status, body) = resident.post(&sessions_url("/worker-broken/keep"), "{}");
+    assert_eq!(status, 500, "{body}");
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), "{ not json }");
+}
+
+#[test]
 fn a_parent_hub_can_be_started_for_a_key_from_the_board() {
     let fixture = Fixture::new(QUIET);
     write_tmux_config(&fixture);

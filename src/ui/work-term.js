@@ -3,7 +3,7 @@
    slide down over the top of the terminal, how they read (a line each, a quick row, and for a hub's start check a form that folds
    to one line), the buttons at the heading's right end, the two floating buttons, the block over a stopped hub, and the box that
    sends text into the terminal. They touch neither the page nor the network, so `src/ui/tests/work-term.test.js` runs them under
-   `node --test`. Loaded after question-card.js (`questionStripHtml`, `questionCardArticleHtml`, `qcIcon`), decide.js (`BUTTONS`,
+   `node --test`. Loaded after question-card.js (`questionStripHtml`, `questionCardArticleHtml`, `qcIcon`), my-work-clean.js (`workMergedAskHtml`), decide.js (`BUTTONS`,
    `kindOf`) and session-actions.js (`actionButtonHtml`), and before my-work.js. Everything that is drawn over the terminal is
    markup of its own, never a child of the terminal's host: the host's size is the terminal's, and a question coming or going must
    not resize it. */
@@ -71,6 +71,10 @@ function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(),
   }
   return html + questionStripHtml(rest, ctxOf);
 }
+
+/* A merged session the board asks about, as the line that slides down: the question when nothing is to be lost, and the warning when something
+   is (`a` is `workMergedAsk`'s answer, in my-work-clean.js). The terminal names the session already, so the question does not. */
+const workTermMergedHtml = (a, { board, sid, busy = false } = {}) => workMergedAskHtml(a, { board, sid, busy });
 
 /* The buttons at the heading's right end. 「タスク詳細」 is for a task's row; 「IDE」 and 「セッションを閉じる」 for a worker with a
    linked worktree (`closeWhy` is why the close is not possible just now, or ''); 「hub の詳細」 for a hub. */

@@ -2077,3 +2077,71 @@ fn an_address_that_no_longer_resolves_to_its_slug_is_not_a_context() {
         .unwrap();
     assert!(err.contains("moved"), "{err}");
 }
+
+#[test]
+fn keeping_a_session_is_written_into_the_workers_own_record_and_lasts_until_it_is_started_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    register_worker(worktree, "WID-957", None, None, None).unwrap();
+    let Recorded::Found(before) = read_worker_record(worktree) else {
+        panic!("the record should be there");
+    };
+    assert_eq!(before.cleanup_kept_at, None);
+
+    keep_from_cleanup(worktree).unwrap();
+    let Recorded::Found(kept) = read_worker_record(worktree) else {
+        panic!("the record should be there");
+    };
+    assert!(
+        kept.cleanup_kept_at
+            .is_some_and(|at| (now_secs() - at).abs() < 5)
+    );
+    assert_eq!(kept.task, before.task);
+    assert_eq!(kept.started_at, before.started_at);
+    assert!(worker_status(worktree).present);
+
+    // A worker started again writes its record fresh, and starts without the choice.
+    register_worker(worktree, "WID-957", None, None, None).unwrap();
+    let Recorded::Found(again) = read_worker_record(worktree) else {
+        panic!("the record should be there");
+    };
+    assert_eq!(again.cleanup_kept_at, None);
+}
+
+#[test]
+fn keeping_a_session_leaves_the_keys_of_the_record_it_does_not_know() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    let path = worker_record_path(worktree);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"task":"WID-1","phase":"verify","phaseAt":5,"extra":{"a":1}}"#,
+    )
+    .unwrap();
+    keep_from_cleanup(worktree).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["task"], "WID-1");
+    assert_eq!(written["phase"], "verify");
+    assert_eq!(written["phaseAt"], 5);
+    assert_eq!(written["extra"]["a"], 1);
+    assert!(written["cleanupKeptAt"].as_i64().is_some());
+}
+
+#[test]
+fn keeping_a_session_with_no_record_or_an_unreadable_one_is_refused_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    let error = keep_from_cleanup(worktree).unwrap_err();
+    assert!(error.contains("no worker is registered"), "{error}");
+    assert!(!worker_record_path(worktree).exists());
+
+    let path = worker_record_path(worktree);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ not json }").unwrap();
+    let error = keep_from_cleanup(worktree).unwrap_err();
+    assert!(error.contains("cannot read the worker record"), "{error}");
+    assert!(!error.contains("no worker is registered"), "{error}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json }");
+}

@@ -24,9 +24,12 @@ run([
   cut(decide, /^function choicesHtml\(g, pickable, opts = \{\}\) \{[\s\S]*?\n\}/m),
 ].join('\n'), 'decide.js');
 run(read('question-card.js'), 'question-card.js');
+// my-work-clean.js is loaded whole (it only defines); the two page helpers it asks of my-work.js and task-view.js are stood in for.
+run('const workMerged = r => (r.task ? r.task.prState === "merged" : r.s?.branchPr?.state === "merged"); const prRefNumber = pr => /(\\d+)$/.exec(pr || "")?.[1] || "";', 'page.js');
+run(read('my-work-clean.js'), 'my-work-clean.js');
 run(read('todo.js'), 'todo.js');
-const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER } = vm.runInContext(
-  '({ todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER })', ctx);
+const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER, todoCleanRowHtml } = vm.runInContext(
+  '({ todoCleanRowHtml, todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -203,4 +206,91 @@ test('a gate is gone only by a read newer than when it was first seen listed', (
   assert.equal(todoIsGone({ data: {}, at: 2000 }, 1500, false), true);
   assert.equal(todoIsGone({ data: {}, at: 2000 }, 1500, true), false);
   assert.equal(todoIsGone({ data: null, at: 2000 }, 1500, false), false);
+});
+
+/* ── a merged session the board asks about ── */
+
+const mergedTask = (id, extra = {}) => ({ id, title: `Task ${id}`, prState: 'merged', pr: `https://github.com/acme/widget/pull/${id.slice(1)}0`, ...extra });
+const mergedSession = (id, extra = {}) => ({ id, kind: 'worker', worktree: `/w/${id}`, present: false, uncommitted: { files: 0, untracked: 0 }, unpushed: 0, phaseAt: T0, ...extra });
+const mergedRow = (taskId, sid, extra = {}, task = mergedTask(taskId)) => ({ board: 'b1', task, session: mergedSession(sid, extra) });
+const withRows = (rows, turns = [], nwo = 'acme/widget') => doc([{ nwo, rows, hubSessions: [], turns }]);
+
+test('a merged session with nothing to lose is listed as a clean item with its board, session, key, repository, question and facts', () => {
+  const it = todoItems({ doc: withRows([mergedRow('t1', 's1')]) });
+  assert.equal(it.clean.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(it.clean[0])), { key: 'clean:b1/s1', board: 'b1', sessionId: 's1', nwo: 'acme/widget', title: 'Task t1',
+    text: 'Task t1: PR #10 マージ済み。片付けてセッションを閉じる？', files: 0, unpushed: 0, since: T0 });
+  assert.equal(it.count, 1);
+  // Not a gate: nothing is selectable, and no board is read for it.
+  assert.deepEqual(todoSelectable(it), []);
+  assert.equal(todoSlugsToRead(it, { boards: {}, seen: {}, have: () => false, now: 0, freshMs: 1, force: true }).size, 0);
+});
+
+test('a clean item is counted with the gates, and the keys are the board and the session, so two boards never share one', () => {
+  const d = withRows([mergedRow('t1', 's1'), { ...mergedRow('t2', 's1'), board: 'b2' }], [turn('t3', [gate('g1', 'plan', 1)])]);
+  const it = todoItems({ doc: d });
+  assert.deepEqual(keysOf(it.clean), ['clean:b1/s1', 'clean:b2/s1']);
+  assert.equal(it.read.length, 1);
+  assert.equal(it.count, 3);
+});
+
+test('the board asks only when no gate waits: not for a gate of the task, a gate the session waits on, 「残す」, another organisation, or work to lose', () => {
+  const ids = (d, extra = {}) => keysOf(todoItems({ doc: d, ...extra }).clean);
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1')])), ['clean:b1/s1']);
+  // The worker's own clean-up gate on the task.
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1')], [turn('t1', [gate('g1', 'question', 1, { quick: true })])])), []);
+  // The session waits on a gate of its own; and the same gate answered on this page no longer holds it back.
+  const waiting = withRows([mergedRow('t1', 's1', { waiting: { slug: 'b1', id: 'g9', openedAt: stamp(T0) } })]);
+  assert.deepEqual(ids(waiting), []);
+  assert.deepEqual(ids(waiting, { isDone: key => key === 'b1/g9' }), ['clean:b1/s1']);
+  // 「残す」: by the record, and by the page until the document says it.
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', { cleanupKeptAt: 1 })])), []);
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1')]), { kept: new Set(['clean:b1/s1']) }), []);
+  // Out of scope.
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1')]), { inScope: nwo => nwo !== 'acme/widget' }), []);
+  // Work to lose is for the terminal's warning only; so is a fact that is not known.
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', { unpushed: 1 })])), []);
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', { uncommitted: { files: 0, untracked: 2 } })])), []);
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', { unpushed: undefined })])), []);
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', { uncommittedError: 'x' })])), []);
+  // Not merged, and a hub.
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', {}, mergedTask('t1', { prState: 'open' }))])), []);
+  assert.deepEqual(ids(withRows([mergedRow('t1', 's1', { kind: 'hub' })])), []);
+});
+
+test('clean items are oldest first by the session\'s phase time, and by title when that does not tell', () => {
+  const d = withRows([mergedRow('t1', 's1', { phaseAt: T0 + 300 }), mergedRow('t2', 's2', { phaseAt: T0 + 60 }), mergedRow('t3', 's3', { phaseAt: undefined }),
+    mergedRow('t4', 's4', { phaseAt: T0 + 60 }, mergedTask('t4', { title: 'A first' }))]);
+  assert.deepEqual(keysOf(todoItems({ doc: d }).clean), ['clean:b1/s4', 'clean:b1/s2', 'clean:b1/s1', 'clean:b1/s3']);
+});
+
+test('the list draws the clean rows first, then the quick ones, then the gates to read, and the separator follows what is above it', () => {
+  const html = it => todoListHtml(it, { gateOf: () => null });
+  const rows = [mergedRow('t1', 's1')];
+  const q = turn('t5', [gate('g5', 'question', 3, { quick: true })]);
+  const r = turn('t6', [gate('g6', 'plan', 1)]);
+  const all = html(todoItems({ doc: withRows(rows, [q, r]) }));
+  assert.ok(all.indexOf('data-todo-key="clean:b1/s1"') < all.indexOf('data-todo-key="b1/g5"'));
+  assert.ok(all.indexOf('data-todo-key="b1/g5"') < all.indexOf('読んで決める'));
+  assert.ok(all.includes('class="todo-sep"') && !all.includes('todo-sep first'));
+  // Clean rows and something to read: the separator is the one that follows rows, not the first.
+  const withRead = html(todoItems({ doc: withRows(rows, [r]) }));
+  assert.ok(withRead.includes('class="todo-sep"') && !withRead.includes('todo-sep first'));
+  // Nothing above it: the first.
+  assert.ok(html(todoItems({ doc: withRows([], [r]) })).includes('todo-sep first'));
+  // Only clean rows: no separator, and the empty line is not shown.
+  const only = html(todoItems({ doc: withRows(rows) }));
+  assert.ok(!only.includes('todo-sep') && !only.includes('あなたの番はありません') && only.includes('data-todo-key="clean:b1/s1"'));
+  assert.ok(html(todoItems({ doc: withRows([]) })).includes('あなたの番はありません'));
+});
+
+test('a clean row has the question, the two buttons carrying the board and the session, the repository, and is dimmed while a request is out', () => {
+  const it = todoItems({ doc: withRows([mergedRow('t1', 's<1')]) });
+  const row = todoCleanRowHtml(it.clean[0]);
+  assert.ok(row.includes('Task t1: PR #10 マージ済み。片付けてセッションを閉じる？') && row.includes('class="todo-from">acme/widget</div>'));
+  assert.ok(row.includes('data-wk-ask-act="cleanup"') && row.includes('data-wk-ask-act="keep"') && row.includes('data-wk-ask-board="b1"') && row.includes('data-wk-ask-sid="s&lt;1"'));
+  assert.ok(row.includes('未コミット 0') && row.includes('未 push 0') && !row.includes(' disabled'));
+  assert.equal(todoListHtml(it, { busyOf: key => key === 'clean:b1/s<1' }).split(' disabled').length, 3);
+  const evil = todoItems({ doc: withRows([mergedRow('t1', 's1', {}, mergedTask('t1', { title: '<img onerror=x>' }))]) });
+  assert.ok(!todoCleanRowHtml(evil.clean[0]).includes('<img') && todoCleanRowHtml(evil.clean[0]).includes('&lt;img'));
 });

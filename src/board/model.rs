@@ -102,9 +102,19 @@ pub struct Session {
     /// `files: 0`, not a missing key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncommitted: Option<crate::kernel::worktree_state::Uncommitted>,
-    /// Why the last read of `uncommitted` failed; the counts of an earlier read stay beside it.
+    /// How many commits the worktree holds that no remote has, as last read in the background
+    /// beside `uncommitted`. Only for a worker, and only once it has been read: none is `0`,
+    /// not a missing key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpushed: Option<usize>,
+    /// Why the last read of `uncommitted` or `unpushed` failed; the values of an earlier read
+    /// stay beside it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncommitted_error: Option<String>,
+    /// When the person chose to keep this session instead of cleaning it up (seconds, UTC), from
+    /// the worker's own record. It lasts until a session is started again in the worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_kept_at: Option<i64>,
     /// The pull request of the session's branch, for a session that has no task (a task's own
     /// is on its card). Only where the resident server polls, and as old as its last round.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -386,6 +396,8 @@ mod tests {
             agent_session: None,
             uncommitted: None,
             uncommitted_error: None,
+            unpushed: None,
+            cleanup_kept_at: None,
             branch_pr: None,
             branch_pr_error: None,
         };
@@ -398,7 +410,9 @@ mod tests {
             "waiting",
             "agentSession",
             "uncommitted",
+            "unpushed",
             "uncommittedError",
+            "cleanupKeptAt",
             "branchPr",
             "branchPrError",
         ] {
@@ -459,6 +473,8 @@ mod tests {
             deletions: 3,
             binary: 1,
         });
+        session.unpushed = Some(3);
+        session.cleanup_kept_at = Some(1_700_000_000);
         session.uncommitted_error = Some("git could not read HEAD".to_string());
         session.branch_pr = Some(SessionPr {
             number: 12,
@@ -482,6 +498,8 @@ mod tests {
         );
         assert_eq!(full["uncommitted"]["files"], 2);
         assert_eq!(full["uncommitted"]["binary"], 1);
+        assert_eq!(full["unpushed"], 3);
+        assert_eq!(full["cleanupKeptAt"], 1_700_000_000);
         assert_eq!(full["uncommittedError"], "git could not read HEAD");
         assert_eq!(full["branchPr"]["number"], 12);
         assert_eq!(full["branchPr"]["state"], "draft");

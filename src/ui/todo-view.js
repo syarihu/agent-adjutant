@@ -31,9 +31,10 @@ const todo = {
 };
 
 /* What waits on the person, in the selected organisation unless `inScope` says otherwise (the organisation switch counts the others with it). */
-const todoMine = (inScope = todoInScope()) => todoItems({
-  doc: work.doc, isDone: key => answeredGates.has(key), inScope,
-});
+const todoMine = (inScope = todoInScope()) => {
+  workAskPrune(workAsk.kept, work.doc);
+  return todoItems({ doc: work.doc, isDone: key => answeredGates.has(key), inScope, kept: workAsk.kept });
+};
 
 const todoSlugOf = key => key.slice(0, Math.max(key.lastIndexOf('/'), 0));
 
@@ -127,7 +128,7 @@ function todoListOf(items, sel) {
   // Nothing has been read yet, or the read failed: not the same as nothing waiting.
   const st = todoStatus();
   if (st.blocked) return todoNotesHtml([st.blocked]);
-  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, goneOf: todoGoneOf, sel, now: Date.now() / 1000, emptyOk: st.emptyOk });
+  return todoNotesHtml(st.notes) + todoListHtml(items, { gateOf: todoGateOf, errorOf: todoBoardError, goneOf: todoGoneOf, busyOf: key => workAsk.busy.has(key), sel, now: Date.now() / 1000, emptyOk: st.emptyOk });
 }
 
 function todoDrawBadge(items) {
@@ -146,8 +147,8 @@ function todoDrawList(items) {
 function todoEmptyCardHtml(items) {
   const st = todoStatus();
   if (st.blocked) return `<div class="todo-card-empty">${todoNotesHtml([st.blocked])}</div>`;
-  // With quick rows left, something does wait: there is only nothing here to select.
-  const [line, hint] = items.quick.length ? ['選んで読む質問はありません', '左の確認は、その場で押せます。'] : ['あなたの番はありません', 'worker が何か聞いてきたら、ここに出ます。'];
+  // With one-tap rows left (a merged session asked about, a quick question), something does wait: there is only nothing here to select.
+  const [line, hint] = items.quick.length || (items.clean || []).length ? ['選んで読む質問はありません', '左の確認は、その場で押せます。'] : ['あなたの番はありません', 'worker が何か聞いてきたら、ここに出ます。'];
   return `<div class="todo-card-empty">${todoNotesHtml(st.notes)}${st.emptyOk ? `<p class="todo-empty">${esc(line)}</p><p class="todo-hint">${esc(hint)}</p>` : ''}</div>`;
 }
 
@@ -327,7 +328,23 @@ function todoRefocus(box, index) {
   (all[Math.min(index, all.length - 1)] || (box.id === 'todo-pop' ? todoTabEl() : null))?.focus({ preventScroll: true });
 }
 
+/* A press on a merged session's 「片付ける」 or 「残す」: the button is out of reach while its request is, and the focus moves on to the row that
+   takes its place when the row goes. */
+function todoAskClick(b, box) {
+  if (b.disabled) return;
+  const at = box.id !== 'todo-card' ? [...box.querySelectorAll(TODO_FOCUSABLE)].indexOf(b) : -1;
+  b.disabled = true;
+  workAskPress(b.dataset.wkAskAct, b.dataset.wkAskBoard, b.dataset.wkAskSid)
+    .then(() => refreshWork(true))
+    .then(() => {
+      todoFollow(true);
+      if (at >= 0 && (!document.activeElement || document.activeElement === document.body)) todoRefocus(box, at);
+    });
+}
+
 function todoClick(e) {
+  const ask = e.target.closest('[data-wk-ask-act]');
+  if (ask) return todoAskClick(ask, e.currentTarget);
   const row = e.target.closest('[data-todo-sel]');
   if (row) return e.currentTarget.id === 'todo-pop' ? todoOpen(row.dataset.todoSel) : todoSelect(row.dataset.todoSel);
   if (e.target.closest('[data-todo-open]')) return todoOpen();

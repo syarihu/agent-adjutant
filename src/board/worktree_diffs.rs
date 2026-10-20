@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use crate::kernel::worktree_state::{Uncommitted, uncommitted_of};
+use crate::kernel::worktree_state::{Uncommitted, uncommitted_of, unpushed_of};
 
 /// How soon the diff of a worktree whose session is on the board is read again.
 pub const DIFF_REREAD_LISTED: Duration = Duration::from_secs(10);
@@ -24,6 +24,8 @@ struct Diff {
     read_at: Option<Instant>,
     /// The last good count, kept through a read that failed.
     counts: Option<Uncommitted>,
+    /// The last good count of commits only here, kept the same way.
+    unpushed: Option<usize>,
     error: Option<String>,
 }
 
@@ -68,12 +70,13 @@ impl WorktreeDiffs {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// What was last read of `path`: its counts, none before the first read, and the error of
-    /// the last read when it failed, the counts of an earlier one staying beside it.
-    pub fn look(&self, path: &str) -> (Option<Uncommitted>, Option<String>) {
+    /// What was last read of `path`: its counts and its unpushed commits, none before the first
+    /// read, and the error of the last read when either part failed, the values of an earlier
+    /// read staying beside it.
+    pub fn look(&self, path: &str) -> (Option<Uncommitted>, Option<usize>, Option<String>) {
         match self.lock().by_path.get(path) {
-            Some(diff) => (diff.counts.clone(), diff.error.clone()),
-            None => (None, None),
+            Some(diff) => (diff.counts.clone(), diff.unpushed, diff.error.clone()),
+            None => (None, None, None),
         }
     }
 
@@ -86,22 +89,32 @@ impl WorktreeDiffs {
             .present = present;
     }
 
-    /// What a read of `path` at `at` found: a count, nothing for a directory that is gone, or
-    /// why it could not tell. A failure leaves the last count in place. A path nobody asks for
-    /// any more is not brought back.
-    pub fn store(&self, path: &str, at: Instant, result: Result<Option<Uncommitted>, String>) {
+    /// What a read of `path` at `at` found: the counts and the unpushed commits, each a number,
+    /// nothing for a directory that is gone, or why it could not tell. A failure of either
+    /// leaves that part's last value in place and sets the error. A path nobody asks for any
+    /// more is not brought back.
+    pub fn store(
+        &self,
+        path: &str,
+        at: Instant,
+        counts: Result<Option<Uncommitted>, String>,
+        unpushed: Result<Option<usize>, String>,
+    ) {
         let mut inner = self.lock();
         let Some(diff) = inner.by_path.get_mut(path) else {
             return;
         };
         diff.read_at = Some(at);
-        match result {
-            Ok(counts) => {
-                diff.counts = counts;
-                diff.error = None;
-            }
-            Err(error) => diff.error = Some(error),
+        let mut error = None;
+        match counts {
+            Ok(counts) => diff.counts = counts,
+            Err(e) => error = Some(e),
         }
+        match unpushed {
+            Ok(unpushed) => diff.unpushed = unpushed,
+            Err(e) => error = error.or(Some(e)),
+        }
+        diff.error = error;
     }
 
     /// Forgets the worktrees that are no longer listed.
@@ -148,10 +161,12 @@ fn read_all(weak: &Weak<WorktreeDiffs>, paths: &[String]) {
         if weak.strong_count() == 0 {
             return;
         }
-        let deadline = Instant::now() + Duration::from_secs(DIFF_GIT_SECS);
-        let result = uncommitted_of(Path::new(path), deadline);
+        // Each read has its own time: a slow count of the files does not time out the other.
+        let deadline = || Instant::now() + Duration::from_secs(DIFF_GIT_SECS);
+        let counts = uncommitted_of(Path::new(path), deadline());
+        let unpushed = unpushed_of(Path::new(path), deadline());
         match weak.upgrade() {
-            Some(diffs) => diffs.store(path, Instant::now(), result),
+            Some(diffs) => diffs.store(path, Instant::now(), counts, unpushed),
             None => return,
         }
     }

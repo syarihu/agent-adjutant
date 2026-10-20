@@ -495,6 +495,8 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
             agent_session,
             uncommitted: None,
             uncommitted_error: None,
+            unpushed: None,
+            cleanup_kept_at: None,
             branch_pr: None,
             branch_pr_error: None,
         });
@@ -609,7 +611,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         poll.server.diffs.want(&worktree, status.present);
         poll.diffs.insert(worktree.clone());
     }
-    let (uncommitted, uncommitted_error) = poll.server.diffs.look(&worktree);
+    let (uncommitted, unpushed, uncommitted_error) = poll.server.diffs.look(&worktree);
     let branch_pr = match (&task, &branch, &poll.server.pr_poll) {
         (None, Some(branch), Some(pr_poll)) => pr_poll.branch_pr(&repo.nwo, branch),
         _ => (None, None),
@@ -642,7 +644,9 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         waiting,
         agent_session,
         uncommitted,
+        unpushed,
         uncommitted_error,
+        cleanup_kept_at: record.as_ref().and_then(|r| r.cleanup_kept_at),
         branch_pr,
         branch_pr_error,
     }
@@ -720,6 +724,8 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
                 agent_session: None,
                 uncommitted: None,
                 uncommitted_error: None,
+                unpushed: None,
+                cleanup_kept_at: None,
                 branch_pr: None,
                 branch_pr_error: None,
             })

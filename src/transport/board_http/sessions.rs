@@ -6,8 +6,8 @@
 use serde_json::{Value, json};
 
 use crate::board::session::{
-    BranchRemoval, CleanUp, CleanUpRequest, LinkSession, Loss, OpenedIn, StartSession, clean_up,
-    inbox_name, link, open, restart, resume, start,
+    BranchRemoval, CleanUp, CleanUpRequest, Keep, LinkSession, Loss, OpenedIn, StartSession,
+    clean_up, inbox_name, keep_session, link, open, restart, resume, start,
 };
 use crate::board::view::{find_session, session_git, session_last_message};
 use crate::board::{Server, settings_now};
@@ -249,6 +249,18 @@ pub(super) fn clean_up_session(server: &Server, id: &str, body: &[u8]) -> Result
             }
             Ok(reply)
         }
+    }
+}
+
+/// Keep a session instead of cleaning it up. Answered with its own statuses, since the page
+/// tells an unknown session (404) from one that cannot be kept (400) from a record that could
+/// not be written (500): 200 `{"kept": true}` on success.
+pub(super) fn keep_session_answer(server: &Server, id: &str) -> (u16, Value) {
+    match keep_session(server, id) {
+        Keep::Kept => (200, json!({ "kept": true })),
+        Keep::NoSuchSession => (404, json!({ "error": format!("no such session: {id}") })),
+        Keep::Refused(why) => (400, json!({ "error": why })),
+        Keep::Failed(e) => (500, json!({ "error": e })),
     }
 }
 
