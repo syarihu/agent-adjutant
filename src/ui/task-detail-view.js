@@ -72,6 +72,17 @@ function taskDetailParts(task) {
   return { head: frame.head, body: taskDetailClean(frame.body, new Map(all.map(g => [g.id, g]))) };
 }
 
+/* The `<details>` of `root` by a key that survives a redraw: the text of its own summary, and how many before it had the same. */
+function taskDetailFolds(root) {
+  const seen = new Map();
+  return new Map([...root.querySelectorAll('details')].map(d => {
+    const text = d.querySelector(':scope > summary')?.textContent || '';
+    const n = seen.get(text) || 0;
+    seen.set(text, n + 1);
+    return [`${n}\u0000${text}`, d];
+  }));
+}
+
 const taskDetailLayer = () => (taskDetail ? dialogStack.layerEl(taskDetail.key) : null);
 
 /* The entry of the table of contents that is current: the one for `key`. */
@@ -157,7 +168,11 @@ function taskDetailFollow() {
   const titleId = main.querySelector('h2')?.id;
   main.innerHTML = parts.head;
   if (titleId) main.querySelector('h2').id = titleId;
+  // What was unfolded or folded by hand stays so: each fold is known by its summary and which of that summary it is, so one that
+  // comes or goes does not move the others' state (only one with the very same summary, before it, would).
+  const folds = taskDetailFolds(body);
   body.innerHTML = parts.body;
+  for (const [key, d] of taskDetailFolds(body)) if (folds.has(key)) d.open = folds.get(key).open;
   body.scrollTop = top;
   if (current) taskDetailMark(layer, current);
   // What was drawn can be taller or shorter now: the entry follows unless the person chose one.
