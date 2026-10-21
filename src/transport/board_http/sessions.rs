@@ -6,8 +6,9 @@
 use serde_json::{Value, json};
 
 use crate::board::session::{
-    BranchRemoval, CleanUp, CleanUpRequest, Keep, LinkSession, Loss, OpenedIn, StartSession,
-    clean_up, inbox_name, keep_session, link, open, restart, resume, start,
+    Answer, BranchRemoval, CleanUp, CleanUpRequest, Keep, LinkSession, Loss, OpenedIn,
+    StartSession, answer_prompt, clean_up, inbox_name, keep_session, link, open, restart, resume,
+    start,
 };
 use crate::board::view::{find_session, session_git, session_last_message};
 use crate::board::{Server, settings_now};
@@ -283,5 +284,33 @@ fn loss_of(loss: &Loss) -> Value {
             "kind": "unpushed",
             "detail": format!("{n} commit(s) no remote has"),
         }),
+    }
+}
+
+pub(super) fn answer_prompt_answer(server: &Server, id: &str, body: &[u8]) -> (u16, Value) {
+    let input = match input_of(body) {
+        Ok(v) => v,
+        Err(e) => return (400, json!({ "error": e })),
+    };
+    let seen_id = match text(&input, "id") {
+        Ok(Some(s)) => s,
+        Ok(None) => return (400, json!({ "error": "id is required" })),
+        Err(e) => return (400, json!({ "error": e })),
+    };
+    let key = match text(&input, "key") {
+        Ok(Some(s)) => s,
+        Ok(None) => return (400, json!({ "error": "key is required" })),
+        Err(e) => return (400, json!({ "error": e })),
+    };
+    match answer_prompt(server, id, seen_id, key) {
+        Answer::Sent => (200, json!({ "sent": true })),
+        Answer::NoSuchSession => (404, json!({ "error": format!("no such session: {id}") })),
+        Answer::Gone => (
+            409,
+            json!({ "error": "the question is no longer on screen" }),
+        ),
+        Answer::NotAnOption => (400, json!({ "error": "key is not an option" })),
+        Answer::Refused(why) => (400, json!({ "error": why })),
+        Answer::Failed(e) => (500, json!({ "error": e })),
     }
 }

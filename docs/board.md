@@ -223,3 +223,18 @@ From the terminal action bar or API:
 - **Open in External Terminal (`POST /api/sessions/<id>/open`)**: Attach to the tmux session using your native terminal (e.g. iTerm2 via `tmux -CC attach`).
 - **Clean Up (`POST /api/sessions/<id>/cleanup`)**: Remove the worktree and local branch if changes are fully committed and pushed. Requires confirmation (`force: true` with directory name) if untracked/uncommitted changes exist.
 - **Keep (`POST /api/sessions/<id>/keep`)**: Stop asking whether to clean up a merged session. Writes `cleanupKeptAt` into the worker's record and answers `{"kept": true}`; 404 for an unknown session, 400 for a hub, 500 when the record cannot be written. A worker started again in the worktree starts without it.
+- **Answer Prompt (`POST /api/sessions/<id>/prompt`)**: Answer a permission prompt or numbered choice list waiting in the session's terminal by sending its option key (`1`..`9`). Payload: `{"id": "<fingerprint>", "key": "<digit>"}`.
+  - Answers `200 {"sent": true}` on success.
+  - Answers `409 {"error": "the question is no longer on screen"}` when the prompt on screen has changed, timed out, or was answered in the terminal.
+  - Answers `400` when the key is not an option, the prompt cannot be reliably read, or the session is not running in tmux.
+  - Answers `404` when the session is not found.
+
+### Terminal Prompts (Permissions and Choice Lists)
+When an agent (Claude Code or `agy`) asks a question directly in its terminal without opening a gate (e.g. tool execution permission prompt, numbered choice list):
+- The board detects the prompt from the session's pane cache and displays it at the top of the TODO list and as an overlay above the active session's terminal.
+- An open gate takes priority: a gated session does not show a terminal prompt.
+- Buttons allow answering in one tap without pressing Enter:
+  - **Permission prompts**: Option 1 (`Yes...`) becomes 「許可」 (primary button); the first option containing `always allow`, `don't ask again`, or `allow all` becomes 「今後は聞かない」; the last option (`No...`) becomes 「断る」.
+  - **Choice prompts**: Buttons display trimmed option labels (up to 24 chars).
+  - When options cannot be read reliably (missing numbers, multi-select checkboxes, freeform write-in required), a single 「ターミナルで答える」 button is shown instead.
+- The server checks the screen fingerprint (`id`) immediately before sending the key to tmux. If the question has changed or was already answered, the request is rejected with 409 Conflict without sending keystrokes.

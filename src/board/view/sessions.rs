@@ -223,6 +223,8 @@ struct Poll<'a> {
     worker_agent: String,
     /// The panes whose last line was read this poll.
     screens: HashSet<String>,
+    /// The panes whose prompt was considered this poll.
+    prompt_screens: HashSet<String>,
     /// The worktrees whose diff this poll asked for.
     diffs: HashSet<String>,
 }
@@ -282,6 +284,51 @@ impl Poll<'_> {
                 let screen =
                     crate::infra::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
                 crate::mail::last_output_line(agent, &screen)
+            },
+        )
+    }
+
+    /// The question the session's pane asks, for a session that may be asking (see below), cached
+    /// by pane like the last line.
+    fn prompt(
+        &mut self,
+        terminal: &crate::infra::terminal::SessionTerminal,
+        agent: &str,
+        present: bool,
+        activity: Option<i64>,
+        agent_session: &Option<board::SessionAgentState>,
+    ) -> Option<board::SessionPrompt> {
+        if !present || !self.listing.prompts {
+            return None;
+        }
+        let pane = tmux_pane_of(&mut self.views, terminal)?;
+        let key = format!(
+            "{}\t{pane}",
+            socket_key(terminal.socket.as_deref()).display()
+        );
+        self.prompt_screens.insert(key.clone());
+        let agent =
+            crate::infra::agent::Agent::parse(agent).unwrap_or(crate::infra::agent::Agent::Generic);
+        // Reading a screen runs a command per pane, so only a session that may be asking is read:
+        // one whose hooks say it waits, or an agent that reports through no hooks (agy) and so
+        // has no status to say it.
+        let should_read = match agent_session.as_ref().and_then(|a| a.status.as_deref()) {
+            Some(status) => status == "waiting",
+            None => agent == crate::infra::agent::Agent::Agy,
+        };
+        if !should_read {
+            return None;
+        }
+        self.server.prompts.look_unless_moved(
+            &key,
+            activity,
+            Instant::now(),
+            crate::infra::clock::now_secs(),
+            || {
+                let screen =
+                    crate::infra::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
+                let p = crate::mail::pane_prompt(agent, &screen)?;
+                Some(board::SessionPrompt::from(p))
             },
         )
     }
@@ -418,6 +465,7 @@ pub(super) fn sessions_of(
                 .unwrap_or(runner::DEFAULT_AGENT_RUNNER),
         ),
         screens: HashSet::new(),
+        prompt_screens: HashSet::new(),
         diffs: HashSet::new(),
     };
     let mut sessions = hub_sessions(&mut poll);
@@ -428,6 +476,7 @@ pub(super) fn sessions_of(
     // their panes being gone.
     if poll.listing.lines == Lines::All && poll.listing.listed && !poll.skipped("worker-main") {
         server.last_lines.keep_only(&poll.screens);
+        server.prompts.keep_only(&poll.prompt_screens);
     }
     // The same for the diffs, and the reading of what is due starts here, off this thread.
     if poll.listing.diffs && poll.listing.listed && only.is_none() {
@@ -467,6 +516,13 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
                 ps_started: ps_started.as_deref(),
             },
         );
+        let prompt = poll.prompt(
+            &terminal,
+            &agent,
+            h.state.present,
+            last_activity_at,
+            &agent_session,
+        );
 
         sessions.push(board::Session {
             id: h.id.clone(),
@@ -490,6 +546,7 @@ fn hub_sessions(poll: &mut Poll) -> Vec<board::Session> {
             phases: Vec::new(),
             last_activity_at,
             last_line: line,
+            prompt,
             attached,
             waiting,
             agent_session,
@@ -617,6 +674,13 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         _ => (None, None),
     };
     let (branch_pr, branch_pr_error) = branch_pr;
+    let prompt = poll.prompt(
+        &terminal,
+        &agent,
+        status.present,
+        last_activity_at,
+        &agent_session,
+    );
 
     board::Session {
         id,
@@ -640,6 +704,7 @@ fn worker_session(poll: &mut Poll, source: WorkerSource) -> board::Session {
         phases: status.phases,
         last_activity_at,
         last_line: line,
+        prompt,
         attached,
         waiting,
         agent_session,
@@ -719,6 +784,7 @@ fn main_worker_session(poll: &mut Poll) -> Option<board::Session> {
                 phases: Vec::new(),
                 last_activity_at,
                 last_line: line,
+                prompt: None,
                 attached,
                 waiting,
                 agent_session: None,
@@ -763,6 +829,7 @@ fn board_sessions_of(
             main_branch,
             lines: Lines::None,
             diffs: false,
+            prompts: false,
             listed: complete,
         },
         only,
@@ -789,7 +856,8 @@ pub fn board_session(
         .next()
 }
 
-/// Every session of this board, from its own records and with no pane read, and whether the
+/// Every session of this board, from its own records and with no pane read (no last line and
+/// no `prompt`), and whether the
 /// list is the whole of them (`false` when the worktrees could not be listed). What a job that
 /// watches the sessions reads, so that it and the page agree on who is waiting.
 pub fn board_sessions(

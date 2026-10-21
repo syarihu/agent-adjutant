@@ -41,6 +41,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/sessions.js"),
     include_str!("../../ui/session-actions.js"),
     include_str!("../../ui/my-work-clean.js"),
+    include_str!("../../ui/my-work-prompt.js"),
     include_str!("../../ui/sessions-side.js"),
     include_str!("../../ui/sessions-start.js"),
     include_str!("../../ui/my-work-seen.js"),

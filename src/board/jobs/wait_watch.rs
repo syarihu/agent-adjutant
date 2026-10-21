@@ -600,6 +600,7 @@ mod tests {
             phases: Vec::new(),
             last_activity_at: None,
             last_line: None,
+            prompt: None,
             attached: None,
             waiting: None,
             agent_session: Some(SessionAgentState {

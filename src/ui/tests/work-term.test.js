@@ -28,6 +28,7 @@ run(read('question-card.js'), 'question-card.js');
 // my-work-clean.js is loaded whole (it only defines); the two page helpers it asks of my-work.js and task-view.js are stood in for.
 run('const workMerged = r => (r.task ? r.task.prState === "merged" : r.s?.branchPr?.state === "merged"); const prRefNumber = pr => /(\\d+)$/.exec(pr || "")?.[1] || "";', 'page.js');
 run(read('my-work-clean.js'), 'my-work-clean.js');
+run(read('my-work-prompt.js'), 'my-work-prompt.js');
 run(read('work-term.js'), 'work-term.js');
 const api = vm.runInContext(
   '({ workSendableText, workSendBody, workSendTooLong, workTermGatesOf, workTermAskHtml, workTermMergedHtml, workTermHeadActsHtml, workTermMoreHtml, workHubStatusLineHtml, workHubStoppedHtml, workStoppedHubShown, workTermFabsHtml, workSendParts })', ctx);

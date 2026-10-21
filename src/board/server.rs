@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::{LastLines, WorktreeDiffs};
+use super::{LastLines, Prompts, WorktreeDiffs};
 use crate::board::jobs::Watch as JulesWatch;
 use crate::board::jobs::{HubTitles, PrPoll, WaitWatch};
 
@@ -25,6 +25,8 @@ pub(crate) struct Server {
     /// The last line each session's pane showed, for the pages that ask for it (`?lines=1`, or `?lines=hub` for the hubs').
     /// A cache: the pane is the answer.
     pub last_lines: Arc<LastLines>,
+    /// The prompt each session's pane showed. A cache: the pane is the answer.
+    pub prompts: Arc<Prompts>,
     /// The uncommitted files and lines of the worktrees the page lists, read by a thread of its
     /// own at the pace of the list. A cache: the worktree is the answer.
     pub diffs: Arc<WorktreeDiffs>,

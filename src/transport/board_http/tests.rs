@@ -1126,11 +1126,12 @@ fn a_session_route_names_a_session_id_and_an_action() {
             "restart" => Route::Session(id, SessionAction::Restart),
             "open" => Route::Session(id, SessionAction::Open),
             "keep" => Route::KeepSession(id),
+            "prompt" => Route::AnswerPrompt(id),
             _ => Route::Session(id, SessionAction::CleanUp),
         }
     }
     for action in [
-        "link", "git", "message", "resume", "restart", "open", "cleanup", "keep",
+        "link", "git", "message", "resume", "restart", "open", "cleanup", "keep", "prompt",
     ] {
         let method = method(action);
         assert_eq!(
@@ -1287,6 +1288,7 @@ fn only_the_resident_serves_what_reaches_outside_the_repository() {
         ("POST", "/api/sessions/x/resume"),
         ("POST", "/api/sessions/x/open"),
         ("POST", "/api/sessions/x/keep"),
+        ("POST", "/api/sessions/x/prompt"),
         ("POST", "/api/hubs"),
         ("POST", "/api/hubs/x/start"),
         ("GET", "/api/sessions/x/terminal"),

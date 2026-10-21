@@ -27,9 +27,10 @@ run(read('question-card.js'), 'question-card.js');
 // my-work-clean.js is loaded whole (it only defines); the two page helpers it asks of my-work.js and task-view.js are stood in for.
 run('const workMerged = r => (r.task ? r.task.prState === "merged" : r.s?.branchPr?.state === "merged"); const prRefNumber = pr => /(\\d+)$/.exec(pr || "")?.[1] || "";', 'page.js');
 run(read('my-work-clean.js'), 'my-work-clean.js');
+run(read('my-work-prompt.js'), 'my-work-prompt.js');
 run(read('todo.js'), 'todo.js');
-const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER, todoCleanRowHtml } = vm.runInContext(
-  '({ todoCleanRowHtml, todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER })', ctx);
+const { todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER, todoCleanRowHtml, todoPromptRowHtml } = vm.runInContext(
+  '({ todoCleanRowHtml, todoPromptRowHtml, todoItems, todoSelectable, todoPickSelection, todoListHtml, todoQuickRowHtml, todoReadRowHtml, todoNotes, todoSlugsToRead, todoIsGone, quickRowHtml, TODO_READ_ORDER })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;

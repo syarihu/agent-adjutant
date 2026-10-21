@@ -1,4 +1,6 @@
 //! Reading what an agent's screen shows and whether it is safe to type into.
+use serde::{Deserialize, Serialize};
+
 use crate::infra::agent::Agent;
 use crate::infra::terminal::*;
 
@@ -537,6 +539,304 @@ pub fn look_before_typing(agent: Agent) -> Option<LookBeforeTyping> {
         }),
         holds_just: Box::new(move |screen, line| shows_typed_line(agent, screen, line)),
     })
+}
+
+/// Permission (a yes/no-shaped tool approval) or Choice (any other numbered list).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PromptKind {
+    Permission,
+    Choice,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptOption {
+    /// A single digit ("1".."9").
+    pub key: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanePrompt {
+    /// Permission (a yes/no-shaped tool approval) or Choice (any other numbered list).
+    pub kind: PromptKind,
+    /// The question line as drawn, e.g. "Do you want to proceed?", "Which tea do you prefer?".
+    pub question: Option<String>,
+    /// For a permission prompt: up to 3 non-blank lines between the prompt's top rule and the
+    /// question (e.g. "Bash command", "touch probe.txt"), without `Tip:` lines. Empty otherwise allowed.
+    pub detail: Vec<String>,
+    /// The options a press may answer, in screen order. Empty when they cannot be read reliably.
+    pub options: Vec<PromptOption>,
+    /// A fingerprint of what is on screen: a short digest of kind, question, detail and *every*
+    /// numbered option label (including the ones left out of `options`) and which one is pointed.
+    pub id: String,
+}
+
+/// Why a key is not sent to a prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptRefusal {
+    /// No prompt on screen now, or not the one the board saw.
+    Gone,
+    /// The key is not one of the prompt's options.
+    NotAnOption,
+    /// The prompt's options could not be read.
+    Unreadable,
+}
+
+fn is_typing_option(label: &str) -> bool {
+    let lower = label.trim().to_lowercase();
+    lower.starts_with("type something")
+        || lower.starts_with("write-in")
+        || lower.starts_with("chat about this")
+}
+
+#[derive(Debug, Clone)]
+struct RawOption {
+    line_idx: usize,
+    pointed: bool,
+    number: usize,
+    label: String,
+    has_checkbox: bool,
+}
+
+fn parse_option_line(line: &str) -> Option<(bool, usize, String, bool)> {
+    let trimmed = line.trim_start();
+    let (pointed, rest) = if let Some(after) = trimmed.strip_prefix(['❯', '>', '›']) {
+        (true, after.trim_start())
+    } else {
+        (false, trimmed)
+    };
+    let digits_len = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits_len == 0 {
+        return None;
+    }
+    let num_str = &rest[..digits_len];
+    let after_num = &rest[digits_len..];
+    let after_delim = after_num.strip_prefix(['.', ')'])?;
+    if !after_delim.is_empty() && !after_delim.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let number: usize = num_str.parse().ok()?;
+    let label = after_delim.trim().to_string();
+    let has_checkbox = line.contains('☐')
+        || line.contains('☒')
+        || line.contains("[ ]")
+        || line.contains("[x]")
+        || line.contains("[X]");
+    Some((pointed, number, label, has_checkbox))
+}
+
+fn cut_line(line: &str) -> String {
+    let mut chars = line.chars();
+    let cut: String = chars.by_ref().take(LAST_LINE_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{}…", cut.trim_end())
+    } else {
+        cut
+    }
+}
+
+/// The question a session asks in its terminal alone (a permission prompt, a numbered choice
+/// list), as far as the screen tells it. `None` unless the screen is asking, and for the
+/// folder-trust dialog, which is answered elsewhere. Options that cannot be read reliably (a
+/// pane cut short, a multi-select list) leave `options` empty: what was not read is not
+/// offered as an answer.
+pub fn pane_prompt(agent: Agent, screen: &PaneScreen) -> Option<PanePrompt> {
+    if agent == Agent::Generic
+        || pane_state(agent, screen) != PaneState::Asking
+        || trust_dialog(agent, screen).is_some()
+    {
+        return None;
+    }
+    let lines: Vec<Line> = screen
+        .text
+        .lines()
+        .map(|raw| Line {
+            plain: strip_escapes(raw),
+            raw: raw.to_string(),
+        })
+        .collect();
+    let input = input_box(agent, &lines);
+    let start_idx = input.as_ref().map_or(0, |b| b.bottom + 1);
+    let search_lines = &lines[start_idx..];
+
+    let mut candidates: Vec<RawOption> = Vec::new();
+    for (idx, line) in search_lines.iter().enumerate() {
+        if let Some((pointed, number, label, has_checkbox)) = parse_option_line(&line.plain) {
+            candidates.push(RawOption {
+                line_idx: idx,
+                pointed,
+                number,
+                label,
+                has_checkbox,
+            });
+        }
+    }
+    let last = candidates.last()?;
+    let mut block = vec![last.clone()];
+    let mut prev_num = last.number;
+    let mut prev_idx = last.line_idx;
+
+    for cand in candidates.iter().rev().skip(1) {
+        if cand.line_idx >= prev_idx {
+            continue;
+        }
+        let between_valid = search_lines[cand.line_idx + 1..prev_idx].iter().all(|l| {
+            let plain = l.plain.trim();
+            plain.is_empty()
+                || is_border(plain)
+                || l.plain.chars().take_while(|c| c.is_whitespace()).count() >= 2
+        });
+        if !between_valid {
+            break;
+        }
+        if cand.number + 1 == prev_num {
+            block.push(cand.clone());
+            prev_num = cand.number;
+            prev_idx = cand.line_idx;
+            if cand.number == 1 {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    block.reverse();
+
+    let first_opt_idx = block[0].line_idx;
+    let mut question = None;
+    let mut q_idx = None;
+    for (i, line) in search_lines[..first_opt_idx].iter().enumerate().rev() {
+        let plain = line.plain.trim();
+        if plain.is_empty()
+            || is_key_hint(plain)
+            || plain.starts_with('☐')
+            || plain.starts_with('☒')
+        {
+            continue;
+        }
+        if is_border(plain) {
+            break;
+        }
+        let q_text = plain.strip_prefix("? ").unwrap_or(plain).trim();
+        question = Some(cut_line(q_text));
+        q_idx = Some(i);
+        break;
+    }
+
+    let first_yes = block.first().is_some_and(|o| o.label.starts_with("Yes"));
+    let last_no = block.last().is_some_and(|o| o.label.starts_with("No"));
+    let kind = if first_yes && last_no {
+        PromptKind::Permission
+    } else {
+        PromptKind::Choice
+    };
+
+    let detail = if kind == PromptKind::Permission {
+        if let Some(qi) = q_idx {
+            let top_rule = search_lines[..qi]
+                .iter()
+                .enumerate()
+                .rposition(|(_, l)| is_border(&l.plain));
+            if let Some(ti) = top_rule {
+                search_lines[ti + 1..qi]
+                    .iter()
+                    .map(|l| l.plain.trim())
+                    .filter(|s| !s.is_empty() && !s.starts_with("Tip:"))
+                    .take(3)
+                    .map(cut_line)
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let has_at_least_two = block.len() >= 2;
+    let numbers_sequential = block.first().is_some_and(|o| o.number == 1)
+        && block.windows(2).all(|w| w[1].number == w[0].number + 1);
+    let exactly_one_pointed = block.iter().filter(|o| o.pointed).count() == 1;
+    let has_question = question.is_some();
+    let has_multi_select = block.iter().any(|o| o.has_checkbox);
+
+    let is_reliable = has_at_least_two
+        && numbers_sequential
+        && exactly_one_pointed
+        && has_question
+        && !has_multi_select
+        // One key per option: an option numbered 10 would be typed as `1` then `0`, and the `1`
+        // alone already answers.
+        && block.iter().all(|o| o.number <= 9);
+
+    let options = if is_reliable {
+        block
+            .iter()
+            .filter(|o| !is_typing_option(&o.label))
+            .map(|o| PromptOption {
+                key: o.number.to_string(),
+                label: o.label.clone(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let mut fingerprint = String::new();
+    fingerprint.push_str(match kind {
+        PromptKind::Permission => "permission\n",
+        PromptKind::Choice => "choice\n",
+    });
+    fingerprint.push_str(question.as_deref().unwrap_or(""));
+    fingerprint.push('\n');
+    for d in &detail {
+        fingerprint.push_str(d);
+        fingerprint.push('\n');
+    }
+    fingerprint.push_str("---\n");
+    for opt in &block {
+        fingerprint.push_str(if opt.pointed { ">" } else { " " });
+        fingerprint.push_str(&opt.number.to_string());
+        fingerprint.push(':');
+        fingerprint.push_str(&opt.label);
+        fingerprint.push('\n');
+    }
+    let id = crate::kernel::identity::short_digest(&fingerprint);
+
+    Some(PanePrompt {
+        kind,
+        question,
+        detail,
+        options,
+        id,
+    })
+}
+
+/// Whether `key` may be sent to answer the prompt the board saw as `seen_id`, on this screen.
+pub fn prompt_answerable(
+    agent: Agent,
+    screen: &PaneScreen,
+    seen_id: &str,
+    key: &str,
+) -> Result<(), PromptRefusal> {
+    let Some(prompt) = pane_prompt(agent, screen) else {
+        return Err(PromptRefusal::Gone);
+    };
+    if prompt.id != seen_id {
+        return Err(PromptRefusal::Gone);
+    }
+    if prompt.options.is_empty() {
+        return Err(PromptRefusal::Unreadable);
+    }
+    if !prompt.options.iter().any(|opt| opt.key == key) {
+        return Err(PromptRefusal::NotAnOption);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
