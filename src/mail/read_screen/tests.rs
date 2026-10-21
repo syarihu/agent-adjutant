@@ -146,6 +146,20 @@ fn a_list_with_an_option_numbered_ten_offers_no_answer() {
 }
 
 #[test]
+fn a_long_run_of_digits_is_not_an_option_number() {
+    let screen = PaneScreen {
+        text: "Pick one?\n❯ 18446744073709551615. One\n  2. Two\n\nEnter to select · Esc to cancel"
+            .to_string(),
+        in_mode: false,
+        cursor_x: 0,
+        cursor_y: 0,
+    };
+    // Read without overflowing, and the list is cut short there.
+    let prompt = pane_prompt(Agent::Claude, &screen).expect("still a question");
+    assert!(prompt.options.is_empty(), "{prompt:?}");
+}
+
+#[test]
 fn prompt_fingerprint_and_refusals() {
     let screen = parse_pane_screen(fixture("claude-permission"));
     let p1 = pane_prompt(Agent::Claude, &screen).unwrap();

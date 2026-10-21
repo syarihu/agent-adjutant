@@ -326,9 +326,9 @@ impl Poll<'_> {
             crate::infra::clock::now_secs(),
             || {
                 let screen =
-                    crate::infra::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)?;
-                let p = crate::mail::pane_prompt(agent, &screen)?;
-                Some(board::SessionPrompt::from(p))
+                    crate::infra::terminal::look_at_tmux_pane(terminal.socket.as_deref(), &pane)
+                        .ok_or(())?;
+                Ok(crate::mail::pane_prompt(agent, &screen).map(board::SessionPrompt::from))
             },
         )
     }
@@ -476,6 +476,10 @@ pub(super) fn sessions_of(
     // their panes being gone.
     if poll.listing.lines == Lines::All && poll.listing.listed && !poll.skipped("worker-main") {
         server.last_lines.keep_only(&poll.screens);
+    }
+    // Prompts are read on every poll the page makes, whatever lines it asks for, so they are
+    // forgotten on those polls too.
+    if poll.listing.prompts && poll.listing.listed {
         server.prompts.keep_only(&poll.prompt_screens);
     }
     // The same for the diffs, and the reading of what is due starts here, off this thread.

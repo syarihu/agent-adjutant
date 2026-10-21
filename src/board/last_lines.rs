@@ -68,26 +68,32 @@ impl<T: Clone> PaneCache<T> {
 
     /// The value of `key`, read again whenever the window has had activity since the last read,
     /// however recent that was. For what has to go from the page as soon as the screen moves
-    /// (a prompt answered in the terminal), and is asked of few panes, so the age that keeps
-    /// `look` cheap on a busy pane is not wanted. Unknown activity, and a read that found
-    /// nothing, are always read again.
+    /// (a prompt answered in the terminal), so the age that keeps `look` cheap on a busy pane is
+    /// not wanted. Unknown activity is always read again. `read` is `Err` when the pane could
+    /// not be read at all: that is not "nothing on screen", so what an earlier read found
+    /// stands and the next poll tries again. An answer to it reads the pane afresh, so a prompt
+    /// kept this way is never answered on the strength of the cache.
     pub fn look_unless_moved(
         &self,
         key: &str,
         activity: Option<i64>,
         now: Instant,
         secs: i64,
-        read: impl FnOnce() -> Option<T>,
+        read: impl FnOnce() -> Result<Option<T>, ()>,
     ) -> Option<T> {
-        // A read that found nothing is not kept either: it may have been a capture that failed,
-        // and a waiting pane does not move to have it read again.
         if let Some(last) = self.read.lock().ok()?.get(key)
-            && last.value.is_some()
             && activity.is_some_and(|a| last.activity == Some(a) && last.secs > a)
         {
             return last.value.clone();
         }
-        let value = read();
+        let Ok(value) = read() else {
+            return self
+                .read
+                .lock()
+                .ok()?
+                .get(key)
+                .and_then(|last| last.value.clone());
+        };
         if let Ok(mut all) = self.read.lock() {
             all.insert(
                 key.to_string(),

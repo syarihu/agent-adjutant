@@ -88,10 +88,19 @@ fn a_prompt_is_read_again_as_soon_as_its_pane_has_moved() {
     let prompts = PaneCache::<String>::default();
     let t0 = Instant::now();
     let reads = std::cell::Cell::new(0);
+    // What each read finds, in order: `Err` is a pane that could not be read.
+    let found = [
+        Ok(Some("asking")),
+        Err(()),
+        Ok(None),
+        Ok(Some("asking")),
+        Ok(Some("asking")),
+    ];
     let look = |activity: Option<i64>, at: Instant| {
         prompts.look_unless_moved("pane", activity, at, 1000, || {
+            let read = found[reads.get()];
             reads.set(reads.get() + 1);
-            (reads.get() == 1).then(|| "asking".to_string())
+            read.map(|v| v.map(str::to_string))
         })
     };
     assert_eq!(look(Some(10), t0).as_deref(), Some("asking"));
@@ -100,14 +109,21 @@ fn a_prompt_is_read_again_as_soon_as_its_pane_has_moved() {
         look(Some(10), t0 + Duration::from_secs(1)).as_deref(),
         Some("asking")
     );
-    // Answered in the terminal a moment later: gone on the next poll, not five seconds on.
-    assert_eq!(look(Some(11), t0 + Duration::from_secs(2)), None);
-    // Nothing found is read again, still pane or not: it may have been a capture that failed.
+    assert_eq!(reads.get(), 1);
+    // Moved, and the pane could not be read: what was found stands rather than vanishing.
+    assert_eq!(
+        look(Some(11), t0 + Duration::from_secs(2)).as_deref(),
+        Some("asking")
+    );
+    // Read again on the next poll: answered in the terminal, gone at once.
     assert_eq!(look(Some(11), t0 + Duration::from_secs(3)), None);
     assert_eq!(reads.get(), 3);
+    // Nothing on screen is kept while the pane is still.
+    assert_eq!(look(Some(11), t0 + Duration::from_secs(4)), None);
+    assert_eq!(reads.get(), 3);
     // Activity that is not known says nothing: read every time.
-    look(None, t0 + Duration::from_secs(4));
-    look(None, t0 + Duration::from_secs(4));
+    look(None, t0 + Duration::from_secs(5));
+    look(None, t0 + Duration::from_secs(5));
     assert_eq!(reads.get(), 5);
 }
 

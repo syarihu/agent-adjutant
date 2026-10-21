@@ -609,7 +609,9 @@ fn parse_option_line(line: &str) -> Option<(bool, usize, String, bool)> {
         (false, trimmed)
     };
     let digits_len = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-    if digits_len == 0 {
+    // Agent output is not trusted: a long run of digits is not an option number, and would
+    // overflow the arithmetic below.
+    if digits_len == 0 || digits_len > 3 {
         return None;
     }
     let num_str = &rest[..digits_len];
