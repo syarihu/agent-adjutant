@@ -261,10 +261,46 @@ pub fn tmux_spawn_script(
     // `remain-on-exit` is on: set after the real command had started, a hub that dies in a few
     // milliseconds (#182) would be gone before the option landed and leave nothing to read. By
     // pane id because `\; set-option` in the same call lands on the session's current pane, not
-    // the new one. A failure of either step is the caller's, with no placeholder left behind.
+    // the new one. Some servers refuse every `respawn-pane` yet still open windows (#772), so
+    // when it fails the placeholder is closed and the command gets a plain window of its own.
+    // That one is left without `remain-on-exit`: nothing would ever turn it off again, and a
+    // dead pane would sit there for good. It is reported as `degraded`, so the caller knows
+    // there is no held screen to read. If that window cannot be opened either, both errors go
+    // to stderr and nothing is left behind.
     format!(
-        "{ensure}; P=$({prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} -P -F '#{{pane_id}}' 'sleep 60') || exit 1; {prefix} set-option -p -t \"$P\" remain-on-exit on 2>/dev/null; {prefix} respawn-pane -k -t \"$P\" -c {cwd_q} {cmd_q} || {{ {prefix} kill-pane -t \"$P\"; exit 1; }}; echo \"$P\""
+        "{ensure}; P=$({prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} -P -F '#{{pane_id}}' 'sleep 60') || exit 1; {prefix} set-option -p -t \"$P\" remain-on-exit on 2>/dev/null; if E=$({prefix} respawn-pane -k -t \"$P\" -c {cwd_q} {cmd_q} 2>&1); then echo \"$P\"; else {prefix} kill-pane -t \"$P\"; Q=$({prefix} new-window -d -t {next_q} -c {cwd_q} -n {title_q} -P -F '#{{pane_id}}' {cmd_q}) || {{ printf '%s\\n' \"$E\" >&2; exit 1; }}; printf 'degraded\\t%s\\t%s\\n' \"$Q\" \"$(printf '%s' \"$E\" | tr '\\n' ' ')\"; fi"
     )
+}
+
+/// What a held spawn printed: the pane it was held in, or the plain window it fell back to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum HeldPane {
+    Held(String),
+    /// `respawn-pane` failed and the command runs in a window with no `remain-on-exit`.
+    Degraded {
+        pane: String,
+        reason: String,
+    },
+}
+
+pub(super) fn parse_held_output(out: &str) -> Result<HeldPane, String> {
+    const NO_PANE: &str = "tmux did not say which pane it opened";
+    let out = out.trim();
+    let Some(rest) = out.strip_prefix("degraded\t") else {
+        if out.is_empty() {
+            return Err(NO_PANE.to_string());
+        }
+        return Ok(HeldPane::Held(out.to_string()));
+    };
+    let (pane, reason) = rest.split_once('\t').unwrap_or((rest, ""));
+    let pane = pane.trim();
+    if pane.is_empty() {
+        return Err(NO_PANE.to_string());
+    }
+    Ok(HeldPane::Degraded {
+        pane: pane.to_string(),
+        reason: reason.trim().to_string(),
+    })
 }
 
 pub fn tmux_wake_script(socket: Option<&str>, pane_id: &str, line: &str) -> String {

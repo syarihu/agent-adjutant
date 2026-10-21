@@ -146,7 +146,8 @@ fn spawn_on(
 /// With the built-in tmux backend the new window is kept open when its command exits and the
 /// pane id comes back, so the caller can read what the command printed before it goes. A
 /// `terminal.spawn` template and iTerm2 have no such handle: the id is `None` and the tab
-/// behaves as `spawn` makes it.
+/// behaves as `spawn` makes it. So is a tmux server that cannot respawn a pane (#772): the
+/// command is started in a plain window, the id is `None`, and the description says so.
 pub fn spawn_held(
     terminal: &TerminalSettings,
     req: &SpawnRequest,
@@ -157,9 +158,23 @@ pub fn spawn_held(
     spawn_on_inner(terminal.spawn.as_deref(), &backend, req, dry_run, hold)
 }
 
+/// What a start in the fallback window adds to its description, so whoever reads it does not
+/// take the start as checked.
+pub(super) fn degraded_note(reason: &str) -> String {
+    let why = if reason.is_empty() {
+        String::new()
+    } else {
+        format!(" ({reason})")
+    };
+    format!(
+        "; started degraded: tmux could not respawn the placeholder pane{why}, so it runs in a plain window without remain-on-exit and whether it stayed up was not checked"
+    )
+}
+
 /// Whether `spawn_held` gives back a pane to watch: the built-in tmux backend with no
 /// `terminal.spawn` template. A caller that cannot watch says so rather than announce a start
-/// it has no way to check.
+/// it has no way to check. Even then a server that cannot respawn a pane (#772) gives back
+/// none, which is only known after the spawn and is said in its description.
 pub fn watches_start(terminal: &TerminalSettings) -> bool {
     terminal.spawn.is_none() && matches!(Backend::of(terminal), Backend::Tmux { .. })
 }
@@ -263,18 +278,23 @@ fn spawn_on_inner(
             ));
         }
         let out = run_shell(&script)?;
+        let mut note = String::new();
         let pane = if hold {
-            let pane = out.trim();
-            if pane.is_empty() {
-                return Err("tmux did not say which pane it opened".to_string());
+            match parse_held_output(&out)? {
+                HeldPane::Held(pane) => Some(pane),
+                // Nothing to watch: the window has no `remain-on-exit`, so a command that dies
+                // at once would leave no screen to read.
+                HeldPane::Degraded { reason, .. } => {
+                    note = degraded_note(&reason);
+                    None
+                }
             }
-            Some(pane.to_string())
         } else {
             None
         };
         return Ok((
             Performed {
-                description: format!("started in a new tab: {title} ({})", req.cwd),
+                description: format!("started in a new tab: {title} ({}){note}", req.cwd),
                 script,
                 ran: true,
                 screen: false,
