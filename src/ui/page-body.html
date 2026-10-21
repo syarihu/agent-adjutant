@@ -95,7 +95,8 @@
 <!-- 「拡大」: the whole task under an index, or one card alone (card-dialog.js). -->
 <dialog id="card-dialog" class="card-dialog" aria-labelledby="card-dialog-title">
   <div class="card-dialog-head">
-    <div><div class="card-dialog-sub" id="card-dialog-sub"></div><h2 id="card-dialog-title"></h2></div>
+    <div class="card-dialog-titles"><div class="card-dialog-sub" id="card-dialog-sub"></div><h2 id="card-dialog-title"></h2><p class="card-dialog-line" id="card-dialog-line" hidden></p></div>
+    <div class="card-dialog-acts" id="card-dialog-acts" hidden></div>
     <button type="button" class="m3-icon-button" data-card-dialog-close title="閉じる" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
   </div>
   <p class="card-dialog-gone" role="status"></p>
@@ -181,12 +182,12 @@
     <div id="work-view">
       <section class="wk-term" id="wk-term" aria-label="選んだ仕事のターミナル">
         <!-- The row over the middle is always shown in this view. #wk-mid-lead holds the toggle that hides and shows the list column
-             (core.js applyLayout); the tabs of a task that has a PR, 「タスク」 (the worker's terminal below) and 「AI 下読み」
-             (#task-read), are shown for a task only, see task-read-view.js. -->
+             (core.js applyLayout); the tabs of a review request (下読み, 差分, 下書き) are shown for one only, and #task-read, their
+             read-through, in place of the terminal's pane (pr-panel.js). -->
         <div class="wk-mid-row" id="wk-mid-row"><div class="wk-mid-lead" id="wk-mid-lead"><button type="button" class="tool-btn rail-toggle" id="rail-toggle" data-action="rail-toggle" aria-controls="side-list" aria-expanded="true" aria-label="一覧を隠す" title="一覧を隠す"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span><span class="rail-badge zero" id="rail-toggle-count" title="新着の数">0</span></button></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示" hidden></div></div>
         <div class="wk-mid-empty" id="wk-mid-empty" hidden></div>
         <div class="wk-term-head" id="wk-term-head"></div>
-        <div class="tp-pane tp-term wk-term-pane" id="wk-term-pane" role="tabpanel" aria-labelledby="wk-mid-tab-task">
+        <div class="tp-pane tp-term wk-term-pane" id="wk-term-pane">
           <!-- The stage is the terminal's own place: what is laid over it sits beside the host, never in it (the terminal clears its host
                when it goes) and never in the flow above it, so a question coming or going does not resize the terminal (work-term-view.js).
                #wk-term-ask slides down from its top edge; #wk-term-fabs holds the two buttons at its bottom right. -->
@@ -198,7 +199,7 @@
           </div>
           <div class="tp-term-ph" id="wk-term-ph"></div>
         </div>
-        <div class="task-read" id="task-read" role="tabpanel" aria-labelledby="wk-mid-tab-ai" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
+        <div class="task-read" id="task-read" role="tabpanel" aria-labelledby="wk-mid-tab-pr-detail" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
       </section>
     </div>
     <!-- What waits on the person: the list is in the list column (#todo-list), the selected question's card here (todo-view.js). -->

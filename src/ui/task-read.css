@@ -1,7 +1,7 @@
-/* A task's 「AI 下読み」 and a review request's (src/ui/task-read.js, task-read-view.js, pr-panel.js): the tabs over the middle, and the read-through in it, laid out as 「拡大」
+/* A review request's read-through (src/ui/task-read.js, task-read-view.js, pr-panel.js): the tabs over the middle, and the read-through in it, laid out as 「拡大」
    lays out a review request's. Colours are the page's tokens only, so the dark theme follows without a rule of its own. */
 
-/* The row over the head of the middle: the sidebar's toggle, then the tabs, which are shown for a task only. The row is the height
+/* The row over the head of the middle: the sidebar's toggle, then the tabs, which are shown for a review request only. The row is the height
    it has with the tabs, so the head does not jump between a task and what is not one: 43px is the tab row's height (6px of top
    padding, the tab or the button, 36px at most, and the 1px border). */
 .wk-mid-row { flex: none; min-height: 43px; display: flex; align-items: center; gap: 8px; padding: 6px 14px 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
@@ -20,7 +20,6 @@ body:not(.rail-hidden) #rail-toggle .rail-badge { display: none; }
 .wk-mid-tab:disabled { opacity: .55; cursor: not-allowed; }
 .wk-mid-tab:disabled:hover { background: transparent; }
 .wk-mid-tab:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
-.wk-mid-sub { font-size: 11px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
 
 /* A review request's head over the middle has 「GitHub で開く」 and 「拡大」 at its right end (a task's has none). */
 /* In a narrow middle the buttons wrap under the title, which keeps a readable width of its own, so the heading's height stays a few lines. */

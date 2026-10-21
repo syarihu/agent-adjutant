@@ -1,5 +1,5 @@
-/* ── いまの仕事 「AI 下読み」: the list of the PRs others asked you to review, drawn ──────────────────────
-   The second list of 「いまの仕事」, chosen by the switch in its heading row. It reads `GET /api/others` (one document for
+/* ── 「レビュー」: the list of the PRs others asked you to review, drawn ──────────────────────
+   The list of the rail's 「レビュー」, drawn while `nav.list` is 'review'. It reads `GET /api/others` (one document for
    the server, as `/api/work` is) and syncs with GitHub only when asked (`POST /api/others/sync`). The pure half (what a
    row says, what is new, the order, the hub's row) is my-work-others.js; this file draws and keeps what the page holds:
    the document, the read marks in this browser (`adj.seenOthers`), and the sync in flight. Loaded after my-work.js, which
@@ -80,6 +80,8 @@ async function refreshOthers(force = false) {
   renderOthersStaleDot();
   renderOthersCount();
   if (view === 'work') renderOthersList(force);
+  // The review list's empty middle says whether there is anything to choose from: drawn again when the records come or change.
+  if (view === 'work' && nav.list === 'review' && !nav.task) renderWorkTerm();
   // The PR that is open follows its record, and one named by the address is opened once the records are here.
   prFollow();
 }
@@ -102,12 +104,11 @@ function othersSelect(rec) {
 
 /* ── sync ── */
 
-/* The click on a notification of review requests: this page, on the AI 下読み list. */
+/* The click on a notification of review requests: this page, on the 「レビュー」 list. */
 function openReviewNotified(notification) {
   try { notification?.close(); } catch {}
   window.focus();
-  setWorkTab('others');
-  go({ board: 'all', view: 'work', task: null, pane: 'detail' });
+  go({ board: 'all', view: 'work', list: 'review', task: null, pane: 'detail' });
 }
 
 /* One desktop notification for what a sync brought in, from the tab that synced; the tag makes the next sync's replace it. */
@@ -313,7 +314,7 @@ function othersRowHtml(rec, isNew, hubView, nowEst, records) {
   return `<div class="wk-band-row ov-row-wrap" data-ov-cell="${esc(rec.id)}">
     <button type="button" class="wk-row ov-row${dim}${isNew ? ' new' : ''}${selected ? ' selected' : ''}" data-ov="${esc(rec.id)}"${selected ? ' aria-current="true"' : ''} title="開く">
       ${othersGlyphHtml(rec)}<span class="wk-main">
-        <span class="wk-title">${isNew ? '<span class="ov-new">新着</span>' : ''}${esc(rec.title)}</span>
+        <span class="wk-title">${isNew ? '<span class="ov-new">新着</span>' : ''}${rec.requested ? '<span class="ov-req">依頼</span>' : ''}${esc(rec.title)}</span>
         <span class="wk-meta">${meta}</span>
         ${oor ? `<span class="wk-line ov-oor-line">${esc(othersOutOfReviewLine(oor))}</span>
         ` : ''}${stateLine}
@@ -436,7 +437,7 @@ function othersHeldSel(el) {
 
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
-  if (!root || prefs.workTab !== 'others') return;
+  if (!root || nav.list !== 'review') return;
   const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, prefs.othersHideDone, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
   if (!force && sig === others.sig) return;
   others.sig = sig;

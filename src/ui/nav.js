@@ -15,18 +15,22 @@
      /b/<slug>/?view=work&task=<ref>&pane=detail           いまの仕事 with a row selected: the board of
                                                            the row's task, hub or parent (<ref> may also
                                                            be parent:<key>)
-     /?view=work&task=pr:<owner/repo#N>&pane=drafts        いまの仕事 with a PR waiting on your review in the
+     /?view=review                                         レビュー, every board; nothing selected, so the
+                                                           middle is the empty state
+     /?view=review&task=pr:<owner/repo#N>&pane=detail      レビュー with a PR waiting on your review in the
                                                            middle (pane: detail = 下読み, diff, drafts), its reader on the right
-   /b/<slug>/?view=work&task=<id>&pane=ai                 いまの仕事 with a task's AI 下読み in the middle (pane: ai, or
-                                                           ai-drafts with 「worker への指示」 on the right)
+                                                           (/?view=work&task=pr:... from older links lands on the same)
+   /b/<slug>/?view=work&task=<id>&pane=ai                 an older link to a task's AI 下読み (pane: ai, or ai-drafts): the task opens
+                                                           in いまの仕事 and its AI 下読み dialog opens over it
    A board served on its own has no list of boards, so it is `board: null` at `/`. Every
    address carries `?token=`: the server refuses a GET without it. The addresses of the セッション
    tab and of 要対応, which are gone, are sent on by nav-legacy.js. */
 /* The task panel's tabs, as `pane=` names them; anything else is 詳細 (タスクサマリ). */
 const PANES = ['detail', 'term', 'review', 'check', 'history'];
-const nav = { board: null, view: 'agent', task: null, pane: 'detail' };
+const nav = { board: null, view: 'agent', list: 'task', task: null, pane: 'detail' };
 let boards = [];                 // /api/boards: the sidebar's rows
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
+let pendingOwnRead = null;       // '<board>/<task id>' of an older AI 下読み link: its dialog opens once the task is drawn (task-read-view.js)
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
 let navApplying = false;
 let pendingTask = null;          // opened once the board's first state is in
@@ -47,7 +51,7 @@ function parseUrl(loc = location) {
   const task = q.get('task');
   const p = q.get('pane');
   // A PR has its own tabs; any other task has the board's.
-  const out = { board: null, view: 'agent', task, pane: PANES.includes(p) || (isPrRef(task) && PR_PANES.includes(p)) ? p : 'detail' };
+  const out = { board: null, view: 'agent', list: 'task', task, pane: PANES.includes(p) || (isPrRef(task) && PR_PANES.includes(p)) ? p : 'detail' };
   const m = /^\/b\/([^/]+)/.exec(loc.pathname);
   out.board = m ? m[1] : multiBoard ? 'all' : null;
   // `/` on a server with several boards opens the view its constant names; a board's own address, the one before.
@@ -57,25 +61,33 @@ function parseUrl(loc = location) {
   if (v === 'human' || v === 'agent') out.view = v;
   // The work view reads every board of a resident server: a board served alone has none.
   if (v === 'work' && multiBoard) out.view = 'work';
+  // 「レビュー」 is the work view on a resident server with list: 'review' and board: 'all'.
+  if (v === 'review' && multiBoard) { out.view = 'work'; out.list = 'review'; out.board = 'all'; }
   // The TODO reads every board too, and is on none of them.
   if (v === 'todo' && multiBoard) { out.view = 'todo'; out.board = 'all'; }
   // The addresses of the セッション tab and of 要対応, which are gone, land where nav-legacy.js says.
   const legacy = legacyNav(loc, multiBoard);
   if (legacy) Object.assign(out, legacy.nav);
+  // With view=review, a task that is not a PR ref is dropped.
+  if (v === 'review' && !isPrRef(out.task)) out.task = null;
   // The task panel opens on a board of its own; 「すべて」 switches to the card's board first.
   // A PR waiting on your review belongs to no board: its address stays on 「すべて」, in the work view.
   if (out.board === 'all' && !(out.view === 'work' && isPrRef(out.task))) out.task = null;
   // And it is kept nowhere else: another view, or a board's own address (a board served alone never reads the records), has no panel for it.
   if (isPrRef(out.task) && (out.view !== 'work' || out.board !== 'all')) out.task = null;
-  // A task's read-through is a view of the work view only; the address of one anywhere else opens the task on its own panes.
-  if (READ_PANES.includes(p) && out.view === 'work' && isTaskRef(out.task)) out.pane = p;
+  // An older link to a task's AI 下読み opens the task, and the dialog of its read-through once the task is drawn (pendingOwnRead).
+  if (/^ai(-drafts)?$/.test(p) && out.view === 'work' && isTaskRef(out.task)) pendingOwnRead = `${out.board}/${out.task}`;
+  // A PR address (with view=work as older links have it, or view=review) is list: 'review'. Everything else is list: 'task'.
+  if (out.view !== 'work') out.list = 'task';
+  else if (isPrRef(out.task)) out.list = 'review';
   return out;
 }
 
 function urlOf(n = nav) {
   const path = n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
-  if (n.view === 'human' || n.view === 'work' || n.view === 'todo') url += `&view=${n.view}`;
+  if (n.view === 'work') url += n.list === 'review' ? '&view=review' : '&view=work';
+  else if (n.view === 'human' || n.view === 'todo') url += `&view=${n.view}`;
   // 「すべて」 is what `/` no longer opens.
   else if (n.view === 'agent' && multiBoard && path === '/') url += '&view=agent';
   if (n.task) url += `&task=${encodeURIComponent(n.task)}`;
@@ -89,7 +101,7 @@ function setNav(patch) {
   history.replaceState(null, '', urlOf());
 }
 
-const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.task === b.task && a.pane === b.pane;
+const sameNav = (a, b) => a.board === b.board && a.view === b.view && a.list === b.list && a.task === b.task && a.pane === b.pane;
 
 /* Everything that pointed into the board being left. */
 function switchBoard() {
@@ -104,6 +116,12 @@ function switchBoard() {
   // 「すべて」 shows what it last read while the new round is on its way.
   allRound = false;
   state = scopeAll() && Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
+}
+
+/* From 「レビュー」 to 「いまの仕事」 with nothing selected: the view did not change, so `setView` does not bring back the session
+   selected last; it is asked for here, as arriving from another view asks for it. */
+function backToWorkList(prev) {
+  if (prev.view === 'work' && prev.list === 'review' && nav.view === 'work' && nav.list === 'task' && !nav.task) work.restore = true;
 }
 
 /* From the work view to 「すべて」: the board did not change, but the state was emptied while the work view
@@ -130,9 +148,14 @@ function go(patch = {}, { replace = false } = {}) {
   // A session with no task is shown over 「いまの仕事」: it does not follow a move off it.
   // A PR waiting on your review is shown over 「いまの仕事」 only, as a session with no task is.
   if (nav.view !== 'work' && !('task' in patch) && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
-  // A task's read-through is a view of the work view only.
-  if (nav.view !== 'work' && READ_PANES.includes(nav.pane)) nav.pane = 'detail';
+  if (nav.view !== 'work') nav.list = 'task';
+  else if (isPrRef(nav.task)) nav.list = 'review';
+  else if (nav.task) nav.list = 'task';
+  else if ('list' in patch) nav.list = patch.list;
+  // The person moves on: an old link's dialog is no longer wanted.
+  if (pendingOwnRead && pendingOwnRead !== `${nav.board}/${nav.task}`) pendingOwnRead = null;
   const boardChanged = nav.board !== prev.board;
+  backToWorkList(prev);
   if (boardChanged) switchBoard(); else leaveWork(prev);
   const url = urlOf();
   if (replace || url === location.pathname + location.search) history.replaceState(null, '', url);
@@ -143,7 +166,7 @@ function go(patch = {}, { replace = false } = {}) {
 
 /* Only the task panel's card or tab changed: the screen under it is as it was, and drawing it
    again would only rebuild the list under it. */
-const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.view
+const onlyPanelMoved = prev => nav.board === prev.board && nav.view === prev.view && nav.list === prev.list
   && (nav.view === 'work' ? view === 'work' : view === 'board');
 
 /* A move to or from the work view changes what the next poll asks for (the work document, the last
@@ -223,12 +246,15 @@ function runBoardJob() {
 
 window.addEventListener('popstate', () => {
   pendingGate = null;
+  // An older link's dialog is armed again only if the address now shown carries it.
+  pendingOwnRead = null;
   const next = parseUrl(location);
   boardJob = null;
   if (sameNav(next, nav)) return;
   const boardChanged = next.board !== nav.board;
   const prev = { ...nav };
   Object.assign(nav, next);
+  backToWorkList(prev);
   if (boardChanged) switchBoard(); else leaveWork(prev);
   applyNav(boardChanged, onlyPanelMoved(prev));
   askWorkOnMove(prev.view, boardChanged);

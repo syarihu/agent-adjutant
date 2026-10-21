@@ -85,6 +85,8 @@ vm.runInContext([
   cut(/^const workRepoLabel = [^\n]*;/m),
   cut(/^const WORK_EMPTY_HTML = [^\n]*;/m),
   cut(/^const WORK_MIDDLE_EMPTY_HTML = [^\n]*;/m),
+  cut(/^function reviewMiddleKind[\s\S]*?^}/m),
+  cut(/^function reviewMiddleEmptyHtml[\s\S]*?^}/m),
   cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
   cut(/^const workMergedEnd = [^\n]*;/m),
   cut(/^function workTurnRowHtml[\s\S]*?^}/m),
@@ -1048,6 +1050,39 @@ test('the middle with nothing selected says to pick a session, with the terminal
   assert.ok(html.includes('左の一覧から選ぶと、ここにターミナルが出ます。'));
 });
 
+test('the middle of レビュー with nothing selected asks for a PR, says there is none, or claims nothing while the records are not here', () => {
+  const some = run("reviewMiddleEmptyHtml('some')");
+  assert.ok(some.includes('>rate_review</span>') && some.includes('<strong>PR を選んでください</strong>') && some.includes('左の一覧から選ぶと、ここに AI 下読みが出ます。'));
+  const none = run("reviewMiddleEmptyHtml('none')");
+  assert.ok(none.includes('>rate_review</span>') && none.includes('<strong>レビューする PR はありません</strong>'));
+  assert.ok(none.includes('レビューを頼まれた PR と、同期したリポジトリの PR がここに出ます。'));
+  // Before the first document: neither claim.
+  const loading = run("reviewMiddleEmptyHtml('loading')");
+  assert.ok(loading.includes('<strong>読み込み中…</strong>') && !loading.includes('PR を選んで') && !loading.includes('ありません'));
+  const failed = run("reviewMiddleEmptyHtml('failed', 'boom')");
+  assert.ok(failed.includes('<strong>読み込めませんでした</strong>') && failed.includes('<span>boom</span>') && !failed.includes('ありません'));
+  // An empty list says there is none only after a sync that finished.
+  const unsynced = run("reviewMiddleEmptyHtml('unsynced')");
+  assert.ok(unsynced.includes('<strong>まだ同期していません</strong>') && !unsynced.includes('ありません'));
+  const partial = run("reviewMiddleEmptyHtml('partial')");
+  assert.ok(partial.includes('一覧に出ていない PR があるかもしれません') && !partial.includes('ありません。'));
+});
+
+test('which empty middle レビュー shows follows what is known of the records and the last sync', () => {
+  const kind = (doc, error = null) => run(`reviewMiddleKind(${JSON.stringify(doc)}, ${JSON.stringify(error)})`);
+  const at = '20261021T000000Z';
+  assert.strictEqual(kind(null), 'loading');
+  assert.strictEqual(kind(null, 'boom'), 'failed');
+  assert.strictEqual(kind({ records: [{ id: 'a/b#1' }], lastSync: null }), 'some');
+  assert.strictEqual(kind({ records: [], lastSync: null }), 'unsynced');
+  assert.strictEqual(kind({ records: [], lastSync: { at: '' } }), 'unsynced');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: false } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true, truncated: true } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true, failed: ['acme'] } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true, error: 'x' } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true } }), 'none');
+});
+
 /* ── the first session with a task, and the selection kept per organisation ── */
 
 const leaf = (key, extra = {}) => ({ row: { key, task: { id: key }, ...extra }, place: 'tree' });
@@ -1086,7 +1121,7 @@ function lastWorld(over = {}) {
   const calls = [];
   const c = vm.createContext({
     ORG_NONE_KEY: '-', localStorage: { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, v); } },
-    view: 'work', prefs: { workTab: 'task' }, nav: { board: 'b-1', task: '41' }, pendingGate: null, pendingTask: null,
+    view: 'work', nav: { board: 'b-1', task: '41' }, pendingGate: null, pendingTask: null,
     isPrRef: x => String(x).startsWith('pr:'), isGateRef: x => String(x).startsWith('gate:'), isParentRef: x => String(x).startsWith('parent:'), parentKeyOfRef: x => x.slice(7),
     orgOf: nwo => (String(nwo).includes('/') ? String(nwo).split('/')[0].toLowerCase() : ''), currentOrg: () => 'acme', orgScope: () => ({}), workRepoChoice: () => '',
     workInShown: () => true, workParentOf: key => (key === '#2' ? { key, repo: { nwo: 'acme/a' } } : null), workParentBoard: () => 'b-p',
@@ -1119,14 +1154,12 @@ test('the selection is kept for the organisation of its row, only when it change
     w.c.nav = nav;
     w.run('workRemember()');
   }
-  w.c.nav = { board: 'b-1', task: '41' };
-  w.c.prefs.workTab = 'others';
-  w.c.nav.task = '42';
+  w.c.nav = { board: 'b-1', task: '42', list: 'review' };
   w.run('workRemember()');
   assert.strictEqual(writes, 0);
   assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"41"}');
   // A row of another organisation is kept under that organisation; the owner-less one under the none key.
-  w.c.prefs.workTab = 'task';
+  w.c.nav.list = 'task';
   w.c.workSelected = () => ({ parent: { repo: { nwo: 'Other/r' } } });
   w.run('workRemember()');
   assert.strictEqual(w.store.get('adj.workLast.other'), '{"board":"b-1","task":"42"}');
@@ -1211,7 +1244,7 @@ test('a row the page selected by itself does not replace the one the person sele
   assert.strictEqual(w.store.get('adj.workLast.acme'), '{"board":"b-1","task":"first"}');
 });
 
-test('the restore happens once, waits for the document, and leaves an address, a link in flight and the other tab alone', () => {
+test('the restore happens once, waits for the document, and leaves an address, a link in flight and the review list alone', () => {
   const none = { board: 'all', task: null };
   const world = (over, setup = () => {}) => {
     const w = lastWorld({ nav: { ...none }, ...over });
@@ -1234,8 +1267,8 @@ test('the restore happens once, waits for the document, and leaves an address, a
   const idle = world({}, w => { w.c.work.restore = false; });
   idle.run('workRestoreSelection()');
   assert.deepStrictEqual(idle.calls, []);
-  // An address, an old link still being resolved, and the other tab: nothing selected, and the flag is spent.
-  for (const [over, setup] of [[{ nav: { board: 'b-1', task: '41' } }], [{ pendingGate: 'b-1/g' }], [{ pendingTask: '41' }], [{ prefs: { workTab: 'others' } }], [{ view: 'todo' }]]) {
+  // An address, an old link still being resolved, and the review list: nothing selected, and the flag is spent.
+  for (const [over, setup] of [[{ nav: { board: 'b-1', task: '41' } }], [{ pendingGate: 'b-1/g' }], [{ pendingTask: '41' }], [{ nav: { board: 'all', task: null, list: 'review' } }], [{ view: 'todo' }]]) {
     const w = world(over, setup);
     w.run('workRestoreSelection()');
     assert.deepStrictEqual(w.calls, [], JSON.stringify(over));

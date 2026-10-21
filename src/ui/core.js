@@ -42,9 +42,6 @@ const PR_REF = 'pr:';
 const isPrRef = id => typeof id === 'string' && id.startsWith(PR_REF);
 const prIdOfRef = id => id.slice(PR_REF.length);
 const PR_PANES = ['detail', 'diff', 'drafts'];
-/* A task with a PR has a second view in the work view, its read-through (task-read-view.js): `ai` is the reader's terminal beside
-   it, `ai-drafts` its 「worker への指示」. Any other pane of a task is the board's. */
-const READ_PANES = ['ai', 'ai-drafts'];
 /* The ref of a task: its id, which carries none of the prefixes of the other things the work view opens. */
 const isTaskRef = id => typeof id === 'string' && id !== '' && ![PR_REF, HUB_REF, SESS_REF, PARENT_REF, WORK_GATE_REF].some(prefix => id.startsWith(prefix));
 
@@ -55,7 +52,7 @@ const PREF_KEY = 'adj-board-split';
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
 // listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle).
 const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  workFolded:[], workTab:'task', othersRepo:'', railHidden:false },
+  workFolded:[], othersRepo:'', railHidden:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -76,16 +73,15 @@ prefs.listWidth = Math.min(560, Math.max(240, Number(prefs.listWidth) || 330));
 delete prefs.railWidth;
 delete prefs.workListWidth;
 delete prefs.workGroup;
-// Which list the work view shows, and the repository the AI 下読み list is narrowed to (lower case; '' is すべて).
-// The page opens on 「いまの仕事」 whichever rail entry was last chosen: `/` is いまの仕事, not レビュー.
-prefs.workTab = 'task';
+// The repository the 「レビュー」 list is narrowed to (lower case; '' is すべて).
+// The list the work view shows is `nav.list`, from the address: it is not a pref (an older one is dropped).
+delete prefs.workTab;
 prefs.othersRepo = typeof prefs.othersRepo === 'string' ? prefs.othersRepo.toLowerCase() : '';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
 // rings waits and gates itself and the server's `notification` stays silent for them; see pageRings.
 prefs.notify = notifyPrefs(prefs.notify);
-// `prPrefsToSave` (pr-panel.js) keeps the tab a PR link switched to out of what is saved.
-const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(typeof prPrefsToSave === 'function' ? prPrefsToSave() : prefs)); } catch {} };
+const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 /* The list column's toggle: its icon, and its name, which carries the 新着 count its badge shows while the column is hidden (the label
    replaces the button's content for a screen reader). Called when the pref changes and when the count does. */
@@ -103,7 +99,7 @@ function renderRailToggle() {
 /* The rail's entry for the place on screen is the one `aria-current="page"`: the work view's two lists are 「いまの仕事」 and
    「レビュー」, the TODO is its own, and every board is under 「ボード」. */
 function markRail() {
-  const on = view === 'work' ? (prefs.workTab === 'others' ? 'nav-review' : 'nav-work') : view === 'todo' ? 'nav-todo' : 'nav-boards';
+  const on = view === 'work' ? (nav.list === 'review' ? 'nav-review' : 'nav-work') : view === 'todo' ? 'nav-todo' : 'nav-boards';
   for (const id of ['nav-work', 'nav-review', 'nav-todo', 'nav-boards']) {
     const b = document.getElementById(id);
     if (!b) continue;
@@ -716,7 +712,7 @@ async function refresh(force = false) {
     refreshOthers(force);
     if (todo.popOpen) refreshWork(force).then(todoPoll);
     else refreshWork(force);
-    // A task's PR has a read-through of its own, which its tab shows the state of (task-read-view.js).
+    // A task's PR has a read-through of its own, whose state the heading's button says (task-read-view.js).
     taskReadRefresh(force);
     if (nav.board === 'all' || !nav.board) return;
   }

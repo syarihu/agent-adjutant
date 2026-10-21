@@ -98,7 +98,7 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
     // The board this hub is served by, for the same MCP server: it lives exactly as long as
     // the session, so the board stops when the hub does and nothing has to watch for that.
     // `adj hub` itself cannot, since it `exec`s the agent and is gone.
-    // The code-review hub has no board of its own: its list is a row of 「いまの仕事」.
+    // The code-review hub has no board of its own: its row is in 「レビュー」.
     if ctx.settings.hub_serve && !ctx.repo.is_review() {
         env.push((
             crate::infra::env::HUB_SERVE_ENV.to_string(),

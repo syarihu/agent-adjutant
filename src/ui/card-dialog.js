@@ -28,8 +28,11 @@ const cardDialogDrafts = new Map(); // gate ref -> a comment typed in the dialog
 const cdTaskById = id => (state.tasks || []).find(t => t.id === id);
 const cardDialogEl = () => document.getElementById('card-dialog');
 const cardDialogDockEl = () => cardDialogEl().querySelector('.card-dialog-dock');
-/* A whole task and a whole PR (pr-dialog.js) are read under the index; a single card is not. */
-const cardDialogIndexed = () => cardDialog.mode === 'task' || cardDialog.mode === 'review';
+/* A whole task and a whole PR (pr-dialog.js) are read under the index; a single card is not. A task's own read-through
+   (task-read-view.js, 'own-read') is drawn like a PR's, but is one scroll with no index. */
+const cardDialogIndexed = () => cardDialog.mode === 'task' || cardDialog.mode === 'review' || cardDialog.mode === 'own-read';
+/* The modes whose content is a PR's read-through with its drafts in the column: they share the PR buttons and the diff. */
+const cardDialogOnPr = () => cardDialog.mode === 'review' || cardDialog.mode === 'own-read';
 
 /* What a card says about itself, drawn into the panel's markup by task-view.js and decide.js. */
 const expandAttrs = (section, g = null) =>
@@ -96,6 +99,7 @@ function cardDialogNotice(text) {
 function cardDialogSync(force = false, initial = false) {
   if (cardDialog.mode === 'task') return cardDialogTaskSync(force, initial);
   if (cardDialog.mode === 'review') return prDialogSync(force, initial);
+  if (cardDialog.mode === 'own-read') return ownReadDialogSync(force, initial);
   const dlg = cardDialogEl();
   if (!dlg.open && !initial) return;
   // An answer on its way drops the gate from the panel before it is known to have gone: the dialog waits
@@ -205,10 +209,11 @@ function openCardDialog(btn) {
   cardDialog.observer.observe(tp('task-panel'), { attributes: true, attributeFilter: ['hidden'] });
 }
 /* What the dialog has before anything is drawn in it. */
-function cardDialogShell(mode, title, sub) {
+function cardDialogShell(mode, title, sub, head = {}) {
   const dlg = cardDialogEl();
   dlg.querySelector('#card-dialog-title').textContent = title;
   dlg.querySelector('#card-dialog-sub').textContent = sub;
+  cardDialogHead(head);
   dlg.querySelector('.card-dialog-gone').textContent = '';
   cardDialogResetUpdates();
   // Nothing of an earlier opening may be read back: what is kept across redraws is read from this DOM.
@@ -218,10 +223,21 @@ function cardDialogShell(mode, title, sub) {
   const content = dlg.querySelector('.card-dialog-content');
   content.replaceChildren();
   content.dataset.mode = mode;
-  dock.setAttribute('aria-label', mode === 'review' ? '下書き' : '判定');
+  dock.setAttribute('aria-label', mode === 'review' ? '下書き' : mode === 'own-read' ? 'worker への指示' : '判定');
   const index = dlg.querySelector('.card-dialog-index');
-  index.hidden = mode === 'card';
+  index.hidden = mode === 'card' || mode === 'own-read';
   index.replaceChildren();
+}
+/* The optional line under the title and the buttons at the right of the head: `line` is text, `acts` markup. Both are empty and hidden
+   for the modes that have none, and are rewritten only when they differ, so that a button with the keyboard is not replaced for nothing. */
+function cardDialogHead({ line = '', acts = '' } = {}) {
+  const dlg = cardDialogEl();
+  const lineEl = dlg.querySelector('#card-dialog-line');
+  const actsEl = dlg.querySelector('#card-dialog-acts');
+  if (lineEl.textContent !== line) lineEl.textContent = line;
+  lineEl.hidden = !line;
+  if (actsEl.dataset.html !== acts) { actsEl.innerHTML = acts; actsEl.dataset.html = acts; }
+  actsEl.hidden = !acts;
 }
 function closeCardDialog() {
   const dlg = cardDialogEl();
@@ -237,7 +253,9 @@ function cardDialogFocusTarget() {
     .map(el => el.querySelector('[data-expand-open]'))[0];
   // Opened from the head's button, which no card stands for.
   const head = cardDialog.section ? null : document.querySelector('#task-panel [data-expand-task]');
-  return [cardDialog.opener, again, head, document.querySelector('#tp-tabs [aria-selected="true"]'),
+  // The heading button of a task's AI 下読み, drawn again since it opened the dialog.
+  const ownRead = cardDialog.mode === 'own-read' ? document.querySelector('#wk-term-head [data-own-read]') : null;
+  return [cardDialog.opener, again, head, ownRead, document.querySelector('#tp-tabs [aria-selected="true"]'),
     document.querySelector('#task-panel [data-tp-close]')].find(shown) || null;
 }
 
@@ -379,6 +397,7 @@ cardDialogEl().addEventListener('click', cardDialogPressEnd);
 cardDialogEl().addEventListener('pointercancel', cardDialogPressEnd);
 cardDialogEl().addEventListener('close', () => {
   if (cardDialog.mode === 'review') prDialogClosed();
+  else if (cardDialog.mode === 'own-read') ownReadDialogClosed();
   cardDialog.observer?.disconnect();
   // What was typed goes back to the box of the same gate in the panel, and to no other.
   cardDialogEl().querySelectorAll('[data-gate]').forEach(el => {
@@ -400,6 +419,7 @@ cardDialogEl().addEventListener('close', () => {
   dock.replaceChildren();
   dock.hidden = true;
   cardDialogEl().querySelector('.card-dialog-gone').textContent = '';
+  cardDialogHead();
   cardDialogResetUpdates();
 });
 

@@ -76,5 +76,4 @@ OWN_HOOKS.drafts = {
     if (!b.disabled) taskReadHand();
     return true;
   },
-  input: e => prInput(e),
 };

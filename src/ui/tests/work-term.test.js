@@ -107,6 +107,14 @@ test('the heading buttons are offered only where they apply', () => {
   assert.ok(task.includes('data-wk-term-act="detail"') && task.includes('タスク詳細'));
   assert.ok(task.includes('data-wk-term-act="ide"') && task.includes('data-wk-term-act="close"') && task.includes('セッションを閉じる'));
   assert.ok(!task.includes('hubinfo') && !task.includes(' disabled'));
+  // 「下読みを見る」 / 「下読みする」 comes before 「タスク詳細」, for a task only.
+  const see = api.workTermHeadActsHtml({ task: true, ownRead: 'see' });
+  assert.match(see, /^<button type="button" class="btn-m3-text" data-own-read="see"[^>]*>.*auto_stories.*下読みを見る/);
+  assert.ok(see.indexOf('data-own-read') < see.indexOf('タスク詳細'));
+  const ask = api.workTermHeadActsHtml({ task: true, ownRead: 'ask' });
+  assert.ok(ask.includes('data-own-read="ask"') && ask.includes('下読みする') && !ask.includes('下読みを見る'));
+  assert.ok(!api.workTermHeadActsHtml({ task: true }).includes('data-own-read'));
+  assert.ok(!api.workTermHeadActsHtml({ ownRead: 'see' }).includes('data-own-read'));
   const noTask = api.workTermHeadActsHtml({ ide: true });
   assert.ok(!noTask.includes('タスク詳細') && !noTask.includes('close'));
   const hub = api.workTermHeadActsHtml({ hub: true });
@@ -160,7 +168,6 @@ test('the stopped-hub block covers a hub with no process, also over a terminal t
   assert.equal(api.workStoppedHubShown(on), true);
   assert.equal(api.workStoppedHubShown({ ...on, starting: true }), false);
   assert.equal(api.workStoppedHubShown({ ...on, present: true }), false);
-  assert.equal(api.workStoppedHubShown({ ...on, reading: true }), false);
   assert.equal(api.workStoppedHubShown({ present: false }), false);
 });
 

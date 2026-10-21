@@ -59,12 +59,23 @@ function prTabsHtml(rec, read, pane, draftCount = 0, diffOn = false) {
 /* 「下読みを閉じる」, while a reader runs that has a process to stop; `closing` is a close of this page's that is out. */
 const prCloseReaderBtnHtml = (rec, closing) => prReaderOpen(rec) && rec.ai.pid
   ? `<button type="button" class="btn-m3-text tp-jump" data-pr-close-reader${closing ? ' disabled' : ''} title="読み取り専用の worker を止めて、ウィンドウを閉じます">${closing ? '閉じています…' : '下読みを閉じる'}</button>` : '';
-/* What sits at the head of the middle: 「GitHub で開く」 and 「拡大」. */
-function prMidActsHtml(rec) {
-  const url = httpUrl(rec?.url);
-  const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）">GitHub で開く</a>` : '';
+/* The CI of a record as one word: any failure is 失敗 and its count, else a run under way, else 通過; なし when it has none. */
+function prCiWord(ci) {
+  const n = k => Number(ci?.[k]) || 0;
+  if (n('fail') > 0) return `失敗 ${n('fail')}`;
+  if (n('pending') > 0) return '実行中';
+  return n('pass') > 0 ? '通過' : 'なし';
+}
+
+/* The heading of a review request's middle: the number and title, the repository, author, size and CI under it, and at the right
+   「GitHub で開く」 and 「拡大」. */
+function prReviewHeadHtml(rec) {
+  const author = rec.author ? `@${rec.author}` : '（削除されたアカウント）';
+  const sub = [rec.repo, author, `+${Number(rec.additions) || 0} −${Number(rec.deletions) || 0}`, `${Number(rec.changedFiles) || 0} files`, `CI ${prCiWord(rec.ci)}`].join(' · ');
+  const url = httpUrl(rec.url);
+  const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>GitHub で開く</a>` : '';
   const expand = '<button type="button" class="tool-btn" data-pr-expand aria-haspopup="dialog" title="拡大" aria-label="PR 全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>';
-  return open + expand;
+  return `<div class="wk-head-main"><div class="wk-term-title">${esc(`#${rec.number} ${rec.title}`)}</div><div class="wk-term-sub">${esc(sub)}</div></div><span class="wk-head-acts">${open}${expand}</span>`;
 }
 
 /* ── the sections: `{ key, label, html }`, or null when there is nothing to say ── */
@@ -125,7 +136,7 @@ function prThree(read) {
   return { key: 'top:three', label: '3行でいうと', html: `${line('目的', t.purpose)}${line('やり方', t.approach)}${line('影響', t.impact)}<p class="pr-essence"><b>この差分の本質:</b> ${esc(t.essence)}</p>` };
 }
 
-/* 見るポイント. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off. */
+/* 見るポイント. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off, `opts.noAsk` leaves it out (a place with no reader to type to). */
 function prPoints(read, opts = {}) {
   const points = read?.points || [];
   if (!points.length) return null;
@@ -135,7 +146,7 @@ function prPoints(read, opts = {}) {
       <div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[p.level] || p.level)}</span>${prLoc(p.path, p.line)}</div>
       <div class="pr-point-title">${esc(p.title)}</div>
       <div class="pr-point-why">${esc(p.why)}</div>
-      <div class="pr-point-acts">${opts.diff ? `<button type="button" class="btn-m3-text pr-act" data-pr-goto-diff="${i}">差分で見る</button>` : ''}<button type="button" class="btn-m3-text pr-act" data-pr-ask="${i}"${opts.readerOpen === false ? ` disabled title="${esc(PR_ASK_OFF_WHY)}"` : ''}>聞く</button><button type="button" class="btn-m3-text pr-act" data-pr-todraft="${i}">下書きに</button></div>
+      <div class="pr-point-acts">${opts.diff ? `<button type="button" class="btn-m3-text pr-act" data-pr-goto-diff="${i}">差分で見る</button>` : ''}${opts.noAsk ? '' : `<button type="button" class="btn-m3-text pr-act" data-pr-ask="${i}"${opts.readerOpen === false ? ` disabled title="${esc(PR_ASK_OFF_WHY)}"` : ''}>聞く</button>`}<button type="button" class="btn-m3-text pr-act" data-pr-todraft="${i}">下書きに</button></div>
     </li>`;
   });
   return { key: 'points:list', label: '見るポイント', badge: String(points.length), html: `<ul class="pr-points">${items.join('')}</ul>` };
@@ -209,6 +220,20 @@ function prAiButtonHtml(ai, hubView, asking) {
 function prSplitButtonHtml(label, hubView, asking) {
   return `<button type="button" class="btn-m3-tonal pr-ai" data-pr-split${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">call_split</span><span>${esc(asking ? '依頼中…' : label)}</span></button>`;
 }
+/* What the middle says before a read-through exists, in place of the groups: a read that is queued or running, else that none was made
+   (with why the last one failed, and the button that asks for one). `ai` is `othersAiView`'s. */
+function prNoReadHtml(rec, ai, hubView, asking) {
+  const icon = name => `<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;
+  if (['queued', 'running'].includes(ai?.kind)) {
+    // The queue place is the tail of the view's text ("…の順番待ち（1 番目）").
+    const place = ai.kind === 'queued' ? /順番待ち.*$/.exec(ai.text || '')?.[0] : '';
+    return `<div class="wk-mid-empty-in pr-noread" role="status">${icon('progress_activity')}<strong>下読み中です</strong>`
+      + `<span>読み終わると、ここに要点と見るポイントが出ます。</span>${place ? `<span>${esc(place)}</span>` : ''}</div>`;
+  }
+  const failed = ['failed', 'hung'].includes(ai?.kind) && ai.text ? `<span>${esc(ai.text)}</span>` : '';
+  return `<div class="wk-mid-empty-in pr-noread">${icon('auto_stories')}<strong>まだ下読みしていません</strong>`
+    + `<span>コードレビュー hub の読み手が、要点と見るポイントをまとめます。</span>${failed}${prAiButtonHtml(ai, hubView, asking)}</div>`;
+}
 function prBeforeRead(rec, records, hubView, nowSecs, asking = false, readerWhere = '') {
   const ai = othersAiView(rec, records, nowSecs);
   // `readerWhere`: where the reader can be talked to, when that is not the middle (a task's is its sidebar).
@@ -272,7 +297,7 @@ function prSplitProposal(read) {
     html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">下書きタブで編集・コピー・pending review に積めます。</div>` };
 }
 
-/* The sections of the 下読み tab, in the issue's order. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's). */
+/* The sections of the 下読み tab, in the issue's order. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
 function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
   const ai = othersAiView(rec, records, nowSecs);
   const hasRead = !!read;
@@ -283,7 +308,7 @@ function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
     !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking, opts.readerWhere) : null,
     prThree(read),
     prSplitProposal(read),
-    prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec) }),
+    prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec), noAsk: opts.noAsk }),
     prOrder(read, rec, { diff: opts.diff }),
     prDecisions(read),
     prTests(read),
@@ -488,7 +513,7 @@ function prHandHtml(doc, hand = {}) {
 }
 
 const PR_SAVE_TEXT = { saved: '保存しました', saving: '保存しています…' };
-/* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('read' for a review request's 下書き tab, 'panel' for a task's 「worker への指示」, 'dock' for 「拡大」: only the class of the
+/* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('read' for a review request's 下書き tab, 'panel' for a task's 「worker への指示」, which is the right column of its dialog, 'dock' for 「拡大」: only the class of the
    wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `to` (where they go:
    'pending', the default, a pending review on GitHub, with `pend` (`prPendHtml`'s); or 'worker', a task's worker, with `hand`
    (`prHandHtml`'s) and no pending review). */

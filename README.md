@@ -163,7 +163,7 @@ Crucial checkpoints (approving implementation plans, filing issues, reviewing di
 
 Comprehensive guides are available in the [`docs/`](docs/) directory:
 
-- [**Web Board & Resident Server**](docs/board.md) ([日本語](docs/board.ja.md)): Board views, 「いまの仕事」, AI 下読み (PR review), REST API, and launchd setup.
+- [**Web Board & Resident Server**](docs/board.md) ([日本語](docs/board.ja.md)): Board views, 「いまの仕事」, 「レビュー」 (AI 下読み, PR review), REST API, and launchd setup.
 - [**Jules Integration**](docs/jules.md) ([日本語](docs/jules.ja.md)): Delegating tasks to Google Jules, automated design planning, and review comment relay.
 - [**Configuration & Runtime**](docs/configuration.md) ([日本語](docs/configuration.ja.md)): Deep dive into tmux presets, wake hooks, runner templates, and session lifecycles.
 - [**Architecture & Layering**](docs/architecture.md): Internal crate modules, architectural rules, and state storage design.

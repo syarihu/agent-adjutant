@@ -1,6 +1,6 @@
 /* ── A PR waiting on your review, in the middle and in the panel ─────────────────────────────────────────────
-   Selecting a row of 「AI 下読み」 opens the PR as a task's 「AI 下読み」 tab opens (task-read-view.js): its read-through in the
-   middle, with the tabs 下読み, 差分 and 下書き over it, the reader's terminal in the panel on the right, 「拡大」 for the whole.
+   Selecting a row of 「レビュー」 opens the PR: its read-through in the middle, with the tabs 下読み, 差分 and 下書き over it, the
+   reader's terminal in the panel on the right, 「拡大」 for the whole. (A task's own PR is read in a dialog, task-read-view.js.)
    It is `selectedTaskId` = `pr:<owner/repo#N>` on board `all`, since a PR belongs to no board. What it says is pr-read.js's (pure); this
    file holds what the page keeps for it: the stored read-through of the selected PR, the drafts the person is writing and their
    saving, and the terminal. Loaded after my-work-others-view.js, whose records (`others`) it reads. */
@@ -18,17 +18,17 @@ const prView = {
   drafts: new Map(),  // id -> see prDraftsEntry
   shownFor: null,     // the id the middle was last drawn for: another one starts at the top and reloads its drafts
   focusNext: null,    // { sel, inDialog }: the box an action wants focused once the forced redraw is made
-  tabWas: null,       // the saved list tab, while a link has shown 「AI 下読み」 over it
+  last: null,         // the id of the PR shown last, so that 「レビュー」 can open it again (in memory only)
   force: false,       // a redraw that must not wait for a box that has focus (a button was pressed: the boxes may be gone)
   held: false,        // a redraw of the panel's drafts that came while a box of them has focus
 };
 
 const prSelected = () => isPrRef(selectedTaskId) ? othersById(prIdOfRef(selectedTaskId)) : null;
 /* What the read-through's views are on now, so that one set of buttons serves a review request and a task. A review request (selected
-   as `pr:<id>`) has its record in the list of the records and asks for a read through the list's endpoint. A task's (the 「AI 下読み」
-   tab of the work view, task-read-view.js) has it in the task's own document and asks through the task. Both have the read-through in
-   the middle and the reader's terminal in the panel (`panelTerm`). `slot` is where the reader's terminal is mounted;
-   `ask(mode)` asks for a read (`mode` 'split' for a proposal). Null while the page is on neither. */
+   as `pr:<id>`) has its record in the list of the records and asks for a read through the list's endpoint; it has the read-through in
+   the middle and the reader's terminal in the panel (`panelTerm`). A task's (the dialog of its AI 下読み, task-read-view.js) has it in
+   the task's own document and asks through the task; it has no terminal. `slot` is where the reader's terminal is mounted, null for
+   none; `ask(mode)` asks for a read (`mode` 'split' for a proposal). Null while the page is on neither. */
 function prShown() {
   if (isPrRef(selectedTaskId)) {
     const id = prIdOfRef(selectedTaskId);
@@ -49,12 +49,6 @@ function prRedrawFor(id) {
 }
 /* The address names a PR that can be drawn: the records are in (or could not be read, which the panel says). */
 const prReady = () => !!others.doc || others.error != null;
-/* What savePrefs writes: the person's own tab, unless they have chosen one since the link. */
-function prPrefsToSave() {
-  if (prView.tabWas == null) return prefs;
-  if (prefs.workTab !== 'others') { prView.tabWas = null; return prefs; }
-  return { ...prefs, workTab: prView.tabWas };
-}
 /* A structural change (a draft thrown away or added): drawn now even with a box focused, since some browsers do not move focus
    to a pressed button, and the box left on screen could be one that is gone. The focused box keeps its text and caret. */
 function prRedrawNow(focus = null) {
@@ -83,12 +77,6 @@ function prRestoreFocus(root, keep, inDialog) {
 function prLeft() {
   prView.shownFor = null;
   prView.held = false;
-}
-/* A deliberate choice of 「AI 下読み」 ends the override a link made of the saved tab; true when there was one. */
-function prKeepTab() {
-  const was = prView.tabWas != null;
-  prView.tabWas = null;
-  return was;
 }
 /* Draw the panel again if it is on a PR (a request of the page changed what its buttons say). */
 const prRedraw = () => { if (isPrRef(selectedTaskId)) renderTaskPanel(); else if (typeof taskReadRedraw === 'function') taskReadRedraw(); };
@@ -247,7 +235,7 @@ window.addEventListener('beforeunload', e => {
   if ([...prView.drafts.values()].some(d => d.dirty)) { e.preventDefault(); e.returnValue = ''; }
 });
 
-/* The drafts as a body: the middle's 下書き tab, a task's 「worker への指示」 and the dialog's column draw the same, `place` being the only difference. `to` is
+/* The drafts as a body: the middle's 下書き tab, a task's 「worker への指示」 (in its dialog's column) and the review dialog's column draw the same, `place` being the only difference. `to` is
    where they are going: 'pending' (a review request's: a pending review on GitHub) or 'worker' (a task's: its worker). */
 function prDraftsBodyHtml(rec, read, place, to = 'pending') {
   const e = prDraftsEntry(rec.id);
@@ -268,21 +256,20 @@ const prBoxFocused = root => !!document.activeElement?.matches?.(PR_BOX_SEL) && 
 
 /* ── the middle: the read-through, and the panel: the reader ── */
 
-/* A selection that is new: the list it came from shows, its drafts are read again (unless something here is unsaved), and it starts at the top. */
+/* A selection that is new: its drafts are read again (unless something here is unsaved), and it starts at the top. */
 function prEnter(id, rec) {
   if (prView.shownFor === id) return;
   prView.shownFor = id;
+  prView.last = id;
   const e = prDraftsEntry(id);
   if (!e.dirty && !e.saving) { e.loaded = false; e.error = null; }
   if (!e.pending) e.pendResult = null;
-  // The list the link came from shows, for this visit: the tab the person saved is not changed (prPrefsToSave).
-  if (prefs.workTab !== 'others') { prView.tabWas = prefs.workTab; prefs.workTab = 'others'; renderWorkTabs(); renderOthersList(); }
   panelScrolledFor = null;
   if (rec) { prEnsureRead(rec); prEnsureDrafts(id); }
 }
 
 /* The middle for a review request: its head, the tabs 下読み, 差分 and 下書き, and the tab on show drawn in the read-through's place
-   (task-read-view.js, which a task's 「AI 下読み」 tab draws in as well). The reader's terminal is the panel's (renderPrPanel). Called
+   (task-read-view.js). The reader's terminal is the panel's (renderPrPanel). Called
    from `renderWorkTerm`, which runs before the panel is drawn. */
 function renderPrRead(rec) {
   const id = prIdOfRef(nav.task);
@@ -290,7 +277,7 @@ function renderPrRead(rec) {
   disposeTermSlot(workTerm);
   workTerm.board = null;
   prEnter(id, rec);
-  setWorkTermPart('head', wk('wk-term-head'), rec ? taskReadHeadHtml(null, rec, prMidActsHtml(rec)) : '');
+  setWorkTermPart('head', wk('wk-term-head'), rec ? prReviewHeadHtml(rec) : '');
   const readEl = wk('task-read');
   readEl.dataset.drafts = 'on';
   if (!rec) {
@@ -319,6 +306,12 @@ function renderPrRead(rec) {
   if (pane === 'drafts') return prDrawDrafts(key, rec, read, behind);
   // The flag means that the drafts tab is waiting for a box to be left: no other tab waits.
   prView.held = false;
+  // Before the first read the groups have nothing to say: a block says that it is under way, or that none was made, with the button.
+  if (pane === 'detail' && !hasRead && !othersOutOfReview(rec)) {
+    const band = behind + taskReadHubHtml(rec, hubView, others.starting);
+    taskReadSay(band + prNoReadHtml(rec, othersAiView(rec, records, othersNowEst()), hubView, asking));
+    return keepHubStartFocus(startHeld);
+  }
   const wantsDiff = pane === 'diff';
   const groups = readPaneGroups(taskReadGroups(rec, read, hubView, othersNowEst(), {
     records, since: true, diff: !!hook, asking, readError: !!prReadEntry(id)?.error,
@@ -366,7 +359,7 @@ function prDrawDrafts(key, rec, read, band) {
   }
 }
 
-/* The panel for a review request: its reader's terminal, as a task's 「AI 下読み」 tab has it, and nothing else. */
+/* The panel for a review request: its reader's terminal, and nothing else. */
 function renderPrPanel() {
   const panel = tp('task-panel');
   if (!panel) return;
@@ -415,12 +408,10 @@ function prAsk(point) {
   const shown = prShown();
   const rec = shown?.rec;
   const slot = shown?.slot;
-  // Typed into the reader's terminal if that is where it is mounted; what the reader wrote is not typed as it came, since a
-  // control character in it would be a key.
+  // Typed into the reader's terminal if that is where it is mounted (a review request's, in the panel); what the reader wrote is not
+  // typed as it came, since a control character in it would be a key.
   const text = `${prDraftLocation(point)} の「${point.title}」について: `.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ');
   if (rec && slot?.term && slot.ended == null && slot.taskId?.startsWith(`${PR_REF}${rec.id}/`)) {
-    // A task's reader is in the panel, and its terminal is only hidden behind 「worker への指示」: it is shown before it takes the keyboard.
-    if (shown.kind === 'task' && nav.pane !== 'ai') go({ pane: 'ai' }, { replace: true });
     if (slot.term.type(text)) slot.term.focus();
     else note('聞く', true, 'AI 下読みの worker のターミナルが開いていません');
   } else note('聞く', true, 'AI 下読みの worker のターミナルが開いていません');
@@ -485,13 +476,8 @@ async function prPend(id, read) {
   }
 }
 
-/* The tab the drafts are in: a task's 「worker への指示」 (in its panel), else a review request's 下書き (in the middle). */
-function prDraftsPane() {
-  return prShown()?.kind === 'task' ? 'ai-drafts' : 'drafts';
-}
-
-/* The click of a button that belongs to a PR, in 「拡大」 (`place` 'dialog') or in the read-through of a review request or a task
-   (`place` 'read', the default). True when it was one. */
+/* The click of a button that belongs to a PR, in 「拡大」 or a task's AI 下読み dialog (`place` 'dialog') or in the read-through of a review
+   request (`place` 'read', the default). True when it was one. */
 function prAct(e, { place = 'read' } = {}) {
   const hit = sel => e.target.closest(sel);
   const shown = prShown();
@@ -534,7 +520,7 @@ function prAct(e, { place = 'read' } = {}) {
       return true;
     }
     // The tab first, so the box that is made is drawn in it; it takes the keyboard, where the person finishes it.
-    if (!inDialog && nav.pane !== prDraftsPane()) go({ pane: prDraftsPane() }, { replace: true });
+    if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
     const key = prNextKey(doc(), 'p');
     edited(d => { d.drafts.push(prDraftFromPoint(point, d)); }, boxSel(key));
     return true;

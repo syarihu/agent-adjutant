@@ -186,8 +186,8 @@ test('the time since the request is the words of the list, and nothing without o
 
 test('the AI 下読み of a record: what it says and the one button it offers, for every status', () => {
   const view = (extra, state = 'requested', records) => plain(othersAiView(rec(1, { state, ...extra }), records));
-  assert.deepStrictEqual(view({}), { kind: 'none', text: '', action: 'AI 下読み' });
-  assert.equal(view({}, 'pushed').action, 'AI 下読み');
+  assert.deepStrictEqual(view({}), { kind: 'none', text: '', action: '下読みする' });
+  assert.equal(view({}, 'pushed').action, '下読みする');
   // A PR waiting on its author, or done, is offered nothing.
   assert.equal(view({}, 'waiting-on-author').action, null);
   assert.equal(view({}, 'done').action, null);
@@ -355,7 +355,7 @@ test('the row of a PR out of review says so, offers 分割案 and not AI 下読�
   const html = rowOf(big);
   assert.ok(html.includes('ov-oor-line') && html.includes('レビュー対象外 · src/b.rs（+2000 −0） ほか 1 件'));
   assert.ok(html.includes('data-ov-split="acme/widget#1"') && html.includes('call_split'));
-  assert.ok(!html.includes('data-ov-ai') && !html.includes('AI 下読み</button>') && !html.includes('menu_book'));
+  assert.ok(!html.includes('data-ov-ai') && !html.includes('下読みする</button>') && !html.includes('menu_book'));
   // Disabled while no read can be asked for, and only marked so while the request is out.
   assert.match(rowOf(big, { canRead: false }), /data-ov-split="acme\/widget#1" disabled title="hub is down"/);
   const asking = rowOf(big, { asking: true });
@@ -380,7 +380,7 @@ test('the buttons are drawn beside the row button, and the state line ends with 
   assert.ok(!html.slice(0, row).includes('data-ov-ai'));
   // The ghost sits in the state line, hidden from assistive technology, with the label and no hook.
   const line = html.match(/<span class="wk-line ov-line[^"]*">[\s\S]*?<\/span><\/span>/)[0];
-  assert.match(line, /<span class="ov-acts-ghost" aria-hidden="true"><span class="ov-act">[\s\S]*AI 下読み<\/span><\/span>$/);
+  assert.match(line, /<span class="ov-acts-ghost" aria-hidden="true"><span class="ov-act">[\s\S]*下読みする<\/span><\/span>$/);
   assert.ok(!line.includes('data-ov-') && !line.includes('</button>'));
   // The new mark is the second action, in both.
   const fresh = ctx.othersRowHtml(rec(1, { files: [file('src/a.rs', 100)] }), true, { canRead: true }, T0 + 60, [rec(1)]);
@@ -399,7 +399,7 @@ test('a row with no state text keeps its state line only for the ghost', () => {
     Object.assign(ctx, { othersStateLine: () => ({ cls: '', text }), othersAiView: () => ({ text: '', action }) });
     try { return rowOf(rec(1, { files: [file('src/a.rs', 100)] })); } finally { Object.assign(ctx, { othersStateLine: stateLine, othersAiView: aiView }); }
   };
-  assert.match(row('', 'AI 下読み'), /ov-line ov-line-bare"><span class="ov-acts-ghost"/);
+  assert.match(row('', '下読みする'), /ov-line ov-line-bare"><span class="ov-acts-ghost"/);
   assert.ok(!row('', null).includes('ov-line'));
 });
 
@@ -421,7 +421,7 @@ test('a current proposal of a PR that is not out of review now offers the usual 
   const ai = { status: 'ready', mode: 'split', stale: false, sha: 'abcdef0123' };
   const small = rowOf(rec(1, { state: 'ai-ready', files: [file('src/a.rs', 100)], ai }));
   assert.ok(small.includes('data-ov-ai') && small.includes('分割案あり') && !small.includes('data-ov-split'));
-  assert.deepStrictEqual(plain(othersAiView(rec(1, { state: 'ai-ready', files: [file('src/a.rs', 100)], ai }))), { kind: 'done', text: '分割案あり', action: 'AI 下読み' });
+  assert.deepStrictEqual(plain(othersAiView(rec(1, { state: 'ai-ready', files: [file('src/a.rs', 100)], ai }))), { kind: 'done', text: '分割案あり', action: '下読みする' });
   const big = rowOf(rec(1, { state: 'ai-ready', files: [file('src/big.rs', 2000)], ai }));
   assert.ok(!big.includes('data-ov-ai') && !big.includes('data-ov-split'));
   // Waiting on its author: nothing is offered.
@@ -447,7 +447,7 @@ function listOf(doc, { repo = '', stage = '', marks = {}, hub = '', hideDone } =
 }
 const listDoc = records => ({ now: T0 + 60, lastSync: { at: stamp(T0) }, records });
 
-test('the 「AI 下読み」 list offers 新着をすべて既読にする only while a row is new, and not while it loads', () => {
+test('the 「レビュー」 list offers 新着をすべて既読にする only while a row is new, and not while it loads', () => {
   const withNew = listOf(listDoc([rec(1)]));
   assert.ok(withNew.includes('data-ov-read-all') && !withNew.includes('data-wk-read-all'));
   assert.ok(!listOf(listDoc([rec(1)]), { marks: { 'acme/widget#1': { read: T0 } } }).includes('data-ov-read-all'));

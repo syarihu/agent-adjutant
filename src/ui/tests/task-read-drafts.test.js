@@ -216,17 +216,17 @@ test('the hook sets what the panel shows: the drafts for the worker, and ã€ŒN ä»
   assert.ok(hit);
   // Anything else falls through to `prAct`.
   assert.strictEqual(hook.act(click('[data-pr-copy-all]')), false);
-  // An input of its own is the drafts' `prInput`: one that is no draft's box is nobody's.
-  assert.strictEqual(hook.input({ target: { matches: () => false } }), undefined);
+  // Typing is the drafts' `prInput`, not a hook of its own.
+  assert.strictEqual(hook.input, undefined);
 });
 
-test('the drafts of the task\'s PR are asked for by the reader\'s panel, and drawing it again when they come is the task\'s own redraw', async () => {
+test('the drafts of the task\'s PR are asked for by its dialog, and drawing it again when they come is the task\'s own redraw', async () => {
   const src = read('task-read-view.js');
-  const panel = fn(src, 'renderTaskReaderPanel');
-  assert.match(panel, /prEnsureDrafts\(rec\.id\)/);
-  // Held while a box has focus, like the review request's panel, so typing is not thrown away.
-  assert.match(panel, /prBoxFocused\(tp\('task-panel'\)\)/);
-  assert.match(panel, /prHandable\(prDoc\(rec\.id, read\)\)/);
+  const dialog = fn(src, 'ownReadDialogSync');
+  assert.match(dialog, /prEnsureDrafts\(rec\.id\)/);
+  // The column is drawn by the review dialog's painter, which holds the redraw while a box has focus, so typing is not thrown away.
+  assert.match(dialog, /prDialogPaint\(groups, dockHtml/);
+  assert.match(dialog, /OWN_HOOKS\.drafts\.html\(rec, read\)/);
   // What `prEnsureDrafts` does when the answer comes: `prRedrawFor`, which for a task is the task's redraw (not the review request's panel).
   const calls = [];
   const c = vm.createContext({

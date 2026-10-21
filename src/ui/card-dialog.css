@@ -124,3 +124,10 @@
 .expand-btn { position: absolute; top: 8px; right: 8px; }
 .expand-btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 body.panel-pop #task-panel .expand-btn { display: none; }
+/* A task's own AI 下読み: a line under the title, buttons in the head, one scroll with no index, and no reader to type to (task-read-view.js). */
+.card-dialog-titles { min-width: 0; }
+.card-dialog-line { margin: 4px 0 0; font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.card-dialog-line[hidden], .card-dialog-acts[hidden] { display: none; }
+.card-dialog-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.card-dialog-content[data-mode="own-read"] { gap: 28px; }
+.card-dialog-content[data-mode="own-read"] [data-prd-ask] { display: none; }

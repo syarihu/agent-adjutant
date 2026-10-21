@@ -738,7 +738,7 @@ fn a_request_is_written_as_the_form_writes_it_and_handed_to_the_hub() {
     for args in wrong {
         let err = call_tool("adjutant_request", &args).unwrap_err();
         if args["board"] == "review" {
-            assert!(err.contains("下読み"), "{err}");
+            assert!(err.contains("「レビュー」 (adjutant_reviews)"), "{err}");
         }
     }
     assert_eq!(snapshot(&sandbox.state()), before);

@@ -1,11 +1,11 @@
-/* ── 「AI 下読み」 of a task: the tab over the middle, the read-through in it, and the reader in the panel ──────────────────────────
-   A task whose PR has a read-through (docs/architecture.md, "A task's PR") has two views in the work view, chosen by the tabs over
-   the middle: 「タスク」, which is the worker's terminal in the middle and the task's panel, and 「AI 下読み」, which is the
-   read-through in the middle, laid out as 「拡大」 lays out a review request's, and the reader (its terminal, and 「worker への指示」)
-   in the panel. The address carries the tab (`pane=ai`, `pane=ai-drafts`), so a reload and a link keep it. What the markup says is
-   task-read.js's (pure) and, below it, pr-read.js's; what is drawn is the dialog's machinery (`cardDialogTaskHtml`,
-   `prDialogPatch`), and the buttons are the review request's (`prAct`, with `place: 'read'`). This file keeps what the page holds
-   of it: the task's document, its poll, and the reading place. Loaded after pr-diff-view.js. */
+/* ── 「AI 下読み」 of a task: its document, and the dialog the terminal's heading opens ───────────────────────────────────────────
+   A task whose PR has a read-through (docs/architecture.md, "A task's PR") has 「下読みを見る」 (or 「下読みする」) in the heading of its
+   terminal. It opens the read-through in the card dialog (`#card-dialog`, mode 'own-read'): the read-through in one scroll laid out as
+   「拡大」 lays out a review request's, with no index and no reader's terminal, and 「worker への指示」 in the column at the right. What
+   the markup says is task-read.js's (pure) and, below it, pr-read.js's; what is drawn is the review dialog's machinery
+   (`prDialogPaint`), and the buttons are the review request's (`prAct`, with `place: 'dialog'`). This file keeps what the page holds
+   of it: the task's document, its poll, the dialog, and the middle's drawing for a review request (pr-panel.js uses it). Loaded after
+   pr-diff-view.js. */
 
 const taskRead = {
   key: null,          // `<board>/<task>/<pr>`: what `doc` is for; an answer is used only while this is still the task on show
@@ -14,13 +14,13 @@ const taskRead = {
   error: null,        // why the last read failed
   busy: false,        // a read is out
   again: false,       // a forced read asked for while one was out
-  taskPane: new Map(),  // `<board>/<task id>` -> the pane of the task's panel before this tab was chosen, which 「タスク」 goes back to
+  headMode: '',       // what the terminal's heading button says as it was drawn (`taskReadHeadMode`), so that a document that changes it draws the heading
   drawn: { order: '', html: new Map() },  // what the middle was last drawn from (`prDialogPatch`)
   contentSig: '',     // the middle's markup as drawn
-  drawnKey: null,     // what `drawn` and `contentSig` are of: a task's key, or a review request's `pr:<id>/<tab>`
+  drawnKey: null,     // what `drawn` and `contentSig` are of: a review request's `pr:<id>/<tab>`
   groups: [],         // the groups drawn
-  shownFor: null,     // the key the middle is drawn for while it is on screen, null while the other tab is
-  draftsFor: null,    // the key the PR's drafts were last asked for while the tab was on: asked again when the tab is chosen again
+  shownFor: null,     // the key the middle is drawn for while it is on screen, null while the terminal is
+  draftsFor: null,    // `<key>#<opening>`: the opening of the dialog the PR's drafts were last asked for, asked again at the next
   scroll: new Map(),  // key -> the middle's scroll top
   active: null,       // the group the index marks
   pinned: null,       // the group a jump left, marked until the person scrolls
@@ -28,33 +28,36 @@ const taskRead = {
   spying: false,
 };
 
-/* What task-read-drafts.js fills in to put the drafts in the reader's panel: `html(rec, read)` is what 「worker への指示」 shows,
-   `act(e)` answers a click in the panel (true when it was one of its own) and `input(e)` an input. While `drafts` is set the
+/* What task-read-drafts.js fills in to put the drafts in the dialog's column: `html(rec, read)` is what 「worker への指示」 shows,
+   `act(e)` answers a click in the dialog (true when it was one of its own); typing goes through `prInput` like a review request's. While `drafts` is set the
    middle's draft buttons are drawn (`data-drafts` on #task-read). */
 const OWN_HOOKS = { drafts: null };
 
-/* The tab is on: the work view is on a task that has a PR, and the address names one of the read panes. */
-const taskReadActive = task => !!task && view === 'work' && READ_PANES.includes(nav.pane) && !!task.pr && task.id === nav.task;
+/* The dialog is open on a task that has a PR: the work view is on it, and the dialog was opened for it (it stays 'own-read' with no subject once closed). */
+const taskReadActive = task => !!task && view === 'work' && !!task.pr && task.id === nav.task && cardDialog.mode === 'own-read' && cardDialog.subject === task.id;
 const taskReadTaskOf = () => view === 'work' && isTaskRef(nav.task) ? taskById(nav.task) || null : null;
 const taskReadTask = () => { const t = taskReadTaskOf(); return taskReadActive(t) ? t : null; };
 const taskReadKey = task => `${nav.board}/${task.id}/${task.pr}`;
 
-/* What the read-through's buttons and terminal are on, for `prShown` (pr-panel.js): null until the task's document has come, or
-   when its PR is not one that can be read. `rec` is null while the PR has no record. */
+/* What the read-through's buttons are on, for `prShown` (pr-panel.js): null unless the dialog is open on the task, and until the task's
+   document has come, or when its PR is not one that can be read. `rec` is null while the PR has no record. There is no reader's terminal
+   (`slot` is null). */
 function taskReadShown() {
   const task = taskReadTask();
   if (!task || taskRead.key !== taskReadKey(task) || !taskRead.doc?.pr) return null;
   const { pr: id, record: rec, hub } = taskRead.doc;
-  return { id, rec, kind: 'task', hubView: othersHubView(hub, rec ? [rec] : []), asking: others.asking.has(id), ask: mode => taskReadAsk(mode), slot: panelTerm };
+  return { id, rec, kind: 'task', hubView: othersHubView(hub, rec ? [rec] : []), asking: others.asking.has(id), ask: mode => taskReadAsk(mode), slot: null };
 }
 
 /* ── the document ── */
 
-/* Read the task's document when it has a PR: the tab shows its state beside its label, so this is asked for in either tab, on every
+/* Read the task's document when it has a PR: the heading's button says 「下読みを見る」 or 「下読みする」 by it, so this is asked for on every
    poll while the task is selected (a read in flight is not asked again). A task that is not the one the document is for starts
    it over. */
 async function taskReadRefresh(force = false) {
   const task = taskReadTaskOf();
+  // An older link to the read-through of a task that has no PR has nothing to open: it must not open one the task gets later.
+  if (task && !task.pr && pendingOwnRead === `${nav.board}/${task.id}`) pendingOwnRead = null;
   if (!task?.pr || !multiBoard || !nav.board || nav.board === 'all') return;
   const key = taskReadKey(task);
   if (taskRead.key !== key) {
@@ -86,6 +89,11 @@ async function taskReadRefresh(force = false) {
   } finally {
     taskRead.busy = false;
   }
+  // An older link to the task's AI 下読み: its dialog opens once the document is in.
+  if (pendingOwnRead === `${nav.board}/${task.id}` && taskRead.key === key && taskRead.doc) {
+    pendingOwnRead = null;
+    openOwnReadDialog(document.querySelector('#wk-term-head [data-own-read]'));
+  }
   if (taskRead.again) {
     taskRead.again = false;
     taskReadRefresh(true);
@@ -93,11 +101,13 @@ async function taskReadRefresh(force = false) {
   if (changed) taskReadRedraw();
 }
 
-/* Draw what shows the task's read-through: the tabs always, and the panel (which draws the middle) while the tab is on. */
+/* Draw what shows the task's read-through: the dialog while it is open, and the heading when its button says another thing. */
 function taskReadRedraw() {
   const task = taskReadTaskOf();
   if (!task) return;
-  if (taskReadActive(task) && selectedTaskId === task.id) renderTaskPanel(); else renderTaskReadTabs(task);
+  const doc = taskRead.key === taskReadKey(task) ? taskRead.doc : null;
+  if (taskReadHeadMode(task, doc, othersNowEst(), prStateOf(task)) !== taskRead.headMode) renderWorkTerm();
+  if (taskReadActive(task)) cardDialogSync();
 }
 
 /* Ask for a read-through of the task's PR, or with `mode` 'split' for a split proposal. One request per PR at a time; the answer is
@@ -131,7 +141,7 @@ const TASK_READ_WHY = {
 /* ── the tabs ── */
 
 /* Show `html` as the tabs of the row over the middle (the row itself is always shown, it leads with the sidebar's toggle), and either
-   the read-through (`reading`) or the terminal of what is selected. Shared by a task's tabs and a review request's. Returns whether
+   the read-through (`reading`) or the terminal of what is selected. Only a review request has tabs (pr-panel.js). Returns whether
    the terminal pane has just been revealed, so that the caller can have it sized. */
 function showMidTabs(html, reading) {
   const pane = wk('wk-term-pane');
@@ -149,39 +159,18 @@ function showMidTabs(html, reading) {
   return { revealed };
 }
 
-/* The tabs of a task's row over the middle, and which of the two views is shown. Returns what the caller needs to finish its own draw. */
-function renderTaskReadTabs(task) {
-  if (!task) {
-    // A selection that is not a task has no tabs (the row stays, for the toggle), and is the middle as it always was.
-    taskRead.shownFor = null;
-    return { reading: false, ...showMidTabs('', false) };
-  }
-  if (task.pr && taskRead.key !== taskReadKey(task)) taskReadRefresh(true);
-  const reading = taskReadActive(task);
-  const doc = taskRead.key === taskReadKey(task) ? taskRead.doc : null;
-  const { revealed } = showMidTabs(taskReadTabsHtml(taskReadTabState(task, doc, othersNowEst()), reading ? 'ai' : 'task'), reading);
-  if (!reading) taskRead.shownFor = taskRead.draftsFor = null;
-  return { reading, revealed };
+/* What is selected is not a review request: the terminal is the middle, with no tabs. A task with a PR has its document read when
+   the selection comes to it (and on every poll after), which the heading's button reads. Returns what the caller needs to finish its draw. */
+function taskReadFollow(task) {
+  taskRead.shownFor = null;
+  if (task?.pr && taskRead.key !== taskReadKey(task)) taskReadRefresh(true);
+  return showMidTabs('', false);
 }
 
 wk('wk-mid-tabs').addEventListener('click', e => {
   const b = e.target.closest('[data-mid-tab]');
   // A review request's tabs are its panes of the read-through, named by the address.
-  if (b && isPrRef(nav.task)) {
-    if (!b.disabled && b.dataset.midTab !== nav.pane) go({ pane: b.dataset.midTab }, { replace: true });
-    return;
-  }
-  const task = taskReadTaskOf();
-  if (!b || b.disabled || !task) return;
-  const on = taskReadActive(task);
-  if (b.dataset.midTab === 'ai') {
-    if (on) return;
-    // 「タスク」 goes back to the tab of the task's panel that was on.
-    taskRead.taskPane.set(`${nav.board}/${task.id}`, nav.pane);
-    go({ pane: 'ai' }, { replace: true });
-  } else if (on) {
-    go({ pane: taskRead.taskPane.get(`${nav.board}/${task.id}`) || 'detail' }, { replace: true });
-  }
+  if (b && isPrRef(nav.task) && !b.disabled && b.dataset.midTab !== nav.pane) go({ pane: b.dataset.midTab }, { replace: true });
 });
 
 /* ── the middle ── */
@@ -206,12 +195,6 @@ function keepHubStartFocus(held) {
   const root = wk('task-read');
   const next = root.querySelector('[data-task-read-hub-start]') || root.querySelector('[data-pr-ai]:not([disabled]):not([aria-disabled="true"])');
   if (next) next.focus({ preventScroll: true });
-}
-
-/* The no-record card, with what the stopped hub says (and its start button) over it. */
-function taskReadNoRecordWithHubHtml(pr, hubView) {
-  const hub = taskReadHubHtml(null, hubView, others.starting);
-  return (hub ? `<div class="m3-filled-card pr-sec">${hub}</div>` : '') + taskReadNoRecordHtml(pr, hubView, others.asking.has(pr));
 }
 
 /* Draw `groups` and the `band` over them in the middle, for what `key` names (a task's, or a review request's tab). What the middle was
@@ -254,43 +237,139 @@ function drawReadMiddle(key, groups, band, index = groups.length >= 2) {
   return drawn;
 }
 
-/* The middle of the 「AI 下読み」 tab. Called from `renderWorkTerm`, which has made the pane visible. */
-function renderTaskReadMiddle(task) {
+/* ── the dialog ── */
+
+/* Open the read-through of the task on show as a dialog (the heading's button, `opener`, or an older link). With `ask`, a read is
+   asked for too, but only when one can be asked for now; otherwise the dialog only opens, and its band says why. */
+function openOwnReadDialog(opener, { ask = false } = {}) {
+  const dlg = cardDialogEl();
+  const task = taskReadTaskOf();
+  if (!dlg || dlg.open || !task?.pr) return;
+  Object.assign(cardDialog, {
+    mode: 'own-read', subject: task.id, pane: nav.pane, section: null, gate: null,
+    opener, sig: '', held: false, quiet: false, gone: false, answering: false, gateGone: false, pressing: false,
+    target: null, targetAt: 0, pinned: null, dock: null, dockSig: '', groups: [], gateIds: {}, active: null,
+    answered: new Map(), answeredHere: new Set(), noMore: false, token: cardDialog.token + 1,
+  });
+  prDialogDrawn.order = '';
+  cardDialogShell('own-read', ownReadTitleText(task), ownReadSubText(null, task, ownReadRepoHint(task)));
+  ownReadDialogSync(true, true);
+  dlg.showModal();
+  dlg.querySelector('.card-dialog-body').scrollTop = 0;
+  dlg.querySelector('.card-dialog-body').focus({ preventScroll: true });
+  cardDialogSpy();
   const key = taskReadKey(task);
   const doc = taskRead.key === key ? taskRead.doc : null;
-  wk('task-read').dataset.drafts = OWN_HOOKS.drafts ? 'on' : 'off';
-  wk('task-read').setAttribute('aria-labelledby', 'wk-mid-tab-ai');
-  const rec = doc?.record || null;
-  const startHeld = !!document.activeElement?.matches?.('[data-task-read-hub-start]');
-  if (!doc || !doc.pr || !rec) {
-    const hubView = othersHubView(doc?.hub, []);
-    // A poll that failed keeps the last document: say that what is shown may be behind.
-    const behind = doc && taskRead.error ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>` : '';
-    taskReadSay(behind + (!doc ? (taskRead.error ? `<div class="wk-notice" role="alert">${esc(`読み込めませんでした: ${taskRead.error}`)}</div>` : '<div class="tp-muted" role="status">読み込み中…</div>')
-      : !doc.pr ? `<div class="m3-filled-card"><div class="tp-muted">${esc(TASK_READ_UNREADABLE_WHY)}</div></div>`
-        : taskReadNoRecordWithHubHtml(doc.pr, hubView)));
-    keepHubStartFocus(startHeld);
+  // A PR too large to read is offered the split proposal in the dialog: the heading does not choose for the person.
+  if (ask && doc?.pr && !othersOutOfReview(doc.record) && othersHubView(doc.hub, doc.record ? [doc.record] : []).canRead && !others.asking.has(doc.pr)) taskReadAsk();
+}
+
+/* What names the repository before there is a record: the PR's ref in the task's document, and the repository as the work document spells it. */
+function ownReadRepoHint(task, doc = taskRead.key === taskReadKey(task) ? taskRead.doc : null) {
+  return { ref: doc?.pr || '', nwo: workSelected()?.repo?.nwo || '' };
+}
+
+/* The text of the dialog's body when there is nothing to lay out in groups: one note, in a group of its own. */
+const ownReadNoteGroup = html => ({ key: 'note', label: '下読みの状態', badge: '', cards: [{ key: 'note', label: '下読みの状態', badge: '', wide: true, html, expand: null }] });
+
+/* `cardDialogSync` for a task's own AI 下読み: the head, the band and the groups of its read-through in one scroll, and 「worker への指示」
+   in the column. It follows the page while open (every poll of the task's document draws it), and closes quietly when the selection
+   leaves the task. `force` redraws although a box of the column has focus; `initial` is the first fill, before the dialog is open. */
+function ownReadDialogSync(force = false, initial = false) {
+  const dlg = cardDialogEl();
+  if (!dlg.open && !initial) return;
+  const task = taskReadTaskOf();
+  if (!task || task.id !== cardDialog.subject) {
+    cardDialog.quiet = true;
+    if (dlg.open) dlg.close();
     return;
   }
+  cardDialog.gone = false;
+  const key = taskReadKey(task);
+  const doc = taskRead.key === key ? taskRead.doc : null;
+  const rec = doc?.record || null;
+  const nowSecs = othersNowEst();
+  const hubView = othersHubView(doc?.hub, rec ? [rec] : []);
+  const asking = !!doc?.pr && others.asking.has(doc.pr);
+  if (rec) prEnsureRead(rec);
+  const read = rec ? prReadOf(rec) : null;
+  // The PR's drafts are the file's, asked for at each opening (unless something is unsaved), and the dialog is drawn when they come.
+  const opening = `${key}#${cardDialog.token}`;
+  if (rec && taskRead.draftsFor !== opening) {
+    taskRead.draftsFor = opening;
+    const e = prDraftsEntry(rec.id);
+    if (!e.dirty && !e.saving && !e.handing) { e.loaded = false; e.error = null; }
+  }
+  if (rec) prEnsureDrafts(rec.id);
 
-  prEnsureRead(rec);
-  const read = prReadOf(rec);
-  const hubView = othersHubView(doc.hub, [rec]);
-  const asking = others.asking.has(rec.id);
-  const hook = PR_HOOKS.diff;
-  const groups = taskReadGroups(rec, read, hubView, othersNowEst(), {
-    diff: !!hook, asking, readError: !!prReadEntry(rec.id)?.error,
-    diffFileHtml: hook ? path => hook.dialogFileHtml(rec, read, path) : null,
-    diffPaths: hook && read ? hook.dialogPaths(rec, read) : null,
-    diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,
-    diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
-  });
-  // A poll that failed keeps the last document, so say that what is shown may be behind.
-  const failed = taskRead.error
-    ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>`
-    : '';
-  const band = failed + taskReadHubHtml(rec, hubView, others.starting) + taskReadBandHtml(rec, read, hubView, asking);
-  if (drawReadMiddle(key, groups, band)) keepHubStartFocus(startHeld);
+  const title = dlg.querySelector('#card-dialog-title');
+  if (title.textContent !== ownReadTitleText(task)) title.textContent = ownReadTitleText(task);
+  const sub = dlg.querySelector('#card-dialog-sub');
+  const subText = ownReadSubText(rec, task, ownReadRepoHint(task, doc));
+  if (sub.textContent !== subText) sub.textContent = subText;
+  cardDialogHead({ line: ownReadHeadLine(doc, nowSecs), acts: ownReadActsHtml(rec, read, hubView, asking, !!rec && others.closing.has(rec.id)) });
+
+  // A poll that failed keeps the last document: say that what is shown may be behind.
+  const failed = doc && taskRead.error
+    ? `<div class="wk-notice" role="alert">${esc(`最新の状態を読み込めませんでした（前に読んだ状態を表示しています）: ${taskRead.error}`)}</div>` : '';
+  let groups;
+  if (!doc || !doc.pr || !rec) {
+    groups = [ownReadNoteGroup(failed + (!doc ? (taskRead.error ? `<div class="wk-notice" role="alert">${esc(`読み込めませんでした: ${taskRead.error}`)}</div>` : '<div class="tp-muted" role="status">読み込み中…</div>')
+      : !doc.pr ? `<div class="m3-filled-card"><div class="tp-muted">${esc(TASK_READ_UNREADABLE_WHY)}</div></div>`
+        // The same block the review list's middle has before a first read, under what the stopped hub says.
+        : taskReadHubHtml(null, hubView, others.starting) + prNoReadHtml(null, { kind: 'none', text: '', action: '下読みする' }, hubView, asking)))];
+  } else {
+    const band = failed + taskReadHubHtml(rec, hubView, others.starting) + taskReadBandHtml(rec, read, hubView, asking);
+    if (!prHasRead(rec, read) && !othersOutOfReview(rec)) groups = [ownReadNoteGroup(band + prNoReadHtml(rec, othersAiView(rec, [], nowSecs), hubView, asking))];
+    else {
+      const hook = PR_HOOKS.diff;
+      groups = taskReadGroups(rec, read, hubView, nowSecs, {
+        terminal: false, diff: !!hook, asking, readError: !!prReadEntry(rec.id)?.error,
+        diffFileHtml: hook ? path => hook.dialogFileHtml(rec, read, path) : null,
+        diffPaths: hook && read ? hook.dialogPaths(rec, read) : null,
+        diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,
+        diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
+      });
+      if (band) groups.unshift(ownReadNoteGroup(band));
+    }
+  }
+  const dockHtml = rec && prHasRead(rec, read) && OWN_HOOKS.drafts ? `<p class="cd-dock-label">worker への指示</p>${OWN_HOOKS.drafts.html(rec, read)}` : '';
+  prDialogPaint(groups, dockHtml, { force, initial, loading: read === undefined });
+}
+
+/* The dialog's own clicks, on top of the review request's buttons: the hub's start button, 「下読みを閉じる」 and 「worker に渡す」. */
+function ownReadDialogClick(e) {
+  const start = e.target.closest('[data-task-read-hub-start]');
+  if (start) {
+    if (start.getAttribute('aria-disabled') !== 'true') othersStartHub();
+    return;
+  }
+  // A button that asks for a read works before the PR has a record too, which `prAct` needs for everything else.
+  const b = e.target.closest('[data-pr-ai], [data-pr-split], [data-pr-reread]');
+  if (b) {
+    if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') taskReadAsk(b.matches('[data-pr-split]') ? 'split' : undefined);
+    return;
+  }
+  if (e.target.closest('[data-pr-close-reader]')) return prCloseReader();
+  if (OWN_HOOKS.drafts?.act?.(e)) return;
+  prAct(e, { place: 'dialog' });
+}
+
+/* The dialog was closed: what was written in the column is saved now. */
+function ownReadDialogClosed() {
+  const id = taskRead.doc?.pr;
+  if (id) prScheduleSave(id, true);
+}
+
+/* The page follows its state: the open dialog is drawn again, or closed when the selection is no longer its task. */
+function ownReadDialogFollow() {
+  if (cardDialog.mode === 'own-read' && cardDialogEl().open) cardDialogSync();
+}
+/* The work view is left: the dialog goes with it. */
+function closeOwnReadDialog() {
+  if (cardDialog.mode !== 'own-read' || !cardDialogEl().open) return;
+  cardDialog.quiet = true;
+  cardDialogEl().close();
 }
 
 /* The index marks the group being read. */
@@ -338,8 +417,7 @@ wk('task-read-body').addEventListener('scroll', e => {
   requestAnimationFrame(() => { taskRead.spying = false; taskReadSpy(); });
 });
 
-/* The buttons of the middle are the review request's: a button that asks for a read goes to what is on show (a review request, or a
-   task, which asks through its own endpoint), the rest to `prAct`. */
+/* The buttons of the middle are the review request's: a button that asks for a read goes to what is on show, the rest to `prAct`. */
 wk('task-read').addEventListener('click', e => {
   const start = e.target.closest('[data-task-read-hub-start]');
   if (start) {
@@ -351,20 +429,16 @@ wk('task-read').addEventListener('click', e => {
     if (!b.disabled && b.getAttribute('aria-disabled') !== 'true') prShown()?.ask(b.matches('[data-pr-split]') ? 'split' : undefined);
     return;
   }
-  if (prShown()?.kind === 'task' && OWN_HOOKS.drafts?.act?.(e)) return;
   prAct(e, { place: 'read' });
 });
-// What is typed in the drafts of a review request's middle; a task's are in the panel.
+// What is typed in the drafts of a review request's middle; a task's are in its dialog's column.
 wk('task-read').addEventListener('input', e => { if (prShown()?.kind === 'pr') prInput(e); });
 wk('task-read').addEventListener('focusout', e => prFocusOut(e, wk('task-read'), () => prView.held, () => renderTaskPanel()));
 
 // A link to a line of the diff lands in the middle, which is already as large as it can be. A review request's has the diff in its
 // 差分 tab only (a link from 下読み goes there first: prdGoto).
 PRD_VIEWS.read = {
-  ready: () => {
-    const shown = prShown();
-    return !!shown && !wk('task-read').hidden && (shown.kind === 'task' || nav.pane === 'diff');
-  },
+  ready: () => !!prShown() && !wk('task-read').hidden && nav.pane === 'diff',
   go: (...a) => taskReadGo(...a),
   cardEl: key => [...wk('task-read-content').querySelectorAll('[data-cd-card]')].find(el => el.dataset.cdCard === key) || null,
   place: 'read',
@@ -385,83 +459,3 @@ function drawReaderTerm(rec, records, hubView, missingHtml, mount = true) {
     : prMiddleHtml(rec, records, hubView, othersNowEst(), { asking: others.asking.has(rec.id), read: prReadOf(rec), readError: !!prReadEntry(rec.id)?.error, ...prTermEnd(panelTerm) });
   setPanelPart('ph', ph, text);
 }
-
-/* The panel of the 「AI 下読み」 tab: the reader's terminal and 「worker への指示」. The terminal stays mounted behind the second tab,
-   hidden, so its socket is kept. */
-function renderTaskReaderPanel(task) {
-  const key = taskReadKey(task);
-  const doc = taskRead.key === key ? taskRead.doc : null;
-  const rec = doc?.record || null;
-  panelShown = null;
-  panelScrolledFor = null;
-  renderWorkAway(null);
-  renderHandForm(null);
-  tp('tp-form').hidden = true;
-  tp('tp-tabs').hidden = false;
-  setPanelPart('links', tp('tp-links'), '');
-  setPanelPart('gate', tp('tp-gate'), '');
-
-  const read = rec ? prReadOf(rec) : null;
-  const hasRead = rec ? prHasRead(rec, read) : false;
-  // 「worker への指示」 needs a read-through: a link to it before there is one is the terminal.
-  const pane = nav.pane === 'ai-drafts' && hasRead ? 'ai-drafts' : 'ai';
-  setPanelPart('head', tp('tp-head'), rec ? taskReaderHeadHtml(rec, others.closing.has(rec.id))
-    : `<div class="tp-head-main"><h2 class="tp-title">下読みの worker</h2></div>${panelBtnsHtml('')}`);
-  // The PR's drafts are the file's, asked for when the tab is chosen (and again after it was left, unless something is unsaved), and the
-  // panel is drawn when they come.
-  if (rec && taskRead.draftsFor !== key) {
-    taskRead.draftsFor = key;
-    const e = prDraftsEntry(rec.id);
-    if (!e.dirty && !e.saving && !e.handing) { e.loaded = false; e.error = null; }
-  }
-  if (rec) prEnsureDrafts(rec.id);
-  // What is left to hand over once the drafts are in; until then what the read-through brought.
-  const held = rec && hasRead && read !== undefined && prDraftsEntry(rec.id).loaded ? prHandable(prDoc(rec.id, read)).drafts : rec?.ai?.counts?.drafts;
-  setPanelPart('tabs', tp('tp-tabs'), taskReaderTabsHtml(pane, Number.isFinite(held) ? held : 0, hasRead));
-
-  // Shown before the terminal is mounted: a hidden host has no size to fit to.
-  const reveal = pane === 'ai' && tp('tp-term').hidden;
-  tp('tp-detail').hidden = pane === 'ai';
-  tp('tp-term').hidden = pane !== 'ai';
-  // No records for the queue's place: the document has this record only, which would always be the first.
-  drawReaderTerm(rec, [], othersHubView(doc?.hub, rec ? [rec] : []),
-    !doc ? `<div class="tp-muted">${esc(taskRead.error ? `読み込めませんでした: ${taskRead.error}` : '読み込み中…')}</div>`
-      : '<div class="tp-ph-head">AI 下読みの worker はまだいません</div><div class="tp-muted">AI 下読みすると、ここにその worker のターミナルが開きます。</div>',
-    pane === 'ai');
-  const restHtml = pane === 'ai-drafts' && rec && OWN_HOOKS.drafts ? OWN_HOOKS.drafts.html(rec, read) : '';
-  const restKey = `${key}/${pane}`;
-  // What is typed in a box is kept: the redraw waits until the box is left (prHeldFlush).
-  if (restHtml && prBoxFocused(tp('task-panel')) && panelSig.paneKey === restKey && !prView.force) prView.held = true;
-  else {
-    prView.held = false;
-    const keep = prFocusKeep(tp('tp-rest'));
-    const scroll = tp('tp-detail').scrollTop;
-    setPanelPart('rest', tp('tp-rest'), restHtml);
-    prRestoreFocus(tp('tp-rest'), keep, false);
-    tp('tp-detail').scrollTop = panelSig.paneKey === restKey ? scroll : 0;
-    panelSig.paneKey = restKey;
-  }
-  // It was sized while hidden, which it skips; asked again now that it has a size.
-  if (reveal && panelTerm.term) panelTerm.term.fit();
-}
-
-/* The panel's own clicks in the 「AI 下読み」 tab. */
-function taskReaderPanelClick(e) {
-  let b;
-  if (e.target.closest('[data-tp-close]')) return closeTaskPanel();
-  if ((b = e.target.closest('[data-read-pane]'))) {
-    if (!b.disabled) go({ pane: b.dataset.readPane }, { replace: true });
-    return;
-  }
-  if (e.target.closest('[data-pr-close-reader]')) return prCloseReader();
-  if (e.target.closest('[data-pr-reconnect]')) {
-    panelTerm.reconnect = true;
-    renderTaskPanel();
-    return;
-  }
-  if (OWN_HOOKS.drafts?.act?.(e)) return;
-  prAct(e, { place: 'read' });
-}
-tp('task-panel').addEventListener('input', e => {
-  if (taskReadActive(taskById(selectedTaskId))) OWN_HOOKS.drafts?.input?.(e);
-});

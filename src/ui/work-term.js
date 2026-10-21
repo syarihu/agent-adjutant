@@ -74,12 +74,14 @@ function workTermAskHtml(gates, { ctxOf, keyOf, hub = false, folded = new Set(),
    is (`a` is `workMergedAsk`'s answer, in my-work-clean.js). The terminal names the session already, so the question does not. */
 const workTermMergedHtml = (a, { board, sid, busy = false } = {}) => workMergedAskHtml(a, { board, sid, busy });
 
-/* The buttons at the heading's right end. 「タスク詳細」 is for a task's row; 「親タスクの詳細」 for a parent's hub (the selection is a
+/* The buttons at the heading's right end. 「下読みを見る」 / 「下読みする」 (`ownRead` 'see' / 'ask', task-read.js `taskReadHeadMode`) opens a task's
+   AI 下読み and comes before 「タスク詳細」, which is for a task's row; 「親タスクの詳細」 for a parent's hub (the selection is a
    parent, or a hub that runs one); 「IDE」 and 「セッションを閉じる」 for a worker with a linked worktree (`closeWhy` is why the close is
    not possible just now, or ''); 「hub の詳細」 for a hub. */
-function workTermHeadActsHtml({ task = false, parent = false, ide = false, close = false, closeWhy = '', hub = false } = {}) {
+function workTermHeadActsHtml({ task = false, ownRead = '', parent = false, ide = false, close = false, closeWhy = '', hub = false } = {}) {
   const btn = (act, icon, label, extra = '') => `<button type="button" class="btn-m3-text" data-wk-term-act="${act}"${extra}>${qcIcon(icon)}<span>${esc(label)}</span></button>`;
-  return (task ? btn('detail', 'description', 'タスク詳細') : '')
+  const read = task && ownRead ? `<button type="button" class="btn-m3-text" data-own-read="${ownRead === 'ask' ? 'ask' : 'see'}" aria-haspopup="dialog">${qcIcon('auto_stories')}<span>${ownRead === 'ask' ? '下読みする' : '下読みを見る'}</span></button>` : '';
+  return read + (task ? btn('detail', 'description', 'タスク詳細') : '')
     + (parent ? btn('parent', 'account_tree', '親タスクの詳細') : '')
     + (hub ? btn('hubinfo', 'info', 'hub の詳細') : '')
     + (ide ? btn('ide', 'code', 'IDE') : '')
@@ -106,8 +108,8 @@ function workHubStatusLineHtml(text, cls, counts = []) {
 }
 
 /* Whether the block over a stopped hub is shown: the hub has no process and is not on its way up. A terminal that was mounted before it
-   stopped is a dead one, so the block covers it as well; nothing is shown over the terminal of a read-through. */
-const workStoppedHubShown = ({ isHub = false, present = false, starting = false, reading = false } = {}) => isHub && !present && !starting && !reading;
+   stopped is a dead one, so the block covers it as well. */
+const workStoppedHubShown = ({ isHub = false, present = false, starting = false } = {}) => isHub && !present && !starting;
 
 /* Over a stopped hub's terminal: how long it has been stopped, what is waiting in its inbox, and the button that starts it
    (`act` is the hub's action, which is 「hub を起動」 unless it is a parent's hub nothing reports to any more). */
