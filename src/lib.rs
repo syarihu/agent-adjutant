@@ -40,11 +40,19 @@ pub(crate) mod testing {
         /// Point both the config and the state directory at a tempdir. A test that reads
         /// the real ones answers about the developer's own machine, and a test that writes
         /// to them delivers its fixtures to a hub that is actually running.
+        ///
+        /// A config that is a JSON object without a `notification` gets `"notification":
+        /// "true"` at the top level. Left unset it resolves to the built-in notifier, which on
+        /// macOS posts a real banner every time a test reaches a delivery path; a string is a
+        /// command template, and this one runs `true`. The top level is the lowest-priority
+        /// level, so a fixture that sets `notification` in a repo entry or in `defaults` keeps
+        /// its own, and one that sets it at the top level (to anything) is written as given.
+        /// So is a config that is not a JSON object: some tests feed broken ones on purpose.
         pub fn new(config_json: &str) -> Self {
             let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let dir = tempfile::tempdir().unwrap();
             let config = dir.path().join("config.json");
-            std::fs::write(&config, config_json).unwrap();
+            std::fs::write(&config, quiet_config(config_json)).unwrap();
             unsafe {
                 std::env::set_var("ADJUTANT_STATE_DIR", dir.path().join("state"));
                 std::env::set_var("ADJUTANT_CONFIG", &config);
@@ -72,9 +80,22 @@ pub(crate) mod testing {
             self.dir.path().join("state")
         }
 
-        /// For tests that only care about where messages go.
+        /// For tests that only care about where messages go. Quiet like every sandbox: see
+        /// `new`.
         pub fn empty() -> Self {
             Sandbox::new("{\"repos\": {}}")
+        }
+    }
+
+    /// `config_json` with a silent `notification` added when it is a JSON object that says
+    /// nothing about one; anything else comes back as it was given.
+    fn quiet_config(config_json: &str) -> String {
+        match serde_json::from_str::<serde_json::Value>(config_json) {
+            Ok(serde_json::Value::Object(mut map)) if !map.contains_key("notification") => {
+                map.insert("notification".into(), "true".into());
+                serde_json::Value::Object(map).to_string()
+            }
+            _ => config_json.to_string(),
         }
     }
 
@@ -110,6 +131,43 @@ pub(crate) mod testing {
     impl Drop for EnvVar<'_> {
         fn drop(&mut self) {
             unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::infra::terminal::Hook;
+
+        fn notification() -> Hook {
+            crate::kernel::config::resolve_config("acme/widget")
+                .unwrap()
+                .settings
+                .notification
+        }
+
+        #[test]
+        fn a_sandbox_never_resolves_to_the_built_in_notifier() {
+            let _empty = Sandbox::empty();
+            assert_ne!(notification(), Hook::BuiltIn);
+            drop(_empty);
+            let _bare = Sandbox::new("{}");
+            assert_ne!(notification(), Hook::BuiltIn);
+        }
+
+        #[test]
+        fn a_fixtures_own_notification_is_kept() {
+            let _sandbox = Sandbox::new(r#"{"notification": false, "repos": {}}"#);
+            assert_eq!(notification(), Hook::Off);
+        }
+
+        #[test]
+        fn a_config_that_is_not_json_is_written_as_given() {
+            let sandbox = Sandbox::new("{ not json");
+            let written =
+                std::fs::read_to_string(sandbox.state().parent().unwrap().join("config.json"))
+                    .unwrap();
+            assert_eq!(written, "{ not json");
         }
     }
 }

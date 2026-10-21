@@ -26,6 +26,15 @@ const DEFAULT_ACTIVATE: &str = "com.googlecode.iterm2";
 /// "use it if it is there" rule as the other optional neighbours rather than making a brew
 /// install a hard requirement.
 pub fn default_command(title: &str, message: &str) -> Option<String> {
+    // Checked before the platform, so that a test reaching the built-in fails on Linux CI too,
+    // where this would quietly return `None`, and not only on the one machine that rings.
+    #[cfg(test)]
+    assert!(
+        BUILT_IN_ALLOWED.with(|allowed| allowed.get()),
+        "a unit test reached the built-in notifier (title {title:?}, message {message:?}); give \
+         the test's config a `notification`, as `testing::Sandbox::new` does, or hold \
+         `allow_built_in_for_test()` if the test is about the built-in command line itself"
+    );
     if !cfg!(target_os = "macos") {
         return None;
     }
@@ -34,6 +43,31 @@ pub fn default_command(title: &str, message: &str) -> Option<String> {
     } else {
         osascript_command(title, message)
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Per thread, because tests run in parallel threads and the panic has to fire on the
+    /// thread of the test that reached the notifier, not on one that opted in beside it.
+    static BUILT_IN_ALLOWED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Lets the current test thread build the built-in command, until the guard is dropped. Only
+/// the notifier's own tests, which check that command line, have a reason to hold it.
+#[cfg(test)]
+pub(crate) fn allow_built_in_for_test() -> BuiltInAllowed {
+    BUILT_IN_ALLOWED.with(|allowed| allowed.set(true));
+    BuiltInAllowed(())
+}
+
+#[cfg(test)]
+pub(crate) struct BuiltInAllowed(());
+
+#[cfg(test)]
+impl Drop for BuiltInAllowed {
+    fn drop(&mut self) {
+        BUILT_IN_ALLOWED.with(|allowed| allowed.set(false));
+    }
 }
 
 /// `-activate` rather than `-sender`: spoofing another app's bundle id is stripped on newer
@@ -222,10 +256,27 @@ mod tests {
     #[test]
     fn off_is_a_different_answer_from_unset() {
         assert_eq!(command(&Hook::Off, "acme/widget", "t", "m"), None);
+        let _allowed = allow_built_in_for_test();
         // Unset still tries the platform's own notifier, wherever there is one.
         assert_eq!(
             command(&Hook::BuiltIn, "acme/widget", "t", "m").is_some(),
             cfg!(target_os = "macos")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "a unit test reached the built-in notifier")]
+    fn a_unit_test_cannot_reach_the_built_in_notifier_unannounced() {
+        command(&Hook::BuiltIn, "acme/widget", "t", "m");
+    }
+
+    #[test]
+    fn the_opt_in_ends_when_its_guard_is_dropped() {
+        let allowed = allow_built_in_for_test();
+        let _ = command(&Hook::BuiltIn, "acme/widget", "t", "m");
+        drop(allowed);
+        assert!(
+            std::panic::catch_unwind(|| command(&Hook::BuiltIn, "acme/widget", "t", "m")).is_err()
         );
     }
 
