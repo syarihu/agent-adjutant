@@ -48,7 +48,7 @@ function world() {
     cut(read('task-view.js'), /^const HISTORY_LOADING = [^\n]*;/m), cut(read('task-view.js'), /^const DIFF_LOADING = [^\n]*;/m),
     ...['cardDialogChanged', 'cardDialogTaskHtml'].map(n => fnSrc(dlgSrc, n)),
     cut(read('pr-panel.js'), /^const prBoxFocused = [^\n]*;/m),
-    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'keepReadingPlace'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
+    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPaint'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'keepReadingPlace'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
     cut(read('pr-dialog.js'), /^const prDialogDrawn = [^\n]*;/m),
     cut(read('pr-dialog.js'), /^const PR_DIALOG_GONE = [^\n]*;\nconst PR_DIALOG_NO_READ = [^\n]*;\nconst PR_DIALOG_NO_SPLIT = [^\n]*;/m),
     "cardDialog.mode = 'review'; cardDialog.subject = 'pr:acme/widget#12';",

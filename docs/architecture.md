@@ -471,16 +471,17 @@ Like every record here, unknown keys (also inside `events` and `ai`) are kept on
 
 ### The page
 
-「いまの仕事」 has a second list, 「AI 下読み」 (`src/ui/my-work-others.js` is the pure half, `my-work-others-view.js` draws it),
-chosen by the switch in its heading row, and only on the resident server. It reads `GET /api/others` with the other polls
-(every 2 s while 「いまの仕事」 is open, every 10 s elsewhere) and calls `POST /api/others/sync` only when the person presses 「同期」. A read
+The rail's 「レビュー」 (`/?view=review`) is a place of its own, with the list of the PRs others asked you to review and those of the synced repositories
+(`src/ui/my-work-others.js` is the pure half, `my-work-others-view.js` draws it), only on the resident server. It is the work view with `nav.list === 'review'`;
+「いまの仕事」 has no switch to it. It reads `GET /api/others` with the other polls
+(every 2 s while the work view is open, every 10 s elsewhere) and calls `POST /api/others/sync` only when the person presses 「同期」. A read
 that fails keeps the list and the count as they were.
 
-Selecting a row opens the PR as a task's 「AI 下読み」 tab opens (see [A task's PR](#a-tasks-pr)): the address is `/?view=work&task=pr:<id>` (`<id>` is `owner/repo#N`,
-escaped) with `pane=detail` (下読み, the default), `diff` or `drafts`, on board `all`. Those are the tabs over the middle, which holds the read-through; the reader's
+Selecting a row opens the PR (see [A task's PR](#a-tasks-pr) for a task's own): the address is `/?view=review&task=pr:<id>` (`<id>` is `owner/repo#N`,
+escaped; `view=work` from older links lands on the same) with `pane=detail` (下読み, the default), `diff` or `drafts`, on board `all`. Those are the tabs over the middle, which holds the read-through; the reader's
 terminal is in the panel on the right (`renderPrRead` draws the middle, `renderPrPanel` the panel), and 「拡大」, which is at the head of the middle with 「GitHub で開く」, uses
 the task dialog's structure (index, one scroll, the drafts in the right column). `src/ui/pr-read.js` is the pure half; `pr-panel.js` and `pr-dialog.js` draw it, with the middle's
-parts a task's tab uses (`task-read.js`, `task-read-view.js`).
+parts a task's read-through dialog uses (`task-read.js`, `task-read-view.js`).
 
 The 差分 tab and the 差分 group of 「拡大」 show the stored diff (`GET /api/others/diff`) with the reader's annotations under their lines.
 `src/ui/pr-diff.js` is the pure half (parsing, the category of a path, anchoring, markup) and `pr-diff-view.js` the page's: it sets
@@ -488,33 +489,33 @@ The 差分 tab and the 差分 group of 「拡大」 show the stored diff (`GET /
 first. A diff over 2000 rows is drawn file by file as each comes near the screen, and a file of more than 1500 rows starts closed behind a button. The cards keep the keys `diff:<path>` and `diff-bar`.
 
 - **Stale.** The list is stale when `lastSync.at` is more than 30 minutes before the server's time (the document's `now` plus the time since it was read):
-  the one sync button is in the warning colour (its title adds that it is 30 minutes or more old) and the switch gets a dot, until the next sync. The button reads
+  the one sync button is in the warning colour (its title adds that it is 30 minutes or more old) and the rail's 「レビュー」 entry gets a dot, until the next sync. The button reads
   「同期・最終同期: <time ago>」 (「まだ同期していません」 before the first sync, 「同期中…」 while one is out); there is no second line or button for it. A list never synced is not stale.
 - **新着.** A row is new when `events.requested`, `rerequested`, `aiReady` or `pushed` is later than the later of its read mark and the
   time the person acted on it (`ai.startedAt`). A record in `waiting-on-author` or `done` is never new. The marks are
   `{ "<record id>": { read } }`, in server seconds, in the browser's local storage under `adj.seenOthers`. The rail's いまの仕事 badge counts the
-  new rows of its list, and the page title those of both lists, whatever the repository and AI 下読み chips and 「終わったものを除く」 narrow the list to.
+  new rows of its own list, the 「レビュー」 badge the records that wait on you, and the page title the new rows of both lists, whatever the repository chips and 「終わったものを除く」 narrow the list to.
 - **Finished PRs.** 「終わったものを除く」 (on by default, `prefs.othersHideDone` in the page's saved prefs) leaves out every `done` record, whatever its
   `doneReason`; the chips and their counts are made from what is left, a repository left with none has no group or chip (a saved repository chip falls back to すべて and is kept),
   and an empty list says how many are hidden, with 「終わったものも表示」. The rail's レビュー count and 新着 are not narrowed by it.
 - **Notification.** The tab whose sync answered 200 with a non-empty `arrived` rings 「レビュー依頼」 once, with the tag `adj-review-<lastSync.at>`:
   the PR's title for one, 「レビュー依頼 N 件」 for several. A push alone is not in `arrived`, so it does not ring. It is a choice in the page's
   notification dialog, on by default.
-- **AI 下読み.** A row offers 「AI 下読み」 on a `requested` or `pushed` PR with no read, 「下読みし直す」 when the read is stale (shown
+- **AI 下読み.** A row offers 「下読みする」 on a `requested` or `pushed` PR with no read, 「下読みし直す」 when the read is stale (shown
   as `下読み済み（前の push 時点 <sha7>）`) and 「もう一度 AI 下読み」 after a failure. A queued read says its place, `（N 番目）`, by
   `startedAt` and then `id`. The buttons work only while `hub.canRead` is true; otherwise they are disabled and the hub's `why`
   (stopped, or not tmux) is their title. Each send is guarded per PR and followed by a read of the list; a refusal is shown in the page's log.
 - **The code-review hub's row.** `hub` is `{state, slug, sessionId, running, queued, max, startable, stoppable, canRead}`: `state` is `running` or
   `stopped`, `running` and `queued` count the records by `ai.status`, `max` is 3, `startable` is true when it is stopped and
   `terminal.preset` is `tmux`, `stoppable` is true when it is running and `terminal.preset` is `tmux` (the pane is closed with tmux), and `canRead` is true when it is running and `terminal.preset` is `tmux` (a reader cannot be opened
-  otherwise, and a request answers 409 `not-startable`). 「hub を起動」 is `POST /api/others/hub/start` (200 `{started: true, description}`, or `{started: false, running: true, pid}` when it is already up; 400 for a `start` that is not `auto`, `new` or `resume`; 500 when the start itself failed, for example a terminal that is not tmux or a window that closed at once). 「hub を止める」 is offered in place of it while the hub is `stoppable`, after one confirmation (the dialog the repositories' hubs use), and is `POST /api/others/hub/stop` (body ignored; 200 `{stopped: true, wasRunning}`, `wasRunning` false when none was up and a record it left was cleared; 500 `{error}`), the same stop as a repository's hub (`stop_hub`). The records, the read-throughs, the drafts and the queue stay. The readers that run are separate windows and keep running, and give their read-throughs as usual (their reports wait in the inbox for the next hub); the queued reads start when the hub is started again, and no read can be asked for while it is down. A task's 「AI 下読み」 tab says so in the tab while the hub is stopped (a PR that is done says nothing), with 「hub を起動」 (the same start, offered when `startable`) and, where it is not, that `adj hub --review` starts it; a running hub that cannot open a reader gives its `why`. An older server sends no `hub`, and the page then shows
+  otherwise, and a request answers 409 `not-startable`). 「hub を起動」 is `POST /api/others/hub/start` (200 `{started: true, description}`, or `{started: false, running: true, pid}` when it is already up; 400 for a `start` that is not `auto`, `new` or `resume`; 500 when the start itself failed, for example a terminal that is not tmux or a window that closed at once). 「hub を止める」 is offered in place of it while the hub is `stoppable`, after one confirmation (the dialog the repositories' hubs use), and is `POST /api/others/hub/stop` (body ignored; 200 `{stopped: true, wasRunning}`, `wasRunning` false when none was up and a record it left was cleared; 500 `{error}`), the same stop as a repository's hub (`stop_hub`). The records, the read-throughs, the drafts and the queue stay. The readers that run are separate windows and keep running, and give their read-throughs as usual (their reports wait in the inbox for the next hub); the queued reads start when the hub is started again, and no read can be asked for while it is down. A task's AI 下読み dialog says so in its band while the hub is stopped (a PR that is done says nothing), with 「hub を起動」 (the same start, offered when `startable`) and, where it is not, that `adj hub --review` starts it; a running hub that cannot open a reader gives its `why`. An older server sends no `hub`, and the page then shows
   it as stopped.
 - **Out of review.** A PR is out of review when the change of **one file** (`additions` plus `deletions`) is strictly over 1,500 lines
   (1,500 itself is not), judged by `othersOutOfReview` in `my-work-others.js` from `files`, the one place the rule is written: the row, the
   middle and the 下読み tab all ask it, and the server only learns the mode of a request. Not counted: a file deleted whole
   (`change` is `deleted`), and a lock file, a snapshot or any other generated file (`prDiffIsGenerated` in `pr-diff.js`); the PR's total is not
   counted. Past 1,000 files `filesComplete` is false and the files that were read are what it is judged from. On a PR that waits for you
-  such a row says `レビュー対象外 · <the largest file>（+A −D）` (and `ほか N 件`) and offers 「分割案」 in place of 「AI 下読み」: it asks for a
+  such a row says `レビュー対象外 · <the largest file>（+A −D）` (and `ほか N 件`) and offers 「分割案」 in place of 「下読みする」: it asks for a
   split proposal at once. The middle and the 下読み tab list the files over the limit and offer 「分割を提案する」 and 「それでも AI 下読み」
   (a read of the whole PR, as before) until a reader is at work. A proposal that is stored and not stale is not offered again; one made for an
   older head is offered as 「分割を提案し直す」, and what a button asks for follows whether the PR is out of review now (and live), never the mode of the stored read-through: a PR that has become small is read in the usual way, also after a proposal, and a proposal is asked for again only while it is out of review.
@@ -543,18 +544,12 @@ PR shows that PR's record; `task` says what the record is for, and does not deci
   is closed by the sync, or by the PR poll once it reads the PR so); a task that is done, cancelled or deleted closes its reader within a pass of the review queue (not when the PR is also requested of you: that reader closes when the PR is merged or closed, or by hand), while closing the worker's session does not; an approval or a request going away does not. 「同期」 and each request bring its facts up to date. A done one is
   kept past its day while its task exists. The pending review is not refused here: it is for the PR whoever asked.
 
-**The page.** A task selected in 「いまの仕事」 has two tabs over the middle, 「タスク」 and 「AI 下読み」 (a selection that is not a task has none, but the row itself is always shown in this view and leads with the toggle that hides and shows the list column, kept in `prefs.railHidden`, with the 新着 count on it while hidden;
-a review request has tabs of its own, 下読み, 差分 and 下書き, named by `pane=detail|diff|drafts`, which are the same component and draw in the same place). 「タスク」 is the view as it was: the worker's terminal in the middle and the task's panel. 「AI 下読み」
-shows the read-through in the middle, laid out as 「拡大」 lays out a review request's (the index on the left and one scroll, 要点, 見るポイント, 読む順,
-設計判断・テスト・書かれていないこと, and the annotated diff stored with the read-through, with its files in the index in reading order; the
-index is a strip of the groups over the read-through while the middle is narrower than 760px, whatever the window), and the reader in the panel: its terminal (`/api/others/terminal`, the same socket a review
-request's panel uses, kept while the tab is on) and 「worker への指示」, which holds the drafts and shows their number. A PR that has moved on since the read shows a band over the read-through with
-「下読みし直す」. The tab is the address's (`pane=ai`, `pane=ai-drafts`, kept only for a task in the work view), so a reload, back and a link keep it, and a task
-selected afresh opens on 「タスク」; while the page is open, the tab of the task's panel that 「タスク」 returns to and the reading place are kept per task. The label of the tab carries the state of the read (要注意 N · 確認 N,
-下読み中…, 前の push 時点 with a dot, 失敗しました), and the tab cannot be chosen before the task has a PR or when its PR is not one this can read. The page reads `GET …/ai` on every poll
-while a task with a PR is selected, in either tab, and asks for a read with `POST …/ai`. The buttons are the review request's (`prAct`), which ask which view the page is on (`prShown`) and not
-what is selected, so the diff's places are 「拡大」 and the middle (a task's, or a review request's 差分 tab). There is no 「拡大」 for a task's read-through, and no 前回のレビューから (a review of yours it compares with).
-A review request is laid out the same way: the middle is its read-through (下読み is the groups above without the diff, 差分 is the diff alone, 下書き is its drafts with 「pending review に積む」, as before), drawn by `drawReadMiddle`, which a task's tab draws with too and which forgets what it drew whenever the key (a task's, or `pr:<id>/<tab>`) is another, and the panel is the reader's terminal (`drawReaderTerm`) with 「下読みを閉じる」, saying so when no reader runs. A link to a line from 下読み goes to 差分 first.
+**The page.** A task with a PR that is not merged has 「下読みを見る」 (or 「下読みする」, while its document has come and the PR has no read-through) in the heading of its terminal in 「いまの仕事」. The middle is always the worker's terminal; the row over the middle (which is always shown in this view and leads with the toggle that hides and shows the list column, kept in `prefs.railHidden`, with the 新着 count on it while hidden) has tabs only for a review request: 下読み, 差分 and 下書き, named by `pane=detail|diff|drafts`.
+The button opens the read-through as the card dialog (`#card-dialog`, mode `own-read`; `openOwnReadDialog` in `task-read-view.js`), laid out as 「拡大」 lays out a review request's, but in one scroll with no index: the band (the hub stopped, with 「hub を起動」; the read of an earlier push, with 「下読みし直す」; a document that could not be read), then 要点, 見るポイント, 読む順,
+設計判断・テスト・書かれていないこと, and the annotated diff stored with the read-through. Its head is the repository, the PR and あなたのタスク over the title `AI 下読み — <task title>`, and a line saying when the reader finished and what it counted (or 下読み中です, or まだ下読みしていません), with 「読み直す」 and, while a reader runs, 「下読みを閉じる」 at the right. The column at the right is 「worker への指示」, which holds the drafts. There is no reader's terminal in it (the cards do not point at one and 「聞く」 is not drawn), and no 前回のレビューから (a review of yours it compares with). Before the first read the body is 「まだ下読みしていません」 with 「下読みする」 (`prNoReadHtml`), or 「下読み中です」. The dialog follows the page while it is open (every poll of the task's document draws it) and closes without moving focus when the selection leaves the task or the work view; closing returns focus to the heading's button. It is not in the address: an older link with `pane=ai` or `pane=ai-drafts` opens the task on its own pane and the dialog over it once the task's document has come (`pendingOwnRead`). The page reads `GET …/ai` on every poll
+while a task with a PR is selected, and asks for a read with `POST …/ai`; 「下読みする」 in the heading opens the dialog and asks too, but only when a read can be asked for now. The buttons are the review request's (`prAct`), which ask which view the page is on (`prShown`) and not
+what is selected, so the diff's places are 「拡大」, the task's dialog and the middle (a review request's 差分 tab).
+A review request is laid out the same way: the middle is its read-through (下読み is the groups above without the diff, 差分 is the diff alone, 下書き is its drafts with 「pending review に積む」, as before), drawn by `drawReadMiddle`, which forgets what it drew whenever the key (`pr:<id>/<tab>`) is another, and the panel is the reader's terminal (`drawReaderTerm`) with 「下読みを閉じる」, saying so when no reader runs. A link to a line from 下読み goes to 差分 first.
 「worker への指示」 is the drafts of the PR as instructions for the task's worker: the same boxes as a review request's 下書き (the reader's drafts marked AI, the person's own, 「下書きに」 and 「＋」 of the diff, a comment on the whole),
 but a pending review is not offered for a task's PR (GitHub does not let you ask for changes on your own PR, and the one who fixes it is the worker): the button is 「N 件を worker に渡す」 (see [Handing the drafts to the worker](#handing-the-drafts-to-the-worker)).
 `src/ui/task-read-drafts.js` sets `OWN_HOOKS.drafts` (the hook task-read-view.js leaves) and does the handing; the diff and the read-through are cached by PR, shared with a review request for the same PR. The drafts are the PR's file either way, loaded

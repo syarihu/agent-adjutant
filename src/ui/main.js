@@ -86,12 +86,19 @@ function toggleTheme() {
   document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
 }
 
+/* 「レビュー」 in the rail: the PR shown last opens again while its record is still in the list, else the list with nothing selected. */
+function openReviewList() {
+  if (view === 'work' && nav.list === 'review') return;
+  const last = prView.last && othersById(prView.last) ? prView.last : null;
+  go({ board: 'all', view: 'work', list: 'review', task: last ? PR_REF + last : null, pane: 'detail' });
+}
+
 // Each entry is an arrow so a later optional first parameter never receives the element. One
 // entry per line: the_page_wires_no_inline_handlers reads the keys line by line.
 const ACTIONS = {
   'new-task': () => openForm(),
-  work: () => { setWorkTab('task'); if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
-  review: () => { setWorkTab('others'); if (view !== 'work') go({ board: 'all', view: 'work', task: null, pane: 'detail' }); },
+  work: () => { if (view !== 'work' || nav.list !== 'task') go({ board: 'all', view: 'work', list: 'task', task: null, pane: 'detail' }); },
+  review: () => openReviewList(),
   todo: () => todoOpen(),
   boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
   'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; applyLayout(); },

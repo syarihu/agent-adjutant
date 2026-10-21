@@ -128,7 +128,7 @@ function pageHub() {
 /* The tab's title. The board's name comes first so a narrow tab still shows it, and a parent-task
    hub's title is the one the hub's panel shows (`hubTitle`), so the two never disagree. */
 function boardTitle() {
-  if (view === 'work') return 'いまの仕事 — adj';
+  if (view === 'work') return nav.list === 'review' ? 'レビュー — adj' : 'いまの仕事 — adj';
   if (scopeAll()) return 'すべて — adj';
   const entry = selectedBoard();
   if (entry) {

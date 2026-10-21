@@ -278,6 +278,7 @@ function renderWorkBadge() {
 /* The row the person leaves: `left` is written for 離れていた間に; the row is not read by it. Called when the address moves off it, when the view does, and when the
    page goes. */
 function workLeave() {
+  closeOwnReadDialog();
   const open = work.open;
   work.open = null;
   if (open && work.doc) workWriteMarks(open.nwo, [[open.id, { left: workServerNow() }]]);
@@ -1028,7 +1029,7 @@ function workLastRead(login) {
 function workRemember() {
   // A row the page picked by itself (the fallback, an organisation switch) is not what the person selected, until the address leaves it.
   if (work.autoSel && work.autoSel !== `${nav.board}/${nav.task}`) work.autoSel = null;
-  if (view !== 'work' || prefs.workTab !== 'task' || !nav.task || !nav.board || nav.board === 'all' || isPrRef(nav.task) || isGateRef(nav.task)) return;
+  if (view !== 'work' || nav.list === 'review' || !nav.task || !nav.board || nav.board === 'all' || isPrRef(nav.task) || isGateRef(nav.task)) return;
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (!nwo) return;
@@ -1061,7 +1062,7 @@ function workResolveLast(last) {
 function workRestoreSelection() {
   if (!work.restore || !work.doc || view !== 'work') return;
   work.restore = false;
-  if (nav.task || prefs.workTab !== 'task' || pendingGate || pendingTask) return;
+  if (nav.task || nav.list === 'review' || pendingGate || pendingTask) return;
   const last = workResolveLast(workLastRead(currentOrg()));
   if (last?.parent) return selectWorkParent(last.parent, { replace: true });
   const row = last || work.firstTask;
@@ -1090,6 +1091,18 @@ function renderWorkList() {
 
 /* What the middle says with nothing selected. */
 const WORK_MIDDLE_EMPTY_HTML = '<div class="wk-mid-empty-in"><span class="material-symbols-outlined" aria-hidden="true">terminal</span><strong>セッションを選んでください</strong><span>左の一覧から選ぶと、ここにターミナルが出ます。</span></div>';
+
+/* What the middle of 「レビュー」 says with nothing selected. `kind` is 'some' (the list has PRs to choose from), 'none', or, while the
+   records are not here, 'loading' or 'failed' (with `error`): nothing is claimed about a list that is not known. */
+function reviewMiddleEmptyHtml(kind, error = '') {
+  const [head, text] = {
+    some: ['PR を選んでください', '左の一覧から選ぶと、ここに AI 下読みが出ます。'],
+    none: ['レビューする PR はありません', 'レビューを頼まれた PR と、同期したリポジトリの PR がここに出ます。'],
+    loading: ['読み込み中…', ''],
+    failed: ['読み込めませんでした', error],
+  }[kind] || ['', ''];
+  return `<div class="wk-mid-empty-in"><span class="material-symbols-outlined" aria-hidden="true">rate_review</span><strong>${esc(head)}</strong>${text ? `<span>${esc(text)}</span>` : ''}</div>`;
+}
 
 /* What the list says when the organisation has nothing in it. */
 const WORK_EMPTY_HTML = '<div class="wk-empty wk-empty-none"><span class="material-symbols-outlined" aria-hidden="true">inbox</span><span>この組織にはまだセッションがありません。<br>「依頼する」から始められます。</span></div>';
@@ -1388,8 +1401,9 @@ function workTermHeadHtml(sel, free = null, own = null, hub = null, task = null)
   }
   const linked = !!own && linkedWorktree(own);
   // A task's Issue and PR open on GitHub, as the panel's head has them.
+  taskRead.headMode = task ? taskReadHeadMode(task, taskRead.key === taskReadKey(task) ? taskRead.doc : null, othersNowEst(), prStateOf(task)) : '';
   const acts = (task ? ghHeadLinksHtml(task) : '') + workTermHeadActsHtml({
-    task: !!task, parent: !!workSelectedParent(sel), hub: !!hub, ide: linked,
+    task: !!task, ownRead: taskRead.headMode, parent: !!workSelectedParent(sel), hub: !!hub, ide: linked,
     close: linked && own.kind === 'worker' && !!own.present,
     closeWhy: own && restartingNow(own) ? '再起動しています' : '',
   }) + workTermMoreHtml(workTermMoreItems(own));
@@ -1417,8 +1431,11 @@ function renderWorkTerm() {
   // With nothing selected the middle is the empty state in the place of the terminal and the read-through.
   const empty = !nav.task;
   wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
-  setWorkTermPart('empty', wk('wk-mid-empty'), empty ? WORK_MIDDLE_EMPTY_HTML : '');
+  const review = nav.list === 'review';
+  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : review ? reviewMiddleEmptyHtml(!others.doc ? (others.error ? 'failed' : 'loading') : othersRecords().length > 0 ? 'some' : 'none', others.error || '') : WORK_MIDDLE_EMPTY_HTML);
   wk('wk-mid-empty').hidden = !empty;
+  // No session's terminal stays in the middle under the review list.
+  if (empty && review) { disposeTermSlot(workTerm); workTerm.board = null; }
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
   // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
   if (isPrRef(nav.task)) {
@@ -1433,11 +1450,10 @@ function renderWorkTerm() {
   const ds = sel?.session || null;
   const own = ds ? (state.sessions || []).find(x => x.id === ds.id) || null : free;
   const s = own || ds;
-  // A task with a PR has a second view, its read-through (task-read-view.js): the worker's terminal is kept behind it.
   const task = isTaskRef(nav.task) ? taskById(nav.task) || null : null;
   // The hub of a hub's row, or of a parent's: its status and its detail dialog are the heading's, and its terminal is the middle.
   const hub = ds?.kind === 'hub' ? (state.hubs || []).find(h => h.id === ds.id) || null : null;
-  const { reading, revealed } = renderTaskReadTabs(task);
+  const { revealed } = taskReadFollow(task);
   // The ⋯ menu stays open, with the keyboard where it was, when the heading of the same selection is drawn again under it (a poll
   // changes the state word); another selection's heading starts with it shut.
   const moreMenu = wk('wk-term-head').querySelector('.wk-more-menu');
@@ -1445,7 +1461,7 @@ function renderWorkTerm() {
   const moreOpen = !!moreMenu && !moreMenu.hidden && workHeadFor === headFor;
   workHeadFor = headFor;
   const moreFocus = moreOpen ? document.activeElement?.closest?.('#wk-term-head [data-wk-more-act]')?.dataset.wkMoreAct : null;
-  setWorkTermPart('head', wk('wk-term-head'), reading ? taskReadHeadHtml(task, taskRead.key === taskReadKey(task) ? taskRead.doc?.record : null) : workTermHeadHtml(sel, free, own, hub, task));
+  setWorkTermPart('head', wk('wk-term-head'), workTermHeadHtml(sel, free, own, hub, task));
   if (moreOpen && typeof openWorkMore === 'function' && wk('wk-term-head').querySelector('.wk-more-menu')?.hidden) {
     openWorkMore({ focus: false });
     if (moreFocus) wk('wk-term-head').querySelector(`[data-wk-more-act="${CSS.escape(moreFocus)}"]:not(:disabled)`)?.focus();
@@ -1453,17 +1469,16 @@ function renderWorkTerm() {
   // Session ids are the board's own (every repository has a `hub`): a socket is not carried to another board.
   if (workTerm.board !== nav.board) disposeTermSlot(workTerm);
   workTerm.board = nav.board;
-  // Not mounted while it is hidden behind the read-through: a hidden host has no size, and the terminal would tell the window 80x24. One already mounted is kept.
-  syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own && !reading ? 'term' : 'none');
+  syncTermSlot(workTerm, `${nav.board}/${s?.id || ''}`, own, own ? 'term' : 'none');
   const ph = wk('wk-term-ph');
   const hubUp = !!hub && hubSessionOf(hub).present;
   const hubStarting = !!hub && !hubUp && (hubStartingNow(hub) || workHubStartPending(hub));
-  const stopped = workStoppedHubShown({ isHub: !!hub, present: hubUp, starting: hubStarting, reading });
+  const stopped = workStoppedHubShown({ isHub: !!hub, present: hubUp, starting: hubStarting });
   // A hub on its way up has a dead terminal behind, if one was mounted: covered, rather than shown dead.
-  const coming = hubStarting && !reading;
+  const coming = hubStarting;
   // The connection ended: the placeholder covers the dead screen. Over a session that is still ready it offers the reconnect; over one
   // that stopped it says so, with 「再開」 where that is possible.
-  const closed = !!workTerm.term && workTerm.ended != null && !reading;
+  const closed = !!workTerm.term && workTerm.ended != null;
   const again = closed && !!own && boardTerminalReady(own);
   ph.hidden = !!workTerm.term && !stopped && !coming && !closed;
   const loaded = state.now != null;
@@ -1477,10 +1492,10 @@ function renderWorkTerm() {
             : !own ? '<div class="tp-muted">このボードにはこのセッションが見えないため、ターミナルを開けません</div>'
               : workPlaceholderHtml(own);
   setWorkTermPart('ph', ph, stopped ? workHubStoppedBlock(hub) : text);
-  renderWorkTermOverlays({ sel, own, task, hub, reading, stopped });
+  renderWorkTermOverlays({ sel, own, task, hub, stopped });
   // Sized while it was hidden, which a terminal skips: asked again now that it has a size.
   if (revealed) workTerm.term?.fit();
-  if (reading) renderTaskReadMiddle(task);
+  ownReadDialogFollow();
   workTermDialogsFollow();
 }
 
@@ -1629,13 +1644,13 @@ function workTrackParks() {
 /* The actions on new rows (ask about all, read all, 「処理したら次へ」) are there while something is new in the tasks' list. */
 function renderWorkTools() {
   const tools = wk('wk-list-tools');
-  if (tools) tools.hidden = prefs.workTab === 'others' || workNewShown() === 0;
+  if (tools) tools.hidden = nav.list === 'review' || workNewShown() === 0;
 }
 
 /* The column shows one of the two lists, by the rail's entry chosen: which is shown, and what belongs to one only (the request
    button and the filter are the tasks'; the dot is the other's). */
 function renderWorkTabs() {
-  const others = prefs.workTab === 'others';
+  const others = nav.list === 'review';
   markRail();
   wk('wk-task-scroll').hidden = others;
   wk('ov-scroll').hidden = !others;
@@ -1680,17 +1695,6 @@ wk('wk-list').addEventListener('click', e => {
     return r && selectWorkRow(r);
   }
 });
-
-/* Choose the list the column shows: the tasks', or the AI 下読み of the PRs others asked you to review (the rail's レビュー). */
-function setWorkTab(tab) {
-  // Choosing 「AI 下読み」 on purpose ends what a PR link made of the tab, even when it is the one showing.
-  const chosen = tab === 'others' && prKeepTab();
-  if (prefs.workTab === tab && !chosen) return;
-  prefs.workTab = tab;
-  savePrefs();
-  renderWorkTabs();
-  renderOthersList();
-}
 
 /* Start a hub from its row, once at a time per hub; the list follows when the board answers. */
 const workStarting = new Set();

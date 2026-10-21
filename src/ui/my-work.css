@@ -492,6 +492,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .ov-line { font-family: inherit; }
 .ov-oor-line { font-family: inherit; color: var(--md-sys-color-warning); }
 .ov-new { margin-right: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 800; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.ov-req { margin-right: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 800; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 .ov-size { font-weight: 800; }
 .ov-act {
   display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px 2px 4px; border-radius: var(--md-shape-corner-full); cursor: pointer; white-space: nowrap;
@@ -549,5 +550,5 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-mid-empty[hidden] { display: none; }
 .wk-mid-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .wk-mid-empty-in { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 360px; text-align: center; color: var(--md-sys-color-on-surface-variant); }
-.wk-mid-empty-in .material-symbols-outlined { font-size: 44px; color: var(--md-sys-color-success); }
+.wk-mid-empty-in > .material-symbols-outlined { font-size: 44px; color: var(--md-sys-color-success); }
 .wk-mid-empty-in strong { font-size: 15px; font-weight: 700; color: var(--md-sys-color-on-surface); }

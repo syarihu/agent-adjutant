@@ -133,11 +133,22 @@ function prDialogSync(force = false, initial = false) {
     diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,
     diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
   });
-  const html = cardDialogTaskHtml(groups);
-  const col = cardDialogDockEl();
   const dockHtml = prHasRead(rec, read) ? prDraftsBodyHtml(rec, read, 'dock')
     : othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state) ? `<div class="tp-muted">${esc(PR_DIALOG_NO_SPLIT)}</div>`
     : `<div class="tp-muted">${esc(PR_DIALOG_NO_READ)}</div>${prAiButtonHtml(othersAiView(rec, records, nowSecs), hubView, asking)}`;
+  prDialogPaint(groups, dockHtml, { force, initial, loading: read === undefined });
+}
+
+/* Draw `groups` into the dialog's content and `dockHtml` into its column (hidden when empty), against what was drawn last: a redraw is
+   marked with what changed since, the files of the diff are drawn again, and what the person has open, where they are reading and the
+   box they are typing in survive it. `force` redraws although a box of the column has focus; `initial` is the first fill, before the
+   dialog is open; `loading` that the read-through is still on its way (what it brings in is the first fill of its cards, not a change).
+   Shared by the review dialog and a task's own AI 下読み (task-read-view.js). */
+function prDialogPaint(groups, dockHtml, { force = false, initial = false, loading = false } = {}) {
+  const dlg = cardDialogEl();
+  const hook = PR_HOOKS.diff;
+  const html = cardDialogTaskHtml(groups);
+  const col = cardDialogDockEl();
   const sig = `${html.index}\u0000${html.content}`;
   cardDialog.groups = groups;
   const contentSame = sig === cardDialog.sig && !force;
@@ -151,8 +162,6 @@ function prDialogSync(force = false, initial = false) {
   let changes = null;
   if (!contentSame) {
     cardDialog.sig = sig;
-    // A read-through still on its way: what it brings in is the first fill of its cards, not a change of them.
-    const loading = read === undefined;
     if (!initial && !loading) changes = prDialogWithoutDiff(cardDialogChanged(cardDialog.cardSigs, groups), groups);
     cardDialog.cardSigs = loading ? new Map() : cardDialogCardSigs(groups);
     const keys = new Set(cardDialog.cardSigs.keys());
@@ -184,7 +193,7 @@ function prDialogSync(force = false, initial = false) {
     cardDialog.dockSig = dockHtml;
     const dockScroll = col.scrollTop;
     col.innerHTML = dockHtml;
-    col.hidden = false;
+    col.hidden = !dockHtml;
     col.scrollTop = dockScroll;
     // The box an action asked for, else the control that had the keyboard; one that is gone goes to the overall comment.
     if (!prRestoreFocus(col, dockKeep, true) && dockKeep) col.querySelector('[data-pr-overall]')?.focus({ preventScroll: true });
@@ -209,14 +218,16 @@ function prDialogClosed() {
   prRedraw();
 }
 
-// The column's buttons and boxes are the panel's (`prAct`, `prInput`); 「聞く」 closes the dialog first.
+// The column's buttons and boxes are the panel's (`prAct`, `prInput`); 「聞く」 closes the dialog first. A task's own AI 下読み
+// (task-read-view.js) has its own click, which adds what only it has.
 cardDialogEl().addEventListener('click', e => {
   if (cardDialog.mode === 'review') prAct(e, { place: 'dialog' });
+  else if (cardDialog.mode === 'own-read') ownReadDialogClick(e);
 });
 cardDialogEl().addEventListener('input', e => {
-  if (cardDialog.mode === 'review') prInput(e);
+  if (cardDialogOnPr()) prInput(e);
 });
 cardDialogEl().addEventListener('focusout', e => {
   // A press on one of the column's buttons that was not given focus ends in `cardDialogPressEnd`, which redraws what was held.
-  if (cardDialog.mode === 'review') prFocusOut(e, cardDialogDockEl(), () => cardDialog.held && !cardDialog.pressing, () => cardDialogSync());
+  if (cardDialogOnPr()) prFocusOut(e, cardDialogDockEl(), () => cardDialog.held && !cardDialog.pressing, () => cardDialogSync());
 });

@@ -3,7 +3,7 @@ description: The code-review hub. Starts no work on code; it answers the person 
 ---
 
 Code-review hub — the one resident session that belongs to **no repository**. It stands behind
-「AI 下読み」 on the board: for each PR the person asks it to read first, a read-only reader (see
+「レビュー」 on the board: for each PR the person asks it to read first, a read-only reader (see
 `adj-reviewer`) is started in its own window. The person still does the review; the readers only
 prepare the reading.
 
@@ -20,7 +20,7 @@ shown in Japanese, so messages that end up on it are in Japanese.
 adj hub --review   # from anywhere, no git repository needed
 ```
 
-or 「hub を起動」 on its row in 「いまの仕事」 → 「AI 下読み」. Either way adj decides the name and
+or 「hub を起動」 on its row in 「レビュー」 (the rail). Either way adj decides the name and
 the address, so do not type the agent's launch command by hand. A second one is not started: the
 running one is brought forward.
 
@@ -64,13 +64,13 @@ before the hub went down waits, and it starts, in order, once the hub is back.
   adj review request --task <task id> --repo <owner/name>
   ```
 
-  It reads the same way and shares the same three places, but it is not on the 「AI 下読み」 list: the
+  It reads the same way and shares the same three places, but it is not on the 「レビュー」 list: the
   person finds it with the task. It needs no 「同期」 first.
 
   Asking by `--pr` refuses a PR adj does not have a record for (the list is filled by 「同期」 on the board), and a
   PR that is done. Say so as it says it. A PR that is already queued or being read is not an error:
   tell the person where it stands.
-- **When the person asks what is going on**, point them at 「いまの仕事」 → 「AI 下読み」. The list,
+- **When the person asks what is going on**, point them at 「レビュー」 (the rail's third entry, `?view=review`). The list,
   each PR's progress and the read-through itself are there. Do not summarise PRs from memory.
 - **Never** run `gh` writes, edit files, or start a reader's agent by hand.
 

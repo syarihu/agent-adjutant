@@ -163,7 +163,7 @@ MCP 経由で配信される手順書ではツールの個別許可リストを�
 
 詳細な機能ガイドは [`docs/`](docs/) 配下に用意されています。
 
-- [**Web ボードと常駐サーバー**](docs/board.ja.md) ([English](docs/board.md)): ボードの各ビュー、「いまの仕事」、AI 下読み（PR レビュー支援）、REST API、launchd による常駐化設定。
+- [**Web ボードと常駐サーバー**](docs/board.ja.md) ([English](docs/board.md)): ボードの各ビュー、「いまの仕事」、「レビュー」（AI 下読み、PR レビュー支援）、REST API、launchd による常駐化設定。
 - [**Jules へのタスク委譲**](docs/jules.ja.md) ([English](docs/jules.md)): Google Jules へのタスク割り当て、サブエージェントによる設計書作成、レビュー指摘の自動転送。
 - [**設定とランタイム詳細**](docs/configuration.ja.md) ([English](docs/configuration.md)): tmux 連携の詳細、wake の仕組み、ランナーテンプレート、セッションのライフサイクル管理。
 - [**アーキテクチャとレイヤ構成**](docs/architecture.md): クレートの内部モジュール構成、レイヤ規則、状態保存の仕組み。

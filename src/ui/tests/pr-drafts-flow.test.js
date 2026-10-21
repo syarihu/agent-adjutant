@@ -98,9 +98,9 @@ test('the save body has only the known keys, even when the stored document had a
 
 test('the file is not asked for again while an unsaved edit is held', async () => {
   const { w, c, run } = world();
-  Object.assign(c, { prefs: { workTab: 'others' }, prEnsureRead() {}, renderWorkTabs() {}, renderOthersList() {} });
+  Object.assign(c, { prEnsureRead() {} });
   run(fn('prEnter'));
-  run(`prView.shownFor = null; prView.tabWas = null;`);
+  run(`prView.shownFor = null;`);
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'unsaved'; })`);
@@ -142,31 +142,28 @@ test('a refused save shows the server\'s problems with the message', async () =>
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').saveError`), 'the drafts are not valid (drafts[0].key: bad / overall: too long)');
 });
 
-function miscWorld(prefs) {
-  const c = vm.createContext({ prefs });
-  vm.runInContext(['const prView = { tabWas: null, focusNext: null, shownFor: "acme/widget#1" };', fn('prPrefsToSave'), fn('prKeepTab'), fn('prRestoreFocus'), fn('prLeft')].join('\n'), c);
+function miscWorld() {
+  const c = vm.createContext({});
+  vm.runInContext(['const prView = { last: null, focusNext: null, shownFor: "acme/widget#1" };', fn('prRestoreFocus'), fn('prLeft')].join('\n'), c);
   return { c, run: e => vm.runInContext(e, c) };
 }
 
-test('a PR link\'s tab is not what gets saved, and a deliberate choice of the tab ends that', () => {
-  const prefs = { workTab: 'others', othersRepo: 'x' };
-  const { run } = miscWorld(prefs);
-  // The link flipped the tab from the saved 「タスク」.
-  run(`prView.tabWas = 'task'`);
-  assert.strictEqual(run('prPrefsToSave().workTab'), 'task');
-  assert.strictEqual(run('prPrefsToSave().othersRepo'), 'x');
-  // Choosing 「AI 下読み」 on purpose: it is what is saved from now on.
-  assert.strictEqual(run('prKeepTab()'), true);
-  assert.strictEqual(run('prPrefsToSave().workTab'), 'others');
-  assert.strictEqual(run('prKeepTab()'), false);
-  // Choosing 「タスク」 after a link also ends it.
-  run(`prView.tabWas = 'task'; prefs.workTab = 'task'`);
-  assert.strictEqual(run('prPrefsToSave().workTab'), 'task');
-  assert.strictEqual(run('prView.tabWas'), null);
+test('the PR shown last is remembered in memory, and only a new selection sets it', async () => {
+  const { c, run } = world();
+  Object.assign(c, { prEnsureRead() {} });
+  run(fn('prEnter'));
+  run('prView.shownFor = null; prView.last = null;');
+  run(`prEnter('acme/widget#1', { id: 'acme/widget#1' })`);
+  assert.strictEqual(run('prView.last'), 'acme/widget#1');
+  run(`prEnter('acme/widget#2', null)`);
+  assert.strictEqual(run('prView.last'), 'acme/widget#2');
+  // Leaving the PR makes the next showing a new selection but does not forget which one was shown last.
+  run('prView.shownFor = null');
+  assert.strictEqual(run('prView.last'), 'acme/widget#2');
 });
 
 test('after a forced redraw the box an action asked for has focus, else the one that had it keeps its caret', () => {
-  const { run, c } = miscWorld({ workTab: 'others' });
+  const { run, c } = miscWorld();
   const box = key => ({ key, focused: 0, range: null, matches: () => true, focus() { this.focused++; }, setSelectionRange(a, b) { this.range = [a, b]; } });
   const boxes = { '[data-pr-body="p2"]': box('p2'), '[data-pr-body="r1"]': box('r1') };
   c.root = { querySelector: sel => boxes[sel] || null };
@@ -199,7 +196,7 @@ test('only three of the server\'s problems are shown, and how many more there ar
 });
 
 test('leaving the PR makes the next showing of it a new selection', () => {
-  const { run } = miscWorld({ workTab: 'others' });
+  const { run } = miscWorld();
   run('prLeft()');
   assert.strictEqual(run('prView.shownFor'), null);
 });

@@ -66,8 +66,7 @@ function world({ io = false } = {}) {
     // What the page is on, as pr-panel.js says it: the selected review request.
     prShown: () => w.shown !== undefined ? w.shown : (typeof w.selected === 'string' && w.selected.startsWith('pr:') ? { id: w.selected.slice(3), rec: rec(w.selected.slice(3)), kind: 'pr', hubView: w.hubView, asking: false } : null),
     prRecOf: () => rec(), prRedrawFor: id => { if (w.selected === `pr:${id}`) w.calls.push(['render']); },
-    // The tab the drafts are in, as pr-panel.js says it.
-    prDraftsPane: () => (w.shown?.kind === 'task' ? 'ai-drafts' : 'drafts'),
+    cardDialogOnPr: () => ['review', 'own-read'].includes(c.cardDialog.mode),
     prDraftsEntry: () => ({ loaded: w.loaded }), prDoc: () => ({ drafts: w.drafts }),
     prEditDrafts: (id, rd, fn) => { if (!w.loaded) return false; const doc = { drafts: [...w.drafts] }; fn(doc); w.edits.push(doc.drafts[doc.drafts.length - 1]); return true; },
     prRedrawNow: f => { w.calls.push(['redraw', f]); }, go: (p, o) => { w.calls.push(['gopane', p, o]); }, nav: { get pane() { return w.pane; } },
@@ -522,22 +521,35 @@ test('a link meant for the middle of a task is dropped when the task on show is 
   assert.ok(!w.calls.some(x => x[0] === 'rgo'));
 });
 
-test('the draft buttons of the diff start a draft in the middle of a task too, and the panel goes to 「worker への指示」', async () => {
+test('the draft buttons of the diff start a draft in a task\'s dialog: the column is where it appears, so no tab is switched', async () => {
   const { w, c, run } = readWorld();
+  c.cardDialog.mode = 'own-read';
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
-  assert.strictEqual(c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' }), true);
+  assert.strictEqual(c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'dialog' }), true);
   assert.strictEqual(w.edits.length, 1);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: '' });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane')[1])), { pane: 'ai-drafts' });
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
+  // The new box takes the keyboard in the dialog's column.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: true });
   // The explanation's own button, found by the selector the real DOM would match it by.
   const btn = el({ prdAt: 'right:3' }, { closest: sel => (sel === '[data-prd-ann]' ? el({ prdAnn: '0' }) : null), matches: sel => sel === '[data-prd-todraft]' });
   const click = { target: { closest: sel => (sel.split(',').some(x => x.trim() === '[data-prd-todraft]') ? btn : null) } };
-  assert.strictEqual(c.prdAct(click, { place: 'read' }), true);
+  assert.strictEqual(c.prdAct(click, { place: 'dialog' }), true);
   assert.strictEqual(w.edits.length, 2);
-  // Already on that tab: nothing to switch.
-  w.pane = 'ai-drafts';
-  w.calls.length = 0;
-  c.prdAct(onLine(c, { prdPlus: 'right:4' }, { hit: '[data-prd-plus]' }), { place: 'read' });
-  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
+});
+
+test('the diff is drawn in the dialog of a task\'s AI 下読み as it is in the review dialog', async () => {
+  const { w, c, run } = readWorld();
+  c.cardDialog.mode = 'own-read';
+  c.cardDialog.subject = w.selected;
+  w.dialogOpen = true;
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  const p = c.prdPlace('dialog');
+  assert.strictEqual(p.root, w.dialog.root);
+  c.cardDialog.mode = 'card';
+  assert.strictEqual(c.prdPlace('dialog'), null);
+  c.cardDialog.mode = 'own-read';
+  assert.ok(run('PRD_VIEWS.dialog.ready()'));
 });

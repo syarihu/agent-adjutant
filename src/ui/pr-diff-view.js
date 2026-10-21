@@ -1,4 +1,4 @@
-/* ── The annotated diff on the page: the 差分 group of 「拡大」 and of the read-through in the middle (a review request's 差分 tab, a task's 「AI 下読み」) ──
+/* ── The annotated diff on the page: the 差分 group of 「拡大」 (a review request's, and a task's own AI 下読み dialog) and of the read-through in the middle (a review request's 差分 tab) ──
    pr-diff.js is the pure half (parsing, categories, anchoring, markup); this file holds what the page keeps: the diff of each PR
    as `GET /api/others/diff` answered it (applied only to its own PR and read-through), which category tab and fold are on, which
    files are drawn, and what a click does. It sets `PR_HOOKS.diff`, which pr-panel.js, pr-read.js and pr-dialog.js call. Two places
@@ -176,7 +176,7 @@ function prdDialogLabel(rec, path) {
 /* ── putting in place what is on, and drawing the files ── */
 
 /* Where the diff is drawn now: 「拡大」 when it is open on this PR (or is being filled for opening: `filling`), and the middle
-   (a task's 「AI 下読み」, or a review request's 差分 tab). `root` holds the bar and the files, `scroll` is what scrolls them (the observer's root). */
+   (a review request's 差分 tab). `root` holds the bar and the files, `scroll` is what scrolls them (the observer's root). */
 function prdPlace(place, filling = false) {
   if (place === 'read') {
     // Kept while the other tab or another selection is on, but not on screen: what another PR puts in place must not reach it.
@@ -185,7 +185,7 @@ function prdPlace(place, filling = false) {
     return root?.querySelector('[data-prd-file], [data-prd-tab]') ? { root, scroll: document.getElementById('task-read-body') } : null;
   }
   const dlg = cardDialogEl();
-  if (!dlg || !(dlg.open || filling) || cardDialog.mode !== 'review' || cardDialog.subject !== selectedTaskId) return null;
+  if (!dlg || !(dlg.open || filling) || !cardDialogOnPr() || cardDialog.subject !== selectedTaskId) return null;
   const root = cardDialogContent();
   return root.querySelector('[data-prd-file], [data-prd-tab]') ? { root, scroll: dlg.querySelector('.card-dialog-body') } : null;
 }
@@ -307,7 +307,7 @@ function prdShowCategoryOf(path) {
    `ready()` is whether it is open and on the PR, `go(cardKey, groupKey, flash)` brings a card to the top, `cardEl(key)` finds a card
    and `place` is where its files are drawn. The dialog's is here; the middle sets its own. */
 const PRD_VIEWS = {
-  dialog: { ready: () => !!cardDialogEl()?.open && cardDialog.mode === 'review', go: (...a) => cardDialogGo(...a), cardEl: key => cardDialogCardEl(key), place: 'dialog' },
+  dialog: { ready: () => !!cardDialogEl()?.open && cardDialogOnPr(), go: (...a) => cardDialogGo(...a), cardEl: key => cardDialogCardEl(key), place: 'dialog' },
 };
 
 /* Take the view the PR on show is read in (「拡大」 when it is open on it, else the middle) to the place waiting in
@@ -354,7 +354,7 @@ function prdGoto(path, line, { place = 'read' } = {}) {
 
 /* The index of 「拡大」: the category of a file is turned on before the jump, or the jump lands on a hidden card. */
 cardDialogEl().addEventListener('click', e => {
-  if (cardDialog.mode !== 'review') return;
+  if (!cardDialogOnPr()) return;
   const b = e.target.closest?.('[data-cd-go-card^="diff:"]');
   if (b) prdShowCategoryOf(b.dataset.cdGoCard.slice('diff:'.length));
 }, true);
@@ -369,7 +369,7 @@ function prdStartDraft(rec, read, { path, at, body }, inDialog) {
     note('下書き', true, '下書きを読み込んでいます。少し待ってからもう一度押してください');
     return;
   }
-  if (!inDialog && nav.pane !== prDraftsPane()) go({ pane: prDraftsPane() }, { replace: true });
+  if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
   const key = prNextKey(prDoc(id, read), 'p');
   if (prEditDrafts(id, read, d => { d.drafts.push(prDiffDraft(d, { path, line: at?.line, side: at?.side, body })); })) {
     prRedrawNow({ sel: `[data-pr-body="${CSS.escape(key)}"]`, inDialog });

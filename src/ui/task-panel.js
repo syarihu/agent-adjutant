@@ -234,8 +234,8 @@ function renderTaskPanelNow() {
   // The work view marks the row, and draws the terminal, of what the address names.
   // The middle terminal is the work view's: one the panel mounted earlier is not kept beside it.
   if (view === 'work') {
-    // The 「AI 下読み」 tab and a review request keep their reader's terminal in the panel (task-read-view.js, pr-panel.js); any other panel has none.
-    if (panelTerm.term && !taskReadActive(task) && !isPrRef(selectedTaskId)) disposePanelTerminal();
+    // A review request keeps its reader's terminal in the panel (pr-panel.js); any other panel has none.
+    if (panelTerm.term && !isPrRef(selectedTaskId)) disposePanelTerminal();
     syncWorkSelection();
   }
   // A PR waiting on your review has no board behind it: its panel is drawn from its own record (pr-panel.js).
@@ -252,10 +252,10 @@ function renderTaskPanelNow() {
   // Until the board has answered once, what it lacks is not known to be missing.
   if (gone && state.now == null) return;
   // In the work view a hub has no right column: its heading over the terminal has its status, and 「hub の詳細」 the rest. Nor has a
-  // task, whose details are in a dialog opened from the heading (task-detail-view.js); only its AI 下読み keeps its reader's panel here.
-  // A parent (「親タスクの詳細」), a session with no task (the heading's ⋯ menu) and a row the list no longer has (the middle says so) have
-  // none either: the panel is left to the AI 下読み reader and to a gate that has no task card.
-  const shown = view === 'work' ? !!((task && taskReadActive(task)) || gateOf)
+  // task, whose details are in a dialog opened from the heading (task-detail-view.js), as is its AI 下読み (task-read-view.js). A parent
+  // (「親タスクの詳細」), a session with no task (the heading's ⋯ menu) and a row the list no longer has (the middle says so) have none
+  // either: in the work view the panel is left to a gate that has no task card.
+  const shown = view === 'work' ? !!gateOf
     : (!!(task || hub || sess || parent || gateOf) || gone) && view === 'board';
   const cls = document.body.classList;
   panel.hidden = !shown;
@@ -273,8 +273,6 @@ function renderTaskPanelNow() {
     renderWorkAway(null);
     return renderGatePanel(gateOf);
   }
-  // A task's 「AI 下読み」 tab: the panel is its reader's.
-  if (taskReadActive(task)) return renderTaskReaderPanel(task);
   tp('tp-tabs').hidden = false;
 
   const colId = task ? columnOf(task) : null;
@@ -944,7 +942,6 @@ function termPlaceholderHtml(s) {
 /* Events are heard on the panel itself: its parts are drawn again, it is not. */
 tp('task-panel').addEventListener('click', e => {
   if (isPrRef(selectedTaskId)) return view === 'work' ? prPanelClick(e) : undefined;
-  if (taskReadActive(taskById(selectedTaskId))) return taskReaderPanelClick(e);
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
   const sess = !hub && !task ? sessOfRef(selectedTaskId) : null;

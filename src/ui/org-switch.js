@@ -99,7 +99,7 @@ function chooseOrg(login) {
   closeOrgMenu(true);
   if (login === currentOrg()) return;
   setCurrentOrg(login);
-  if (view === 'work' && prefs.workTab === 'task') return workSelectFirst();
+  if (view === 'work' && nav.list !== 'review') return workSelectFirst();
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (nwo && orgOf(nwo) !== currentOrg()) go({ board: 'all', view: 'work', task: null, pane: 'detail' });

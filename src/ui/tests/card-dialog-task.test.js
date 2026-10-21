@@ -104,12 +104,14 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
   const body = { scrollTop: 0, focused: 0, getBoundingClientRect: () => ({ top: 0 }), focus() { this.focused++; } };
   const index = { innerHTML: '', hidden: true, replaceChildren() { this.innerHTML = ''; } };
   const titleEl = { textContent: 'T' }, subEl = { textContent: '' };
+  const lineEl = { textContent: '', hidden: true }, actsEl = { innerHTML: '', hidden: true, dataset: {} };
   const dlg = {
     open: true, closed: false, close() { this.open = false; this.closed = true; }, handlers: {},
     addEventListener(type, f) { this.handlers[type] = f; }, querySelectorAll: sel => col.querySelectorAll(sel),
     querySelector: sel => sel === '.card-dialog-gone' ? goneEl : sel === '.card-dialog-update' ? updateEl : sel === '.card-dialog-body' ? body : sel === '.card-dialog-index' ? index
       : sel === '.card-dialog-content' ? content : sel === '.card-dialog-dock' ? col
-      : sel === '#card-dialog-title' ? titleEl : sel === '#card-dialog-sub' ? subEl : null,
+      : sel === '#card-dialog-title' ? titleEl : sel === '#card-dialog-sub' ? subEl
+      : sel === '#card-dialog-line' ? lineEl : sel === '#card-dialog-acts' ? actsEl : null,
   };
   const world = { waiting, subject: 't1', exists: true, hidden: false, nowKnown: true, html: 'v1', groups: [], dockMark: '', title: 'T',
     sent: [], goGate: [], closed: 0, shown: [], marks: 0, recorded: [], pruned: 0 };
@@ -143,7 +145,7 @@ function taskWorld({ waiting = ['A'], drafts = {}, focused = false } = {}) {
       'cardDialogFocusOf', 'cardDialogFocusBack', 'cardDialogShowDock', 'cardDialogSetDock', 'cardDialogWithAnswered',
       'cardDialogAnswer', 'cardDialogAfterAnswer', 'cardDialogSync', 'cardDialogGateButton', 'cardDialogFollowDock'].map(n => fnSrc(dlgSrc, n)),
     cut(dlgSrc, /^const cardDialogWaiting = [^\n]*;/m),
-    fnSrc(dlgSrc, 'cardDialogShell'),
+    fnSrc(dlgSrc, 'cardDialogShell'), fnSrc(dlgSrc, 'cardDialogHead'),
     cut(dlgSrc, /^cardDialogEl\(\)\.addEventListener\('close', \(\) => \{[\s\S]*?\n\}\);/m),
     `Object.assign(cardDialog, { mode: 'task', subject: 't1', dock: ${JSON.stringify(waiting[0] || null)} });`,
   ].join('\n'), c);

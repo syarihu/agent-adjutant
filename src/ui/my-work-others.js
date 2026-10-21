@@ -1,4 +1,4 @@
-/* ── いまの仕事 「AI 下読み」: the PRs others asked you to review, as rows ───────────────────────────────
+/* ── 「レビュー」: the PRs others asked you to review, as rows ───────────────────────────────
    Pure, like my-work-seen.js: these read a record of `GET /api/others` (docs/architecture.md, "PRs others
    asked you to review") and the read marks they are handed and return, touching neither the page nor local
    storage, so `src/ui/tests/my-work-others.test.js` runs them under `node --test`. Loaded after
@@ -204,7 +204,7 @@ function othersQueuePlace(rec, records) {
 function othersAiView(rec, records, nowSecs) {
   const ai = rec?.ai;
   const live = ['requested', 'ai-ready', 'pushed'].includes(rec?.state);
-  if (!ai) return { kind: 'none', text: '', action: live && rec.state !== 'ai-ready' ? 'AI 下読み' : null };
+  if (!ai) return { kind: 'none', text: '', action: live && rec.state !== 'ai-ready' ? '下読みする' : null };
   // A split proposal says its own words. Its buttons ask for another proposal (`mode`) only while the PR is out of review now: a PR
   // that has become small is read in the usual way, whatever the stored read-through is.
   const split = ai.mode === 'split';
@@ -231,7 +231,7 @@ function othersAiView(rec, records, nowSecs) {
           live ? '下読みし直す' : null, '分割案を作り直す');
       }
       // A proposal of a PR that is not out of review now is no read of it: the usual button is offered.
-      if (split) return asksSplit ? view('done', '分割案あり', null, null) : { kind: 'done', text: '分割案あり', action: live ? 'AI 下読み' : null };
+      if (split) return asksSplit ? view('done', '分割案あり', null, null) : { kind: 'done', text: '分割案あり', action: live ? '下読みする' : null };
       const c = ai.counts;
       const parts = [['要注意', c?.attention], ['確認', c?.check], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
       return { kind: 'done', text: ['下読み済み', ...parts].join(' · '), action: null };

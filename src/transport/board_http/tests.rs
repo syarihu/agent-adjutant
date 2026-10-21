@@ -160,7 +160,7 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     ] {
         assert_eq!(UI_HTML.matches(id).count(), 1, "{id}");
     }
-    // The row is always shown: its lead holds the sidebar's toggle, and only the tabs go away for what is not a task.
+    // The row is always shown: its lead holds the sidebar's toggle, and only the tabs go away for what is not a review request.
     assert!(!UI_HTML.contains("id=\"wk-mid-row\" hidden"));
     assert_eq!(UI_HTML.matches("id=\"rail-toggle\"").count(), 1);
     let (lead, toggle, tabs) = (
@@ -174,19 +174,18 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     );
     assert!(UI_HTML.contains(".wk-mid-tabs[hidden] { display: none; }"));
     for function in [
-        "function taskReadTabState(",
-        "function taskReadTabsHtml(",
+        "function taskReadHeadMode(",
+        "function ownReadLineText(",
         "function taskReadGroups(",
         "function taskReaderHeadHtml(",
-        "function taskReaderTabsHtml(",
         "function taskReadShown(",
         "function taskReadRefresh(",
         "function taskReadAsk(",
-        "function renderTaskReadTabs(",
-        "function renderTaskReadMiddle(",
-        "function renderTaskReaderPanel(",
+        "function taskReadFollow(",
+        "function openOwnReadDialog(",
+        "function ownReadDialogSync(",
+        "function prDialogPaint(",
         "function prShown(",
-        "function prDraftsPane(",
         "function prSaveSettled(",
         "function taskReadHand(",
         "function prRecOf(",
@@ -209,15 +208,16 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         "OWN_HOOKS.drafts = {",
         "data-drafts=\"off\"",
         "id=\"tp-read-drafts\"",
-        "const READ_PANES = ['ai', 'ai-drafts']",
+        "let pendingOwnRead = null",
+        "data-own-read=",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
     // The scripts share one scope and run in order: the pure half after the diff's, the page's half after the diff's page half and
     // before the entry point, which draws the first screen.
     let at = |piece: &str| UI_HTML.find(piece).unwrap();
-    assert!(at("function prParseDiff(") < at("function taskReadTabState("));
-    assert!(at("function taskReadTabState(") < at("function prShown("));
+    assert!(at("function prParseDiff(") < at("function taskReadHeadMode("));
+    assert!(at("function taskReadHeadMode(") < at("function prShown("));
     assert!(at("function prdGoto(") < at("function taskReadShown("));
     assert!(at("function taskReadShown(") < at("function setView("));
     // The drafts' hook is set after the view that declares it, and before the entry point that draws the first screen.
@@ -236,13 +236,12 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         assert!(at("id=\"wk-term-host\"") < at(id), "{id}");
     }
     assert!(at(".prd-bar {") < at(".wk-mid-row {"));
-    // The tabs control panels that name them back.
-    for piece in [
-        "id=\"wk-term-pane\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-task\"",
-        "id=\"task-read\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-ai\"",
-    ] {
-        assert!(UI_HTML.contains(piece), "{piece}");
-    }
+    // The review request's tabs control the read-through, which names them back.
+    assert!(
+        UI_HTML.contains(
+            "id=\"task-read\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-pr-detail\""
+        )
+    );
 }
 
 #[test]

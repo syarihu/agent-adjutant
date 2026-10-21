@@ -105,7 +105,7 @@ pub struct TaskLink {
 }
 
 impl Record {
-    /// Whether the record is in the 「AI 下読み」 list: a PR that was asked of you, or a task's PR
+    /// Whether the record is in the 「レビュー」 list: a PR that was asked of you, or a task's PR
     /// that is also requested from you. A task's PR that nobody requested is read for its task,
     /// and the task's card shows it.
     pub fn on_review_list(&self) -> bool {

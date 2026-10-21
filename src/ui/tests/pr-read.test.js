@@ -17,7 +17,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 const plain = x => JSON.parse(JSON.stringify(x));
 const run = expr => vm.runInContext(expr, ctx);
 const { prPaneOf, prTabsHtml, prDetailHtml, prBeforeRead, prSeedDrafts, prNewReaderDrafts, prDraftFromPoint, prDraftLocation, prCopyAllText,
-  prDialogGroups, prNextKey, prDraftsHtml, prMidActsHtml, prMiddleHtml, prPendable, prHandable, prHandHtml,
+  prDialogGroups, prNextKey, prDraftsHtml, prReviewHeadHtml, prCiWord, prNoReadHtml, prMiddleHtml, prPendable, prHandable, prHandHtml,
   prOorActions, prOutOfReview, prSplitProposal, prNewReaderOverall, prFromElsewhere } = ctx;
 
 const prCloseReaderBtnHtml = run('prCloseReaderBtnHtml');
@@ -107,18 +107,60 @@ test('everything the reader or the PR wrote comes out as text', () => {
     unwritten: [bad], sinceReview: { commit: B, comments: [{ commentId: 1, path: bad, status: bad, note: bad }], newChanges: [{ path: bad, note: bad }] },
   });
   const pr = rec({ title: bad, author: bad, repo: bad, base: bad, head: bad, state: 'pushed', reviewers: [{ login: bad, team: false, state: bad }] });
-  const html = prDetailHtml(pr, r, [pr], hub, T0) + prMidActsHtml(pr) + prDialogGroups(pr, r, [pr], hub, T0).map(g => g.cards.map(c => c.html).join('')).join('')
+  const html = prDetailHtml(pr, r, [pr], hub, T0) + prReviewHeadHtml(pr) + prDialogGroups(pr, r, [pr], hub, T0).map(g => g.cards.map(c => c.html).join('')).join('')
     + prDraftsHtml({ drafts: [{ key: 'k', source: 'person', path: bad, body: bad }], overall: { body: bad } }, r, { notice: 0 });
   assert.ok(!html.includes('<img'), html.match(/.{20}<img.{20}/)?.[0]);
   assert.ok(html.includes('&lt;img'));
 });
 
 test('a link that is not http(s) is no link, and the PR\'s own opens in a new tab without the opener', () => {
-  const head = prMidActsHtml(rec());
+  const head = prReviewHeadHtml(rec());
   assert.match(head, /href="https:\/\/github\.com\/acme\/widget\/pull\/12" target="_blank" rel="noopener noreferrer"/);
-  assert.ok(head.includes('data-pr-expand') && head.includes('aria-haspopup="dialog"') && head.includes('GitHub で開く'));
-  const noLink = prMidActsHtml(rec({ url: 'javascript:alert(1)' }));
+  assert.ok(head.includes('data-pr-expand') && head.includes('aria-haspopup="dialog"') && head.includes('GitHub で開く') && head.includes('open_in_new'));
+  const noLink = prReviewHeadHtml(rec({ url: 'javascript:alert(1)' }));
   assert.ok(!noLink.includes('javascript:') && !noLink.includes('GitHub で開く') && noLink.includes('data-pr-expand'));
+});
+
+test('the CI of a record is one word: a failure first, then a run under way, then a pass, else none', () => {
+  assert.strictEqual(prCiWord({ pass: 3, fail: 2, pending: 1 }), '失敗 2');
+  assert.strictEqual(prCiWord({ pass: 3, fail: 0, pending: 1 }), '実行中');
+  assert.strictEqual(prCiWord({ pass: 3, fail: 0, pending: 0 }), '通過');
+  assert.strictEqual(prCiWord({ pass: 0, fail: 0, pending: 0 }), 'なし');
+  assert.strictEqual(prCiWord({}), 'なし');
+  assert.strictEqual(prCiWord(null), 'なし');
+  assert.strictEqual(prCiWord(undefined), 'なし');
+});
+
+test('the middle\'s heading: number and title, then repository, author, size, files and CI, and the two buttons at the right', () => {
+  const head = prReviewHeadHtml(rec());
+  assert.ok(head.includes('<div class="wk-term-title">#12 Round the amounts</div>'));
+  assert.ok(head.includes('<div class="wk-term-sub">acme/widget · @alice · +30 −4 · 3 files · CI 実行中</div>'));
+  const acts = head.slice(head.indexOf('wk-head-acts'));
+  assert.ok(acts.indexOf('GitHub で開く') < acts.indexOf('data-pr-expand'));
+  assert.ok(prReviewHeadHtml(rec({ author: null })).includes('（削除されたアカウント）'));
+  assert.ok(prReviewHeadHtml(rec({ ci: { pass: 0, fail: 1, pending: 0 } })).includes('CI 失敗 1'));
+  assert.ok(prReviewHeadHtml(rec({ title: '<b>x</b>' })).includes('#12 &lt;b&gt;x&lt;/b&gt;'));
+});
+
+test('before the first read the middle says it is under way, with the queue place, or that none was made, with the button', () => {
+  const queued = rec({ ai: { status: 'queued', startedAt: '20261001T000000Z' }, state: 'ai-reading' });
+  const q = prNoReadHtml(queued, ctx.othersAiView(queued, [queued], T0), hub, false);
+  assert.ok(q.includes('progress_activity') && q.includes('下読み中です') && q.includes('読み終わると、ここに要点と見るポイントが出ます。') && q.includes('順番待ち（1 番目）'));
+  assert.ok(!q.includes('data-pr-ai'));
+  const running = rec({ ai: { status: 'running', launchedAt: '20261001T000000Z' }, state: 'ai-reading' });
+  const r = prNoReadHtml(running, ctx.othersAiView(running, [running], T0), hub, false);
+  assert.ok(r.includes('下読み中です') && !r.includes('順番待ち'));
+  const none = rec({ ai: null, state: 'requested' });
+  const n = prNoReadHtml(none, ctx.othersAiView(none, [none], T0), hub, false);
+  assert.ok(n.includes('auto_stories') && n.includes('まだ下読みしていません') && n.includes('コードレビュー hub の読み手が、要点と見るポイントをまとめます。'));
+  assert.ok(n.includes('data-pr-ai') && n.includes('下読みする') && !n.includes('disabled'));
+  // The hub's reason when no read can be asked for, and 依頼中… while a request is out.
+  assert.match(prNoReadHtml(none, ctx.othersAiView(none, [none], T0), { canRead: false, why: 'hub が止まっています' }, false), /data-pr-ai disabled title="hub が止まっています"/);
+  assert.ok(prNoReadHtml(none, ctx.othersAiView(none, [none], T0), hub, true).includes('依頼中…'));
+  // The last read failed: why, and the button to try again.
+  const failed = rec({ ai: { status: 'failed', error: 'boom' }, state: 'requested' });
+  const f = prNoReadHtml(failed, ctx.othersAiView(failed, [failed], T0), hub, false);
+  assert.ok(f.includes('まだ下読みしていません') && f.includes('boom') && f.includes('data-pr-ai'));
 });
 
 test('before a read: the button is disabled with the hub\'s reason, and a queued read says its place', () => {
@@ -462,7 +504,7 @@ test('the footer offers the usual read for a current proposal of a PR that is no
   const proposal = rec({ ai: { status: 'ready', sha: A, mode: 'split', stale: false } });
   const footer = html => html.slice(html.indexOf('data-pr-sec="footer"'));
   const f = footer(prDetailHtml(proposal, splitRead(), [proposal], hub, T0));
-  assert.ok(f.includes('data-pr-reread') && f.includes('AI 下読み'));
+  assert.ok(f.includes('data-pr-reread') && f.includes('下読みする'));
   const r = big({ ai: { status: 'ready', sha: A, mode: 'split', stale: false }, state: 'ai-ready' });
   assert.ok(!footer(prDetailHtml(r, splitRead(), [r], hub, T0)).includes('data-pr-reread'));
   // A full read-through that is current has no such button.

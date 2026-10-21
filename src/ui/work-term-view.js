@@ -32,8 +32,8 @@ function workTermAskGates(task, own, hub) {
 /* The merged session the board asks about for what is selected, as { a, board, sid }, or null: only where no gate is drawn (the worker's own
    clean-up gate is the only question then), and from the work document's entry, which holds the gates of a task on boards the page does not
    read. */
-function workTermMergedAsk(sel, gates, reading) {
-  if (reading || gates.length || !sel?.row || !sel.session) return null;
+function workTermMergedAsk(sel, gates) {
+  if (gates.length || !sel?.row || !sel.session) return null;
   workAskPrune(workAsk.kept, work.doc);
   const isDone = key => answeredGates.has(key);
   const e = workEntries(work.doc, isDone).find(x => x.board === sel.row.board && x.session?.id === sel.session.id);
@@ -70,19 +70,19 @@ const workSendWhy = () => workTerm.ended != null ? 'ターミナルは切れて�
 
 /* The two buttons over the terminal's bottom right: only while the terminal itself is on screen (the placeholder covers it
    otherwise). 最後のメッセージ is there while the running agent has said something. */
-function drawWorkFabs(own, hub, reading) {
+function drawWorkFabs(own, hub) {
   const s = hub ? hubSessionOf(hub) : own;
   const a = s?.present ? s.agentSession : null;
   const mins = a?.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
-  const html = workTerm.term && !reading && s?.present
+  const html = workTerm.term && s?.present
     ? workTermFabsHtml({ hasLast: !!a?.lastMessage, lastAge: mins != null ? agoLabel(mins) : '', sendWhy: workSendWhy() }) : '';
   setWorkTermPart('fabs', wk('wk-term-fabs'), html);
 }
 
 /* Called by `renderWorkTerm` once the head and the terminal are in place. */
-function renderWorkTermOverlays({ sel = null, own, task, hub, reading, stopped = false }) {
-  const gates = reading ? [] : workTermAskGates(task, own, hub);
-  const merged = workTermMergedAsk(sel, gates, reading);
+function renderWorkTermOverlays({ sel = null, own, task, hub, stopped = false }) {
+  const gates = workTermAskGates(task, own, hub);
+  const merged = workTermMergedAsk(sel, gates);
   // Over a stopped hub the start check is one line, so the block with 「hub を起動」 under it is in reach.
   drawWorkAsk(merged ? workTermMergedHtml(merged.a, { board: merged.board, sid: merged.sid, busy: workAsk.busy.has(workAskKey(merged.board, merged.sid)) })
     : workTermAskHtml(gates, {
@@ -92,7 +92,7 @@ function renderWorkTermOverlays({ sel = null, own, task, hub, reading, stopped =
   const ph = wk('wk-term-ph');
   const askBox = workAskEl().getBoundingClientRect();
   ph.style.paddingTop = !ph.hidden && askBox.height ? `${Math.ceil(askBox.bottom - ph.getBoundingClientRect().top + 12)}px` : '';
-  drawWorkFabs(own, hub, reading);
+  drawWorkFabs(own, hub);
   // Only the count is announced: the questions themselves are read where they are, and a redraw must not read the form out again.
   setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : merged?.a.ask === 'clean' ? '確認待ちが 1 件あります' : '');
 }
@@ -156,6 +156,9 @@ function workTermSession() {
 }
 
 wk('wk-term-head').addEventListener('click', e => {
+  // 「下読みを見る」 / 「下読みする」: the task's AI 下読み, as a dialog; the second asks for a read too.
+  const own = e.target.closest('[data-own-read]');
+  if (own) return own.disabled ? undefined : openOwnReadDialog(own, { ask: own.dataset.ownRead === 'ask' });
   const b = e.target.closest('[data-wk-term-act]');
   if (!b || b.disabled) return;
   const act = b.dataset.wkTermAct;
