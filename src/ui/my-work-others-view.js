@@ -1,5 +1,5 @@
-/* ── いまの仕事 「AI 下読み」: the list of the PRs others asked you to review, drawn ──────────────────────
-   The second list of 「いまの仕事」, chosen by the switch in its heading row. It reads `GET /api/others` (one document for
+/* ── 「レビュー」: the list of the PRs others asked you to review, drawn ──────────────────────
+   The list of the rail's 「レビュー」, drawn while `nav.list` is 'review'. It reads `GET /api/others` (one document for
    the server, as `/api/work` is) and syncs with GitHub only when asked (`POST /api/others/sync`). The pure half (what a
    row says, what is new, the order, the hub's row) is my-work-others.js; this file draws and keeps what the page holds:
    the document, the read marks in this browser (`adj.seenOthers`), and the sync in flight. Loaded after my-work.js, which

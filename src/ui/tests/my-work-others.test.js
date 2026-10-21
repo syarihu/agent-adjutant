@@ -447,7 +447,7 @@ function listOf(doc, { repo = '', stage = '', marks = {}, hub = '', hideDone } =
 }
 const listDoc = records => ({ now: T0 + 60, lastSync: { at: stamp(T0) }, records });
 
-test('the 「AI 下読み」 list offers 新着をすべて既読にする only while a row is new, and not while it loads', () => {
+test('the 「レビュー」 list offers 新着をすべて既読にする only while a row is new, and not while it loads', () => {
   const withNew = listOf(listDoc([rec(1)]));
   assert.ok(withNew.includes('data-ov-read-all') && !withNew.includes('data-wk-read-all'));
   assert.ok(!listOf(listDoc([rec(1)]), { marks: { 'acme/widget#1': { read: T0 } } }).includes('data-ov-read-all'));

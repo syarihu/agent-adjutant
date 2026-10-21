@@ -11,13 +11,14 @@ const TASK_READ_UNREADABLE_WHY = 'この PR は AI 下読みできません';
    (「下読みする」: the document has come and the PR has none, and none is under way) or '' (no button: the task has no PR, or it is
    merged or closed). `doc` is the task's document, or null until it has come; `nowSecs` tells a read under way from one that has hung;
    `prState` is the PR's state as the page shows it (`prStateOf`: a board's task carries no state of its own). A PR whose record says it
-   is done is not offered a read either: the server refuses one. */
+   is done is not offered a read either (the server refuses one): it keeps 下読みを見る only for a read-through it has. */
 function taskReadHeadMode(task, doc, nowSecs = Date.now() / 1000, prState = null) {
   if (!task?.pr || prState === 'merged' || prState === 'closed') return '';
   if (!doc || !doc.pr) return 'see';
   const rec = doc.record;
   if (!rec) return 'ask';
-  if (!OTHERS_LIVE.includes(rec.state) && !prHasRead(rec)) return 'see';
+  // A record that says the PR is done has nothing to read and nothing to ask for, until the page's own state catches up.
+  if (!OTHERS_LIVE.includes(rec.state) && !prHasRead(rec)) return '';
   return prHasRead(rec) || ['queued', 'running'].includes(othersAiView(rec, [], nowSecs).kind) ? 'see' : 'ask';
 }
 

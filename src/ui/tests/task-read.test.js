@@ -25,7 +25,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(read(file), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { taskReadHeadMode, ownReadSubText, ownReadTitleText, ownReadLineText, ownReadHeadLine, ownReadActsHtml, taskReadGroups, readPaneGroups, taskReadNoRecordHtml, taskReadBandHtml, taskReadHubHtml,
+const { taskReadHeadMode, ownReadSubText, ownReadTitleText, ownReadLineText, ownReadHeadLine, ownReadActsHtml, taskReadGroups, readPaneGroups, taskReadBandHtml, taskReadHubHtml,
   taskReaderHeadHtml } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -57,7 +57,7 @@ test('the heading button of a task: 下読みを見る with a read-through or be
   assert.strictEqual(mode(task, doc(rec()), 'merged'), '');
   assert.strictEqual(mode(task, doc(null), 'closed'), '');
   // A record that says the PR is done is never offered a read (the server refuses one); a read-through it has is still shown.
-  assert.strictEqual(mode(task, doc(rec({ state: 'done', ai: null }))), 'see');
+  assert.strictEqual(mode(task, doc(rec({ state: 'done', ai: null }))), '');
   assert.strictEqual(mode(task, doc(rec({ state: 'done' }))), 'see');
   // Before the document has come: see.
   assert.strictEqual(mode(task, null), 'see');
