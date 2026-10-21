@@ -56,17 +56,19 @@ thread_local! {
 /// the notifier's own tests, which check that command line, have a reason to hold it.
 #[cfg(test)]
 pub(crate) fn allow_built_in_for_test() -> BuiltInAllowed {
-    BUILT_IN_ALLOWED.with(|allowed| allowed.set(true));
-    BuiltInAllowed(())
+    BuiltInAllowed(BUILT_IN_ALLOWED.with(|allowed| allowed.replace(true)))
 }
 
+/// Holds what the flag was before, so that a guard taken inside another one hands back the
+/// outer one's permission rather than ending it.
 #[cfg(test)]
-pub(crate) struct BuiltInAllowed(());
+#[must_use = "the built-in is allowed only while the guard is held"]
+pub(crate) struct BuiltInAllowed(bool);
 
 #[cfg(test)]
 impl Drop for BuiltInAllowed {
     fn drop(&mut self) {
-        BUILT_IN_ALLOWED.with(|allowed| allowed.set(false));
+        BUILT_IN_ALLOWED.with(|allowed| allowed.set(self.0));
     }
 }
 
@@ -273,6 +275,8 @@ mod tests {
     #[test]
     fn the_opt_in_ends_when_its_guard_is_dropped() {
         let allowed = allow_built_in_for_test();
+        drop(allow_built_in_for_test());
+        // An inner guard hands the outer one's permission back rather than ending it.
         let _ = command(&Hook::BuiltIn, "acme/widget", "t", "m");
         drop(allowed);
         assert!(
