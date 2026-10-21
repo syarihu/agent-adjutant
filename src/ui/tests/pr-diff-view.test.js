@@ -1,5 +1,6 @@
 /* The page's half of the annotated diff (src/ui/pr-diff-view.js) against stand-ins for the page, run with `node --test`: what is
-   fetched and for whom, what is drawn and when, where a link goes, and what 「＋」 and the annotation's buttons do. */
+   fetched and for whom, what is drawn and when, where a link goes, what 「＋」 and the annotation's buttons do, and how the comments on the lines
+   are put into what is drawn. */
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -31,7 +32,7 @@ function el(dataset = {}, extra = {}) {
 const wrap = el => el;
 
 function world({ io = false } = {}) {
-  const w = { calls: [], gets: [], pending: [], notes: [], edits: [], drafts: [], hubView: { canRead: true }, selected: 'pr:acme/widget#1', pane: 'detail', dialogOpen: false, loaded: true };
+  const w = { calls: [], gets: [], pending: [], notes: [], edits: [], doc: { version: 1, fromSha: null, drafts: [], overall: null }, entry: { loaded: true }, hubView: { canRead: true }, selected: 'pr:acme/widget#1', pane: 'detail', dialogOpen: false };
   // The middle's root and the dialog's content, each with the pieces the code looks for.
   const mk = () => {
     const bodies = [el({ prdBody: '0' }), el({ prdBody: '1' })];
@@ -65,9 +66,17 @@ function world({ io = false } = {}) {
     prShown: () => w.shown !== undefined ? w.shown : (typeof w.selected === 'string' && w.selected.startsWith('pr:') ? { id: w.selected.slice(3), rec: rec(w.selected.slice(3)), kind: 'pr', hubView: w.hubView, asking: false } : null),
     prRecOf: () => rec(), prRedrawFor: id => { if (w.selected === `pr:${id}`) w.calls.push(['render']); },
     cardDialogOnPr: () => ['review', 'own-read'].includes(c.cardDialog.mode),
-    prDraftsEntry: () => ({ loaded: w.loaded }), prDoc: () => ({ drafts: w.drafts }),
-    prEditDrafts: (id, rd, fn) => { if (!w.loaded) return false; const doc = { drafts: [...w.drafts] }; fn(doc); w.edits.push(doc.drafts[doc.drafts.length - 1]); return true; },
-    prRedrawNow: f => { w.calls.push(['redraw', f]); }, go: (p, o) => { w.calls.push(['gopane', p, o]); }, nav: { get pane() { return w.pane; } },
+    prDraftsEntry: () => w.entry, prDoc: () => w.doc,
+    prView: { boxes: new Map() }, prSeedDrafts: () => ({ drafts: [] }), prEditRefused: () => { w.notes.push(['refused']); },
+    prEditDrafts: (id, rd, fn) => {
+      if (!w.entry.loaded || w.entry.pending || w.entry.handing) return false;
+      const doc = structuredClone(w.doc);
+      fn(doc);
+      w.doc = doc;
+      w.edits.push(doc);
+      return true;
+    },
+    prDraftsChanged: id => { w.calls.push(['changed', id]); }, go: (p, o) => { w.calls.push(['gopane', p, o]); }, nav: { get pane() { return w.pane; } },
     note: (...a) => { w.notes.push(a); }, prAsk: p => { w.calls.push(['ask', p]); },
     boardApi: (base, url) => new Promise((resolve, reject) => { w.gets.push(url); w.pending.push({ resolve, reject }); }),
   });
@@ -300,44 +309,54 @@ const onLine = (c, attrs, extra = {}) => {
   return { target: { closest: s => s === extra.hit ? btn : null } };
 };
 
-test('「＋」 starts a draft of the person on the right side and line, and the middle goes to 下書き', async () => {
+const boxes = (w, c) => JSON.parse(JSON.stringify([...c.prView.boxes.get('acme/widget#1')?.entries() || []]));
+
+test('「＋」 opens an editor on the right side and line, in the middle and in 「拡大」, and changes no tab; nothing is stored', async () => {
   const { w, c } = await loaded();
   c.prdAct(onLine(c, { prdPlus: 'left:2' }, { hit: '[data-prd-plus]' }), { place: 'read' });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits)), [{ key: 'p1', source: 'person', path: 'src/a.rs', line: 2, side: 'left', body: '' }]);
-  const order = w.calls.map(x => x[0]);
-  assert.ok(order.indexOf('gopane') < order.indexOf('redraw'), 'the tab first, then the box');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane')[1])), { pane: 'drafts' });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: false });
-});
-
-test('in 「拡大」 the box appears in the column and the middle is left where it is', async () => {
-  const { w, c } = await loaded();
+  assert.deepStrictEqual(boxes(w, c), [['new:src/a.rs|left|2', { kind: 'new', path: 'src/a.rs', side: 'left', line: 2, source: 'person', text: '', focus: true }]]);
+  assert.deepStrictEqual(w.edits, []);
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'), 'there is no tab to go to');
+  // In 「拡大」 the editor is in the dialog's own diff: the same, and the middle is left where it is.
   c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'dialog' });
-  assert.strictEqual(w.calls.some(x => x[0] === 'gopane'), false);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: true });
-  assert.strictEqual(w.edits[0].line, 3);
+  assert.deepStrictEqual(boxes(w, c).map(x => x[0]), ['new:src/a.rs|left|2', 'new:src/a.rs|right|3']);
+  assert.ok(!w.calls.some(x => x[0] === 'gopane'));
+  // Pressing it again on a line that has an editor does not make a second one: it is given the keyboard.
+  c.prView.boxes.get('acme/widget#1').get('new:src/a.rs|right|3').focus = false;
+  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' });
+  assert.strictEqual(boxes(w, c).length, 2);
+  assert.strictEqual(boxes(w, c)[1][1].focus, true);
 });
 
-test('an explanation\'s 「下書きに」 is the same, with its text as the body; unanchored it is a file draft; unloaded drafts say so', async () => {
+test('an explanation\'s 「コメント」 does what its line\'s 「＋」 does; unanchored it is an editor on the file', async () => {
   const { w, c } = await loaded();
   const hit = '[data-prd-todraft], [data-prd-ask]';
   c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit, matches: ['[data-prd-todraft]'] }), { place: 'read' });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Explains new' });
+  assert.deepStrictEqual(boxes(w, c), [['new:src/a.rs|right|3', { kind: 'new', path: 'src/a.rs', side: 'right', line: 3, source: 'person', text: '', focus: true }]]);
   c.prdAct(onLine(c, {}, { hit, matches: ['[data-prd-todraft]'] }), { place: 'read' });
-  assert.strictEqual(w.edits[1].line, undefined);
-  w.loaded = false;
-  c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' });
-  assert.strictEqual(w.edits.length, 2);
-  assert.strictEqual(w.notes.length, 1);
+  assert.deepStrictEqual(boxes(w, c).map(x => x[0]), ['new:src/a.rs|right|3', 'new:src/a.rs|right|']);
+  assert.strictEqual(boxes(w, c)[1][1].line, null);
+  assert.deepStrictEqual(w.edits, [], 'nothing is stored');
 });
 
-test('a concern\'s 「下書きに」 puts the reader\'s draft for the author in the box, not the note on the line', async () => {
+test('a concern\'s 「コメントにする」 opens the editor with the reader\'s draft (else its note) as a comment of the reader\'s, once it is added', async () => {
   const { w, c, run } = world();
   w.read = readThrough({ annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'concern', text: 'Why is this here?', draft: 'Could you say why this is here?' }] });
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
-  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: ['[data-prd-todraft]'] }), { place: 'read' });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Could you say why this is here?' });
+  const click = { place: 'read' };
+  const press = () => c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: ['[data-prd-todraft]'] }), click);
+  press();
+  assert.deepStrictEqual(boxes(w, c), [['new:src/a.rs|right|3', { kind: 'new', path: 'src/a.rs', side: 'right', line: 3, source: 'reader', text: 'Could you say why this is here?', focus: true }]]);
+  // An editor that has something typed in it is not overwritten by pressing it again.
+  c.prView.boxes.get('acme/widget#1').get('new:src/a.rs|right|3').text = 'mine';
+  press();
+  assert.strictEqual(boxes(w, c)[0][1].text, 'mine');
+  // Without a draft its note is what is brought.
+  w.read.annotations[0].draft = undefined;
+  c.prView.boxes.clear();
+  press();
+  assert.strictEqual(boxes(w, c)[0][1].text, 'Why is this here?');
   // 「聞く」 asks about the note.
   c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: [] }), { place: 'read' });
   assert.strictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'ask')[1])).title, 'Why is this here?');
@@ -354,8 +373,8 @@ test('「聞く」 in 「拡大」 closes it first, then asks with the line and 
 
 test('the hook keeps its shape', () => {
   const { run } = world();
-  assert.deepStrictEqual(JSON.parse(run('JSON.stringify(Object.keys(PR_HOOKS.diff).sort())')), ['act', 'applyTarget', 'dialogFileHtml', 'dialogHeadHtml', 'dialogLabel', 'dialogPaths',
-    'goto', 'onDrawn', 'onDrawnAt', 'onMoved']);
+  assert.deepStrictEqual(JSON.parse(run('JSON.stringify(Object.keys(PR_HOOKS.diff).sort())')), ['act', 'applyTarget', 'comments', 'dialogFileHtml', 'dialogHeadHtml', 'dialogLabel', 'dialogPaths',
+    'entries', 'goto', 'input', 'onDrawn', 'onDrawnAt', 'onMoved', 'pointComment']);
 });
 
 test('only the selected PR and a few others are kept, and what was drawn is dropped for the others', async () => {
@@ -481,7 +500,7 @@ test('a link in the middle of a task goes there and opens no dialog, after the f
   assert.ok(!w.calls.some(x => x[0] === 'go'), 'not the dialog\'s');
 });
 
-/* The same place for a review request: its 下読み tab is where the diff is, and 「拡大」 is the other place a link can land in. */
+/* The same place for a review request: its one view is where the diff is, and 「拡大」 is the other place a link can land in. */
 function prReadWorld() {
   const x = readWorld();
   x.w.shown = { id: 'acme/widget#1', rec: rec(), kind: 'pr', hubView: x.w.hubView, asking: false };
@@ -490,18 +509,12 @@ function prReadWorld() {
   return x;
 }
 
-test('a link from the 下書き tab of a review request goes back to the 下読み tab first; from 下読み it lands in the same view', async () => {
+test('a link from a review request lands in its one view, and switches no tab', async () => {
   const { w, c, run } = prReadWorld();
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
-  w.pane = 'drafts';
   c.prdGoto('docs/x.md', 1, { place: 'read', opener: el() });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane').slice(1))), [{ pane: 'detail' }, { replace: true }]);
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'no 「拡大」 for it');
-  // Already on 下読み, which holds the diff: nothing to switch, and it lands.
-  w.pane = 'detail';
-  w.calls.length = 0;
-  c.prdGoto('docs/x.md', 1, { place: 'read' });
   assert.ok(!w.calls.some(x => x[0] === 'gopane'));
   assert.deepStrictEqual(w.calls.find(x => x[0] === 'rgo').slice(1, 3), ['diff:docs/x.md', null]);
 });
@@ -533,22 +546,19 @@ test('a link meant for the middle of a task is dropped when the task on show is 
   assert.ok(!w.calls.some(x => x[0] === 'rgo'));
 });
 
-test('the draft buttons of the diff start a draft in a task\'s dialog: the column is where it appears, so no tab is switched', async () => {
+test('the comment buttons of the diff open an editor in a task\'s dialog, with no tab switched', async () => {
   const { w, c, run } = readWorld();
   c.cardDialog.mode = 'own-read';
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
   assert.strictEqual(c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'dialog' }), true);
-  assert.strictEqual(w.edits.length, 1);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: '' });
+  assert.deepStrictEqual(boxes(w, c).map(x => x[0]), ['new:src/a.rs|right|3']);
   assert.ok(!w.calls.some(x => x[0] === 'gopane'));
-  // The new box takes the keyboard in the dialog's column.
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'redraw')[1])), { sel: '[data-pr-body="p1"]', inDialog: true });
   // The explanation's own button, found by the selector the real DOM would match it by.
-  const btn = el({ prdAt: 'right:3' }, { closest: sel => (sel === '[data-prd-ann]' ? el({ prdAnn: '0' }) : null), matches: sel => sel === '[data-prd-todraft]' });
+  const btn = el({ prdAt: 'right:4' }, { closest: sel => (sel === '[data-prd-ann]' ? el({ prdAnn: '0' }) : null), matches: sel => sel === '[data-prd-todraft]' });
   const click = { target: { closest: sel => (sel.split(',').some(x => x.trim() === '[data-prd-todraft]') ? btn : null) } };
   assert.strictEqual(c.prdAct(click, { place: 'dialog' }), true);
-  assert.strictEqual(w.edits.length, 2);
+  assert.deepStrictEqual(boxes(w, c).map(x => x[0]), ['new:src/a.rs|right|3', 'new:src/a.rs|right|4']);
 });
 
 test('the diff is drawn in the dialog of a task\'s AI 下読み as it is in the review dialog', async () => {
@@ -564,4 +574,16 @@ test('the diff is drawn in the dialog of a task\'s AI 下読み as it is in the 
   assert.strictEqual(c.prdPlace('dialog'), null);
   c.cardDialog.mode = 'own-read';
   assert.ok(run('PRD_VIEWS.dialog.ready()'));
+});
+
+test('saving an edit keeps the head the comment was written on, and gives none to one that had none', async () => {
+  const { w, c } = await loaded();
+  const OLD = 'b'.repeat(40);
+  w.doc = { version: 1, fromSha: null, drafts: [{ key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'old', sha: OLD }, { key: 'p2', source: 'person', path: 'src/a.rs', body: 'older' }], overall: null };
+  const el = key => ({ dataset: { prdCmt: key }, querySelector: () => ({ value: 'edited' }) });
+  c.prView.boxes.set('acme/widget#1', new Map());
+  c.prdCommentAct('acme/widget#1', w.read, el('p1'), 'save');
+  c.prdCommentAct('acme/widget#1', w.read, el('p2'), 'save');
+  assert.deepStrictEqual(w.doc.drafts.map(d => [d.body, d.sha]), [['edited', OLD], ['edited', undefined]]);
+  assert.strictEqual(w.doc.fromSha, SHA, 'the document says which head the comments were last written on');
 });

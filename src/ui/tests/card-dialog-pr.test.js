@@ -1,5 +1,5 @@
 /* The 「拡大」 dialog of a PR waiting on your review (src/ui/pr-dialog.js) against a small stand-in for the dialog it fills: the
-   first fill marks nothing, a change while it is open is marked, and the column of drafts is never drawn under the caret.
+   first fill marks nothing, a change while it is open is marked, and the heading's 「レビューを送る」 counts the comments.
    Run with `node --test`. The task dialog's own machinery (card-dialog.js) is cut out of its file and run as it is. */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -22,7 +22,7 @@ const rec = (extra = {}) => ({ id: 'acme/widget#12', repo: 'acme/widget', number
 const readThrough = (purpose = 'P') => ({ sha: A, three: { purpose, approach: 'Ap', impact: 'Im', essence: 'Es' }, points: [], order: [], deleted: [], decisions: [], tests: {}, unwritten: [] });
 
 function world() {
-  const w = { rec: rec(), read: readThrough(), dock: 'DOCK v1', shown: [], marks: 0, pruned: 0, contentDraws: 0, closed: 0, focus: null, others: { doc: { hub: null }, asking: new Set() } };
+  const w = { rec: rec(), read: readThrough(), head: null, entry: { loaded: true }, doc: { drafts: [], overall: null }, shown: [], marks: 0, pruned: 0, contentDraws: 0, closed: 0, focus: null, others: { doc: { hub: null }, asking: new Set() } };
   const titleEl = { textContent: 'Round' };
   const body = { scrollTop: 0, getBoundingClientRect: () => ({ top: 0 }), focus() {} };
   const index = { innerHTML: '' };
@@ -32,9 +32,9 @@ function world() {
     querySelector: sel => sel === '#card-dialog-title' ? titleEl : sel === '.card-dialog-body' ? body : sel === '.card-dialog-index' ? index : null };
   const c = vm.createContext({
     selectedTaskId: 'pr:acme/widget#12', document: { get activeElement() { return w.focus; } }, tp: () => ({ hidden: false }), esc: x => String(x), CSS: { escape: x => x },
-    prView: { force: false }, prFocusKeep: () => null, prRestoreFocus: () => null, others: w.others, othersById: () => w.rec, othersRecords: () => [w.rec], othersHubView: () => ({ canRead: true, why: '' }), othersNowEst: () => 0,
+    others: w.others, othersById: () => w.rec, othersRecords: () => [w.rec], othersHubView: () => ({ canRead: true, why: '' }), othersNowEst: () => 0,
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3),
-    prReadOf: () => w.read, prReadEntry: () => w.readEntry, prDraftsBodyHtml: () => w.dock, PR_HOOKS: { diff: null },
+    prReadOf: () => w.read, prReadEntry: () => w.readEntry, prDraftsEntry: () => w.entry, prDoc: () => w.doc, cardDialogHead: a => { w.head = a; }, PR_HOOKS: { diff: null },
     cardDialogEl: () => dlg, cardDialogContent: () => content, cardDialogDockEl: () => col,
     cardDialogStrip() {}, cardDialogFill: () => ({}), cardDialogFocusOf: () => null, cardDialogFocusBack() {}, cardDialogCardEl: () => null,
     cardDialogMarkUpdated: () => { w.marks++; }, cardDialogShowUpdate: ch => { w.shown.push(ch); }, cardDialogPruneUpdate: () => { w.pruned++; }, cardDialogSpy() {},
@@ -47,8 +47,7 @@ function world() {
     cut(dlgSrc, /^const cardDialogSigOf = [^\n]*;/m), cut(dlgSrc, /^const cardDialogCardSigs = [^\n]*;/m),
     cut(read('task-view.js'), /^const HISTORY_LOADING = [^\n]*;/m), cut(read('task-view.js'), /^const DIFF_LOADING = [^\n]*;/m),
     ...['cardDialogChanged', 'cardDialogTaskHtml'].map(n => fnSrc(dlgSrc, n)),
-    cut(read('pr-panel.js'), /^const prBoxFocused = [^\n]*;/m),
-    fnSrc(read('pr-dialog.js'), 'prFocusSel'), fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPaint'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'keepReadingPlace'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
+    fnSrc(read('pr-dialog.js'), 'prDialogSync'), fnSrc(read('pr-dialog.js'), 'prDialogPaint'), fnSrc(read('pr-dialog.js'), 'prDialogPatch'), fnSrc(read('pr-dialog.js'), 'keepReadingPlace'), fnSrc(read('pr-dialog.js'), 'prDialogWithoutDiff'),
     cut(read('pr-dialog.js'), /^const prDialogDrawn = [^\n]*;/m),
     cut(read('pr-dialog.js'), /^const PR_DIALOG_GONE = [^\n]*;\nconst PR_DIALOG_NO_READ = [^\n]*;\nconst PR_DIALOG_NO_SPLIT = [^\n]*;/m),
     "cardDialog.mode = 'review'; cardDialog.subject = 'pr:acme/widget#12';",
@@ -64,8 +63,9 @@ test('the first fill marks nothing, and what is drawn is the groups of the read-
   assert.deepStrictEqual(w.shown, []);
   assert.strictEqual(state('cardDialog.updated.size'), 0);
   assert.strictEqual(w.contentDraws, 1);
-  assert.strictEqual(col.innerHTML, 'DOCK v1');
-  assert.strictEqual(col.hidden, false);
+  // With a read-through there is no column: the comments are on the diff's lines.
+  assert.strictEqual(col.innerHTML, '');
+  assert.strictEqual(col.hidden, true);
   assert.deepStrictEqual(state('JSON.stringify(cardDialog.groups.map(g => g.key))'), '["top","about"]');
   // Nothing changed: nothing is drawn again, and nothing is marked.
   sync();
@@ -84,23 +84,58 @@ test('a change of what the reader said marks that card and tells the person', ()
   assert.ok(w.marks >= 1);
 });
 
-test('a box of the column with the caret in it holds the column\'s redraw, and the text in it is not touched', () => {
-  const { w, col, sync, state } = world();
+test('the heading has 「レビューを送る」 with the count of what a push would send, once the drafts are loaded and while a read-through exists', () => {
+  const { w, sync } = world();
+  const doc = (...d) => ({ drafts: d, overall: null });
+  const line = (key, extra = {}) => ({ key, source: 'person', path: 'a.rs', line: 1, side: 'right', body: 'x', ...extra });
+  w.doc = doc(line('p1'), line('p2'), line('p3', { sentAt: '20261001T000000Z' }), line('p4', { path: undefined }), line('p5', { body: ' ' }));
   sync(true, true);
-  const box = { inDock: true, matches: sel => sel.includes('.pr-draft-body'), dataset: {} };
-  w.focus = box;
-  w.dock = 'DOCK v2 (typed text is in the document now)';
-  w.read = readThrough('Changed while typing');
+  // Only the ones with a file and a text that are not sent yet.
+  assert.ok(w.head.acts.includes('data-pr-send="pending"') && w.head.acts.includes('<span class="pr-send-count">2</span>'), w.head.acts);
+  w.doc = doc();
   sync();
-  // The column stays as it was and is owed a redraw; the content, which has no box, goes on following.
-  assert.strictEqual(col.innerHTML, 'DOCK v1');
-  assert.strictEqual(state('cardDialog.held'), true);
-  assert.strictEqual(w.shown.length, 1);
-  // Focus leaves: the redraw is made.
-  w.focus = null;
+  assert.ok(w.head.acts.includes('data-pr-send="pending"') && !w.head.acts.includes('pr-send-count'));
+  // The drafts are not in yet: no button; nor before a read-through.
+  w.entry = { loaded: false };
   sync();
-  assert.strictEqual(col.innerHTML, 'DOCK v2 (typed text is in the document now)');
-  assert.strictEqual(state('cardDialog.held'), false);
+  assert.strictEqual(w.head.acts, '');
+  w.entry = { loaded: true };
+  w.read = null;
+  w.rec = rec({ ai: undefined });
+  sync();
+  assert.strictEqual(w.head.acts, '');
+});
+
+test('the button is off, with its reason, while the PR is not live', () => {
+  const { w, sync } = world();
+  w.rec = rec({ state: 'merged' });
+  sync(true, true);
+  assert.ok(/data-pr-send="pending"[^>]* disabled title="/.test(w.head.acts), w.head.acts);
+});
+
+test('a change of the comments alone changes the heading and not the content', () => {
+  const { w, sync } = world();
+  sync(true, true);
+  const draws = w.contentDraws;
+  w.doc = { drafts: [{ key: 'p1', source: 'person', path: 'a.rs', line: 1, body: 'x' }], overall: null };
+  sync();
+  assert.ok(w.head.acts.includes('pr-send-count'));
+  assert.strictEqual(w.contentDraws, draws);
+});
+
+test('before a read-through the column says what one brings, with the button that asks for it, and has no 下書き', () => {
+  const { w, col, sync } = world();
+  w.read = null;
+  w.rec = rec({ ai: undefined, state: 'requested' });
+  sync(true, true);
+  assert.ok(col.innerHTML.includes('AI 下読みすると、差分の行の解説と気になるところが入ります。'), col.innerHTML);
+  assert.ok(col.innerHTML.includes('data-pr-ai'));
+  assert.ok(!col.innerHTML.includes('下書き'));
+  assert.strictEqual(col.hidden, false);
+  // A PR out of review has no read to ask for: a proposal fills the overall comment of the send dialog.
+  w.rec = rec({ ai: undefined, files: [{ path: 'src/big.rs', additions: 2000, deletions: 0, change: 'modified' }] });
+  sync(true);
+  assert.ok(col.innerHTML.includes('分割案が「レビューを送る」の全体のコメントに入ります。') && !col.innerHTML.includes('下書き'), col.innerHTML);
 });
 
 test('a PR that is gone says so and keeps what it showed; a panel that moved on closes the dialog quietly', () => {
@@ -183,21 +218,6 @@ test('onDrawn runs right after the content is replaced, and the target is applie
   d.order.length = 0;
   sync();
   assert.deepStrictEqual(d.order, []);
-});
-
-test('a change of the drafts column alone does not replace the content, however many files the diff has', () => {
-  const { w, c, col, sync } = world();
-  const d = {};
-  withDiff(w, c, d);
-  d.paths = ['a.rs', 'b.rs'];
-  sync(true, true);
-  const draws = w.contentDraws;
-  const drawn = d.drawn;
-  w.dock = 'DOCK v2';
-  sync();
-  assert.strictEqual(col.innerHTML, 'DOCK v2');
-  assert.strictEqual(w.contentDraws, draws);
-  assert.strictEqual(d.drawn, drawn);
 });
 
 /* A stand-in for the dialog's content: groups as sections, each with a title and cards, that can be replaced one by one. */

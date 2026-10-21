@@ -1,13 +1,15 @@
-/* ── The annotated diff on the page: the 差分 group of 「拡大」 (a review request's, and a task's own AI 下読み dialog) and of the read-through in the middle (a review request's 下読み tab) ──
+/* ── The annotated diff on the page: the 差分 group of 「拡大」 (a review request's, and a task's own AI 下読み dialog) and of the read-through in the middle (a review request's) ──
    pr-diff.js is the pure half (parsing, categories, anchoring, markup); this file holds what the page keeps: the diff of each PR
    as `GET /api/others/diff` answered it (applied only to its own PR and read-through), which closed files were opened, which
-   files are drawn, and what a click does. It sets `PR_HOOKS.diff`, which pr-panel.js, pr-read.js and pr-dialog.js call. Two places
+   files are drawn, the person's comments on their lines, and what a click does. It sets `PR_HOOKS.diff`, which pr-panel.js, pr-read.js and pr-dialog.js call. Two places
    draw it: `dialog` and `read` (the middle, which task-read-view.js registers in `PRD_VIEWS`).
    Loaded after pr-dialog.js.
 
-   The markup a hook returns has no time, no draft and no open-file state in it (pr-diff.js), because the middle and the dialog
+   The markup a hook returns has no time, no comment and no open-file state in it (pr-diff.js), because the middle and the dialog
    draw again only when the markup differs. What is on is set in place afterwards (`prdApply`), so opening a file never redraws, and a
-   file's lines are put in its body from a cache (`bodies`) rather than drawn again, also after the dialog replaced its content. */
+   file's lines are put in its body from a cache (`bodies`) rather than drawn again, also after the dialog replaced its content. The
+   comments are put in the same way (`prdComments`): they are the drafts' document and the editors being typed in (`prView.boxes`) made
+   into elements on their lines, and an element that is being typed in is never replaced. */
 
 /* A diff of at most this many rows is drawn whole at once; a bigger one file by file, as each comes near the screen. */
 const PRD_EAGER_ROWS = 2000;
@@ -202,6 +204,7 @@ function prdApply(id, e, p) {
     if (body) body.hidden = !open;
     s.querySelector('[data-prd-open]')?.toggleAttribute('hidden', open);
   });
+  prdComments(id, e, p.root);
 }
 
 /* Whether the annotations' 「聞く」 is on: the PR on show has a reader to type to. */
@@ -230,6 +233,10 @@ function prdFillBody(e, place, el) {
   }
   prdAskState(el, open);
   e.filled[place].add(i);
+  // The comments of its lines, which the body's markup does not have.
+  const root = place === 'dialog' ? cardDialogContent() : document.getElementById('task-read-content');
+  const id = prShown()?.id;
+  if (root && id) prdComments(id, e, root, i);
 }
 
 /* Bring `place` up to date: attributes in place, the files that were filled before filled again (a redraw emptied them), and the
@@ -323,28 +330,222 @@ function prdGoto(path, line, { place = 'read' } = {}) {
   const id = prShown()?.id;
   if (!id) return;
   prDiff.target = { id, path, line: line || null, at: Date.now() };
-  // The diff is part of a review request's 下読み tab: a link from the 下書き tab goes back there first.
-  if (place === 'read' && prShown().kind === 'pr' && nav.pane !== 'detail') go({ pane: 'detail' }, { replace: true });
   prdApplyTarget();
 }
 
 /* ── clicks ── */
 
-/* A draft of the person's own from a line, or from a file when the annotation has no line: as 「下書きに」 of a point does, the
-   middle goes to the 下書き tab and the new box takes the keyboard; in 「拡大」 the box appears in the column and the diff stays. */
-function prdStartDraft(rec, read, { path, at, body }, inDialog) {
-  const id = rec.id;
-  if (!prDraftsEntry(id).loaded) {
-    note('下書き', true, '下書きを読み込んでいます。少し待ってからもう一度押してください');
+/* ── the person's comments on the lines ── */
+
+/* Whether `el` is being typed in: a comment's box with the keyboard. Such an element is never replaced or drawn again. */
+const prdTyping = el => !!el && !!document.activeElement && el.contains(document.activeElement) && document.activeElement.matches?.('textarea');
+/* The state of an element's buttons and box, set in place since it changes without the markup: everything is off while the comments are being put
+   into a pending review or handed to a worker, and 「コメントを足す」 and 「保存」 while the box is blank. */
+function prdCmtControls(el, locked) {
+  const text = el.querySelector('textarea')?.value ?? '';
+  el.querySelectorAll('button, textarea').forEach(c => {
+    c.disabled = locked || (c.matches('[data-prd-cmt-act="add"], [data-prd-cmt-act="save"]') && !text.trim());
+  });
+}
+/* 「コメントにする」 of a concern is hidden while a comment from the reader already sits on its line, so that one concern is not added twice. */
+function prdConcernState(scope, e, doc) {
+  scope.querySelectorAll('.prd-ann-concern [data-prd-todraft]').forEach(b => {
+    const at = prDiffAtOf(b.dataset.prdAt);
+    const f = e.layout.files[Number(b.closest('[data-prd-file]')?.dataset.prdFile)];
+    const has = !!at && !!f && (doc?.drafts || []).some(d => d.source === 'reader' && d.path === f.path && (d.side === 'left' ? 'left' : 'right') === at.side && d.line === at.line);
+    b.toggleAttribute('hidden', has);
+  });
+}
+
+/* Make the comment elements of `root` match the drafts' document and the open editors: add the ones that are missing, take away those whose comment is
+   gone or moved, and draw again those whose text or state changed. A line's comments sit under its annotations and the comments of the last
+   review, a file's in the slot under its header. An element whose box has the keyboard is left as it is, and the files whose body is not filled yet
+   get theirs when they are (`prdFillBody`). `only` is the index of the one file to bring up to date (the rest of `root` is not looked at). */
+function prdComments(id, e, root, only = null) {
+  if (!root || e.state !== 'ok') return;
+  const entry = prDraftsEntry(id);
+  const doc = prDoc(id, e.read);
+  const boxes = prView.boxes.get(id);
+  const shown = prShown();
+  const failed = new Map((entry.pendResult?.failed || []).map(f => [f.key, f.why]));
+  // One file's comments are made from that file's drafts and editors only: a diff of many files is filled file by file.
+  const file = only == null ? null : e.layout.files[only];
+  const mine = only == null ? doc : { ...doc, drafts: (doc.drafts || []).filter(d => d.path === file?.path) };
+  const mineBoxes = only == null || !boxes ? boxes : new Map([...boxes].filter(([, b]) => b.kind !== 'new' || b.path === file?.path));
+  const items = prdCommentItems(e.layout.files, mine, mineBoxes, { readSha: e.read?.sha, to: shown?.id === id && shown.kind === 'task' ? 'worker' : 'pending', failed })
+    .filter(x => only == null || x.i === only);
+  const locked = !!(entry.pending || entry.handing);
+  const scope = only == null ? root : root.querySelector(`[data-prd-file="${only}"]`);
+  if (!scope) return;
+  const have = new Map();
+  scope.querySelectorAll('[data-prd-cmt]').forEach(el => have.set(el.dataset.prdCmt, el));
+  const cards = new Map();
+  const card = i => {
+    if (!cards.has(i)) cards.set(i, only === i ? scope : root.querySelector(`[data-prd-file="${i}"]`));
+    return cards.get(i);
+  };
+  const placed = new Set();
+  // Where the last comment of a line (or of a file's slot) went, so that the next one follows it.
+  const tail = new Map();
+  for (const item of items) {
+    const sec = card(item.i);
+    const body = sec?.querySelector('[data-prd-body]');
+    let anchor;
+    let slot = null;
+    if (item.k != null) {
+      // The line is drawn only once its file's body is filled.
+      if (!body || body.dataset.prdFilled !== String(e.gen)) continue;
+      const row = body.querySelector(`[data-prd-i="${item.k}"]`);
+      if (!row) continue;
+      anchor = row;
+      while (anchor.nextElementSibling?.classList?.contains('prd-ann')) anchor = anchor.nextElementSibling;
+    } else {
+      slot = sec?.querySelector('[data-prd-fcmts]');
+      if (!slot) continue;
+    }
+    const place = `${item.i}:${item.k ?? 'file'}`;
+    let el = have.get(item.key);
+    // A box being typed in is kept while it is still that editor; one that an action closed (保存, コメントを足す, やめる) is replaced even with
+    // the keyboard in it, since a browser that does not move focus to a pressed button leaves it there.
+    const keep = !!el && prdTyping(el) && ['new', 'edit'].includes(item.kind) && el.dataset.prdKind === item.kind;
+    if (el && el.dataset.prdSig !== item.sig && !keep) {
+      const act = el.contains(document.activeElement) ? document.activeElement.dataset?.prdCmtAct : undefined;
+      const fresh = prdCmtEl(item);
+      el.replaceWith(fresh);
+      el = fresh;
+      if (act !== undefined) (el.querySelector(`[data-prd-cmt-act="${act}"]`) || el.querySelector('textarea, button'))?.focus({ preventScroll: true });
+    } else if (!el) el = prdCmtEl(item);
+    const prev = tail.get(place);
+    if (!keep || !el.isConnected) {
+      if (slot) {
+        if (prev ? prev.nextElementSibling !== el : slot.firstElementChild !== el) slot.insertBefore(el, prev ? prev.nextSibling : slot.firstChild);
+      } else if ((prev || anchor).nextElementSibling !== el) (prev || anchor).after(el);
+    }
+    tail.set(place, el);
+    placed.add(item.key);
+    prdCmtControls(el, locked);
+    const typed = boxes?.get(item.key);
+    if (typed?.focus && ['new', 'edit'].includes(item.kind)) {
+      typed.focus = false;
+      el.querySelector('textarea')?.focus();
+    }
+  }
+  have.forEach((el, key) => { if (!placed.has(key)) el.remove(); });
+  prdConcernState(scope, e, doc);
+}
+function prdCmtEl(item) {
+  const t = document.createElement('template');
+  t.innerHTML = item.html;
+  const el = t.content.firstElementChild;
+  el.dataset.prdSig = item.sig;
+  el.dataset.prdKind = item.kind;
+  return el;
+}
+/* The comments of the PR `id` are brought up to date wherever its diff is drawn: after an edit of the drafts, a push or a hand-over, and when the
+   drafts file arrives. */
+function prdCommentsAll(id) {
+  const cur = prdCurrent();
+  if (!cur || cur.id !== id) return;
+  for (const place of ['dialog', 'read']) {
+    const p = prdPlace(place);
+    if (p) prdComments(id, cur.e, p.root);
+  }
+}
+/* What the send dialog needs of the diff: the layout's files, null when there is no diff to show (none stored, too big, empty, unreadable) and
+   undefined while it is on its way, so that a comment is not said to be off the diff before the diff has come. */
+function prdEntriesOf(id) {
+  const e = prDiff.cache.get(id);
+  if (!e || e.state === 'loading' || e.state === 'error' || e.key !== e.wanted) return undefined;
+  return e.state === 'ok' ? e.layout.files : null;
+}
+
+/* The editors open for the PR `id`, as the page holds them. */
+const prBoxesOf = id => {
+  let m = prView.boxes.get(id);
+  if (!m) prView.boxes.set(id, m = new Map());
+  return m;
+};
+/* Open an editor for a new comment on the line `at` (`{ side, line }`) of `path`, or on the file with no `at`; the text starts as `text`. One
+   editor per line: one that is open is given the keyboard, and filled when it is blank. Nothing is stored until 「コメントを足す」. */
+function prdOpenBox(id, { path, at = null, text = '', source = 'person' }) {
+  const boxes = prBoxesOf(id);
+  const spec = { kind: 'new', path, side: at?.side === 'left' ? 'left' : 'right', line: at?.line ?? null, source, text, focus: true };
+  const key = prdBoxKey(spec);
+  const old = boxes.get(key);
+  if (!old) boxes.set(key, spec);
+  else {
+    old.focus = true;
+    if (text && !String(old.text).trim()) {
+      Object.assign(old, { text, source });
+      document.querySelectorAll('[data-prd-box]').forEach(ta => { if (ta.dataset.prdBox === key && ta.value !== text) ta.value = text; });
+    }
+  }
+  prdCommentsAll(id);
+}
+
+/* A comment's box is typed in: its text is kept in the page (never stored before 「コメントを足す」 or 「保存」), and the button that needs text follows it. */
+function prdInput(e) {
+  const t = e.target;
+  if (!t?.matches?.('[data-prd-box]')) return false;
+  const id = prShown()?.id;
+  const box = id ? prView.boxes.get(id)?.get(t.dataset.prdBox) : null;
+  if (box) box.text = t.value;
+  const el = t.closest('[data-prd-cmt]');
+  if (el) prdCmtControls(el, false);
+  return true;
+}
+
+/* The buttons of a comment: 編集, 削除, 保存, やめる and コメントを足す. */
+function prdCommentAct(id, read, el, act) {
+  const key = el.dataset.prdCmt;
+  const boxes = prBoxesOf(id);
+  const doc = prDoc(id, read);
+  const typed = () => el.querySelector('textarea')?.value ?? boxes.get(key)?.text ?? '';
+  // What cannot be edited now says why (the buttons are off while it is the case, but a key press could still get here).
+  const refused = () => prEditRefused(id);
+  if (act === 'edit') {
+    const d = doc.drafts.find(x => x.key === key);
+    if (d && !d.sentAt) boxes.set(key, { kind: 'edit', text: d.body, focus: true });
+  } else if (act === 'cancel') boxes.delete(key);
+  else if (act === 'delete') {
+    if (!prEditDrafts(id, read, d => { d.drafts = d.drafts.filter(x => x.key !== key); })) return refused();
+    boxes.delete(key);
+  } else if (act === 'save') {
+    const text = typed();
+    if (!text.trim()) return;
+    if (!prEditDrafts(id, read, d => {
+      const x = d.drafts.find(y => y.key === key);
+      // The line is not placed again by an edit, so the head it was written on stays.
+      if (x) x.body = text;
+      prStampDoc(d, read);
+    })) return refused();
+    boxes.delete(key);
+  } else if (act === 'add') {
+    const box = boxes.get(key);
+    const text = typed();
+    if (!box || !text.trim()) return;
+    if (!prEditDrafts(id, read, d => {
+      d.drafts.push(prDiffDraft(d, { path: box.path, line: box.line, side: box.side, body: text, source: box.source, sha: read?.sha }));
+      prStampDoc(d, read);
+    })) return refused();
+    boxes.delete(key);
+  } else return;
+  prDraftsChanged(id);
+}
+
+/* 「コメントにする」 of a point of a read-through of the older form: an editor on the point's line of the diff (on its file with no line), filled with
+   the point's words, and the diff goes there. Said, and nothing done, when the diff cannot be shown. */
+function prdPointComment(point, place) {
+  const cur = prdCurrent();
+  const f = cur?.e.layout.files.find(x => x.path === point?.path);
+  if (!cur || !f) {
+    note('コメント', true, !cur ? 'この PR の差分を表示できないので、コメントを書けません（差分が保存されていないか、まだ読み込み中です）' : `差分に ${point?.path} がないので、コメントを書けません`);
     return;
   }
-  if (!inDialog && nav.pane !== 'drafts') go({ pane: 'drafts' }, { replace: true });
-  const key = prNextKey(prDoc(id, read), 'p');
-  if (prEditDrafts(id, read, d => { d.drafts.push(prDiffDraft(d, { path, line: at?.line, side: at?.side, body })); })) {
-    prRedrawNow({ sel: `[data-pr-body="${CSS.escape(key)}"]`, inDialog });
-  } else if (prDraftsEntry(id).handing) {
-    note('下書き', true, 'worker に渡しているあいだは、下書きを変えられません');
-  }
+  // A point's line is a new number; one that is a removed line's old number goes to the left.
+  const side = point.line && prDiffFindAt(f.file, 'right', point.line) == null && prDiffFindAt(f.file, 'left', point.line) != null ? 'left' : 'right';
+  prdOpenBox(cur.id, { path: point.path, at: point.line ? { side, line: point.line } : null, text: `${point.title}: ${point.why}` });
+  prdGoto(point.path, point.line, { place });
 }
 
 /* The click of a button of the diff. True when it was one. */
@@ -353,7 +554,6 @@ function prdAct(e, { place = 'read' } = {}) {
   const cur = prdCurrent();
   if (!cur) return false;
   const { id, e: entry } = cur;
-  const inDialog = place === 'dialog';
   const rec = prRecOf(id);
   const read = prReadOf(rec) || null;
   let b;
@@ -362,20 +562,27 @@ function prdAct(e, { place = 'read' } = {}) {
     if (f) { prDiff.open.add(`${id}|${f.path}`); prdSyncAll(); }
     return true;
   }
+  if ((b = hit('[data-prd-cmt-act]'))) {
+    const el = b.closest('[data-prd-cmt]');
+    if (el && !b.disabled) prdCommentAct(id, read, el, b.dataset.prdCmtAct);
+    return true;
+  }
   if ((b = hit('[data-prd-plus]'))) {
     const f = entry.layout.files[Number(b.closest('[data-prd-file]')?.dataset.prdFile)];
-    if (f && rec) prdStartDraft(rec, read, { path: f.path, at: prDiffAtOf(b.dataset.prdPlus), body: '' }, inDialog);
+    if (f && rec) prdOpenBox(id, { path: f.path, at: prDiffAtOf(b.dataset.prdPlus) });
     return true;
   }
   if ((b = hit('[data-prd-todraft], [data-prd-ask]'))) {
     const ann = read?.annotations?.[Number(b.closest('[data-prd-ann]')?.dataset.prdAnn)];
     if (!ann || !rec) return true;
     const at = prDiffAtOf(b.dataset.prdAt);
-    // A concern's draft is the comment for the author; the others' own text is what the reader said of the line.
-    if (b.matches('[data-prd-todraft]')) prdStartDraft(rec, read, { path: ann.path, at, body: ann.kind === 'concern' && ann.draft != null ? ann.draft : ann.text }, inDialog);
-    else {
+    if (b.matches('[data-prd-todraft]')) {
+      // 解説's 「コメント」 is its line's 「＋」; a concern's 「コメントにする」 brings the reader's draft (else its text) as a comment of the reader's.
+      if (ann.kind === 'concern') prdOpenBox(id, { path: ann.path, at, text: String(String(ann.draft ?? '').trim() ? ann.draft : ann.text ?? ''), source: 'reader' });
+      else prdOpenBox(id, { path: ann.path, at });
+    } else {
       // Leaving for the terminal: the dialog goes first, and focus is not given back to the middle.
-      if (inDialog) { cardDialog.quiet = true; closeCardDialog(); }
+      if (place === 'dialog') { cardDialog.quiet = true; closeCardDialog(); }
       prAsk({ path: ann.path, line: at?.line, title: String(ann.text).slice(0, 40) });
     }
     return true;
@@ -384,7 +591,7 @@ function prdAct(e, { place = 'read' } = {}) {
 }
 
 PR_HOOKS.diff = {
-  dialogFileHtml: prdDialogFileHtml, goto: prdGoto,
+  dialogFileHtml: prdDialogFileHtml, goto: prdGoto, comments: prdCommentsAll, entries: prdEntriesOf, input: prdInput, pointComment: prdPointComment,
   onMoved: prdOnMoved, onDrawn: prdOnDrawn, onDrawnAt: prdOnDrawnAt, applyTarget: prdApplyTarget, act: prdAct,
   dialogPaths: prdDialogPaths, dialogHeadHtml: prdDialogHeadHtml, dialogLabel: prdDialogLabel,
 };

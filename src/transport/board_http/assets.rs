@@ -68,6 +68,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/pr-diff-view.js"),
     include_str!("../../ui/task-read-view.js"),
     include_str!("../../ui/task-read-drafts.js"),
+    include_str!("../../ui/pr-send.js"),
     include_str!("../../ui/todo.js"),
     include_str!("../../ui/todo-view.js"),
     include_str!("../../ui/main.js"),

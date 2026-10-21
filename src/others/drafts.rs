@@ -5,6 +5,8 @@
 //! keys, so a page's typo is an error and not a field that is silently dropped. The stored form
 //! keeps unknown keys (rule 10), so a newer binary may add keys beside these.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::read_through::{Side, is_sha};
@@ -16,7 +18,7 @@ pub const MAX_DRAFT_CHARS: usize = 20_000;
 const MAX_KEY_CHARS: usize = 64;
 /// The drafts and the overall comment together, as compact JSON. The page saves them in one
 /// request, and the HTTP layer takes a body of at most 1 MiB; half of that is left for the keys the
-/// page adds when it seeds a read-through's drafts, the id and the escaping of a body. The per-field
+/// page adds to each draft (key, source, side), the id and the escaping of a body. The per-field
 /// limits alone allow far more (300 bodies of 20000 characters).
 pub const MAX_DRAFTS_BYTES: usize = 512 * 1024;
 pub(super) const MAX_PATH_CHARS: usize = 1024;
@@ -34,15 +36,19 @@ pub struct DraftsInput {
     /// Absent is 1.
     #[serde(default = "first_version")]
     pub version: u32,
-    /// The head of the read-through the reader's drafts were last taken from.
+    /// The head of the read-through the person's comments were last written on.
     #[serde(default)]
     pub from_sha: Option<String>,
-    /// What that read-through was: `read` or `split`; absent is `read`. A change of mode with the
-    /// same head is a new read-through to the page, which offers what it brought.
+    /// What that read-through was: `read` or `split`; absent is `read`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_mode: Option<String>,
     #[serde(default)]
     pub drafts: Vec<DraftItem>,
+    /// The head of the read-through whose diff each comment was written on, by the comment's key.
+    /// A top-level key, not a field of a draft: an older binary keeps reading a file that has it
+    /// (`DraftItem` refuses unknown fields; unknown top-level keys are left out of `input`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shas: BTreeMap<String, String>,
     #[serde(default)]
     pub overall: Option<OverallDraft>,
 }
@@ -118,7 +124,9 @@ impl StoredDrafts {
 }
 
 /// The keys of `DraftsInput`: what `StoredDrafts::input` reads out of the rest of the file.
-pub(super) const INPUT_KEYS: [&str; 5] = ["version", "fromSha", "fromMode", "drafts", "overall"];
+pub(super) const INPUT_KEYS: [&str; 6] = [
+    "version", "fromSha", "fromMode", "drafts", "shas", "overall",
+];
 
 /// What adj has put into the person's pending review on GitHub: the top-level `pending` of the
 /// drafts file. Keys this binary does not know are kept (rule 10).
@@ -271,6 +279,14 @@ pub fn validate(input: &DraftsInput) -> Vec<String> {
             problems.push(format!(
                 "{at}: sentAt must be a stamp like 20261001T000000Z, or left out"
             ));
+        }
+    }
+    for (key, sha) in &input.shas {
+        if !input.drafts.iter().any(|d| &d.key == key) {
+            problems.push(format!("shas[{key}]: names no draft"));
+        }
+        if !is_sha(sha) {
+            problems.push(format!("shas[{key}]: must be 40 lower-case hex digits"));
         }
     }
     if let Some(overall) = &input.overall

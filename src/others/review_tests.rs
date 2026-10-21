@@ -1883,6 +1883,22 @@ fn drafts_that_break_the_contract_are_refused_whole_and_leave_nothing() {
         ("a wrong version", Box::new(|v| v["version"] = json!(2))),
         ("a short fromSha", Box::new(|v| v["fromSha"] = json!("abc"))),
         (
+            "a short sha for a draft",
+            Box::new(|v| v["shas"] = json!({"r1": "abc"})),
+        ),
+        (
+            "an upper-case sha for a draft",
+            Box::new(|v| v["shas"] = json!({"r1": SHA.to_uppercase()})),
+        ),
+        (
+            "a sha for a draft that is not there",
+            Box::new(|v| v["shas"] = json!({"nope": SHA})),
+        ),
+        (
+            "a sha inside a draft",
+            Box::new(|v| v["drafts"][0]["sha"] = json!(SHA)),
+        ),
+        (
             "an unknown fromMode",
             Box::new(|v| v["fromMode"] = json!("summary")),
         ),
@@ -1976,6 +1992,31 @@ fn drafts_that_break_the_contract_are_refused_whole_and_leave_nothing() {
         );
         no_drafts_written(root.path());
     }
+}
+
+#[test]
+fn the_heads_comments_were_written_on_are_a_top_level_map_that_older_binaries_do_not_see() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), record(1));
+    let mut v = drafts_input();
+    v["shas"] = json!({"r1": SHA});
+    let saved = save(root.path(), 1, &v).unwrap();
+    assert_eq!(saved["shas"], json!({"r1": SHA}));
+    // A draft written before the map existed has none, and a file without it is valid.
+    assert!(saved["drafts"][0].get("sha").is_none());
+    assert_eq!(drafts(root.path(), &pr(1)).unwrap(), Some(saved.clone()));
+    let without = save(root.path(), 1, &drafts_input()).unwrap();
+    assert!(without.get("shas").is_none());
+    // What an older binary reads: its draft items (which refuse unknown fields) and its own top-level
+    // keys; a file with `shas` must still read through `input()` as long as the drafts are as before.
+    let mut stored: super::drafts::StoredDrafts = serde_json::from_value(saved).unwrap();
+    assert!(stored.input().is_ok());
+    stored.rest.insert("shas".to_string(), json!({"r1": SHA}));
+    stored.rest.insert("fromTheFuture".to_string(), json!(1));
+    assert_eq!(stored.input().unwrap().shas.len(), 1);
+    let item: Result<super::drafts::DraftItem, _> =
+        serde_json::from_value(json!({"key": "a", "source": "person", "sha": SHA}));
+    assert!(item.is_err(), "a draft item still refuses unknown fields");
 }
 
 #[test]

@@ -188,6 +188,8 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         "function prShown(",
         "function prSaveSettled(",
         "function taskReadHand(",
+        "function prSendOpen(",
+        "function prSendSync(",
         "function prRecOf(",
         "function markIndexCurrent(",
         "function scrollToCard(",
@@ -201,16 +203,24 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     ] {
         assert_eq!(UI_HTML.matches(function).count(), 1, "{function}");
     }
-    // What a later change builds on.
+    // What a later change builds on. The dialog that sends the comments is one, and the column of drafts is gone.
     for piece in [
-        "const OWN_HOOKS = { drafts: null }",
-        "OWN_HOOKS.drafts = {",
         "data-drafts=\"off\"",
-        "id=\"tp-read-drafts\"",
+        "id=\"review-send-dialog\"",
+        "const prSend = {",
         "let pendingOwnRead = null",
         "data-own-read=",
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    assert_eq!(UI_HTML.matches("id=\"review-send-dialog\"").count(), 1);
+    for gone in [
+        "OWN_HOOKS",
+        "id=\"tp-read-drafts\"",
+        "function prDraftsHtml(",
+        "function prDrawDrafts(",
+    ] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
     }
     // The scripts share one scope and run in order: the pure half after the diff's, the page's half after the diff's page half and
     // before the entry point, which draws the first screen.
@@ -219,9 +229,9 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
     assert!(at("function taskReadHeadMode(") < at("function prShown("));
     assert!(at("function prdGoto(") < at("function taskReadShown("));
     assert!(at("function taskReadShown(") < at("function setView("));
-    // The drafts' hook is set after the view that declares it, and before the entry point that draws the first screen.
-    assert!(at("const OWN_HOOKS = {") < at("OWN_HOOKS.drafts = {"));
-    assert!(at("OWN_HOOKS.drafts = {") < at("function setView("));
+    // The send dialog's script comes after the hand-over it calls and before the entry point that draws the first screen.
+    assert!(at("function taskReadHand(") < at("const prSend = {"));
+    assert!(at("const prSend = {") < at("function setView("));
     // The tabs are above the head of the middle, and the read-through is beside the terminal's pane, not inside it.
     assert!(at("id=\"wk-mid-row\"") < at("id=\"wk-term-head\""));
     assert!(at("id=\"wk-term-pane\"") < at("id=\"task-read\""));
@@ -235,12 +245,9 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         assert!(at("id=\"wk-term-host\"") < at(id), "{id}");
     }
     assert!(at(".prd-stale {") < at(".wk-mid-row {"));
-    // The review request's tabs control the read-through, which names them back.
-    assert!(
-        UI_HTML.contains(
-            "id=\"task-read\" role=\"tabpanel\" aria-labelledby=\"wk-mid-tab-pr-detail\""
-        )
-    );
+    // A review request's read-through is one view with no tabs: nothing names a tab, and the read-through is not a tab's panel.
+    assert!(!UI_HTML.contains("wk-mid-tab-pr-"));
+    assert!(!UI_HTML.contains("id=\"task-read\" role=\"tabpanel\""));
 }
 
 #[test]

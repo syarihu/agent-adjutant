@@ -15,8 +15,10 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
+const prdBoxKey = vm.runInContext('prdBoxKey', ctx);
 const { prParseDiff, prDiffCategory, prDiffIsGenerated, prDiffLayout, prDiffAnchor, prDiffCommentBlock, prDiffResolve, prDiffDraft, prDiffSideOf,
-  prDiffShownNo, prDiffFindLine, prDiffBarHtml, prDiffShellHtml, prDiffBodyHtml, prDiffLabels, prDiffAtOf, prdAnnHtml, prDiffExcerptHtml } = ctx;
+  prDiffShownNo, prDiffFindLine, prDiffFindAt, prDiffPlaceOf, prDiffUnplaced, prdCommentHtml, prdCommentItems,
+  prDiffBarHtml, prDiffShellHtml, prDiffBodyHtml, prDiffLabels, prDiffAtOf, prdAnnHtml, prDiffExcerptHtml } = ctx;
 
 const SAMPLE = [
   'diff --git a/src/a.rs b/src/a.rs',
@@ -196,7 +198,7 @@ test('annotations are resolved to lines, tints, unanchored ones and orphans', ()
   assert.strictEqual(r.files.get('docs/new.md').count, 0);
 });
 
-test('one number column, GitHub sides, and a draft with an empty body', () => {
+test('one number column, GitHub sides, and a comment with an empty body', () => {
   const [a] = prParseDiff(SAMPLE);
   const [ctx1, del, add] = a.all;
   assert.deepStrictEqual(plain([prDiffShownNo(ctx1), prDiffShownNo(del), prDiffShownNo(add), prDiffShownNo(a.all[7])]), [1, 2, 2, null]);
@@ -204,6 +206,9 @@ test('one number column, GitHub sides, and a draft with an empty body', () => {
   const doc = { drafts: [{ key: 'p1' }] };
   assert.deepStrictEqual(plain(prDiffDraft(doc, { path: 'a.rs', line: 4, side: 'left' })), { key: 'p2', source: 'person', path: 'a.rs', line: 4, side: 'left', body: '' });
   assert.deepStrictEqual(plain(prDiffDraft(doc, { path: 'a.rs', body: 'b' })), { key: 'p2', source: 'person', path: 'a.rs', side: 'right', body: 'b' });
+  // A concern's draft the person made theirs is the reader's; the head of the read-through on screen is kept.
+  assert.deepStrictEqual(plain(prDiffDraft(doc, { path: 'a.rs', line: 2, body: 'b', source: 'reader', sha: 'a'.repeat(40) })), { key: 'p2', source: 'reader', path: 'a.rs', line: 2, side: 'right', body: 'b', sha: 'a'.repeat(40) });
+  assert.strictEqual(prDiffDraft(doc, { path: 'a.rs', source: 'other' }).source, 'person');
   assert.deepStrictEqual(plain(prDiffAtOf('left:12')), { side: 'left', line: 12 });
   assert.strictEqual(prDiffAtOf('up:1'), null);
   assert.strictEqual(prDiffAtOf(undefined), null);
@@ -216,6 +221,129 @@ test('a point\'s line is found on the new side first, then the old, else null', 
   assert.strictEqual(prDiffFindLine(a, 10), 5);  // only the removed `-x` has old number 10 (the new side has 11)
   assert.strictEqual(prDiffFindLine(a, 99), null);
   assert.strictEqual(prDiffFindLine(a, null), null);
+});
+
+test('a comment\'s line is found by its side: the right is the added and context lines by new number, the left the removed lines by old number', () => {
+  const [a] = prParseDiff(SAMPLE);
+  assert.strictEqual(prDiffFindAt(a, 'right', 3), 3);    // `+    new();`
+  assert.strictEqual(prDiffFindAt(a, 'right', 4), 4);    // the closing brace, a context line
+  assert.strictEqual(prDiffFindAt(a, 'left', 2), 1);     // `-    old();`
+  assert.strictEqual(prDiffFindAt(a, 'left', 3), null, 'old line 3 is a context line: the left side has removed lines only');
+  assert.strictEqual(prDiffFindAt(a, 'right', 10), null, 'the removed `-x` is old number 10 on the left, not on the right');
+  assert.strictEqual(prDiffFindAt(a, 'left', 10), 5);
+  assert.strictEqual(prDiffFindAt(a, 'right', 11), 6);
+  // The same number on the two sides is two lines; `prDiffFindLine` still takes the right first.
+  assert.strictEqual(prDiffFindAt(a, 'right', 2), 2);
+  assert.strictEqual(prDiffFindAt(a, 'left', 2), 1);
+  assert.strictEqual(prDiffFindLine(a, 2), 2);
+  assert.strictEqual(prDiffFindAt(a, 'right', 99), null);
+  assert.strictEqual(prDiffFindAt(a, 'right', null), null);
+  assert.strictEqual(prDiffFindAt(a, 'right', 0), null);
+  // An unknown side is the right.
+  assert.strictEqual(prDiffFindAt(a, undefined, 3), 3);
+  assert.strictEqual(prDiffFindAt(null, 'right', 3), null);
+});
+
+test('a comment is placed on its line, in its file\'s slot, or not at all', () => {
+  const files = prParseDiff(SAMPLE);
+  const entries = prDiffLayout(files, readOf({}), null).files;
+  const at = d => { const p = prDiffPlaceOf(entries, d); return p && { path: p.entry.path, k: p.k, lost: p.lost }; };
+  assert.deepStrictEqual(plain(at({ path: 'src/a.rs', line: 3, side: 'right' })), { path: 'src/a.rs', k: 3, lost: false });
+  assert.deepStrictEqual(plain(at({ path: 'src/a.rs', line: 2, side: 'left' })), { path: 'src/a.rs', k: 1, lost: false });
+  assert.strictEqual(at({ path: 'src/a.rs', line: 2 }).k, 2, 'no side is the right');
+  // A comment on the file: no line, so the slot under the header, and nothing is lost.
+  assert.deepStrictEqual(plain(at({ path: 'src/a.rs' })), { path: 'src/a.rs', k: null, lost: false });
+  // A line the file's diff does not have: the slot, and the header says so.
+  assert.deepStrictEqual(plain(at({ path: 'src/a.rs', line: 3, side: 'left' })), { path: 'src/a.rs', k: null, lost: true });
+  assert.deepStrictEqual(plain(at({ path: 'src/a.rs', line: 500, side: 'right' })), { path: 'src/a.rs', k: null, lost: true });
+  // No path, or a path the diff does not have: not on the diff.
+  assert.strictEqual(prDiffPlaceOf(entries, { body: 'x' }), null);
+  assert.strictEqual(prDiffPlaceOf(entries, { path: 'nope.rs', line: 1 }), null);
+  assert.strictEqual(prDiffPlaceOf(null, { path: 'src/a.rs' }), null);
+  // The ones the diff cannot show are told apart: no path, and a path that is not in it (all of them, with no diff; none while it is on its way).
+  const drafts = [{ key: 'a', path: 'src/a.rs', line: 3 }, { key: 'b', body: 'whole' }, { key: 'c', path: 'nope.rs' }];
+  assert.deepStrictEqual(plain(prDiffUnplaced(entries, drafts)), { whole: [drafts[1]], off: [drafts[2]] });
+  assert.deepStrictEqual(plain(prDiffUnplaced(null, drafts)), { whole: [drafts[1]], off: [drafts[0], drafts[2]] });
+  assert.deepStrictEqual(plain(prDiffUnplaced(undefined, drafts)), { whole: [drafts[1]], off: [] });
+});
+
+test('a comment is drawn with who wrote it and its state; one already sent is read-only, and the head it was written on is said only when it differs', () => {
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const d = { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Why <b>?\nBecause.' };
+  const saved = prdCommentHtml(d, { readSha: A });
+  assert.ok(saved.includes('data-prd-cmt="p1"') && saved.includes('>あなた</span>') && saved.includes('>未送信</span>'));
+  assert.ok(saved.includes('Why &lt;b&gt;?\nBecause.') && saved.includes('data-prd-cmt-act="edit"') && saved.includes('data-prd-cmt-act="delete"'));
+  assert.ok(!saved.includes('AI の文から') && !saved.includes('の差分で書きました') && !saved.includes('行が見つからない'));
+  // From the reader's concern: its chip too.
+  assert.ok(prdCommentHtml({ ...d, source: 'reader' }, { readSha: A }).includes('>AI の文から</span>'));
+  // The head: no chip without one (files from before), none for the same, a warning for another.
+  assert.ok(!prdCommentHtml({ ...d, sha: A }, { readSha: A }).includes('の差分で書きました'));
+  const other = prdCommentHtml({ ...d, sha: B }, { readSha: A });
+  assert.ok(other.includes('>bbbbbbb の差分で書きました</span>') && other.includes('title="下読みし直す前の差分の行です。行がずれていないか確かめてください"'));
+  assert.ok(!prdCommentHtml({ ...d, sha: B }, {}).includes('の差分で書きました'), 'no read-through on screen: nothing to differ from');
+  // A line that is not found is said in the header.
+  assert.ok(prdCommentHtml(d, { lost: true }).includes('行が見つからないコメント（src/a.rs:3）'));
+  // Sent: its own chip, no 編集, and 削除 says what it does not do.
+  const sent = prdCommentHtml({ ...d, sentAt: '20261001T000000Z' }, {});
+  assert.ok(sent.includes('>積みました</span>') && !sent.includes('>未送信<') && !sent.includes('data-prd-cmt-act="edit"'));
+  assert.ok(sent.includes('data-prd-cmt-act="delete" title="adj の一覧から消します（GitHub の pending review や worker への指示は消えません）"'));
+  assert.ok(prdCommentHtml({ ...d, sentAt: '20261001T000000Z' }, { to: 'worker' }).includes('>渡しました</span>'));
+  // Why a push left it out.
+  assert.ok(prdCommentHtml(d, { failedWhy: 'line is not in the diff' }).includes('積めませんでした: line is not in the diff'));
+  assert.ok(!prdCommentHtml({ ...d, sentAt: '20261001T000000Z' }, { failedWhy: 'x' }).includes('積めませんでした'));
+});
+
+test('an editor is a box with 保存 or コメントを足す, off while it is blank; the text in it is escaped and keeps a first newline', () => {
+  const d = { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'old' };
+  const edit = prdCommentHtml(d, { box: { text: '\n<i>x</i>' } });
+  assert.ok(edit.includes('prd-cmt-edit') && edit.includes('<textarea class="prd-cmt-body" data-prd-box="p1"') && edit.includes('placeholder="コメントを書く"'));
+  assert.ok(edit.includes('>\n\n&lt;i&gt;x&lt;/i&gt;</textarea>'), edit);
+  assert.ok(edit.includes('data-prd-cmt-act="cancel"') && edit.includes('>やめる</button>') && edit.includes('data-prd-cmt-act="save"') && edit.includes('>保存</button>'));
+  assert.ok(!/data-prd-cmt-act="save"[^>]* disabled/.test(edit));
+  assert.ok(/data-prd-cmt-act="save"[^>]* disabled/.test(prdCommentHtml(d, { box: { text: ' \n' } })));
+  // A new one has no draft yet: its key is its place.
+  const fresh = prdCommentHtml({ path: 'src/a.rs', line: 3, side: 'left', source: 'reader', body: '' }, { box: { isNew: true, text: '' } });
+  assert.ok(fresh.includes('data-prd-cmt="new:src/a.rs|left|3"') && fresh.includes('data-prd-box="new:src/a.rs|left|3"') && fresh.includes('>AI の文から</span>'));
+  assert.ok(fresh.includes('>コメントを足す</button>') && /data-prd-cmt-act="add"[^>]* disabled/.test(fresh) && !fresh.includes('data-prd-cmt-act="edit"'));
+  assert.strictEqual(prdBoxKey({ path: 'f.rs', side: 'x', line: null }), 'new:f.rs|right|');
+});
+
+test('the comments of a diff: the drafts in their order, then the open editors; each with its file and line, and what changes the element and what does not', () => {
+  const files = prParseDiff(SAMPLE);
+  const entries = prDiffLayout(files, readOf({}), null).files;
+  const A = 'a'.repeat(40);
+  const doc = { drafts: [
+    { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'one', sha: A },
+    { key: 'p2', source: 'person', path: 'src/a.rs', body: 'file' },
+    { key: 'p3', source: 'person', path: 'src/a.rs', line: 77, side: 'right', body: 'gone' },
+    { key: 'p4', source: 'person', body: 'whole PR' },
+    { key: 'p5', source: 'person', path: 'nope.rs', body: 'elsewhere' },
+    { key: 'p6', source: 'person', path: 'docs/new.md', line: 1, side: 'right', body: 'sent', sentAt: '20261001T000000Z' },
+  ] };
+  const boxes = new Map([['p1', { kind: 'edit', text: 'typed' }], ['new:docs/new.md|right|2', { kind: 'new', path: 'docs/new.md', side: 'right', line: 2, source: 'person', text: '' }],
+    ['new:old.rs|right|', { kind: 'new', path: 'old.rs', side: 'right', line: null, source: 'person', text: 'x' }], ['new:nope.rs|right|1', { kind: 'new', path: 'nope.rs', side: 'right', line: 1, source: 'person', text: '' }]]);
+  const items = prdCommentItems(entries, doc, boxes, { readSha: A, failed: new Map([['p1', 'why']]) });
+  const ix = path => entries.find(f => f.path === path).i;
+  assert.deepStrictEqual(plain(items.map(x => [x.key, x.kind, x.i, x.k, x.lost])), [
+    ['p1', 'edit', ix('src/a.rs'), 3, false], ['p2', 'saved', ix('src/a.rs'), null, false], ['p3', 'saved', ix('src/a.rs'), null, true], ['p6', 'sent', ix('docs/new.md'), 0, false],
+    ['new:docs/new.md|right|2', 'new', ix('docs/new.md'), 1, false], ['new:old.rs|right|', 'new', ix('old.rs'), null, false]]);
+  // The one being edited shows what is typed; what is not placed (no path, a path the diff lacks) is not here, whether a draft or an editor.
+  assert.ok(items[0].html.includes('typed') && !items[0].html.includes('one'));
+  // The sig is the element's markup without what is typed: typing changes the html and not the sig, a change of state changes the sig.
+  const again = prdCommentItems(entries, doc, new Map([['p1', { kind: 'edit', text: 'more typed' }]]), { readSha: A, failed: new Map([['p1', 'why']]) });
+  assert.notStrictEqual(again[0].html, items[0].html);
+  assert.strictEqual(again[0].sig, items[0].sig);
+  const moved = prdCommentItems(entries, { drafts: [{ ...doc.drafts[0], sha: 'b'.repeat(40) }] }, new Map([['p1', { kind: 'edit', text: 'typed' }]]), { readSha: A });
+  assert.notStrictEqual(moved[0].sig, items[0].sig, 'another head is a warning chip');
+  const plainOne = prdCommentItems(entries, { drafts: [doc.drafts[0]] }, null, { readSha: A });
+  assert.strictEqual(plainOne[0].kind, 'saved');
+  assert.notStrictEqual(plainOne[0].sig, items[0].sig);
+  // A comment that was sent cannot be edited, whatever box is open for it.
+  const sent = prdCommentItems(entries, { drafts: [doc.drafts[5]] }, new Map([['p6', { kind: 'edit', text: 'x' }]]), {});
+  assert.strictEqual(sent[0].kind, 'sent');
+  // The same text in two comments is two elements; the keys are the draft's and the place's.
+  assert.strictEqual(new Set(items.map(x => x.key)).size, items.length);
 });
 
 test('the labels of the index are the shortest suffix that is unique', () => {
@@ -260,7 +388,7 @@ test('the body puts an annotation after the last line of its block, and the butt
   assert.ok(at('// why') < at('data-prd-ann="0"') && at('data-prd-ann="0"') < at('new();'), 'tr under its own line, before the next');
   assert.ok(at('new();') < at('data-prd-ann="1"'));
   assert.ok(html.includes('data-prd-plus="1:left:2"') && html.includes('data-prd-plus="1:right:3"'));
-  assert.ok(html.includes('aria-label="src/a.rs:3 に下書き"'));
+  assert.ok(html.includes('aria-label="src/a.rs:3 にコメント"') && html.includes('title="この行にコメント"'));
   assert.ok(html.includes('prd-l prd-a prd-tint'));
   assert.ok(html.includes('data-prd-todraft="1" data-prd-at="right:3"'));
   // `tr` has no buttons; the `\ No newline` row has no number and no 「＋」.
@@ -322,7 +450,7 @@ test('the paths of a rename are taken as they are, with no a/ or b/ stripped', (
   assert.deepStrictEqual(plain(files.map(f => [f.oldPath, f.path, f.status])), [['a/old.js', 'a/new.js', 'renamed'], ['x', 'b/y', 'renamed']]);
 });
 
-test('the annotation 「聞く」 is disabled when no reader runs, and 「下書きに」 stays on', () => {
+test('the annotation 「聞く」 is disabled when no reader runs, and 「コメント」 stays on', () => {
   const files = prParseDiff(SAMPLE);
   const read = readOf({ annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'ex', text: 'E1' }] });
   const layout = prDiffLayout(files, read, null);
@@ -407,18 +535,18 @@ test('a file the reader called skippable says so in its header, and its note is 
   assert.ok(gone.indexOf('prd-file-note') < gone.indexOf('prd-gone'));
 });
 
-test('an annotation is 訳, 解説 or 気になる; 解説 and 気になる have the buttons, 訳 has none, and an unknown kind is 解説', () => {
+test('an annotation is 訳, 解説 or 気になる; 解説 has 「コメント」, 気になる has 「コメントにする」, both have 「聞く」, 訳 has none, and an unknown kind is 解説', () => {
   const html = (kind, extra = {}, readerOpen, opts) => prdAnnHtml(4, { kind, text: 'T <b>', ...extra }, 'right:3', readerOpen, opts);
   const tr = html('tr');
   assert.ok(tr.includes('prd-ann-tr') && tr.includes('>訳</span>') && !tr.includes('<button'));
   const ex = html('ex');
-  assert.ok(ex.includes('prd-ann-ex') && ex.includes('>解説</span>') && ex.includes('data-prd-todraft="4" data-prd-at="right:3"') && ex.includes('data-prd-ask="4"'));
+  assert.ok(ex.includes('prd-ann-ex') && ex.includes('>解説</span>') && ex.includes('data-prd-todraft="4" data-prd-at="right:3">コメント</button>') && ex.includes('data-prd-ask="4"'));
   const concern = html('concern', { draft: 'D' });
   assert.ok(concern.includes('class="prd-ann prd-ann-concern" data-prd-ann="4"') && concern.includes('>気になる</span>'));
-  assert.ok(concern.includes('data-prd-todraft="4" data-prd-at="right:3"') && concern.includes('data-prd-ask="4"') && concern.includes('T &lt;b&gt;'));
-  // The draft is the author's comment: it is not shown in the line, only used by 「下書きに」.
+  assert.ok(/data-prd-todraft="4" data-prd-at="right:3"[^>]*>コメントにする<\/button>/.test(concern) && concern.includes('data-prd-ask="4"') && concern.includes('T &lt;b&gt;'));
+  // The draft is the author's comment: it is not shown in the line, only used by 「コメントにする」.
   assert.ok(!concern.includes('>D<'));
-  // The reader's window is gone: 「聞く」 is off with the reason; 「下書きに」 stays.
+  // The reader's window is gone: 「聞く」 is off with the reason; the comment buttons stay.
   const off = html('concern', {}, false);
   assert.ok(/data-prd-ask="4"[^>]* disabled title="worker が動いていません"/.test(off) && !/data-prd-todraft[^>]*disabled/.test(off));
   // A place that only reads has no buttons, whatever the kind.

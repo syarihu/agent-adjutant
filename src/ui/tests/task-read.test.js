@@ -109,8 +109,15 @@ test('the dialog\'s line says nothing until the task\'s document has come, nor f
   assert.strictEqual(ownReadHeadLine({ pr: 'acme/widget#12', record: rec() }, T0), ownReadLineText(rec(), T0));
 });
 
-test('the dialog\'s buttons: 読み直す while a read-through exists and the PR is live, 下読みを閉じる while a reader runs', () => {
-  const acts = (r, read, h = hub, asking = false, closing = false) => ownReadActsHtml(r, read, h, asking, closing);
+test('the dialog\'s buttons: 読み直す while a read-through exists and the PR is live, 「worker に渡す」 with the count, 下読みを閉じる while a reader runs', () => {
+  const acts = (r, read, h = hub, asking = false, closing = false, n = null) => ownReadActsHtml(r, read, h, asking, closing, n);
+  // 「worker に渡す」: once the drafts are loaded and while a read-through exists, with what a hand-over would send.
+  assert.ok(!acts(rec(), readOf()).includes('data-pr-send'));
+  const send = acts(rec(), readOf(), hub, false, false, 3);
+  assert.ok(send.includes('data-pr-send="worker"') && send.includes('>worker に渡す</span>') && send.includes('<span class="pr-send-count">3</span>') && !send.includes('レビューを送る'));
+  assert.ok(!acts(rec(), readOf(), hub, false, false, 0).includes('pr-send-count') && acts(rec(), readOf(), hub, false, false, 0).includes('data-pr-send="worker"'));
+  assert.ok(acts(rec(), readOf(), hub, false, false, 0).indexOf('data-pr-reread') < acts(rec(), readOf(), hub, false, false, 0).indexOf('data-pr-send'));
+  assert.ok(!acts(rec({ ai: null, state: 'requested' }), null, hub, false, false, 2).includes('data-pr-send'));
   const html = acts(rec(), readOf());
   assert.ok(/data-pr-reread>/.test(html) && html.includes('読み直す') && !html.includes('data-pr-close-reader'));
   // Disabled with the hub's reason, and 依頼中… while a request is out.
@@ -253,20 +260,20 @@ test('the reader\'s head says what it is, and offers 「下読みを閉じる」
 /* ── what the buttons are on ── */
 
 function resolver({ selected = 'pr:acme/widget#12', task: shownTask = null } = {}) {
-  const w = { calls: [], asked: [], notes: [], edits: 0 };
+  const w = { calls: [], asked: [], notes: [], points: [] };
   const c = vm.createContext({
     selectedTaskId: selected, PR_REF: 'pr:', CSS: { escape: x => x }, panelTerm: { name: 'panel' }, others: { doc: { hub: { state: 'running' } }, asking: new Set() },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3),
     othersById: id => (id === 'acme/widget#12' ? rec() : null), othersRecords: () => [rec()], othersHubView: () => hub,
     othersRequestAi: (id, mode) => w.asked.push(['list', id, mode]), renderTaskPanel: () => w.calls.push('panel'), taskReadRedraw: () => w.calls.push('read'),
     taskReadShown: () => shownTask, note: (...a) => w.notes.push(a), go: (p, o) => w.calls.push(['go', p, o]), nav: { pane: 'detail' },
-    PR_HOOKS: { diff: null }, cardDialog: { subject: selected }, closeCardDialog: () => w.calls.push('close'), prDraftsEntry: () => ({ loaded: true }), prReadOf: () => readOf(), prDoc: () => ({ drafts: [] }),
-    prEditDrafts: () => { w.edits++; return true; }, prRedrawNow() {}, prNextKey: () => 'p1', prDraftFromPoint: () => ({}), prDraftLocation: () => 'loc',
+    PR_HOOKS: { diff: { pointComment: (point, place) => w.points.push([point.path, place]) } }, cardDialog: { subject: selected }, closeCardDialog: () => w.calls.push('close'), prReadOf: () => readOf(),
+    prSendOpen: () => w.calls.push('send'), prDraftLocation: () => 'loc',
   });
   vm.runInContext(['prShown', 'prRecOf', 'prRedrawFor', 'prAsk', 'prAct'].map(n => fnSrc(panelSrc, n)).join('\n'), c);
   return { w, c, run: e => vm.runInContext(e, c) };
 }
-const onButton = sel => ({ target: { closest: s => (s.split(',').some(x => x.trim() === sel) ? { matches: m => m.split(',').some(x => x.trim() === sel), disabled: false, getAttribute: () => null, dataset: { prTodraft: '0', prAsk: '0' } } : null) } });
+const onButton = sel => ({ target: { closest: s => (s.split(',').some(x => x.trim() === sel) ? { matches: m => m.split(',').some(x => x.trim() === sel), disabled: false, getAttribute: () => null, dataset: { prTodraft: '0', prAsk: '0', prSend: 'worker' } } : null) } });
 
 test('a review request is what the page is on while it is selected, a task\'s read-through while its dialog is open, and nothing otherwise', () => {
   const pr = resolver();
@@ -324,20 +331,31 @@ test('the buttons of a place belong to the thing the page is on: a task\'s read 
   assert.strictEqual(bare.run("prAct(e, { place: 'read' })"), false);
 });
 
-test('a task\'s read-through takes drafts in its dialog as a review request does, with no tab to switch', () => {
+test('a point\'s 「コメントにする」 opens a comment on its line in the diff, in a task\'s dialog and in a review request\'s middle, and switches no tab', () => {
   const shown = { id: 'acme/widget#12', rec: rec(), kind: 'task', hubView: hub, asking: false, ask() {}, slot: null };
   const t = resolver({ selected: 't1', task: shown });
   t.run("cardDialog.subject = 't1'");
   t.c.e = onButton('[data-pr-todraft]');
   assert.strictEqual(t.run("prAct(e, { place: 'dialog' })"), true);
-  assert.strictEqual(t.w.edits, 1);
+  assert.deepStrictEqual(plain(t.w.points), [['src/a.rs', 'dialog']]);
   assert.deepStrictEqual(t.w.calls.filter(x => Array.isArray(x)), []);
-  // A review request's, in the middle, goes to 下書き.
   const pr = resolver();
   pr.c.e = onButton('[data-pr-todraft]');
   pr.run("prAct(e, { place: 'read' })");
-  assert.strictEqual(pr.w.edits, 1);
-  assert.deepStrictEqual(plain(pr.w.calls.filter(x => Array.isArray(x)).map(x => x[1])), [{ pane: 'drafts' }]);
+  assert.deepStrictEqual(plain(pr.w.points), [['src/a.rs', 'read']]);
+  assert.deepStrictEqual(pr.w.calls.filter(x => Array.isArray(x)), [], 'no tab to go to');
+});
+
+test('「レビューを送る」 and 「worker に渡す」 open the send dialog from the dialog\'s heading', () => {
+  const t = resolver({ selected: 't1', task: { id: 'acme/widget#12', rec: rec(), kind: 'task', hubView: hub, asking: false, ask() {}, slot: null } });
+  t.run("cardDialog.subject = 't1'");
+  t.c.e = onButton('[data-pr-send]');
+  assert.strictEqual(t.run("prAct(e, { place: 'dialog' })"), true);
+  assert.deepStrictEqual(t.w.calls, ['send']);
+  const pr = resolver();
+  pr.c.e = onButton('[data-pr-send]');
+  assert.strictEqual(pr.run("prAct(e, { place: 'read' })"), true);
+  assert.deepStrictEqual(pr.w.calls, ['send']);
 });
 
 test('「聞く」 reaches the reader\'s terminal of a review request, and a task\'s dialog has none to say when there is none', () => {
@@ -391,7 +409,7 @@ test('the dialog\'s clicks reach prAct as the review dialog\'s, the task\'s own 
   const handlers = {};
   const calls = [];
   const c = vm.createContext({
-    cardDialog: { mode: 'review' }, cardDialogDockEl: () => ({}), cardDialogSync() {}, prInput: e => calls.push(['input', e]), prFocusOut() {},
+    cardDialog: { mode: 'review' }, cardDialogDockEl: () => ({}), cardDialogSync() {}, PR_HOOKS: { diff: { input: e => calls.push(['input', e]) } },
     prAct: (e, opts) => calls.push(['act', e, opts]), ownReadDialogClick: e => calls.push(['own', e]),
     cardDialogOnPr: () => ['review', 'own-read'].includes(c.cardDialog.mode),
     cardDialogEl: () => ({ addEventListener: (type, fn) => { handlers[type] = fn; } }),
@@ -415,7 +433,7 @@ test('the task\'s dialog asks for a read from its own buttons, before the PR has
   const btn = (sel, attrs = {}) => ({ closest: q => q.split(', ').includes(sel) ? { disabled: false, getAttribute: a => attrs[a] ?? null, matches: m => m === sel } : null });
   const c = vm.createContext({
     taskReadAsk: mode => calls.push(['ask', mode ?? null]), prAct: () => calls.push(['act']), prCloseReader: () => calls.push(['close']),
-    othersStartHub: () => calls.push(['start']), OWN_HOOKS: { drafts: null },
+    othersStartHub: () => calls.push(['start']),
   });
   vm.runInContext(fnSrc(read('task-read-view.js'), 'ownReadDialogClick'), c);
   c.ownReadDialogClick({ target: btn('[data-pr-ai]') });

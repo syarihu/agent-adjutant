@@ -13,15 +13,8 @@
 body:not(.rail-hidden) #rail-toggle .rail-badge { display: none; }
 .wk-mid-tabs[hidden] { display: none; }
 .wk-mid-tabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-.wk-mid-tab { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 7px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
-  color: var(--md-sys-color-on-surface-variant); background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0 0; white-space: nowrap; }
-.wk-mid-tab:hover { background: var(--md-sys-color-surface-container-high); }
-.wk-mid-tab.active { color: var(--md-sys-color-on-surface); border-bottom-color: var(--md-sys-color-primary); }
-.wk-mid-tab:disabled { opacity: .55; cursor: not-allowed; }
-.wk-mid-tab:disabled:hover { background: transparent; }
-.wk-mid-tab:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
 
-/* A review request's head over the middle has 「GitHub で開く」 and 「拡大」 at its right end (a task's has none). */
+/* A review request's head over the middle has 「GitHub で開く」, 「読み直す」, 「レビューを送る」 and 「拡大」 at its right end (a task's has none). */
 /* In a narrow middle the buttons wrap under the title, which keeps a readable width of its own, so the heading's height stays a few lines. */
 .wk-term-head:has(.wk-head-acts) { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 8px; }
 .wk-term-head .wk-head-main { min-width: min(100%, 14em); flex: 1 1 14em; }
@@ -37,14 +30,12 @@ body:not(.rail-hidden) #rail-toggle .rail-badge { display: none; }
 /* The head over the read-through is the band that says it is of an earlier push; it stays in view while the person reads. */
 .task-read-band { position: sticky; top: 0; z-index: 1; padding: 8px 28px; font-size: 12.5px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .task-read-band:empty { display: none; }
-/* A review request's 下書き tab is one column of boxes, as wide as is readable. */
-.task-read-content > .pr-drafts { max-width: 960px; }
 .task-read-band .tp-line { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 /* A jump lands below the band that stays in view. */
 .task-read:has(.task-read-band:not(:empty)) :is(.cd-group, .cd-card, [data-prd-file]) { scroll-margin-top: 72px; }
 /* The band says it, so the diff's own line about it is not drawn a second time. */
 .task-read .prd-stale { display: none; }
-/* Nothing receives a draft yet: the buttons that would start one are not drawn (the drafts are on while a later change sets `data-drafts`). */
+/* Nothing receives a comment yet: the buttons that would start one are not drawn (they are on while the page sets `data-drafts`). */
 .task-read[data-drafts="off"] :is([data-pr-todraft], [data-prd-todraft], [data-prd-plus]) { display: none; }
 
 /* A narrow middle: the index is one strip of the groups over the read-through, scrolling sideways, and the cards under a group are

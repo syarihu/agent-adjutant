@@ -55,13 +55,15 @@ function ownReadHeadLine(doc, nowSecs) {
   return doc?.pr ? ownReadLineText(doc.record || null, nowSecs) : '';
 }
 
-/* The buttons at the right of the dialog's head: 「読み直す」 while a read-through exists and the PR is live, and 「下読みを閉じる」 while a
-   reader runs. `read` is the stored read-through (undefined while it is on its way). */
-function ownReadActsHtml(rec, read, hubView, asking, closing) {
+/* The buttons at the right of the dialog's head: 「読み直す」 while a read-through exists and the PR is live, 「worker に渡す」 with the number of comments
+   it would hand over (`sendN`, `prHandable`'s; null until the drafts are loaded) while a read-through exists, and 「下読みを閉じる」 while a reader runs.
+   `read` is the stored read-through (undefined while it is on its way). */
+function ownReadActsHtml(rec, read, hubView, asking, closing, sendN = null) {
   if (!rec) return '';
   const again = prHasRead(rec, read) && OTHERS_LIVE.includes(rec.state)
     ? `<button type="button" class="btn-m3-tonal pr-reread" data-pr-reread${prAskAttrs(hubView, asking)}>${esc(asking ? '依頼中…' : '読み直す')}</button>` : '';
-  return again + prCloseReaderBtnHtml(rec, closing);
+  const send = prHasRead(rec, read) && sendN != null ? prSendBtnHtml('worker', sendN) : '';
+  return again + send + prCloseReaderBtnHtml(rec, closing);
 }
 
 /* The card that says what the reader is: its state when there is a read to put it beside, and where it can be talked to. */
