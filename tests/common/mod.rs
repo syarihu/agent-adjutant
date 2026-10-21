@@ -134,6 +134,22 @@ impl Fixture {
             );
         }
         let config = dir.path().join("config.json");
+        // These tests run the real binary, so the `cfg(test)` backstop in the notifier does
+        // not reach them and this default is their guard: a config that is a JSON object
+        // without a top-level `notification` gets one that runs `true` instead of the
+        // built-in banner (`null` counts as unset). Anything else is written as given. The same
+        // rule as `testing::Sandbox::new` in `src/lib.rs`; change both together.
+        let config_json = match serde_json::from_str::<serde_json::Value>(config_json) {
+            Ok(serde_json::Value::Object(mut map))
+                if map
+                    .get("notification")
+                    .is_none_or(serde_json::Value::is_null) =>
+            {
+                map.insert("notification".into(), "true".into());
+                serde_json::Value::Object(map).to_string()
+            }
+            _ => config_json.to_string(),
+        };
         std::fs::write(&config, config_json).unwrap();
         Fixture {
             state: dir.path().join("state"),
