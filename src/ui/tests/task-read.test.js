@@ -25,7 +25,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
   vm.runInContext(read(file), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { taskReadHeadMode, ownReadSubText, ownReadTitleText, ownReadLineText, ownReadHeadLine, ownReadActsHtml, taskReadGroups, readPaneGroups, taskReadBandHtml, taskReadHubHtml,
+const { taskReadHeadMode, ownReadSubText, ownReadTitleText, ownReadLineText, ownReadHeadLine, ownReadActsHtml, taskReadGroups, taskReadBandHtml, taskReadHubHtml,
   taskReaderHeadHtml } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -37,7 +37,7 @@ const rec = (extra = {}) => ({
   author: 'alice', base: 'main', head: 'feat', headSha: A, state: 'ai-ready', additions: 30, deletions: 4, changedFiles: 2,
   files: [{ path: 'src/a.rs', additions: 20, deletions: 3, change: 'modified' }, { path: 'src/b.rs', additions: 8, deletions: 1, change: 'modified' }],
   ci: { pass: 1, fail: 0, pending: 0 }, reviewers: [], events: { pushed: null },
-  ai: { status: 'ready', sha: A, finishedAt: '20261001T000000Z', stale: false, counts: { attention: 2, check: 3, drafts: 4 } }, ...extra,
+  ai: { status: 'ready', sha: A, finishedAt: '20261001T000000Z', stale: false, counts: { attention: 2, check: 3, concerns: 1, drafts: 4 } }, ...extra,
 });
 const readOf = (extra = {}) => ({
   sha: A, madeAt: '20261001T000000Z', three: { purpose: 'P', approach: 'Ap', impact: 'Im', essence: 'Es' },
@@ -84,8 +84,11 @@ test('the dialog\'s head: the line over the title, the title, and the line under
   assert.strictEqual(ownReadTitleText(task), 'AI 下読み — Round the amounts');
   // A read-through: when the reader finished and what it counted, as the list words it.
   const done = ownReadLineText(rec(), T0 + 5 * 60 + 5);
-  assert.strictEqual(done, '下読みの worker が5分前に読み終えました · 要注意 2 · 確認 3');
-  assert.strictEqual(ownReadLineText(rec(), T0), '下読みの worker がたった今読み終えました · 要注意 2 · 確認 3');
+  assert.strictEqual(done, '下読みの worker が5分前に読み終えました · 要注意 2 · 確認 3 · 気になる 1');
+  assert.strictEqual(ownReadLineText(rec(), T0), '下読みの worker がたった今読み終えました · 要注意 2 · 確認 3 · 気になる 1');
+  // Each count only when it is a number: a read-through of the newer form counts the concerns alone.
+  assert.strictEqual(ownReadLineText(rec({ ai: { status: 'ready', sha: A, finishedAt: '20261001T000000Z', counts: { concerns: 2 } } }), T0), '下読みの worker がたった今読み終えました · 気になる 2');
+  assert.strictEqual(ownReadLineText(rec({ ai: { status: 'ready', sha: A, finishedAt: '20261001T000000Z', counts: { attention: 0, check: 1, concerns: 'x' } } }), T0), '下読みの worker がたった今読み終えました · 要注意 0 · 確認 1');
   assert.strictEqual(ownReadLineText(rec({ ai: { status: 'ready', sha: A, finishedAt: '20261001T000000Z' } }), T0), '下読みの worker がたった今読み終えました');
   // Under way, or never read.
   assert.strictEqual(ownReadLineText(rec({ ai: { status: 'queued', startedAt: '20261001T000000Z' } }), T0), '下読み中です');
@@ -132,10 +135,11 @@ test('the groups are the dialog\'s without the comparison with your review, with
   assert.ok(plain(ctx.prDialogGroups(r, rd, [r], hub, T0)).some(g => g.key === 'since'), 'the dialog has it');
   const groups = plain(taskReadGroups(r, rd, hub, T0, {}));
   assert.ok(!groups.some(g => g.key === 'since'));
-  assert.deepStrictEqual(groups.map(g => g.key), ['top', 'points', 'order', 'diff']);
+  assert.deepStrictEqual(groups.map(g => g.key), ['top', 'points', 'order', 'diff', 'about']);
   const top = groups[0].cards.map(c => c.key);
   assert.strictEqual(top[0], 'top:reader');
-  assert.ok(top.includes('top:facts') && top.includes('top:three') && top.includes('footer'));
+  assert.ok(top.includes('top:old') && top.includes('top:three'));
+  assert.deepStrictEqual(groups[4].cards.map(c => c.key), ['top:facts', 'footer']);
   // The diff's files are in the reading order, and nothing can be opened to 「拡大」.
   assert.deepStrictEqual(groups[3].cards.map(c => c.key), ['diff:src/b.rs', 'diff:src/a.rs']);
   const everything = groups.map(g => g.cards.map(c => c.html).join('')).join('');
@@ -147,7 +151,7 @@ test('a review request\'s groups keep the comparison with your review and the qu
   const r = rec({ state: 'pushed', commitsSinceReview: 2 });
   const rd = readOf({ sinceReview: { comments: [], newChanges: [] } });
   const groups = plain(taskReadGroups(r, rd, hub, T0, { records: [r], since: true }));
-  assert.deepStrictEqual(groups.map(g => g.key), ['since', 'top', 'points', 'order', 'diff']);
+  assert.deepStrictEqual(groups.map(g => g.key), ['since', 'top', 'points', 'order', 'diff', 'about']);
   assert.strictEqual(groups[1].cards[0].key, 'top:reader');
   // The default is the task's.
   assert.ok(!plain(taskReadGroups(r, rd, hub, T0, {})).some(g => g.key === 'since'));
@@ -158,14 +162,12 @@ test('a review request\'s groups keep the comparison with your review and the qu
   assert.notStrictEqual(place({ records: [q, other] }), place({}));
 });
 
-test('each tab of a review request\'s middle takes its groups: 差分 the diff alone, 下読み the rest', () => {
-  const groups = plain(taskReadGroups(rec(), readOf(), hub, T0, { records: [rec()], since: true }));
-  assert.deepStrictEqual(readPaneGroups(groups, 'diff').map(g => g.key), ['diff']);
-  const rest = readPaneGroups(groups, 'detail').map(g => g.key);
-  assert.deepStrictEqual(rest, ['top', 'points', 'order']);
-  assert.ok(!rest.includes('diff'));
-  // Nothing of the diff before there is a read-through to show it: 差分 has no group.
-  assert.deepStrictEqual(readPaneGroups(plain(taskReadGroups(rec({ ai: null }), null, hub, T0, {})), 'diff'), []);
+test('the reader\'s card has a 要点 group of its own when nothing else is there, after 前回のレビューから', () => {
+  const bare = { version: 2, sha: A, madeAt: '20261001T000000Z', annotations: [], order: [], overall: null };
+  const groups = plain(taskReadGroups(rec({ state: 'pushed', commitsSinceReview: 1 }), bare, hub, T0, { records: [], since: true }));
+  assert.deepStrictEqual(groups.map(g => g.key).slice(0, 2), ['since', 'top']);
+  assert.deepStrictEqual(groups[1].cards.map(c => c.key), ['top:reader']);
+  assert.deepStrictEqual(plain(taskReadGroups(rec(), bare, hub, T0, {})).map(g => g.key).slice(0, 1), ['top']);
 });
 
 test('the reader\'s card says what the reader is: its state beside a read, and where it can be talked to', () => {
@@ -203,7 +205,7 @@ test('the groups of the dialog point at no terminal and offer no 「聞く」, w
 test('before a read the middle is one group, and the card names where the reader will be', () => {
   const r = rec({ ai: null, state: 'requested' });
   const groups = plain(taskReadGroups(r, null, hub, T0, {}));
-  assert.deepStrictEqual(groups.map(g => g.key), ['top']);
+  assert.deepStrictEqual(groups.map(g => g.key), ['top', 'about']);
   assert.ok(groups[0].cards.find(c => c.key === 'top:ai').html.includes('読んだあとは、右のターミナルでその worker に差分のことを聞けます。'));
   assert.ok(groups[0].cards.find(c => c.key === 'top:ai').html.includes('data-pr-ai'));
 });

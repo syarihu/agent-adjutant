@@ -64,7 +64,8 @@ function keepReadingPlace(body, content, live = true) {
   if (live) content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => opened.set(`${c.dataset.cdCard}#${i}`, d.open)));
   const scroll = body.scrollTop;
   const top = body.getBoundingClientRect().top;
-  const first = live ? [...content.querySelectorAll('[data-cd-card]')].find(c => c.getBoundingClientRect().bottom > top + 1) : null;
+  // At the top it stays at the top: a card that moves down (the PR's facts go to the end once the read-through has come) is not followed.
+  const first = live && scroll > 0 ? [...content.querySelectorAll('[data-cd-card]')].find(c => c.getBoundingClientRect().bottom > top + 1) : null;
   const anchor = first && { key: first.dataset.cdCard, offset: first.getBoundingClientRect().top - top };
   return (place = true) => {
     content.querySelectorAll('[data-cd-card]').forEach(c => c.querySelectorAll('details').forEach((d, i) => {
@@ -126,12 +127,14 @@ function prDialogSync(force = false, initial = false) {
   const read = prReadOf(rec);
   const asking = others.asking.has(id);
   const hook = PR_HOOKS.diff;
+  // A split proposal did not read the diff: none is fetched for it.
+  const diffOn = !!hook && !!read && read.mode !== 'split';
   const groups = prDialogGroups(rec, read, records, hubView, nowSecs, {
     diff: !!hook, asking, readError: !!prReadEntry(id)?.error,
-    diffFileHtml: hook ? path => hook.dialogFileHtml(rec, read, path) : null,
-    diffPaths: hook && read ? hook.dialogPaths(rec, read) : null,
-    diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,
-    diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
+    diffFileHtml: diffOn ? path => hook.dialogFileHtml(rec, read, path) : null,
+    diffPaths: diffOn ? hook.dialogPaths(rec, read) : null,
+    diffHeadHtml: diffOn ? hook.dialogHeadHtml(rec, read) : null,
+    diffLabel: diffOn ? path => hook.dialogLabel(rec, path) : null,
   });
   const dockHtml = prHasRead(rec, read) ? prDraftsBodyHtml(rec, read, 'dock')
     : othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state) ? `<div class="tp-muted">${esc(PR_DIALOG_NO_SPLIT)}</div>`

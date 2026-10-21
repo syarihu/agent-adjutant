@@ -50,6 +50,98 @@ function questionLive(key) {
 /* `live` (as the page lists it) with the board `like` was opened on, so a card follows the gate and keeps sending to its board. */
 const pinLike = (live, like) => (like?._slug && !live._slug ? { ...live, _slug: like._slug, _base: like._base } : live);
 
+/* ── The AI 下読み of a diff gate's PR ── */
+
+/* The read-through of the PR of a task, by `<board>|<task id>|<PR>`: { at (when it was last asked for), busy, read (null for none), error }.
+   It is asked for only for the card that is open (a list of cards, such as the TODO, reads what is held and asks for nothing), and again
+   after this long. At most `QUESTION_READS_KEEP` are kept, the one used longest ago going first. */
+const questionReads = new Map();
+const QUESTION_READ_MS = 60 * 1000;
+const QUESTION_READS_KEEP = 8;
+
+const questionReadKey = (g, task) => `${g._slug || nav.board || ''}|${task.id}|${task.pr}`;
+/* What names a read-through, to tell a changed one from the same one again. */
+const questionReadSig = read => (read ? `${read.sha}|${read.madeAt}` : '');
+
+/* The read-through that backs the diff of `g`'s task, as held, or null: the gate is not a diff gate, the task has no PR, the read-through
+   was not of the PR's head when it was last asked for, or it has not been read (`questionReadEnsure` asks for it). What is held is
+   given until the next answer replaces it. */
+function questionReadOf(g, task) {
+  if (g.kind !== 'diff' || !task?.pr) return null;
+  const key = questionReadKey(g, task);
+  const e = questionReads.get(key);
+  if (!e) return null;
+  // Used now: it is the last to go.
+  questionReads.delete(key);
+  questionReads.set(key, e);
+  return e.read;
+}
+
+/* Ask for the read-through of the open card's task when it is not held or was read a while ago; the card is drawn again when it comes. */
+function questionReadEnsure(g, task) {
+  if (g.kind !== 'diff' || !task?.pr) return;
+  const key = questionReadKey(g, task);
+  const e = questionReads.get(key);
+  if (!e || (!e.busy && Date.now() - e.at > QUESTION_READ_MS)) questionReadFetch(g, task, key);
+}
+
+/* Ask for the read-through of the task's PR: the task's document says which record and whether the read-through is of its head now, then
+   the stored read-through is read and kept only if it is that one, has annotations and is not a split proposal. No document, record,
+   read-through or stored copy is an answer (none); any other failure keeps the read-through held and is asked again after a while. The
+   answer goes to the entry it was asked for, and the open card is drawn again only if it is of that task. */
+async function questionReadFetch(g, task, key) {
+  let e = questionReads.get(key);
+  if (!e) {
+    e = { at: 0, busy: false, read: null, error: null };
+    // Past the limit the one used longest ago goes, but not one whose answer is still on its way.
+    for (const [k, x] of [...questionReads]) {
+      if (questionReads.size < QUESTION_READS_KEEP) break;
+      if (!x.busy) questionReads.delete(k);
+    }
+  } else questionReads.delete(key);
+  questionReads.set(key, e);
+  e.at = Date.now();
+  e.busy = true;
+  const was = questionReadSig(e.read);
+  let rec = null;
+  try {
+    const doc = await boardApi(g._base || BASE, `/api/tasks/${encodeURIComponent(task.id)}/ai`);
+    rec = doc?.record;
+    let read = null;
+    if (rec?.ai?.sha && !rec.ai.stale) {
+      const got = await boardApi('', `/api/others/read?id=${encodeURIComponent(rec.id)}`);
+      if (got && got.sha === rec.ai.sha && got.mode !== 'split' && got.annotations?.length) read = got;
+    }
+    e.read = read;
+    e.error = null;
+  } catch (err) {
+    if (err.status === 404) { e.read = null; e.error = null; } else {
+      e.error = err.message;
+      // What is held is kept only while it is still of the head the record names: a newer read-through that could not be read is not the old one.
+      if (rec && e.read && (!rec.ai?.sha || rec.ai.stale || e.read.sha !== rec.ai.sha)) e.read = null;
+    }
+  } finally {
+    e.busy = false;
+  }
+  if (questionReadSig(e.read) !== was) questionReadRedraw(key);
+}
+
+/* What else draws a card from `questionReads` and is told when one came or changed (the TODO's selected card). */
+const questionReadListeners = [];
+
+/* A read-through came or changed: draw the open card again if it is the card of a gate whose task it is for, and tell the others. */
+function questionReadRedraw(key) {
+  questionReadListeners.forEach(fn => fn(key));
+  const base = questionBase;
+  const task = base?.ctx?.task;
+  if (!base || base.gone || !task?.pr || !dialogStack.isOpen() || questionReadKey(base.g, task) !== key) return;
+  const layer = dialogStack.layerEl(`card:${base.key}`);
+  if (!layer) return;
+  const read = questionReads.get(key)?.read ?? null;
+  const ctx = { ...base.ctx, read };
+  questionBodyReplace(layer, base, questionCardHtml(base.g, ctx), base.g, ctx);
+}
+
 /* What the card is given besides the gate: its task, the plan it carries out, where it comes from. */
 function questionCtxOf(g) {
   const task = taskForGate(g) || null;
@@ -59,8 +151,8 @@ function questionCtxOf(g) {
   return {
     task,
     plan: g.kind === 'plan' ? g : task?.approvedPlan || null,
-    // The AI 下読み of the task's PR is not read here yet.
-    read: null,
+    // The AI 下読み of the task's PR (a diff gate only): null until it has been read, and when there is none that backs the diff.
+    read: questionReadOf(g, task),
     nwo: board?.nwo || '',
     key: gateKey(g),
     issue: { number: url ? issueNumberOf(url) : '', url, hasBody: !!snap?.body },
@@ -89,6 +181,7 @@ function openQuestionDialog(g, opts = {}) {
   if (dialogStack.isOpen()) dialogStack.closeAll();
   const c = questionCardHtml(pinned, { ...ctx, key, draft: questionDrafts.get(key) || '' });
   questionBase = { key, g: pinned, ctx: { ...ctx, key }, body: c.body, gone: false, opts };
+  questionReadEnsure(pinned, ctx.task);
   dialogStack.push({
     key: `card:${key}`, head: c.head, body: c.body, foot: c.foot, gate: key, opener: opts.opener,
     onClose: layer => {
@@ -211,30 +304,37 @@ questionDialogEl().addEventListener('input', e => {
 
 /* ── Following the page ── */
 
+/* Put the markup `c.body` of the card in the part that scrolls, if it differs from what is drawn and the focus is not in something of
+   it; the card then holds `g` and `ctx`. The scroll stays where it was. True when it was replaced. */
+function questionBodyReplace(layer, base, c, g, ctx) {
+  const body = layer.querySelector('.qd-body');
+  if (!body || c.body === base.body || (document.activeElement !== body && body.contains(document.activeElement))) return false;
+  const top = body.scrollTop;
+  body.innerHTML = c.body;
+  body.scrollTop = top;
+  base.body = c.body;
+  base.g = g;
+  base.ctx = ctx;
+  return true;
+}
+
 /* The open card as the page's state now has it. The part that scrolls is redrawn only when its markup changed, keeping where it was
    scrolled to, and not while the focus is in something of it; the foot is never redrawn, so what is typed in it is never lost. A gate the board no
    longer lists is shown as gone: nothing to send, the way back is the head's. A card of another board than the page's is left as it is. */
 function questionDialogFollow() {
   const base = questionBase;
   if (!base || !dialogStack.isOpen() || base.gone) return;
+  questionReadEnsure(base.g, base.ctx?.task);
   if (multiBoard && base.g._slug !== nav.board) return;
   const layer = dialogStack.layerEl(`card:${base.key}`);
   if (!layer) return;
   const live = questionLive(base.key);
   // A state not read yet lists nothing: not the gate being gone.
   if (!live && state.now == null) return;
-  const body = layer.querySelector('.qd-body');
   if (live) {
     const pinned = pinLike(live, base.g);
     const ctx = { ...questionCtxOf(live), key: base.key };
-    const c = questionCardHtml(pinned, ctx);
-    if (c.body === base.body || (document.activeElement !== body && body.contains(document.activeElement))) return;
-    const top = body.scrollTop;
-    body.innerHTML = c.body;
-    body.scrollTop = top;
-    base.body = c.body;
-    base.g = pinned;
-    base.ctx = ctx;
+    questionBodyReplace(layer, base, questionCardHtml(pinned, ctx), pinned, ctx);
     return;
   }
   base.gone = true;

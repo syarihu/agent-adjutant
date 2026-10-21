@@ -31,16 +31,14 @@ function el(dataset = {}, extra = {}) {
 const wrap = el => el;
 
 function world({ io = false } = {}) {
-  const w = { calls: [], gets: [], pending: [], notes: [], edits: [], drafts: [], hubView: { canRead: true }, selected: 'pr:acme/widget#1', pane: 'diff', dialogOpen: false, loaded: true };
+  const w = { calls: [], gets: [], pending: [], notes: [], edits: [], drafts: [], hubView: { canRead: true }, selected: 'pr:acme/widget#1', pane: 'detail', dialogOpen: false, loaded: true };
   // The middle's root and the dialog's content, each with the pieces the code looks for.
   const mk = () => {
     const bodies = [el({ prdBody: '0' }), el({ prdBody: '1' })];
     const sections = bodies.map((b, i) => el({ prdFile: String(i) }, { querySelector: s => (s === '[data-prd-body]' ? b : null), closest: () => null }));
-    const tabs = ['logic', 'ui', 'doc', 'test', 'resource'].map(c => el({ prdTab: c }));
-    const fold = el({});
-    const root = el({}, { querySelectorAll: s => (s === '[data-prd-body]' ? bodies : s === '[data-prd-file]' ? sections : s === '[data-prd-tab]' ? tabs : s === '[data-prd-fold]' ? [fold] : []),
-      querySelector: s => (s === '[data-prd-file], [data-prd-tab]' ? sections[0] : s.startsWith('[data-prd-file=') ? sections[Number(s.match(/"(\d+)"/)[1])] : null) });
-    return { root, bodies, sections, tabs, fold };
+    const root = el({}, { querySelectorAll: s => (s === '[data-prd-body]' ? bodies : s === '[data-prd-file]' ? sections : []),
+      querySelector: s => (s === '[data-prd-file]' ? sections[0] : s.startsWith('[data-prd-file=') ? sections[Number(s.match(/"(\d+)"/)[1])] : null) });
+    return { root, bodies, sections };
   };
   w.panel = mk();
   w.dialog = mk();
@@ -58,7 +56,7 @@ function world({ io = false } = {}) {
     cardDialogEl: () => dlg, cardDialogContent: () => Object.assign(w.dialog.root, { addEventListener() {} }),
     cardDialog: { mode: 'review', subject: 'pr:acme/widget#1', quiet: false }, CARD_DIALOG_TARGET_MS: 10000,
     cardDialogCardEl: key => { w.calls.push(['cardEl', key]); return key === 'diff:src/a.rs' ? w.dialog.sections[0] : key === 'diff:docs/x.md' ? w.dialog.sections[1] : null; },
-    cardDialogGo: (...a) => { w.calls.push(['go', ...a, { cat: vm.runInContext("prDiff.cat.get('acme/widget#1')", c), filled: w.dialog.bodies[1].innerHTML !== '' }]); },
+    cardDialogGo: (...a) => { w.calls.push(['go', ...a, { filled: w.dialog.bodies[1].innerHTML !== '' }]); },
     closeCardDialog: () => { w.calls.push(['close']); w.dialogOpen = false; }, openPrDialog: opener => { w.calls.push(['open', opener]); w.dialogOpen = true; },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => rec(), prReadOf: () => w.read,
     othersHubView: () => w.hubView, othersRecords: () => [], others: { doc: { hub: null }, asking: new Set() },
@@ -150,7 +148,8 @@ test('each state says what it is, and 404 offers 「下読みし直す」 and Gi
   assert.ok((await text(p => p.resolve({ sha: SHA, bytes: 3 * 1024 * 1024, diff: null }))).includes('差分が大きすぎるため保存していません（3.0 MB）'));
   assert.ok((await text(p => p.reject(new Error('boom')))).includes('role="alert"'));
   const okHtml = await text(p => p.resolve({ sha: SHA, bytes: DIFF.length, diff: DIFF }));
-  assert.ok(okHtml.includes('data-pr-sec="diff-bar"') && okHtml.includes('data-prd-tab="logic"'));
+  // The diff is there and the bar has nothing to say: no card at all.
+  assert.strictEqual(okHtml, '');
   const stale = await (async () => {
     const { w, c } = world();
     w.pending.length = 0;
@@ -160,7 +159,18 @@ test('each state says what it is, and 404 offers 「下読みし直す」 and Gi
     await tick();
     return c.prdDialogHeadHtml(r, w.read);
   })();
-  assert.ok(stale.includes('この差分は aaaaaaa で下読みしたときのものです'));
+  assert.ok(stale.includes('この差分は aaaaaaa で下読みしたときのものです') && stale.includes('data-pr-sec="diff-bar"'));
+  // Files of the record that the diff lacks are said in the bar.
+  const lacking = await (async () => {
+    const { w, c } = world();
+    w.pending.length = 0;
+    const r = { ...rec(), files: [{ path: 'src/a.rs', additions: 1, deletions: 0 }, { path: 'lost.rs', additions: 1, deletions: 0 }] };
+    c.prdDialogHeadHtml(r, w.read);
+    w.pending[0].resolve({ sha: SHA, bytes: 1, diff: DIFF });
+    await tick();
+    return c.prdDialogHeadHtml(r, w.read);
+  })();
+  assert.ok(lacking.includes('data-pr-sec="diff-bar"') && lacking.includes('差分にないファイル 1 件') && !lacking.includes('data-prd-tab'));
   // The dialog's cards: the bar first, then the files in the diff's order, with short labels.
   const { w, c } = world();
   c.prdDialogHeadHtml(rec(), w.read);
@@ -169,7 +179,7 @@ test('each state says what it is, and 404 offers 「下読みし直す」 and Gi
   await tick();
   assert.deepStrictEqual(JSON.parse(JSON.stringify(c.prdDialogPaths(rec(), w.read))), ['src/a.rs', 'docs/x.md']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(c.prdDialogLabel(rec(), 'src/a.rs'))), { label: 'a.rs', title: 'src/a.rs' });
-  assert.ok(c.prdDialogHeadHtml(rec(), w.read).includes('data-pr-sec="diff-bar"'));
+  assert.strictEqual(c.prdDialogHeadHtml(rec(), w.read), '');
   assert.ok(c.prdDialogFileHtml(rec(), w.read, 'src/a.rs').includes('data-prd-file="0"'));
 });
 
@@ -188,8 +198,6 @@ test('with no IntersectionObserver every file is drawn at once, from one render 
   c.prdSync('read');
   assert.ok(w.panel.bodies.every(b => b.innerHTML.includes('prd-l')));
   assert.strictEqual(renders, 2);
-  assert.strictEqual(w.panel.tabs[0].attrs['aria-pressed'], 'true');
-  assert.strictEqual(w.panel.tabs[2].attrs['aria-pressed'], 'false');
   // Drawn again: nothing is rendered again, and what is there is left alone.
   c.prdSync('read');
   assert.strictEqual(renders, 2);
@@ -233,27 +241,20 @@ test('after the dialog replaced its content, the files drawn before are drawn ag
   assert.strictEqual(renders, 0, 'from the cache, with no new render');
 });
 
-test('a tab and the fold are set in place and hide the other categories', async () => {
-  const { w, c } = await loaded();
+test('every file\'s card is shown, and there is no tab or fold to hide any', async () => {
+  const { w, c, run } = await loaded();
   c.prdSync('read');
-  // The markdown file is in the doc tab: its section is hidden until that tab is on.
   assert.strictEqual(w.panel.sections[0].hidden, false);
-  assert.strictEqual(w.panel.sections[1].hidden, true);
-  const tab = w.panel.tabs[2];
-  w.calls.length = 0;
-  const e = { target: { closest: s => (s === '[data-prd-tab]' ? el({ prdTab: 'doc' }) : null) } };
-  assert.strictEqual(c.prdAct(e, {}), true);
-  assert.strictEqual(w.panel.sections[0].hidden, true);
   assert.strictEqual(w.panel.sections[1].hidden, false);
-  assert.strictEqual(tab.attrs['aria-pressed'], 'true');
-  assert.ok(!w.calls.some(x => x[0] === 'render' || x[0] === 'redraw'), 'nothing is drawn again');
-  c.prdAct({ target: { closest: s => (s === '[data-prd-fold]' ? el() : null) } }, {});
-  assert.strictEqual(w.panel.fold.attrs['aria-pressed'], 'true');
-  assert.strictEqual(w.panel.fold.textContent, '', 'the label is fixed: the state is aria-pressed');
-  assert.strictEqual(w.panel.root.classList.contains('prd-folded'), true);
+  assert.strictEqual(w.panel.root.classList.contains('prd-folded'), false);
+  // The buttons of the old tabs and fold are nobody\'s any more.
+  const e = sel => ({ target: { closest: s => (s === sel ? el({ prdTab: 'doc' }) : null) } });
+  assert.strictEqual(c.prdAct(e('[data-prd-tab]'), {}), false);
+  assert.strictEqual(c.prdAct(e('[data-prd-fold]'), {}), false);
+  assert.strictEqual(run(`'cat' in prDiff || 'folded' in prDiff`), false);
 });
 
-test('a link switches the tab first and draws the file, then goes there', async () => {
+test('a link draws the file, then goes there', async () => {
   const { w, c, run } = await loaded({ io: true });
   run(`prDiff.cache.get('acme/widget#1').layout.rows = ${3000}`);
   w.dialogOpen = true;
@@ -262,8 +263,8 @@ test('a link switches the tab first and draws the file, then goes there', async 
   const go = w.calls.find(x => x[0] === 'go');
   assert.strictEqual(go[1], 'diff:docs/x.md');
   assert.strictEqual(go[3], false);
-  // At the moment of the jump the tab was the file's, and its body was drawn.
-  assert.strictEqual(go[4].cat, 'doc');
+  // At the moment of the jump the file's body was drawn.
+  assert.strictEqual(go[4].filled, true);
   assert.strictEqual(run('prDiff.target'), null);
   // A file that is not in the diff goes to the group.
   w.calls.length = 0;
@@ -328,6 +329,18 @@ test('an explanation\'s 「下書きに」 is the same, with its text as the bod
   c.prdAct(onLine(c, { prdPlus: 'right:3' }, { hit: '[data-prd-plus]' }), { place: 'read' });
   assert.strictEqual(w.edits.length, 2);
   assert.strictEqual(w.notes.length, 1);
+});
+
+test('a concern\'s 「下書きに」 puts the reader\'s draft for the author in the box, not the note on the line', async () => {
+  const { w, c, run } = world();
+  w.read = readThrough({ annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'concern', text: 'Why is this here?', draft: 'Could you say why this is here?' }] });
+  c.prDiffEnsure(rec(), w.read);
+  await ok(w, run, 0);
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: ['[data-prd-todraft]'] }), { place: 'read' });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.edits[0])), { key: 'p1', source: 'person', path: 'src/a.rs', line: 3, side: 'right', body: 'Could you say why this is here?' });
+  // 「聞く」 asks about the note.
+  c.prdAct(onLine(c, { prdAt: 'right:3' }, { hit: '[data-prd-todraft], [data-prd-ask]', matches: [] }), { place: 'read' });
+  assert.strictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'ask')[1])).title, 'Why is this here?');
 });
 
 test('「聞く」 in 「拡大」 closes it first, then asks with the line and the first words', async () => {
@@ -452,7 +465,7 @@ test('the middle of a task is a place of its own: its root is the read-through\'
   assert.strictEqual(c.prdCurrent(), null);
 });
 
-test('a link in the middle of a task goes there and opens no dialog, after the tab and the file are drawn', async () => {
+test('a link in the middle of a task goes there and opens no dialog, after the file is drawn', async () => {
   const { w, c, run } = readWorld();
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
@@ -460,7 +473,6 @@ test('a link in the middle of a task goes there and opens no dialog, after the t
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'no 「拡大」 for it');
   const go = w.calls.find(x => x[0] === 'rgo');
   assert.deepStrictEqual(go.slice(1, 3), ['diff:docs/x.md', null]);
-  assert.strictEqual(run(`prDiff.cat.get('acme/widget#1')`), 'doc');
   assert.strictEqual(run('prDiff.target'), null);
   // Not in the diff: the group.
   w.calls.length = 0;
@@ -469,7 +481,7 @@ test('a link in the middle of a task goes there and opens no dialog, after the t
   assert.ok(!w.calls.some(x => x[0] === 'go'), 'not the dialog\'s');
 });
 
-/* The same place for a review request: its 差分 tab is where the diff is, and 「拡大」 is the other place a link can land in. */
+/* The same place for a review request: its 下読み tab is where the diff is, and 「拡大」 is the other place a link can land in. */
 function prReadWorld() {
   const x = readWorld();
   x.w.shown = { id: 'acme/widget#1', rec: rec(), kind: 'pr', hubView: x.w.hubView, asking: false };
@@ -478,26 +490,26 @@ function prReadWorld() {
   return x;
 }
 
-test('a link from the 下読み tab of a review request goes to the 差分 tab first, and lands in the middle', async () => {
+test('a link from the 下書き tab of a review request goes back to the 下読み tab first; from 下読み it lands in the same view', async () => {
   const { w, c, run } = prReadWorld();
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
+  w.pane = 'drafts';
   c.prdGoto('docs/x.md', 1, { place: 'read', opener: el() });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane').slice(1))), [{ pane: 'diff' }, { replace: true }]);
-  assert.deepStrictEqual(w.calls.find(x => x[0] === 'rgo').slice(1, 3), ['diff:docs/x.md', null]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.calls.find(x => x[0] === 'gopane').slice(1))), [{ pane: 'detail' }, { replace: true }]);
   assert.deepStrictEqual(w.calls.filter(x => x[0] === 'open'), [], 'no 「拡大」 for it');
-  // Already on the 差分 tab: nothing to switch.
-  w.pane = 'diff';
+  // Already on 下読み, which holds the diff: nothing to switch, and it lands.
+  w.pane = 'detail';
   w.calls.length = 0;
-  c.prdGoto('src/a.rs', 1, { place: 'read' });
+  c.prdGoto('docs/x.md', 1, { place: 'read' });
   assert.ok(!w.calls.some(x => x[0] === 'gopane'));
+  assert.deepStrictEqual(w.calls.find(x => x[0] === 'rgo').slice(1, 3), ['diff:docs/x.md', null]);
 });
 
 test('a link lands in 「拡大」 while it is open on the PR, else in the middle', async () => {
   const { w, c, run } = prReadWorld();
   c.prDiffEnsure(rec(), w.read);
   await ok(w, run, 0);
-  w.pane = 'diff';
   w.dialogOpen = true;
   c.prdGoto('docs/x.md', null, { place: 'dialog' });
   assert.ok(w.calls.some(x => x[0] === 'go'), 'the dialog');

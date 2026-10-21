@@ -206,8 +206,8 @@ pub(crate) fn submit_read_with(
         extra: Default::default(),
     };
     // Read before the first write, so that an unreadable `diff.patch` refuses the hand-in whole.
-    // A split proposal keeps no diff: the reader did not read one, so the 差分 tab has nothing
-    // of this head to show and an earlier diff is removed below.
+    // A split proposal keeps no diff: the reader did not read one, so the read-through's diff has
+    // nothing of this head to show and an earlier diff is removed below.
     let diff = match mode {
         ReadMode::Read => reader_diff(root, pr, &read.sha, &stamp).map_err(SubmitError::Failed)?,
         ReadMode::Split => None,

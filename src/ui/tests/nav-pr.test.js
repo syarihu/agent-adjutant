@@ -41,9 +41,11 @@ const enc = encodeURIComponent(PR);
 test('a PR in the address keeps its task and its pane on 「すべて」, in the work view', () => {
   const w = world();
   assert.deepStrictEqual(w.parse(`/?token=t&view=work&task=${enc}`), { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' });
-  for (const pane of ['detail', 'diff', 'drafts']) {
+  for (const pane of ['detail', 'drafts']) {
     assert.deepStrictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=${pane}`), { board: 'all', view: 'work', list: 'review', task: PR, pane });
   }
+  // An address from when the diff was a tab of its own lands on the one view.
+  assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=diff`).pane, 'detail');
   assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=nonsense`).pane, 'detail');
 });
 
@@ -131,7 +133,7 @@ test('レビュー has an address of its own, and an older PR link from the work
   assert.strictEqual(w.urlOf({ board: 'all', view: 'work', list: 'review', task: null, pane: 'detail' }), '/?token=t&view=review');
   assert.strictEqual(w.urlOf({ board: 'all', view: 'work', list: 'task', task: null, pane: 'detail' }), '/?token=t&view=work');
   // It survives a reload: what is written reads back as the same.
-  const review = { board: 'all', view: 'work', list: 'review', task: PR, pane: 'diff' };
+  const review = { board: 'all', view: 'work', list: 'review', task: PR, pane: 'drafts' };
   assert.deepStrictEqual(w.parse(w.urlOf(review)), review);
   assert.deepStrictEqual(w.parse(`/?token=t&view=review&task=${enc}`), { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' });
   assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}`).list, 'review');

@@ -41,7 +41,7 @@ const parentOfRef = id => isParentRef(id) ? workParentOf(parentKeyOfRef(id)) : n
 const PR_REF = 'pr:';
 const isPrRef = id => typeof id === 'string' && id.startsWith(PR_REF);
 const prIdOfRef = id => id.slice(PR_REF.length);
-const PR_PANES = ['detail', 'diff', 'drafts'];
+const PR_PANES = ['detail', 'drafts'];
 /* The ref of a task: its id, which carries none of the prefixes of the other things the work view opens. */
 const isTaskRef = id => typeof id === 'string' && id !== '' && ![PR_REF, HUB_REF, SESS_REF, PARENT_REF, WORK_GATE_REF].some(prefix => id.startsWith(prefix));
 

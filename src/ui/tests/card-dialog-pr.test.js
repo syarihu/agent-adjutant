@@ -66,7 +66,7 @@ test('the first fill marks nothing, and what is drawn is the groups of the read-
   assert.strictEqual(w.contentDraws, 1);
   assert.strictEqual(col.innerHTML, 'DOCK v1');
   assert.strictEqual(col.hidden, false);
-  assert.deepStrictEqual(state('JSON.stringify(cardDialog.groups.map(g => g.key))'), '["top"]');
+  assert.deepStrictEqual(state('JSON.stringify(cardDialog.groups.map(g => g.key))'), '["top","about"]');
   // Nothing changed: nothing is drawn again, and nothing is marked.
   sync();
   assert.strictEqual(w.contentDraws, 1);
@@ -157,7 +157,7 @@ test('the diff arriving in an open dialog is its first fill, not a change; its c
   withDiff(w, c, d);
   d.loading = true;
   sync(true, true);
-  assert.strictEqual(state('JSON.stringify(cardDialog.groups.map(g => g.key))'), '["top","diff"]');
+  assert.strictEqual(state('JSON.stringify(cardDialog.groups.map(g => g.key))'), '["top","diff","about"]');
   d.loading = false;
   d.paths = ['src/a/mod.rs', 'docs/x.md'];
   sync();

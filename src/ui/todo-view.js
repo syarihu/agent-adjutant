@@ -156,6 +156,8 @@ function todoEmptyCardHtml(items) {
    scrolled to), and the foot only when another gate is selected, so that what is typed in it is never lost. */
 function todoDrawGateCard(el, key, g) {
   const ctx = todoCtxOf(g);
+  // The selected card is the one read: the AI 下読み of its task's PR is asked for it alone, and the card is drawn again when it comes.
+  questionReadEnsure(g, ctx.task);
   const c = questionCardHtml(g, { ...ctx, draft: questionDrafts.get(key) || '' });
   // The cached card stays, with why it may be old.
   const why = todoBoardError(key);
@@ -225,6 +227,7 @@ function todoFollow(force = false) {
 onOrgChange(() => { todoFollow(true); if (todoBoardsWanted()) todoLoadBoards(); });
 
 registerView('todo-view', { render: () => todoFollow() });
+questionReadListeners.push(() => { if (view === 'todo') todoFollow(); });
 
 /* Called every round, whichever view is on: the boards of the list are read only while it is shown, and the badge follows the documents. */
 async function todoPoll() {

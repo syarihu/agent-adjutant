@@ -14,8 +14,6 @@ const PR_SINCE_STATUS = { addressed: '対応済み', replied: '返信だけ', un
 /* The placeholder of a file's card in 「拡大」 where there is no annotated diff hook (a fallback: the page sets one). */
 const PR_DIFF_PLACEHOLDER = 'この PR の差分はまだここに表示できません。GitHub で開いて読んでください。';
 const PR_NO_READ_WHY = 'AI 下読みのあとに使えます';
-const PR_NO_DIFF_WHY = '差分はまだ表示できません';
-const PR_SPLIT_NO_DIFF_WHY = '分割案では差分を読んでいません';
 
 const prSha7 = sha => String(sha || '').slice(0, 7);
 const prSubText = rec => `${rec?.repo || ''} #${rec?.number ?? ''}`;
@@ -34,17 +32,15 @@ const PR_BOX_SEL = '.pr-draft-body, .pr-overall';
 /* What the middle and the panel say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
 const prMissingText = (doc, error) => doc ? 'この PR は、いまの一覧にありません' : error ? `読み込めませんでした: ${error}` : '読み込み中…';
 
-/* The tab that is shown: 下読み unless the one named can be used (下書き and 差分 need a read-through; 差分 also needs the
-   annotated diff, which says so through `diffOn`). */
-function prPaneOf(pane, hasRead, diffOn = false) {
-  if (pane === 'drafts' && hasRead) return 'drafts';
-  if (pane === 'diff' && hasRead && diffOn) return 'diff';
-  return 'detail';
+/* The tab that is shown: 下読み unless 下書き is asked for and can be used (it needs a read-through). Any other name, such as the
+   `diff` of an older address, is 下読み, which holds the diff. */
+function prPaneOf(pane, hasRead) {
+  return pane === 'drafts' && hasRead ? 'drafts' : 'detail';
 }
 
 /* The tabs over the middle, the same component a task's tabs are (`wk-mid-tab`, task-read.js), named by `data-mid-tab`. A tab that
    cannot be used is disabled, with why as its title. */
-function prTabsHtml(rec, read, pane, draftCount = 0, diffOn = false) {
+function prTabsHtml(rec, read, pane, draftCount = 0) {
   const has = prHasRead(rec, read);
   const tab = (id, label, extra, off) =>
     `<button type="button" role="tab" id="wk-mid-tab-pr-${id}" class="wk-mid-tab${pane === id ? ' active' : ''}" data-mid-tab="${id}" aria-selected="${pane === id}" aria-controls="task-read"${off ? ` disabled title="${esc(off)}"` : ''}>`
@@ -52,7 +48,6 @@ function prTabsHtml(rec, read, pane, draftCount = 0, diffOn = false) {
   const dot = OTHERS_LIVE.includes(rec?.state) && rec?.events?.pushed ? '<span class="tp-dot" role="img" aria-label="前回のレビューのあとに push されました" title="前回のレビューのあとに push されました"></span>' : '';
   const badge = draftCount > 0 ? `<span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${draftCount}</span>` : '';
   return tab('detail', '下読み', dot, '')
-    + tab('diff', '差分', '', !has ? PR_NO_READ_WHY : read?.mode === 'split' ? PR_SPLIT_NO_DIFF_WHY : !diffOn ? PR_NO_DIFF_WHY : '')
     + tab('drafts', '下書き', badge, !has ? PR_NO_READ_WHY : '');
 }
 
@@ -68,14 +63,17 @@ function prCiWord(ci) {
 }
 
 /* The heading of a review request's middle: the number and title, the repository, author, size and CI under it, and at the right
-   「GitHub で開く」 and 「拡大」. */
-function prReviewHeadHtml(rec) {
+   「GitHub で開く」, 「読み直す」 and 「拡大」. 「読み直す」 is there while a read-through exists and the PR is live and not out of review
+   (the card of one that is has its own buttons); `hubView` and `asking` are what `prAskAttrs` takes. */
+function prReviewHeadHtml(rec, read, hubView, asking = false) {
   const author = rec.author ? `@${rec.author}` : '（削除されたアカウント）';
   const sub = [rec.repo, author, `+${Number(rec.additions) || 0} −${Number(rec.deletions) || 0}`, `${Number(rec.changedFiles) || 0} files`, `CI ${prCiWord(rec.ci)}`].join(' · ');
   const url = httpUrl(rec.url);
   const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>GitHub で開く</a>` : '';
+  const again = prHasRead(rec, read) && OTHERS_LIVE.includes(rec.state) && !othersOutOfReview(rec)
+    ? `<button type="button" class="btn-m3-text tp-jump" data-pr-reread${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">refresh</span>${esc(asking ? '依頼中…' : '読み直す')}</button>` : '';
   const expand = '<button type="button" class="tool-btn" data-pr-expand aria-haspopup="dialog" title="拡大" aria-label="PR 全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>';
-  return `<div class="wk-head-main"><div class="wk-term-title">${esc(`#${rec.number} ${rec.title}`)}</div><div class="wk-term-sub">${esc(sub)}</div></div><span class="wk-head-acts">${open}${expand}</span>`;
+  return `<div class="wk-head-main"><div class="wk-term-title">${esc(`#${rec.number} ${rec.title}`)}</div><div class="wk-term-sub">${esc(sub)}</div></div><span class="wk-head-acts">${open}${again}${expand}</span>`;
 }
 
 /* ── the sections: `{ key, label, html }`, or null when there is nothing to say ── */
@@ -109,16 +107,17 @@ function prFacts(rec, nowSecs) {
   return { key: 'top:facts', label: 'PR の事実', html: `<div class="tp-kvs">${rows}</div>` };
 }
 
-/* 「前回のレビューから」: for a PR pushed since your review, or one whose read-through compares with it. */
-function prSince(rec, read) {
+/* 「前回のレビューから」: for a PR pushed since your review, or one whose read-through compares with it. With `opts.diff` the place of
+   each comment is a button that goes to its line of the diff. */
+function prSince(rec, read, opts = {}) {
   const since = read?.sinceReview;
   if (rec?.state !== 'pushed' && !since) return null;
   const n = rec?.commitsSinceReview;
   const count = Number.isFinite(n) ? `前回のレビューから +${n} コミット` : '前回のレビューのあとに push されました';
   let html;
   if (since) {
-    const comments = (since.comments || []).map(c => prLi(
-      `<span class="pr-chip pr-since-${esc(c.status)}">${esc(PR_SINCE_STATUS[c.status] || c.status)}</span> ${prLoc(c.path, c.line)} <span>${esc(c.note)}</span>`));
+    const comments = (since.comments || []).map((c, i) => prLi(
+      `<span class="pr-chip pr-since-${esc(c.status)}">${esc(PR_SINCE_STATUS[c.status] || c.status)}</span> ${opts.diff && c.path ? `<button type="button" class="pr-loc-btn" data-pr-goto-since="${i}" title="差分で見る">${prLoc(c.path, c.line)}</button>` : prLoc(c.path, c.line)} <span>${esc(c.note)}</span>`));
     const changes = (since.newChanges || []).map(c => prLi(`<code class="pr-loc">${esc(c.path)}</code> <span>${esc(c.note)}</span>`));
     html = `<div class="tp-line">${esc(count)}</div>`
       + (comments.length ? `<ul class="pr-list">${comments.join('')}</ul>` : '<div class="tp-muted">前回の指摘は記録されていません</div>')
@@ -129,6 +128,23 @@ function prSince(rec, read) {
   return { key: 'since:list', label: '前回のレビューから', badge: Number.isFinite(n) ? `+${n}` : '', html };
 }
 
+/* Whether `read` is a read-through of the older form (version 1, with 見るポイント and drafts of its own): one that is not a split
+   proposal and has a version below 2. A missing version counts as old only if it has `points` or `drafts`. */
+function prOldForm(read) {
+  if (!read || read.mode === 'split') return false;
+  if (read.version === undefined || read.version === null) return Array.isArray(read.points) || Array.isArray(read.drafts);
+  return Number(read.version) < 2;
+}
+
+/* The band over a read-through of the older form: that it is, and, while the PR is live, the button that reads it again in the new form. */
+function prOldBand(rec, read, hubView, asking = false) {
+  if (!prOldForm(read)) return null;
+  const made = read.madeAt ? `（${esc(when(read.madeAt))}）` : '';
+  const again = OTHERS_LIVE.includes(rec?.state)
+    ? ` <button type="button" class="btn-m3-tonal pr-reread" data-pr-reread${prAskAttrs(hubView, asking)}>${esc(asking ? '依頼中…' : '下読みし直す')}</button>で新しい形式になります。` : '';
+  return { key: 'top:old', label: '前の形式', html: `<div class="tp-line">前の形式の下読みです${made}。見るポイントはそのまま出します。${again}</div>` };
+}
+
 function prThree(read) {
   const t = read?.three;
   if (!t) return null;
@@ -136,7 +152,7 @@ function prThree(read) {
   return { key: 'top:three', label: '3行でいうと', html: `${line('目的', t.purpose)}${line('やり方', t.approach)}${line('影響', t.impact)}<p class="pr-essence"><b>この差分の本質:</b> ${esc(t.essence)}</p>` };
 }
 
-/* 見るポイント. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off, `opts.noAsk` leaves it out (a place with no reader to type to). */
+/* 見るポイント, which only a read-through of the older form has. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off, `opts.noAsk` leaves it out (a place with no reader to type to). */
 function prPoints(read, opts = {}) {
   const points = read?.points || [];
   if (!points.length) return null;
@@ -228,17 +244,17 @@ function prNoReadHtml(rec, ai, hubView, asking) {
     // The queue place is the tail of the view's text ("…の順番待ち（1 番目）").
     const place = ai.kind === 'queued' ? /順番待ち.*$/.exec(ai.text || '')?.[0] : '';
     return `<div class="wk-mid-empty-in pr-noread" role="status">${icon('progress_activity')}<strong>下読み中です</strong>`
-      + `<span>読み終わると、ここに要点と見るポイントが出ます。</span>${place ? `<span>${esc(place)}</span>` : ''}</div>`;
+      + `<span>読み終わると、ここに要点と差分の解説が出ます。</span>${place ? `<span>${esc(place)}</span>` : ''}</div>`;
   }
   const failed = ['failed', 'hung'].includes(ai?.kind) && ai.text ? `<span>${esc(ai.text)}</span>` : '';
   return `<div class="wk-mid-empty-in pr-noread">${icon('auto_stories')}<strong>まだ下読みしていません</strong>`
-    + `<span>コードレビュー hub の読み手が、要点と見るポイントをまとめます。</span>${failed}${prAiButtonHtml(ai, hubView, asking)}</div>`;
+    + `<span>コードレビュー hub の読み手が、要点をまとめ、差分の行に解説を書きます。</span>${failed}${prAiButtonHtml(ai, hubView, asking)}</div>`;
 }
 function prBeforeRead(rec, records, hubView, nowSecs, asking = false, readerWhere = '') {
   const ai = othersAiView(rec, records, nowSecs);
   // `readerWhere`: where the reader can be talked to, when that is not the middle (a task's is its sidebar).
   const text = ai.kind === 'none' || !ai.text
-    ? `下読みするまでは GitHub の情報だけです。AI 下読みすると、要点・見るポイント・読む順・設計判断・テスト範囲・下書きの候補ができます。${readerWhere ? `読んだあとは、${readerWhere}でその worker に差分のことを聞けます。` : ''}` : ai.text;
+    ? `下読みするまでは GitHub の情報だけです。AI 下読みすると、要点・差分の行の解説と気になるところ・設計判断・テスト範囲ができます。${readerWhere ? `読んだあとは、${readerWhere}でその worker に差分のことを聞けます。` : ''}` : ai.text;
   return { key: 'top:ai', label: 'AI 下読み', html: `<div class="tp-line">${esc(text)}</div>${prAiButtonHtml(ai, hubView, asking)}` };
 }
 
@@ -297,19 +313,21 @@ function prSplitProposal(read) {
     html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">下書きタブで編集・コピー・pending review に積めます。</div>` };
 }
 
-/* The sections of the 下読み tab, in the issue's order. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
+/* The sections of the 下読み tab. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
 function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
   const ai = othersAiView(rec, records, nowSecs);
   const hasRead = !!read;
   return [
     prFacts(rec, nowSecs),
     prOutOfReview(rec, read, ai, hubView, opts.asking, !!opts.readError),
-    prSince(rec, read),
+    prSince(rec, read, { diff: opts.diff }),
     !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking, opts.readerWhere) : null,
+    prOldBand(rec, read, hubView, opts.asking),
     prThree(read),
     prSplitProposal(read),
-    prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec), noAsk: opts.noAsk }),
-    prOrder(read, rec, { diff: opts.diff }),
+    // 見るポイント and 読む順 are the older form's; a newer read-through has its notes on the diff's lines, in the diff's file order.
+    prOldForm(read) ? prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec), noAsk: opts.noAsk }) : null,
+    prOldForm(read) ? prOrder(read, rec, { diff: opts.diff }) : null,
     prDecisions(read),
     prTests(read),
     prUnwritten(read),
@@ -544,7 +562,7 @@ ${esc(d.body)}</textarea>${why}
     : PR_SAVE_TEXT[opts.save?.status] || '';
   return `<div class="pr-drafts" data-pr-place="${esc(opts.place || 'read')}">
     ${notice}
-    ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。見るポイントの「下書きに」から足せます。</div>'}
+    ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。差分の行の「＋」や、解説・気になるの「下書きに」から足せます。</div>'}
     <label class="pr-overall-label">全体のコメント
       ${suggestion}
       <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${sending ? ' readonly' : ''}>
@@ -557,22 +575,23 @@ ${esc(doc?.overall?.body || '')}</textarea>
 
 /* ── 「拡大」 ── */
 
-/* The groups of the dialog, in the issue's order, for `cardDialogTaskHtml`: 前回のレビューから, 要点, 見るポイント, 読む順,
-   設計判断・テスト・書かれていないこと, 差分 (not for a split proposal). A group with no card is left out; before a read-through only the first two
-   can be there. The annotated diff's cards (`opts`): `diffFileHtml(path)` for a file, `diffPaths` the files in the order to show
-   (the reader's order, then the record's files, until there are any), `diffHeadHtml` a first card (key `diff-bar`), and
-   `diffLabel(path)` the index's `{ label, title }` of a file. The footer joins 要点, where 「下読みし直す」 can be found. */
+/* The groups of the one view (the middle's 下読み tab, 「拡大」 and a task's own dialog), for `cardDialogTaskHtml`, in this order: 前回のレビューから,
+   要点, 見るポイント and 読む順 (a read-through of the older form only), 差分 (not for a split proposal), 設計判断・テスト・書かれていないこと,
+   この PR について. A group with no card is left out; before a read-through only 前回のレビューから, 要点 and この PR について can be there.
+   The annotated diff's cards (`opts`): `diffFileHtml(path)` for a file, `diffPaths` the files in the order to show
+   (the reader's order, then the record's files, until there are any), `diffHeadHtml` a first card (key `diff-bar`) when it is not
+   blank, and `diffLabel(path)` the index's `{ label, title }` of a file. The footer is in この PR について, where 「下読みし直す」 can be found. */
 function prDialogGroups(rec, read, records, hubView, nowSecs, opts = {}) {
   const secs = prSections(rec, read, records, hubView, nowSecs, opts);
   const of = key => secs.find(s => s.key === key);
   const card = (s, wide = false) => s && { key: s.key, label: s.label, badge: s.badge || '', wide, html: prSecHtml(s), expand: null };
   const group = (key, label, cards, badge = '') => ({ key, label, badge, cards: cards.filter(Boolean) });
+  const old = prOldForm(read);
   const groups = [
     group('since', '前回のレビューから', [card(of('since:list'))], of('since:list')?.badge || ''),
-    group('top', '要点', [card(of('top:facts')), card(of('top:oor')), card(of('top:ai')), card(of('top:three')), card(of('top:split')), card(of('footer'))]),
-    group('points', '見るポイント', [card(of('points:list'), true)], of('points:list')?.badge || ''),
-    group('order', '読む順', [card(of('order:list'), true)]),
-    group('more', '設計判断・テスト・書かれていないこと', [card(of('more:decisions')), card(of('more:tests')), card(of('more:unwritten'))]),
+    group('top', '要点', [card(of('top:oor')), card(of('top:ai')), card(of('top:old')), card(of('top:three')), card(of('top:split'))]),
+    group('points', '見るポイント', old ? [card(of('points:list'), true)] : [], old ? of('points:list')?.badge || '' : ''),
+    group('order', '読む順', old ? [card(of('order:list'), true)] : []),
   ];
   // A split proposal did not read the diff: there is none to show.
   if (read && read.mode !== 'split') {
@@ -591,5 +610,9 @@ function prDialogGroups(rec, read, records, hubView, nowSecs, opts = {}) {
     if (opts.diffHeadHtml) cards.unshift({ key: 'diff-bar', label: '差分の概要', title: '', badge: '', wide: true, html: opts.diffHeadHtml, expand: null });
     groups.push(group('diff', '差分', cards, paths.length ? String(paths.length) : ''));
   }
+  groups.push(
+    group('more', '設計判断・テスト・書かれていないこと', [card(of('more:decisions')), card(of('more:tests')), card(of('more:unwritten'))]),
+    group('about', 'この PR について', [card(of('top:facts')), card(of('footer'))]),
+  );
   return groups.filter(g => g.cards.length);
 }

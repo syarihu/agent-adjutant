@@ -1,5 +1,5 @@
 /* ── A PR waiting on your review, in the middle and in the panel ─────────────────────────────────────────────
-   Selecting a row of 「レビュー」 opens the PR: its read-through in the middle, with the tabs 下読み, 差分 and 下書き over it, the
+   Selecting a row of 「レビュー」 opens the PR: its read-through in the middle, with the tabs 下読み (the read-through and its annotated diff, in one scroll) and 下書き over it, the
    reader's terminal in the panel on the right, 「拡大」 for the whole. (A task's own PR is read in a dialog, task-read-view.js.)
    It is `selectedTaskId` = `pr:<owner/repo#N>` on board `all`, since a PR belongs to no board. What it says is pr-read.js's (pure); this
    file holds what the page keeps for it: the stored read-through of the selected PR, the drafts the person is writing and their
@@ -7,8 +7,8 @@
 
 /* What pr-diff-view.js sets (the annotated diff): `dialogFileHtml(rec, read, path)`, `dialogPaths(rec, read)`,
    `dialogHeadHtml(rec, read)` and `dialogLabel(rec, path)` the cards of the diff (keys `diff:<path>` and `diff-bar`), in 「拡大」 and in
-   the middle's 差分 tab; `goto(path, line, { place })` (`place`: 'dialog' or 'read'); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { place })`
-   for a click of the diff's own buttons. While it is null the 差分 tab is disabled and 「差分で見る」 is not drawn. */
+   the middle's 下読み tab; `goto(path, line, { place })` (`place`: 'dialog' or 'read'); `onMoved()` when the person scrolls 「拡大」 by hand; `onDrawn()` after 「拡大」 replaced its content and `applyTarget()` after it is in place; `act(e, { place })`
+   for a click of the diff's own buttons. While it is null the diff is not drawn and 「差分で見る」 is not offered. */
 const PR_HOOKS = { diff: null };
 /* The drafts are saved a moment after the last key. */
 const PR_SAVE_MS = 800;
@@ -268,7 +268,7 @@ function prEnter(id, rec) {
   if (rec) { prEnsureRead(rec); prEnsureDrafts(id); }
 }
 
-/* The middle for a review request: its head, the tabs 下読み, 差分 and 下書き, and the tab on show drawn in the read-through's place
+/* The middle for a review request: its head, the tabs 下読み and 下書き, and the tab on show drawn in the read-through's place
    (task-read-view.js). The reader's terminal is the panel's (renderPrPanel). Called
    from `renderWorkTerm`, which runs before the panel is drawn. */
 function renderPrRead(rec) {
@@ -277,7 +277,11 @@ function renderPrRead(rec) {
   disposeTermSlot(workTerm);
   workTerm.board = null;
   prEnter(id, rec);
-  setWorkTermPart('head', wk('wk-term-head'), rec ? prReviewHeadHtml(rec) : '');
+  const records = rec ? othersRecords() : [];
+  const hubView = rec ? othersHubView(others.doc?.hub, records) : null;
+  const read = rec ? prReadOf(rec) : undefined;
+  const asking = others.asking.has(id);
+  setWorkTermPart('head', wk('wk-term-head'), rec ? prReviewHeadHtml(rec, read, hubView, asking) : '');
   const readEl = wk('task-read');
   readEl.dataset.drafts = 'on';
   if (!rec) {
@@ -286,19 +290,15 @@ function renderPrRead(rec) {
     readEl.removeAttribute('aria-labelledby');
     return taskReadSay(`<div class="m3-filled-card"><div class="tp-muted" role="status">${esc(prMissingText(others.doc, others.error))}</div></div>`);
   }
-  const records = othersRecords();
-  const hubView = othersHubView(others.doc?.hub, records);
-  const read = prReadOf(rec);
   const hasRead = prHasRead(rec, read);
-  // A split proposal did not read the diff, so there is no annotated one.
+  // The diff is part of the 下読み tab; a split proposal did not read it (prDialogGroups leaves it out).
   const hook = PR_HOOKS.diff;
-  const pane = prPaneOf(nav.pane, hasRead, !!hook && read?.mode !== 'split');
+  const pane = prPaneOf(nav.pane, hasRead);
   const entry = prDraftsEntry(id);
   const draftCount = entry.loaded && hasRead ? prDoc(id, read).drafts.length : 0;
-  showMidTabs(prTabsHtml(rec, read, pane, draftCount, !!hook), true);
+  showMidTabs(prTabsHtml(rec, read, pane, draftCount), true);
   readEl.setAttribute('aria-labelledby', `wk-mid-tab-pr-${pane}`);
 
-  const asking = others.asking.has(id);
   const startHeld = !!document.activeElement?.matches?.('[data-task-read-hub-start]');
   // What stands over the read-through when the records could not be read again: it may be behind.
   const behind = others.doc && others.error ? `<div class="wk-notice" role="alert">${esc(`最新の一覧を読み込めませんでした（前に読んだ状態を表示しています）: ${others.error}`)}</div>` : '';
@@ -312,18 +312,19 @@ function renderPrRead(rec) {
     taskReadSay(band + prNoReadHtml(rec, othersAiView(rec, records, othersNowEst()), hubView, asking));
     return keepHubStartFocus(startHeld);
   }
-  const wantsDiff = pane === 'diff';
-  const groups = readPaneGroups(taskReadGroups(rec, read, hubView, othersNowEst(), {
+  // A split proposal did not read the diff: none is fetched for it.
+  const diffOn = !!hook && !!read && read.mode !== 'split';
+  const groups = taskReadGroups(rec, read, hubView, othersNowEst(), {
     records, since: true, diff: !!hook, asking, readError: !!prReadEntry(id)?.error,
-    diffFileHtml: hook && wantsDiff ? path => hook.dialogFileHtml(rec, read, path) : null,
-    diffPaths: hook && wantsDiff && read ? hook.dialogPaths(rec, read) : null,
-    diffHeadHtml: hook && wantsDiff && read ? hook.dialogHeadHtml(rec, read) : null,
-    diffLabel: hook && wantsDiff ? path => hook.dialogLabel(rec, path) : null,
-  }), pane);
-  // The diff is on its way while the read-through is: nothing of it can be drawn yet.
-  if (!groups.length) return taskReadSay('<div class="tp-muted" role="status">差分を読み込み中…</div>');
+    diffFileHtml: diffOn ? path => hook.dialogFileHtml(rec, read, path) : null,
+    diffPaths: diffOn ? hook.dialogPaths(rec, read) : null,
+    diffHeadHtml: diffOn ? hook.dialogHeadHtml(rec, read) : null,
+    diffLabel: diffOn ? path => hook.dialogLabel(rec, path) : null,
+  });
+  // The read-through is on its way: nothing of it can be drawn yet.
+  if (!groups.length) return taskReadSay('<div class="tp-muted" role="status">下読みを読み込み中…</div>');
   const band = behind + taskReadHubHtml(rec, hubView, others.starting) + taskReadBandHtml(rec, read, hubView, asking);
-  // The files of the diff are the index of the tab, as the diff's own bar lists them in 「拡大」.
+  // The groups and the files of the diff are the index of the tab, as the dialog's index lists them in 「拡大」.
   if (drawReadMiddle(key, groups, band, groups.length >= 2 || groups[0].cards.length >= 2)) keepHubStartFocus(startHeld);
 }
 
@@ -562,6 +563,11 @@ function prAct(e, { place = 'read' } = {}) {
     if (point) PR_HOOKS.diff?.goto(point.path, point.line, { place });
     return true;
   }
+  if ((b = hit('[data-pr-goto-since]'))) {
+    const c = read?.sinceReview?.comments?.[Number(b.dataset.prGotoSince)];
+    if (c?.path) PR_HOOKS.diff?.goto(c.path, c.line, { place });
+    return true;
+  }
   if ((b = hit('[data-pr-goto-file], [data-pr-goto-deleted]'))) {
     const item = b.dataset.prGotoFile != null ? read?.order?.[Number(b.dataset.prGotoFile)] : read?.deleted?.[Number(b.dataset.prGotoDeleted)];
     if (item) PR_HOOKS.diff?.goto(item.path, null, { place });
@@ -580,10 +586,13 @@ function prPanelClick(e) {
   }
   prAct(e);
 }
-// 「拡大」 is at the head of the middle.
+// 「拡大」 and 「読み直す」 are at the head of the middle.
 wk('wk-term-head').addEventListener('click', e => {
+  if (!isPrRef(nav.task)) return;
   const b = e.target.closest('[data-pr-expand]');
-  if (b && isPrRef(nav.task)) openPrDialog(b);
+  if (b) return openPrDialog(b);
+  const again = e.target.closest('[data-pr-reread]');
+  if (again && !again.disabled && again.getAttribute('aria-disabled') !== 'true') prShown()?.ask();
 });
 /* 「下読みを閉じる」: asked once, in the page, since closing stops the reader, which cannot be taken back. */
 function prCloseReader() {

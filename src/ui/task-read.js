@@ -42,7 +42,7 @@ function ownReadLineText(rec, nowSecs) {
   if (['queued', 'running'].includes(othersAiView(rec, [rec], nowSecs).kind)) return '下読み中です';
   if (!prHasRead(rec)) return 'まだ下読みしていません';
   const c = rec.ai?.counts;
-  const counts = [['要注意', c?.attention], ['確認', c?.check]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => ` · ${w} ${n}`).join('');
+  const counts = [['要注意', c?.attention], ['確認', c?.check], ['気になる', c?.concerns]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => ` · ${w} ${n}`).join('');
   const at = stampSecs(rec.ai?.finishedAt);
   if (at == null) return `下読み済みです${counts}`;
   const ago = agoLabel(minutesSince(at, nowSecs));
@@ -87,12 +87,9 @@ function taskReadGroups(rec, read, hubView, nowSecs, opts = {}) {
   const reader = taskReaderCard(rec, read, records, nowSecs, { terminal });
   const top = groups.find(g => g.key === 'top');
   if (top && reader) top.cards.unshift(reader);
+  // A read-through with nothing else to say in 要点 still has the reader's card there, after 前回のレビューから when that is shown.
+  else if (reader) groups.splice(groups.findIndex(g => g.key === 'since') + 1, 0, { key: 'top', label: '要点', badge: '', cards: [reader] });
   return groups;
-}
-
-/* The groups one tab of a review request's middle shows: 差分 is the diff alone, 下読み is the rest. */
-function readPaneGroups(groups, pane) {
-  return groups.filter(g => (g.key === 'diff') === (pane === 'diff'));
 }
 
 /* What the read-through says while the code-review hub cannot be asked: that it is stopped, with the button that starts it when this
