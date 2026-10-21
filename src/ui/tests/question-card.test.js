@@ -250,7 +250,8 @@ test('a plan with choices: one button to a choice in the foot, the recommended f
   assert.ok(!c.foot.includes('見送る') && !c.foot.includes('data-act="reject"') && !c.foot.includes('承認する'));
   const more = c.foot.slice(c.foot.indexOf('<details class="qc-more">'));
   assert.ok(more.includes('data-act="close"') && more.includes('qc-more-menu') && more.includes('aria-label="ほかの操作"'));
-  assert.ok(c.foot.indexOf('qc-spacer') < c.foot.indexOf('data-act="talk"') && c.foot.indexOf('data-act="talk"') < c.foot.indexOf('qc-more'));
+  assert.ok(c.foot.indexOf('data-act="changes"') < c.foot.indexOf('qc-decide-end') && c.foot.indexOf('qc-decide-end') < c.foot.indexOf('data-act="talk"')
+    && c.foot.indexOf('data-act="talk"') < c.foot.indexOf('qc-more'));
   // The recommended choice is first even when the worker listed it later; with none recommended none is filled.
   const later = qcAnswerButtons({ kind: 'plan', options: [], choices: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y', recommended: true }] });
   assert.ok(later[0].lead && later[0].html.includes('data-choice="y"') && !later[1].lead);
@@ -327,17 +328,19 @@ test('a dispatch card reads the hub\'s reading as a table, then the question, wi
   assert.ok(c.foot.includes('着手する') && c.foot.includes('data-act="changes"') && c.foot.includes('>直す<'));
   assert.ok(c.foot.includes('placeholder="直してほしいところ（任意）"'));
   assert.ok(/class="btn-m3-text reject" data-act="reject"/.test(c.foot) && c.foot.includes('>やめる<'));
-  assert.ok(c.foot.indexOf('qc-spacer') < c.foot.indexOf('data-act="reject"'));
+  assert.ok(c.foot.includes('qc-decide-end') && c.foot.indexOf('qc-decide-end') < c.foot.indexOf('data-act="reject"'));
   // Values from a gate are escaped.
   assert.ok(!card({ ...g, facts: ['x: <script>1</script>'] }).body.includes('<script>'));
   // The other kinds say a send-back needs a comment.
   assert.ok(card(planGate).foot.includes('直してほしいときは必須'));
 });
 
-test('qcNeedsComment is true for the two send-backs only', () => {
+test('qcNeedsComment is true for the two send-backs, and for an answer in words beside choices', () => {
   assert.equal(qcNeedsComment('changes'), true);
   assert.equal(qcNeedsComment('ask'), true);
   for (const act of ['approve', 'reject', 'ack', 'task', 'answer', 'choice', 'close', 'talk']) assert.equal(qcNeedsComment(act), false, act);
+  assert.equal(qcNeedsComment('answer', { choices: [{ id: 'a' }] }), true);
+  assert.equal(qcNeedsComment('answer', { choices: [] }), false);
 });
 
 test('a quick row takes its icon by what it asks', () => {

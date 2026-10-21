@@ -277,8 +277,9 @@ function qcSendbackButtons(g) {
   return out;
 }
 
-/* Sending a card back says nothing by itself: the person has to write what to fix, or what to ask. */
-const qcNeedsComment = act => act === 'changes' || act === 'ask';
+/* Sending a card back says nothing by itself: the person has to write what to fix, or what to ask. 「書いて答える」 beside a question's
+   choices (`answer` on a gate with choices) is the same: its words are the answer. */
+const qcNeedsComment = (act, g = {}) => act === 'changes' || act === 'ask' || (act === 'answer' && (g.choices || []).length > 0);
 
 const QC_PLACEHOLDER_HUB = '直してほしいところ（任意）';
 const QC_PLACEHOLDER = 'ほかに伝えること（直してほしいときは必須）';

@@ -2175,7 +2175,7 @@ not answers. Run "Reading a request" first. Without it, the request was answered
    the `facts` and `decided` lines of the form `<label>: <value>` as the two-column table 「hub の読み取り」
    on the start check, so keep one item per line as `- Label: value` (labels in the person's language:
    e.g. やること, 完了条件, 止める所, Issue); its buttons are 着手する / 直す / やめる (approve / changes /
-   reject), or one per choice.
+   reject), or one per choice with 直す and やめる after them; 直す is sent only with a comment.
 
    ```bash
    adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'

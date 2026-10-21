@@ -165,8 +165,8 @@ async function questionAct(b) {
   // A send-back with nothing written says nothing to the worker: ask for the comment before anything is locked or sent.
   // A quick row has no box to write in, and is answered as it stands.
   const box = root.querySelector('.gate-comment');
-  if (qcNeedsComment(act) && box && !box.value.trim()) {
-    note('判断', true, act === 'ask' ? '聞きたいことをコメントに書いてください' : '直してほしいところをコメントに書いてください');
+  if (qcNeedsComment(act, g) && box && !box.value.trim()) {
+    note('判断', true, act === 'ask' ? '聞きたいことをコメントに書いてください' : act === 'answer' ? '答えをコメントに書いてください' : '直してほしいところをコメントに書いてください');
     box.focus();
     return false;
   }
