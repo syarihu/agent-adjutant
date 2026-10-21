@@ -234,6 +234,7 @@ body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1f
   outline: 2px solid var(--md-sys-color-primary);
   box-shadow: var(--md-elevation-2);
 }
+.card[role="button"]:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .card.attention-card {
   border-left: 4px solid var(--md-sys-color-warning);
 }

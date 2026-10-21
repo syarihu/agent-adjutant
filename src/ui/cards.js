@@ -231,12 +231,26 @@ function agentCard(task) {
     if (live || hcol) return onBoard(slug, () => openTaskPanel(task.id, 'term'));
     onBoard(slug, () => openTaskDetail((state.tasks || []).find(t => t.id === task.id) || task, el));
   };
+  pressableCard(el, task.title || task.id);
   return el;
 }
 
 /* A session started with no task: it has no record to show gates or a phase for, so the card
    says what it is and offers what it can become (#178). `s` is its session, which the 「すべて」
    view does not always carry. */
+/* A card that opens something when pressed is reached and pressed from the keyboard too: pressing it is the only way to its terminal.
+   Enter or Space on the card itself presses it; on a control inside it, that control's own. */
+function pressableCard(el, label) {
+  el.tabIndex = 0;
+  el.setAttribute('role', 'button');
+  el.setAttribute('aria-label', label);
+  el.addEventListener('keydown', e => {
+    if (e.target !== el || e.isComposing || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    el.click();
+  });
+}
+
 function sessionCard(w) {
   const s = (state.sessions || []).find(x => x.kind === 'worker' && x.worktree === w.worktree && (!w._slug || x._slug === w._slug)) || null;
   const el = document.createElement('div');
@@ -284,5 +298,6 @@ function sessionCard(w) {
     if (opens) onBoard(w._slug, () => openSessionRef(sessionRef(s)));
     else if (lands) onBoard(w._slug, () => {});
   };
+  if (opens || lands) pressableCard(el, name);
   return el;
 }
