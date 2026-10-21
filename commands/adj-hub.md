@@ -2171,7 +2171,11 @@ not answers. Run "Reading a request" first. Without it, the request was answered
    person to correct with a comment. **Make each choice id encode the value it stands for**
    (`base:origin/release-1.2`, `kind:investigate`), so the id alone is enough to write it back; when
    you re-open the gate after a refused `--read`, put your proposed value in `choices`. Write `title`, `focus`, `facts`, `decided`, `unsure` and the
-   labels in the person's language; keep the `id`s, and keep `{task_title}` as it is.
+   labels in the person's language; keep the `id`s, and keep `{task_title}` as it is. The board draws
+   the `facts` and `decided` lines of the form `<label>: <value>` as the two-column table 「hub の読み取り」
+   on the start check, so keep one item per line as `- Label: value` (labels in the person's language:
+   e.g. やること, 完了条件, 止める所, Issue); its buttons are 着手する / 直す / やめる (approve / changes /
+   reject), or one per choice with 直す and やめる after them; 直す is sent only with a comment.
 
    ```bash
    adj gate open --file '{main}/.claude/gate-{task_id}.json' --json && rm '{main}/.claude/gate-{task_id}.json'

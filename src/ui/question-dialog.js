@@ -162,6 +162,14 @@ async function questionAct(b) {
   const act = b.matches('.pick[data-choice]') ? 'choice' : b.dataset.act;
   if (act === 'talk') { dialogStack.closeAll(); talk(gateRef(g)); return false; }
   if (!['choice', 'close', ...(g.options || [])].includes(act)) return false;
+  // A send-back with nothing written says nothing to the worker: ask for the comment before anything is locked or sent.
+  // A quick row has no box to write in, and is answered as it stands.
+  const box = root.querySelector('.gate-comment');
+  if (qcNeedsComment(act, g) && box && !box.value.trim()) {
+    note('判断', true, act === 'ask' ? '聞きたいことをコメントに書いてください' : act === 'answer' ? '答えをコメントに書いてください' : '直してほしいところをコメントに書いてください');
+    box.focus();
+    return false;
+  }
   const ref = gateRef(g);
   if (deciding.has(ref)) return false;
   deciding.add(ref);

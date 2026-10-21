@@ -328,7 +328,18 @@ function choicesHtml(g, pickable, opts = {}) {
   if (!g.choices?.length) return '';
   const expand = opts.expand !== false;
   const gateAttr = pickable ? ` data-gate="${esc(gateRef(g))}"` : '';
-  const head = opts.bare ? `<div class="qc-choices"${gateAttr}>` : `<div class="panel"${expand ? expandAttrs('choices', g) : ''}${gateAttr}>
+  // The question card reads the choices as cards with no button of their own: its foot has one button to a choice.
+  if (opts.bare) {
+    return `<div class="qc-choices"${gateAttr}><div class="choices-container choices">` + g.choices.map(c => `
+      <div class="qc-choice${c.recommended ? ' rec' : ''}">
+        ${c.recommended || g.choice === c.id ? `<div class="qc-choice-pills">${c.recommended ? '<span class="qc-rec-pill">推し</span>' : ''}${g.choice === c.id ? '<span class="m3-pill pill-good qc-picked-pill"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span><span>選ばれた案</span></span>' : ''}</div>` : ''}
+        <h4>${esc(c.label)}</h4>
+        ${c.why ? `<p class="why">${esc(c.why)}</p>` : ''}
+        ${(c.points || []).length ? `<ul>${c.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+        ${pickable && String(c.comment ?? '').trim() ? `<div class="choice-draft"><b>送るコメント（何も書かなければ）:</b> ${esc(c.comment)}</div>` : ''}
+      </div>`).join('') + '</div></div>';
+  }
+  const head = `<div class="panel"${expand ? expandAttrs('choices', g) : ''}${gateAttr}>
     ${expand ? expandBtnHtml('AI からの提案・選択肢') : ''}
     <h3 style="font-size:13px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:6px;color:var(--md-sys-color-primary);">
       <span class="material-symbols-outlined" style="font-size:18px;">lightbulb</span>

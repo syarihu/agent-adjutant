@@ -3,8 +3,7 @@
    slide down over the top of the terminal, how they read (a line each, a quick row, and for a hub's start check a form that folds
    to one line), the buttons at the heading's right end, the two floating buttons, the block over a stopped hub, and the box that
    sends text into the terminal. They touch neither the page nor the network, so `src/ui/tests/work-term.test.js` runs them under
-   `node --test`. Loaded after question-card.js (`questionStripHtml`, `questionCardArticleHtml`, `qcIcon`), my-work-clean.js (`workMergedAskHtml`), decide.js (`BUTTONS`,
-   `kindOf`) and session-actions.js (`actionButtonHtml`), and before my-work.js. Everything that is drawn over the terminal is
+   `node --test`. Loaded after question-card.js (`questionStripHtml`, `questionCardArticleHtml`, `qcIcon`), my-work-clean.js (`workMergedAskHtml`), decide.js (`kindOf`) and session-actions.js (`actionButtonHtml`), and before my-work.js. Everything that is drawn over the terminal is
    markup of its own, never a child of the terminal's host: the host's size is the terminal's, and a question coming or going must
    not resize it. */
 
@@ -38,13 +37,12 @@ function workTermGatesOf({ task = null, hub = false, gates = [], sessGates = [],
 /* A hub's start check, which is a dispatch question that is not a quick one: it is a form over the terminal. */
 const workIsStartCheck = (g, hub) => !!hub && g.kind === 'dispatch' && !g.quick;
 
-/* The start check folded to one line: the kind, the question, the gate's first button and 「広げる」. Inside the gate's own
+/* The start check folded to one line: the kind, the question, the gate's lead answer button (the recommended choice, or the kind's primary) and 「広げる」. Inside the gate's own
    element, so a click on the button is answered as it is anywhere else. With a comment typed in the form the button is left out,
    for it would send the answer without it. */
 function workAskFoldedHtml(g, key, draft, expand = true) {
   const line = gateFocusLine(g.focus) || gateFocusLine(g.title);
-  const first = !draft && (g.options || [])[0];
-  const button = first && BUTTONS[first] ? BUTTONS[first](g) : '';
+  const button = draft ? '' : qcAnswerButtons(g).find(b => b.lead)?.html || '';
   return `<div class="qc-quick wk-ask-folded" data-qc-gate="${esc(key)}">${qcIcon('bolt')}<span class="qc-kind">${esc(kindOf(g.kind)[0])}</span>`
     + `<b class="qc-quick-text">${esc(line)}</b><span class="qc-spacer"></span>${button}`
     + (expand ? `<button type="button" class="btn-m3-text" data-wk-fold="${esc(key)}" aria-expanded="false">${qcIcon('expand_more')}<span>広げる</span></button>` : '') + '</div>';

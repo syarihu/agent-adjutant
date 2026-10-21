@@ -2,7 +2,7 @@
    One gate as one card that reads top to bottom: あなたの依頼, 調べたこと, 計画, then the question as the heading, the choices one to a
    row, the comment box and the buttons. These functions take the gate and what surrounds it and return markup, touching neither the
    page nor the network, so `src/ui/tests/question-card.test.js` runs them under `node --test`. Loaded after util.js (`esc`, `md`,
-   `kindOf`), decide.js (`BUTTONS`, `choicesHtml`, `gateRef`) and gate-evidence.js (`gateEvidenceParts`, `gateFocusLine`), and before
+   `kindOf`, `httpUrl`, `decisionLabel`, `QC_PRIMARY_OF_KIND`), decide.js (`BUTTONS`, `choicesHtml`, `gateRef`) and gate-evidence.js (`gateEvidenceParts`, `gateFocusLine`), and before
    my-work.js. What the card needs from the page comes in as `ctx`, never from a global that holds state, so a second board can
    build its own:
      { task, plan, read, nwo, key, issue: { number, url, hasBody }, now, ticked }
@@ -82,18 +82,28 @@ function qcBodyPlace(g) {
 /* The sections a card reads: on a diff or verify card, the approved plan's come first, for the gate itself rarely repeats them. */
 const qcSections = (g, ctx) => [...(['diff', 'verify'].includes(g.kind) ? ctx.plan?.sections || [] : []), ...(g.sections || [])];
 
-/* What was found: the problem, the sections the worker wrote under that stage, the facts. */
+/* A result "has a plan" when it carries steps or a section under the plan stage; one with none is a research result: what was found is
+   the answer, not the ground for a plan. */
+const qcIsResearch = (g, ctx = {}) => g.kind === 'result' && !(g.steps || []).length && !(g.sections || []).some(s => s.stage === 'plan')
+  // An approved plan of the task is drawn as this card's plan (`qcPlanHtml`): then it is a report on a plan, not a research result.
+  && !(ctx.plan?.steps || []).length && !ctx.plan?.decided;
+
+/* What was found: the problem, the sections the worker wrote under that stage, the facts. A research result reads its first section
+   (the conclusion) first, in bold and with no heading, under 調査結果. */
 function qcFoundHtml(g, ctx, body) {
   let h = '';
+  const research = qcIsResearch(g, ctx);
   const problem = g.kind === 'plan' ? g.problem : g.problem || ctx.plan?.problem;
-  if (problem) h += `${qcSub('error', '問題')}<div class="body">${md(problem)}</div>`;
   const found = qcSections(g, ctx).filter(s => s.stage !== 'plan');
-  for (const s of found) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
+  const rest = research ? found.slice(1) : found;
+  if (research && found.length) h += `<div class="qc-concl">${md(found[0].body)}</div>`;
+  if (problem) h += `${qcSub('error', '問題')}<div class="body">${md(problem)}</div>`;
+  for (const s of rest) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
   if (!['diff', 'verify'].includes(g.kind)) h += qcChips(g.facts);
   const place = qcBodyPlace(g);
   if (body && place === 'found') h += `<div class="body">${md(body)}</div>`;
   if (body && place === 'link') h += `<button type="button" class="qc-link" data-qc-open="report">${qcIcon('description')}<span>レポートを開く</span></button>`;
-  return qcStage('manage_search', '調べたこと', h);
+  return research ? qcStage('lightbulb', '調査結果', h) : qcStage('manage_search', '調べたこと', h);
 }
 
 /* The steps, in the worker's order, with 済 on those done. */
@@ -178,6 +188,32 @@ function qcPlanHtml(g, ctx, body) {
   return qcStage('format_list_numbered', after ? '計画とやったこと' : '計画', h);
 }
 
+/* A line of a start check that reads `label: value`, as [label, value], else null. The label is at most 20 characters; a `://` after the
+   colon is a URL, not a value. */
+function qcKvLine(line) {
+  const m = /^([^:：]{1,20})[:：]\s*(\S.*)$/.exec(line.trim());
+  return m && !m[2].startsWith('//') ? [m[1].trim(), m[2].trim()] : null;
+}
+
+/* 「hub の読み取り」, the middle of a start check: what the hub read as a two-column table (the lines of `facts` and `decided` that read
+   `label: value`), the other lines under it as markdown, then the concerns, any sections, and `body`. */
+function qcDispatchReadHtml(g, body) {
+  const lines = [...(g.facts || []).map(String), ...String(g.decided || '').split('\n')].map(l => l.replace(/^\s*[-*]\s+/, '')).filter(l => l.trim());
+  const rows = [];
+  const other = [];
+  for (const l of lines) {
+    const kv = qcKvLine(l);
+    if (kv) rows.push(kv); else other.push(l);
+  }
+  let h = '';
+  if (rows.length) h += `<dl class="qc-kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${httpUrl(v) && !/\s/.test(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>` : esc(v)}</dd>`).join('')}</dl>`;
+  if (other.length) h += `<div class="body">${md(other.join('\n'))}</div>`;
+  if (body) h += `<div class="body">${md(body)}</div>`;
+  if (g.unsure) h += qcSub('warning', '懸念点') + `<div class="qc-unsure">${md(g.unsure)}</div>`;
+  for (const s of g.sections || []) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
+  return qcStage('fact_check', 'hub の読み取り', h);
+}
+
 /* The head of the card: what kind of question, where it comes from, how long it has waited, and whose task it is. */
 function qcHeadHtml(g, ctx) {
   const [label, color] = kindOf(g.kind);
@@ -189,17 +225,81 @@ function qcHeadHtml(g, ctx) {
     + `<h2 class="qd-title">${esc(ctx.task?.title || g.title || label)}</h2>`;
 }
 
-/* The comment box and the buttons: what it takes to answer, once what is asked has been read. */
+/* What a choice's button says: a short label as it is, else its leading id with a verb for the kind (A. ... becomes 「A で進める」), else
+   the label cut short. The full label is always the button's title. */
+function qcChoiceText(label, kind) {
+  const chars = [...String(label ?? '')];
+  if (chars.length <= 16) return chars.join('');
+  const id = /^([A-Za-z0-9]{1,2})[.．:：)）]\s*/.exec(chars.join(''));
+  if (id) return `${id[1]} ${kind === 'diff' ? 'で PR に' : 'で進める'}`;
+  return `${chars.slice(0, 15).join('')}…`;
+}
+
+/* The buttons that carry on, as [{ html, lead }]; `lead` is the filled one. With choices, one to a choice, the recommended first and
+   filled (with none recommended none is filled: the worker's own pick is not made up). Without, the one primary button of the kind,
+   when its decision is in the gate's options. */
+function qcAnswerButtons(g) {
+  const btn = (attrs, cls, icon, text, extra = '') => `<button type="button" class="${cls}" ${attrs}${extra}>${icon ? qcIcon(icon) : ''}<span>${esc(text)}</span></button>`;
+  const choices = g.choices || [];
+  if (choices.length) {
+    const rec = choices.findIndex(c => c.recommended);
+    const ordered = rec > 0 ? [choices[rec], ...choices.filter((_, i) => i !== rec)] : choices;
+    return ordered.map(c => {
+      const lead = !!c.recommended && c === ordered[0];
+      const label = String(c.label ?? '');
+      return {
+        lead,
+        html: btn(`data-choice="${esc(c.id)}"`, `pick ${lead ? 'btn-m3-primary' : 'qc-btn-outline'}`, lead ? 'check' : '', qcChoiceText(label, g.kind),
+          ` title="${esc(label)}"`),
+      };
+    });
+  }
+  const options = g.options || [];
+  let pick = QC_PRIMARY_OF_KIND[g.kind];
+  if (!pick) {
+    const d = ['approve', 'ack', 'answer'].find(x => options.includes(x));
+    pick = d ? [d, decisionLabel(d, g.kind)] : null;
+  }
+  if (!pick || !options.includes(pick[0])) return [];
+  return [{ lead: true, html: btn(`data-act="${pick[0]}"`, 'btn-m3-primary', pick[0] === 'answer' ? 'send' : 'check', pick[1]) }];
+}
+
+/* The tonal buttons that send the card back, as html. A result with choices asks for more research; without, it asks on or becomes a task. */
+function qcSendbackButtons(g) {
+  const options = g.options || [];
+  const btn = (act, icon, text) => `<button type="button" class="btn-m3-tonal" data-act="${act}">${qcIcon(icon)}<span>${esc(text)}</span></button>`;
+  const out = [];
+  const back = QC_SENDBACK_OF_KIND[g.kind];
+  if (back && options.includes(back[0])) out.push(btn(back[0], 'replay', g.kind === 'result' && (g.choices || []).length ? QC_RESULT_ASK_WITH_CHOICES : back[1]));
+  if (g.kind === 'result' && !(g.choices || []).length && options.includes('task')) out.push(btn('task', 'add_task', 'これをタスクにする'));
+  // A question with choices can still be answered in the person's own words.
+  if (g.kind === 'question' && (g.choices || []).length && options.includes('answer')) out.push(btn('answer', 'edit', '書いて答える'));
+  return out;
+}
+
+/* Sending a card back says nothing by itself: the person has to write what to fix, or what to ask. 「書いて答える」 beside a question's
+   choices (`answer` on a gate with choices) is the same: its words are the answer. */
+const qcNeedsComment = (act, g = {}) => act === 'changes' || act === 'ask' || (act === 'answer' && (g.choices || []).length > 0);
+
+const QC_PLACEHOLDER_HUB = '直してほしいところ（任意）';
+const QC_PLACEHOLDER = 'ほかに伝えること（直してほしいときは必須）';
+
+/* The comment box and the buttons: what it takes to answer, once what is asked has been read. One button to a choice (or the kind's
+   one), one to send back, then at the right the links, the hub's 「やめる」, the terminal and a menu with the close. */
 function qcFootHtml(g, ctx, draft) {
-  const buttons = (g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('');
   const link = (attrs, icon, text, cls = 'm3-icon-button') => `<button type="button" class="${cls}" ${attrs}>${qcIcon(icon)}<span>${text}</span></button>`;
-  return `<textarea class="gate-comment" aria-label="コメント" placeholder="ほかに伝えること（任意）">${esc(draft || '')}</textarea>`
-    + `<div class="decide qc-decide">${buttons}<span class="qc-spacer"></span>`
+  const hubKind = ['dispatch', 'issue', 'relay'].includes(g.kind);
+  const closeBtn = link('data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします"', 'done_all', '解決済みとして閉じる', 'btn-m3-text close');
+  return `<textarea class="gate-comment" aria-label="コメント" placeholder="${hubKind ? QC_PLACEHOLDER_HUB : QC_PLACEHOLDER}">${esc(draft || '')}</textarea>`
+    + `<div class="decide qc-decide">${qcAnswerButtons(g).map(b => b.html).join('')}${qcSendbackButtons(g).join('')}`
+    // The right end wraps as one piece, so the ⋯ menu stays at the right edge and opens inside the card.
+    + '<span class="qc-decide-end">'
     + (g.kind === 'diff' && g.diff ? link('data-qc-open="diff"', 'difference', '差分を全部見る') : '')
     + (g.kind === 'verify' && g.worktree ? link('data-qc-ide', 'code', 'IDE で開く') : '')
+    + (hubKind && (g.options || []).includes('reject') ? link('data-act="reject"', 'close', 'やめる', 'btn-m3-text reject') : '')
     + link('data-act="talk"', 'terminal', 'ターミナルで話す', 'm3-icon-button talk')
-    + link('data-act="close" title="worker への通知を行わずに、この確認待ちを解決済みとしてアーカイブします"', 'done_all', '解決済みとして閉じる', 'btn-m3-text close')
-    + '</div>';
+    + `<details class="qc-more"><summary class="m3-icon-button" aria-label="ほかの操作" title="ほかの操作">${qcIcon('more_horiz')}</summary><div class="qc-more-menu">${closeBtn}</div></details>`
+    + '</span></div>';
 }
 
 /* The card in three pieces for a dialog: the head (kind, where from, the task's title), the body that scrolls, and the foot that stays.
@@ -207,10 +307,10 @@ function qcFootHtml(g, ctx, draft) {
    choices are drawn with nothing to pick and there is no foot), as the task detail shows what was asked at the time. */
 function questionCardHtml(g, ctx = {}) {
   const body = g.body && g.body !== ctx.task?.body ? g.body : '';
+  // A start check reads as the request and what the hub read; the other kinds as what was found and the plan.
   const parts = [
     qcRequestHtml(g, ctx),
-    qcFoundHtml(g, ctx, body),
-    qcPlanHtml(g, ctx, body),
+    ...(g.kind === 'dispatch' ? [qcDispatchReadHtml(g, body)] : [qcFoundHtml(g, ctx, body), qcPlanHtml(g, ctx, body)]),
     questionEarlierHtml(g, ctx),
     `<section class="qc-ask-stage"><div class="qc-ask" role="heading" aria-level="3">${questionAskHtml(g, ctx)}</div>${choicesHtml(g, !ctx.readOnly, { expand: false, bare: true })}</section>`,
   ];
@@ -221,6 +321,13 @@ function questionCardHtml(g, ctx = {}) {
 function questionCardArticleHtml(g, ctx = {}) {
   const c = questionCardHtml(g, ctx);
   return `<article class="qc" data-qc-gate="${esc(qcKey(g, ctx))}"><header class="qd-head-main">${c.head}</header>${c.body}<footer class="qc-foot">${c.foot}</footer></article>`;
+}
+
+/* The icon of a quick row, by what it asks: the worker's 「clean up the worktree?」 (a choice named cleanup), a terminal permission prompt
+   (#736), else the bolt. */
+function qcQuickIcon(g) {
+  if ((g.choices || []).some(c => c.id === 'cleanup')) return 'cleaning_services';
+  return g.kind === 'permission' ? 'front_hand' : 'bolt';
 }
 
 /* A question answered where it stands: the question in a line, the facts as chips, the choices (or the options) as buttons. The
@@ -234,7 +341,7 @@ function quickRowHtml(g, ctx = {}) {
   const buttons = choices.length
     ? choices.map((c, i) => `<button type="button" class="pick ${i === Math.max(lead, 0) ? 'btn-m3-primary' : 'btn-m3-tonal'}" data-choice="${esc(c.id)}">${esc(c.label)}</button>`).join('')
     : (g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('');
-  return `<div class="qc-quick" data-qc-gate="${esc(qcKey(g, ctx))}">${qcIcon('bolt')}<b class="qc-quick-text">${esc(line)}</b>${qcChips(g.facts)}<span class="qc-spacer"></span>${buttons}</div>`;
+  return `<div class="qc-quick" data-qc-gate="${esc(qcKey(g, ctx))}">${qcIcon(qcQuickIcon(g))}<b class="qc-quick-text">${esc(line)}</b>${qcChips(g.facts)}<span class="qc-spacer"></span>${buttons}</div>`;
 }
 
 /* The lines over a task's terminal: a quick question as its row, any other as a line that opens the card. `ctx` is the card's context, or a

@@ -475,14 +475,18 @@ fix, so there is no diff to review and no PR to open.
       (or `adj gate close`) and write the report in this tab as usual.
    3. When woken after `up`, read `adj outbox`. `ack` (acknowledged) means done, and you go on to
       step 4; `ask` (a follow-up question) means investigate further as the comment says and start
-      again from 1; `task` (これをタスクにする) means hand the result to the hub as a task: send it with
+      again from 1; a result may also offer what happens next as `choices` (fix it as A, B, or end):
+      the pick arrives as `choice` with its `## Chosen` line, and one that ends the work is handled as
+      `ack`, any other as `task` (the chosen option goes into the `## Scope` below);
+      `task` (これをタスクにする) means hand the result to the hub as a task: send it with
       `adj-report` (`adj skill adj-report`) with no `## Kind`, so that it is filed like a bug
       report. Symptom is the conclusion; Suspected cause is the 原因 section; Location is the files
       the result names; Why outside is "the task was investigation only; the person chose to make
-      it a task"; `## Scope` follows the person's comment, and is the file alone when there is none.
+      it a task"; `## Scope` follows the person's comment (and the chosen option, if any), and is the file alone when there is none.
       Then go on to step 4.
 
-   **This is something to be read, not approved**, so the only decisions are `ack`, `ask` and `task`.
+   **This is something to be read, not approved**, so the only decisions are `ack`, `ask` and `task`
+   (and `choice`, when the result offered `choices`).
 4. If there is knowledge worth saving in `lk` (reusable understanding of the structure, where an
    existing implementation lives), save it the same way as `## Knowledge to Save` in §1. Whether it
    is kept here is what an investigation is worth.
@@ -590,7 +594,11 @@ card (in the TODO, and over the terminal in 「いまの仕事」) shows it as t
 - `facts` are what is true whatever the decision (number of rounds, the `verify` result, lines).
 - `choices` only **when you want an option picked**. Two options are shown side by side. Be honest
   with `recommended`. A choice may carry `comment`, a draft of what you would send with it: picking
-  that choice sends the person's own comment if they typed one, else this draft.
+  that choice sends the person's own comment if they typed one, else this draft. The board draws one
+  button per choice, named after it (a label over 16 characters is shortened to its leading id, so
+  start labels with `A.` / `B.` ...), the recommended one first, plus one send-back that needs a
+  comment. There is no fixed button to drop the work, so **a worker that offers to drop it writes it
+  as one of the choices** (for example `{"id": "drop", "label": "C. 直さずに終わる"}`).
 - Extra fields per `kind`: `diff` (the diff as a string) / `run` (how to run it) / `body` (a long
   report kept as it is; prefer `sections`).
 - `plan` has `problem`, `goal` and `steps` (step 3 of §1).
@@ -732,6 +740,8 @@ this shape:
   `rounds`** and open it again. The board looks at that number and suggests to the person that
   talking in the tab would be faster.
 - `task` (result): hand it over with `adj-report`, as §8 says.
+- `choice` whose option drops the work means stop: do not implement, report, and go to §9. A `reject`
+  (from an older board, or `adj gate answer`) means the same.
 - `choice`: implement the chosen option. **Do not reopen the question by bringing up the merits of
   the option not chosen.**
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had

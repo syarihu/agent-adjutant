@@ -306,6 +306,30 @@ const DECISION_LABEL_OF_KIND = {
 const decisionLabel = (decision, kind) =>
   DECISION_LABEL_OF_KIND[kind]?.[decision] || DECISION_LABEL[decision] || decision;
 
+/* The question card's buttons (question-card.js): the one that carries on, by the kind of the gate, when it has no choices of its own,
+   and the one that sends it back. [decision, label]; a decision that is not in the gate's `options` is not drawn. */
+const QC_PRIMARY_OF_KIND = {
+  plan: ['approve', 'この計画で進める'],
+  diff: ['approve', 'PR にする'],
+  verify: ['approve', '確認した'],
+  dispatch: ['approve', '着手する'],
+  issue: ['approve', '起票する'],
+  relay: ['approve', 'Jules に回す'],
+  result: ['ack', '分かった（閉じる）'],
+  question: ['answer', '答える'],
+};
+/* `result` is told apart by whether it has choices: 「もう少し調べて」 when it has, 「続けて聞く」 when it has none. */
+const QC_SENDBACK_OF_KIND = {
+  plan: ['changes', '計画を直してほしい'],
+  diff: ['changes', '直してほしい'],
+  verify: ['changes', '直してほしい'],
+  dispatch: ['changes', '直す'],
+  issue: ['changes', '直す'],
+  relay: ['changes', '直す'],
+  result: ['ask', '続けて聞く'],
+};
+const QC_RESULT_ASK_WITH_CHOICES = 'もう少し調べて';
+
 const DECISION = { approve:'承認した', changes:'差し戻した', reject:'見送った', choice:'案を選んだ',
                    ack:'了解した', ask:'追加で聞いた', task:'タスクにした', answer:'答えた', closed:'解決済みとして閉じた', terminal:'ターミナルで答えた' };
 
