@@ -59,7 +59,8 @@ pub fn claim_worker_slot(
 /// With the built-in tmux backend the window is watched for about three seconds, as the hub's is
 /// (#182), so a worker that exits at once is an error rather than `started`. A worker that dies
 /// after the watch ends is still reported as started; a terminal that cannot be watched
-/// (iTerm2, a `terminal.spawn` template) is never checked at all.
+/// (iTerm2, a `terminal.spawn` template, a tmux server that fell back to a plain window) is
+/// never checked at all.
 pub fn open_worker_tab(
     ctx: &Context,
     worktree: &str,

@@ -870,10 +870,175 @@ fn a_held_tmux_spawn_keeps_the_window_and_prints_its_pane() {
         .find("set-option -p -t \"$P\" remain-on-exit on")
         .unwrap_or_else(|| panic!("{script}"));
     let run = script
-        .find("respawn-pane -k -t \"$P\" -c /tmp 'claude --help' || { tmux kill-pane -t \"$P\"; exit 1; }")
+        .find("if E=$(tmux respawn-pane -k -t \"$P\" -c /tmp 'claude --help' 2>&1); then echo \"$P\"; else")
         .unwrap_or_else(|| panic!("{script}"));
-    assert!(open < keep && keep < run, "{script}");
-    assert!(script.ends_with("echo \"$P\""), "{script}");
+    let fallback = script
+        .find("Q=$(tmux new-window -d -t '=adjutant:' -c /tmp -n task-1 -P -F '#{pane_id}' 'claude --help')")
+        .unwrap_or_else(|| panic!("{script}"));
+    assert!(open < keep && keep < run && run < fallback, "{script}");
+    // The fallback window is plain: nothing would ever turn `remain-on-exit` off again there.
+    assert!(!script[fallback..].contains("remain-on-exit"), "{script}");
+}
+
+#[test]
+fn a_degraded_start_says_so_and_that_it_was_not_checked() {
+    let note = degraded_note("fork failed: Device not configured");
+    assert!(note.contains("started degraded"), "{note}");
+    assert!(
+        note.contains("(fork failed: Device not configured)"),
+        "{note}"
+    );
+    assert!(note.contains("without remain-on-exit"), "{note}");
+    assert!(note.contains("not checked"), "{note}");
+    assert!(!degraded_note("").contains("()"), "{}", degraded_note(""));
+}
+
+#[test]
+fn a_held_spawn_prints_a_pane_or_the_degraded_window() {
+    assert_eq!(
+        parse_held_output("%3\n"),
+        Ok(HeldPane::Held("%3".to_string()))
+    );
+    assert_eq!(
+        parse_held_output("degraded\t%4\tfork failed: Device not configured \n"),
+        Ok(HeldPane::Degraded {
+            pane: "%4".to_string(),
+            reason: "fork failed: Device not configured".to_string(),
+        })
+    );
+    assert_eq!(
+        parse_held_output("degraded\t%4\t\n"),
+        Ok(HeldPane::Degraded {
+            pane: "%4".to_string(),
+            reason: String::new(),
+        })
+    );
+    let none = Err("tmux did not say which pane it opened".to_string());
+    assert_eq!(parse_held_output(""), none);
+    assert_eq!(parse_held_output("  \n"), none);
+    assert_eq!(parse_held_output("degraded\t\tsome reason"), none);
+}
+
+/// Runs the held script against a fake `tmux` that is first on PATH for the child only.
+/// Returns the child's output and the fake's log of calls.
+#[cfg(unix)]
+fn run_held_script_with_fake_tmux(
+    respawn_ok: bool,
+    second_window_ok: bool,
+) -> (std::process::Output, Vec<String>) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls.log");
+    let counter = dir.path().join("windows");
+    let fake = format!(
+        r#"#!/bin/sh
+echo "$*" >> '{log}'
+case "$1" in
+  has-session|set-option|kill-pane) exit 0 ;;
+  new-window)
+    n=$(cat '{counter}' 2>/dev/null || echo 0)
+    n=$((n + 1))
+    echo "$n" > '{counter}'
+    if [ "$n" -gt 1 ] && [ '{second_ok}' = no ]; then
+      echo 'create window failed: no space' >&2
+      exit 1
+    fi
+    echo "%$n"
+    ;;
+  respawn-pane)
+    if [ '{respawn_ok}' = no ]; then
+      echo 'fork failed: Device not configured' >&2
+      exit 1
+    fi
+    ;;
+esac
+"#,
+        log = log.display(),
+        counter = counter.display(),
+        second_ok = if second_window_ok { "yes" } else { "no" },
+        respawn_ok = if respawn_ok { "yes" } else { "no" },
+    );
+    let tmux = dir.path().join("tmux");
+    std::fs::write(&tmux, fake).unwrap();
+    std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let script = tmux_spawn_script(None, "adjutant", "/tmp", "task-1", "claude --help", true);
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(&script)
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let calls = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    (out, calls)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_held_spawn_falls_back_to_a_plain_window_when_respawn_fails() {
+    let (out, calls) = run_held_script_with_fake_tmux(false, true);
+    assert!(out.status.success(), "{out:?}");
+    match parse_held_output(&String::from_utf8_lossy(&out.stdout)) {
+        Ok(HeldPane::Degraded { pane, reason }) => {
+            assert_eq!(pane, "%2");
+            assert!(reason.contains("fork failed"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let killed = calls
+        .iter()
+        .position(|c| c == "kill-pane -t %1")
+        .unwrap_or_else(|| panic!("{calls:?}"));
+    let windows: Vec<usize> = calls
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.starts_with("new-window"))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(windows.len(), 2, "{calls:?}");
+    // The placeholder goes before the plain window opens, so only one window carries the title.
+    assert!(killed < windows[1], "{calls:?}");
+    assert!(calls[windows[1]].ends_with("claude --help"), "{calls:?}");
+    assert!(
+        !calls[windows[1]..]
+            .iter()
+            .any(|c| c.contains("remain-on-exit")),
+        "{calls:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_held_spawn_that_respawns_opens_one_window() {
+    let (out, calls) = run_held_script_with_fake_tmux(true, true);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        parse_held_output(&String::from_utf8_lossy(&out.stdout)),
+        Ok(HeldPane::Held("%1".to_string()))
+    );
+    assert_eq!(
+        calls.iter().filter(|c| c.starts_with("new-window")).count(),
+        1,
+        "{calls:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_held_spawn_fails_with_both_errors_when_no_window_can_be_opened() {
+    let (out, _) = run_held_script_with_fake_tmux(false, false);
+    assert!(!out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no space"), "{stderr}");
+    assert!(stderr.contains("fork failed"), "{stderr}");
 }
 
 /// A command that dies in a few milliseconds with something to say, as `adj hub` does in a
