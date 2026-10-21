@@ -4,10 +4,9 @@
    page's half (what is fetched, filled, shown and clicked) is pr-diff-view.js. Loaded after pr-read.js.
 
    Everything that came from the diff or from the reader goes through `esc`, and nothing of it is Markdown. No markup here
-   carries an `id`, a time, a draft, or which tab or fold is on: those are set in place by the page, so a redraw of the panel or
+   carries an `id`, a time, a draft, or which files were opened: those are set in place by the page, so a redraw of the panel or
    of 「拡大」 (which compares markup) does not empty the files that were filled. */
 
-const PRD_CATS = ['logic', 'ui', 'doc', 'test', 'resource'];
 /* A file with more rows than this starts closed behind a button, as a file deleted whole does: drawing it is one write to the page. */
 const PRD_BIG_ROWS = 1500;
 const PRD_CAT_TAB = { logic: '仕様・ロジック', ui: 'UI', doc: 'ドキュメント', test: 'テスト', resource: 'リソース' };
@@ -181,24 +180,13 @@ function prDiffCategory(path) {
   return 'logic';
 }
 
-/* ── the layout: files in reading order, and the share of each category ── */
+/* ── the layout: files in reading order ── */
 
-/* Whole numbers that add up to 100 (the largest remainders get the leftover), all zero when there is nothing. */
-function prdShares(lines) {
-  const total = lines.reduce((a, b) => a + b, 0);
-  if (!total) return lines.map(() => 0);
-  const raw = lines.map(n => (n * 100) / total);
-  const out = raw.map(Math.floor);
-  const order = raw.map((r, i) => [r - out[i], i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
-  for (let left = 100 - out.reduce((a, b) => a + b, 0), j = 0; left > 0; left--, j++) out[order[j % order.length][1]]++;
-  return out;
-}
-
-/* `{ files: [{ i, path, file, cat, add, del, rows, whole, closed, deleted }], cats: { logic: { count, drawn, lines, share }, ... }, missing, rows }`.
-   The files are in the reader's reading order (those of `read.order` that the diff has), then the others in the diff's own order. `whole` is
+/* `{ files: [{ i, path, file, cat, add, del, rows, whole, closed, deleted, skippable, note }], missing, rows }`.
+   The files are in the reader's reading order (those of `read.order` that the diff has), then the others in the diff's own order. `cat` is the
+   chip of the file's kind; `skippable` and `note` are what the reader said of the file in `read.order` (false and '' when it said nothing). `whole` is
    a file deleted whole (by the diff's own word: the record is of the PR's head now, the diff of the read's), `deleted` what the reader said of it (`read.deleted`), `closed`
-   that it starts closed (deleted whole, or more than `PRD_BIG_ROWS` rows). A file of `rec.files` that the diff does not have counts
-   in the tabs' numbers only (`count`), not in `drawn`, and is counted in `missing`. */
+   that it starts closed (deleted whole, or more than `PRD_BIG_ROWS` rows). `missing` counts the files of `rec.files` that the diff does not have. */
 function prDiffLayout(files, read, rec) {
   const byPath = new Map(files.map(f => [f.path, f]));
   const seen = new Set();
@@ -208,22 +196,16 @@ function prDiffLayout(files, read, rec) {
   }
   for (const f of files) if (!seen.has(f.path)) { seen.add(f.path); ordered.push(f); }
   const deletedBy = new Map((read?.deleted || []).map(d => [d.path, d]));
+  const orderBy = new Map();
+  for (const o of read?.order || []) if (!orderBy.has(o.path)) orderBy.set(o.path, o);
   const entries = ordered.map((f, i) => ({
     i, path: f.path, file: f, cat: prDiffCategory(f.path), add: f.add, del: f.del, rows: f.all.length + f.hunks.length,
     whole: f.status === 'deleted', deleted: deletedBy.get(f.path) || null,
+    skippable: !!orderBy.get(f.path)?.skippable, note: String(orderBy.get(f.path)?.note ?? ''),
   }));
   entries.forEach(e => { e.closed = e.whole || e.rows > PRD_BIG_ROWS; });
-  const cats = Object.fromEntries(PRD_CATS.map(c => [c, { count: 0, drawn: 0, lines: 0, share: 0 }]));
-  for (const e of entries) { cats[e.cat].count++; cats[e.cat].drawn++; cats[e.cat].lines += e.add + e.del; }
-  let missing = 0;
-  for (const x of rec?.files || []) {
-    if (byPath.has(x.path)) continue;
-    missing++;
-    const c = cats[prDiffCategory(x.path)];
-    c.count++; c.lines += (Number(x.additions) || 0) + (Number(x.deletions) || 0);
-  }
-  prdShares(PRD_CATS.map(c => cats[c].lines)).forEach((s, i) => { cats[PRD_CATS[i]].share = s; });
-  return { files: entries, cats, missing, rows: entries.reduce((n, e) => n + e.rows, 0) };
+  const missing = (rec?.files || []).filter(x => !byPath.has(x.path)).length;
+  return { files: entries, missing, rows: entries.reduce((n, e) => n + e.rows, 0) };
 }
 
 /* ── anchoring the reader's annotations ── */
@@ -315,11 +297,13 @@ function prDiffCommentBlock(file, k, path = file.path) {
   return { ks, last: ks[ks.length - 1] };
 }
 
-/* Where each annotation goes: `{ files: Map(path -> { byLine: Map(k -> [annotation index]), tint: Set(k), unanchored: [index], at: Map(index -> 'right:42'), count }), orphans: [index] }`.
-   A `tr` goes under the last line of its comment block and tints the block; an `ex` goes under its line and tints it. An
-   annotation whose anchor is not found is `unanchored` in its file; one whose path is not in the diff is an orphan. */
+/* Where each annotation goes: `{ files: Map(path -> { byLine: Map(k -> [annotation index]), tint: Set(k), unanchored: [index], at: Map(index -> 'right:42'), since: Map(k -> [comment index]), count }), orphans: [index] }`.
+   A `tr` goes under the last line of its comment block and tints the block; an `ex` or a `concern` goes under its line and tints it. An
+   annotation whose anchor is not found is `unanchored` in its file; one whose path is not in the diff is an orphan. The comments of
+   `read.sinceReview.comments` that name a file of the diff and a line found in it are placed under that line (`since`, by index into
+   those comments); they are not counted in `count`, and the ones not found are not drawn on lines. */
 function prDiffResolve(files, read) {
-  const out = new Map(files.map(f => [f.path, { byLine: new Map(), tint: new Set(), unanchored: [], at: new Map(), count: 0 }]));
+  const out = new Map(files.map(f => [f.path, { byLine: new Map(), tint: new Set(), unanchored: [], at: new Map(), since: new Map(), count: 0 }]));
   const orphans = [];
   (read?.annotations || []).forEach((ann, idx) => {
     const file = files.find(f => f.path === ann.path);
@@ -334,6 +318,15 @@ function prDiffResolve(files, read) {
     r.byLine.get(block.last).push(idx);
     const l = file.all[found.line];
     r.at.set(idx, `${prDiffSideOf(l)}:${prDiffShownNo(l)}`);
+  });
+  (read?.sinceReview?.comments || []).forEach((c, i) => {
+    const file = c?.path ? files.find(f => f.path === c.path) : null;
+    if (!file) return;
+    const k = prDiffFindLine(file, c.line);
+    if (k == null) return;
+    const since = out.get(file.path).since;
+    if (!since.has(k)) since.set(k, []);
+    since.get(k).push(i);
   });
   return { files: out, orphans };
 }
@@ -368,23 +361,16 @@ function prDiffAtOf(text) {
 
 /* ── markup ── */
 
-/* The tabs (real buttons in a group: `aria-pressed` and which are shown are set in place by the page) and the fold button, whose
-   label stays the same (its state is `aria-pressed`). A category with no file to draw is disabled and still drawn, so the bar looks
-   the same in every tab; files of the record that the diff lacks are said once. */
+/* What stands over the files: only that files of the record are missing from the diff, said once; nothing when none are. */
 function prDiffBarHtml(layout) {
-  const tabs = PRD_CATS.map(c => {
-    const s = layout.cats[c];
-    return `<button type="button" class="prd-tab" data-prd-tab="${c}" aria-pressed="false"${s.drawn ? '' : ' disabled'}><span class="prd-tab-name">${esc(PRD_CAT_TAB[c])}</span><span class="prd-tab-n">${s.count} · ${s.share}%</span></button>`;
-  }).join('');
-  return `<div class="prd-bar"><div class="prd-tabs" role="group" aria-label="差分のカテゴリ">${tabs}</div>`
-    + '<button type="button" class="btn-m3-text prd-fold" data-prd-fold aria-pressed="false">注釈をたたむ</button></div>'
-    + (layout.missing ? `<div class="tp-muted prd-missing" role="note">${esc(`差分にないファイル ${layout.missing} 件（GitHub で見てください）`)}</div>` : '');
+  return layout.missing ? `<div class="tp-muted prd-missing" role="note">${esc(`差分にないファイル ${layout.missing} 件（GitHub で見てください）`)}</div>` : '';
 }
 
 const prdFileName = e => (e.file.status === 'renamed' && e.file.oldPath ? `${e.file.oldPath} → ${e.path}` : e.path);
 const prdStat = e => `<span class="prd-stat"><span class="add">+${e.add}</span> <span class="del">−${e.del}</span></span>`;
 
-/* A file's header and an empty body to be filled later (`--prd-rows` holds its height). A file deleted whole, or a very long one,
+/* A file's header and an empty body to be filled later (`--prd-rows` holds its height). The header has the file's kind and, when the
+   reader said so, 飛ばしてよい; the reader's note on the file is under it. A file deleted whole, or a very long one,
    starts closed behind a button (a deleted one with what the reader said of it). */
 function prDiffShellHtml(e, res) {
   const n = res?.count || 0;
@@ -394,22 +380,31 @@ function prDiffShellHtml(e, res) {
   const gone = e.closed
     ? `<div class="prd-gone">${why} <button type="button" class="btn-m3-text prd-open" data-prd-open="${e.i}">${e.whole ? `−${e.del} 行を表示` : `${e.rows} 行を表示`}</button></div>` : '';
   return `<section class="m3-filled-card pr-sec prd-file" data-prd-file="${e.i}" data-prd-cat="${e.cat}">`
-    + `<header class="prd-file-head"><code class="pr-loc prd-path">${esc(prdFileName(e))}</code><span class="pr-chip">${esc(PRD_CAT_TAB[e.cat])}</span>${prdStat(e)}${n ? `<span class="tp-muted">注釈 ${n}</span>` : ''}</header>`
-    + `${gone}<div class="prd-body" data-prd-body="${e.i}"${e.closed ? ' hidden' : ''} style="--prd-rows:${e.rows}"></div></section>`;
+    + `<header class="prd-file-head"><code class="pr-loc prd-path">${esc(prdFileName(e))}</code><span class="pr-chip">${esc(PRD_CAT_TAB[e.cat])}</span>${e.skippable ? '<span class="pr-chip pr-skippable">飛ばしてよい</span>' : ''}${prdStat(e)}${n ? `<span class="tp-muted">注釈 ${n}</span>` : ''}</header>`
+    + `${String(e.note ?? '').trim() ? `<div class="prd-file-note">${esc(e.note)}</div>` : ''}${gone}<div class="prd-body" data-prd-body="${e.i}"${e.closed ? ' hidden' : ''} style="--prd-rows:${e.rows}"></div></section>`;
 }
 
-const PRD_ANN_LABEL = { tr: '訳', ex: '解説' };
-/* `opts.plain` leaves out the buttons, for a place that only reads (the question card's evidence); the default is the diff's own. */
+const PRD_ANN_LABEL = { tr: '訳', ex: '解説', concern: '気になる' };
+/* One annotation under its line: 訳 (a translated comment), 解説 (what the line does) or 気になる (what deserves a question); a kind
+   not known is drawn as 解説. The text is shown whole. 解説 and 気になる have 「下書きに」 and 「聞く」, unless `opts.plain` leaves out
+   the buttons, for a place that only reads (the question card's evidence); the default is the diff's own. */
 function prdAnnHtml(idx, ann, at, readerOpen = true, opts = {}) {
-  const kind = ann.kind === 'tr' ? 'tr' : 'ex';
-  const acts = kind === 'ex' && !opts.plain
+  const kind = ann.kind === 'tr' || ann.kind === 'concern' ? ann.kind : 'ex';
+  const acts = kind !== 'tr' && !opts.plain
     ? `<div class="prd-ann-acts"><button type="button" class="btn-m3-text pr-act" data-prd-todraft="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}>下書きに</button><button type="button" class="btn-m3-text pr-act" data-prd-ask="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}${readerOpen ? '' : ` disabled title="${esc(PR_ASK_OFF_WHY)}"`}>聞く</button></div>` : '';
   return `<div class="prd-ann prd-ann-${kind}" data-prd-ann="${idx}"><span class="prd-ann-k">${PRD_ANN_LABEL[kind]}</span><div class="prd-ann-text">${esc(ann.text)}</div>${acts}</div>`;
 }
 
-/* A file's hunks, every line of them, with the annotations under their lines. `readerOpen` false turns the annotations' 「聞く」 off. */
+/* One comment of your last review under its line, with how it was dealt with since. */
+function prdPrevHtml(c) {
+  const status = String(c?.status ?? '');
+  return `<div class="prd-ann prd-ann-prev"><span class="prd-ann-k">前回のあなたのコメント <span class="pr-chip pr-since-${esc(status)}">${esc(PR_SINCE_STATUS[status] || status)}</span></span><div class="prd-ann-text">${esc(c?.note)}</div></div>`;
+}
+
+/* A file's hunks, every line of them, with the annotations, then the comments of your last review, under their lines. `readerOpen` false turns the annotations' 「聞く」 off. */
 function prDiffBodyHtml(e, res, read, readerOpen = true) {
   const anns = read?.annotations || [];
+  const prevs = read?.sinceReview?.comments || [];
   const f = e.file;
   const lost = (res?.unanchored || []).map(idx => `<div class="prd-ann prd-ann-lost"><span class="prd-ann-k">行が見つからない注釈</span> <code>${esc(anns[idx].anchor)}</code>`
     + `<div class="prd-ann-text">${esc(anns[idx].text)}</div></div>`).join('');
@@ -424,7 +419,8 @@ function prDiffBodyHtml(e, res, read, readerOpen = true) {
     const line = `<div class="prd-l ${cls[l.kind]}${res?.tint.has(l.k) ? ' prd-tint' : ''}" data-prd-i="${l.k}"><span class="prd-no">${no}</span>`
       + `<span class="prd-sign">${l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span><span class="prd-code">${esc(l.text)}</span>`
       + `<button type="button" class="prd-plus" data-prd-plus="${e.i}:${side}:${no}" aria-label="${esc(label)}" title="この行に下書き">＋</button></div>`;
-    return line + (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx), readerOpen)).join('');
+    return line + (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx), readerOpen)).join('')
+      + (res?.since?.get(l.k) || []).map(i => prdPrevHtml(prevs[i])).join('');
   }).join('')).join('');
   return `${lost}${rows}`;
 }

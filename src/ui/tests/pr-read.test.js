@@ -42,44 +42,52 @@ const read = (extra = {}) => ({
   drafts: [{ path: 'src/a.rs', line: 42, side: 'right', body: 'B1' }], overall: { body: 'OB', suggestion: 'Request changes' },
   sinceReview: null, ...extra,
 });
+/* A read-through of the newer form (version 2): notes on the diff's lines, no points and no drafts of its own. */
+const read2 = (extra = {}) => ({
+  version: 2, sha: A, madeAt: '20261001T000000Z', three: { purpose: 'P', approach: 'Ap', impact: 'Im', essence: 'Es' },
+  annotations: [{ path: 'src/a.rs', anchor: 'let x', kind: 'ex', text: 'E1' }, { path: 'src/a.rs', anchor: 'y', kind: 'concern', text: 'C1', draft: 'D1' }],
+  order: [{ path: 'src/b.rs', category: 'logic', note: 'N', skippable: false }, { path: 'src/a.rs', category: 'test', note: '', skippable: true }],
+  deleted: [{ path: 'old.rs', reason: 'moved', question: null }],
+  decisions: [{ decision: 'D', gains: 'G', costs: 'C' }], tests: { covered: ['T1'], notCovered: ['T2'] }, unwritten: ['Q1'],
+  overall: { body: 'OB' }, sinceReview: null, ...extra,
+});
 const hub = { canRead: true, why: '' };
 const secKeys = html => [...html.matchAll(/data-pr-sec="([^"]*)"/g)].map(m => m[1]);
 
-test('only 下読み opens before a read-through, and 下書き and 差分 need one (差分 also the annotated diff)', () => {
+test('only 下読み opens before a read-through, and 下書き needs one; the diff of an older address is the one view', () => {
   assert.strictEqual(prPaneOf('detail', true), 'detail');
   assert.strictEqual(prPaneOf('drafts', false), 'detail');
   assert.strictEqual(prPaneOf('drafts', true), 'drafts');
-  assert.strictEqual(prPaneOf('diff', true, false), 'detail');
-  assert.strictEqual(prPaneOf('diff', true, true), 'diff');
-  assert.strictEqual(prPaneOf('nonsense', true, true), 'detail');
+  assert.strictEqual(prPaneOf('diff', true), 'detail');
+  assert.strictEqual(prPaneOf('nonsense', true), 'detail');
 });
 
-test('the tabs: a dot on 下読み only when pushed, the others disabled before a read, a count on 下書き', () => {
+test('the tabs: 下読み and 下書き, a dot on 下読み only when pushed, 下書き disabled before a read, a count on 下書き', () => {
   const quiet = prTabsHtml(rec(), read(), 'detail', 0);
   assert.ok(!quiet.includes('tp-dot'));
+  assert.strictEqual((quiet.match(/data-mid-tab="/g) || []).length, 2);
+  assert.ok(!quiet.includes('data-mid-tab="diff"') && !quiet.includes('差分'));
   assert.ok(prTabsHtml(rec({ events: { pushed: '20261001T000000Z' } }), read(), 'detail', 0).includes('tp-dot'));
   const before = prTabsHtml(rec({ ai: null }), null, 'detail', 0);
-  assert.strictEqual((before.match(/ disabled /g) || []).length, 2);
+  assert.strictEqual((before.match(/ disabled /g) || []).length, 1);
   assert.ok(before.includes('AI 下読みのあとに使えます'));
-  // With a read, 差分 stays disabled until there is a diff to show.
-  const after = prTabsHtml(rec(), read(), 'drafts', 3, false);
-  assert.strictEqual((after.match(/ disabled /g) || []).length, 1);
-  assert.ok(after.includes('差分はまだ表示できません'));
+  const after = prTabsHtml(rec(), read(), 'drafts', 3);
+  assert.strictEqual((after.match(/ disabled /g) || []).length, 0);
   assert.ok(after.includes('>3</span>'));
   assert.ok(after.includes('data-mid-tab="drafts" aria-selected="true"'));
   // The tabs of the middle, as a task's are: the same class, named by `data-mid-tab`, for the read-through's place.
   assert.ok(after.includes('class="wk-mid-tab active"') && after.includes('aria-controls="task-read"') && after.includes('id="wk-mid-tab-pr-detail"'));
   assert.ok(!after.includes('data-pr-pane'));
-  assert.strictEqual((prTabsHtml(rec(), read(), 'detail', 0, true).match(/ disabled /g) || []).length, 0);
 });
 
-test('the 下読み tab is in the issue\'s order, with 前回のレビューから first after the facts for a PR that was pushed', () => {
+test('the 下読み sections: 前回のレビューから first after the facts for a PR that was pushed; 見るポイント and 読む順 only for the older form', () => {
   const html = prDetailHtml(rec(), read(), [rec()], hub, T0);
-  assert.deepStrictEqual(secKeys(html), ['top:facts', 'top:three', 'points:list', 'order:list', 'more:decisions', 'more:tests', 'more:unwritten', 'footer']);
+  assert.deepStrictEqual(secKeys(html), ['top:facts', 'top:old', 'top:three', 'points:list', 'order:list', 'more:decisions', 'more:tests', 'more:unwritten', 'footer']);
+  assert.deepStrictEqual(secKeys(prDetailHtml(rec(), read2(), [rec()], hub, T0)), ['top:facts', 'top:three', 'more:decisions', 'more:tests', 'more:unwritten', 'footer']);
   const pushed = rec({ state: 'pushed', commitsSinceReview: 2 });
   const withSince = read({ sinceReview: { commit: B, comments: [{ commentId: 1, path: 'src/a.rs', line: 7, status: 'untouched', note: 'still' }], newChanges: [{ path: 'src/b.rs', note: 'new' }] } });
   const h2 = prDetailHtml(pushed, withSince, [pushed], hub, T0);
-  assert.deepStrictEqual(secKeys(h2).slice(0, 3), ['top:facts', 'since:list', 'top:three']);
+  assert.deepStrictEqual(secKeys(h2).slice(0, 4), ['top:facts', 'since:list', 'top:old', 'top:three']);
   assert.ok(h2.includes('前回のレビューから +2 コミット'));
   assert.ok(h2.includes('手つかず') && h2.includes('src/a.rs:7') && h2.includes('新しく増えた変更'));
   // Before a read there is the AI 下読み card, and the count line says what the read will check.
@@ -90,11 +98,11 @@ test('the 下読み tab is in the issue\'s order, with 前回のレビューか�
 });
 
 test('the footer offers 「下読みし直す」 only when the head has moved', () => {
-  assert.ok(!prDetailHtml(rec(), read(), [rec()], hub, T0).includes('data-pr-reread'));
+  assert.ok(!prDetailHtml(rec(), read2(), [rec()], hub, T0).includes('data-pr-reread'));
   const stale = rec({ headSha: B, ai: { status: 'ready', sha: A, stale: true } });
-  const html = prDetailHtml(stale, read(), [stale], hub, T0);
+  const html = prDetailHtml(stale, read2(), [stale], hub, T0);
   assert.ok(html.includes('data-pr-reread') && html.includes('head は bbbbbbb') && html.includes('下読みした時点: <code>aaaaaaa</code>'));
-  const off = prDetailHtml(stale, read(), [stale], { canRead: false, why: 'stopped' }, T0);
+  const off = prDetailHtml(stale, read2(), [stale], { canRead: false, why: 'stopped' }, T0);
   assert.match(off, /data-pr-reread disabled title="stopped"/);
 });
 
@@ -107,17 +115,17 @@ test('everything the reader or the PR wrote comes out as text', () => {
     unwritten: [bad], sinceReview: { commit: B, comments: [{ commentId: 1, path: bad, status: bad, note: bad }], newChanges: [{ path: bad, note: bad }] },
   });
   const pr = rec({ title: bad, author: bad, repo: bad, base: bad, head: bad, state: 'pushed', reviewers: [{ login: bad, team: false, state: bad }] });
-  const html = prDetailHtml(pr, r, [pr], hub, T0) + prReviewHeadHtml(pr) + prDialogGroups(pr, r, [pr], hub, T0).map(g => g.cards.map(c => c.html).join('')).join('')
+  const html = prDetailHtml(pr, r, [pr], hub, T0) + prReviewHeadHtml(pr, r, hub, false) + prDialogGroups(pr, r, [pr], hub, T0).map(g => g.cards.map(c => c.html).join('')).join('')
     + prDraftsHtml({ drafts: [{ key: 'k', source: 'person', path: bad, body: bad }], overall: { body: bad } }, r, { notice: 0 });
   assert.ok(!html.includes('<img'), html.match(/.{20}<img.{20}/)?.[0]);
   assert.ok(html.includes('&lt;img'));
 });
 
 test('a link that is not http(s) is no link, and the PR\'s own opens in a new tab without the opener', () => {
-  const head = prReviewHeadHtml(rec());
+  const head = prReviewHeadHtml(rec(), read2(), hub, false);
   assert.match(head, /href="https:\/\/github\.com\/acme\/widget\/pull\/12" target="_blank" rel="noopener noreferrer"/);
   assert.ok(head.includes('data-pr-expand') && head.includes('aria-haspopup="dialog"') && head.includes('GitHub で開く') && head.includes('open_in_new'));
-  const noLink = prReviewHeadHtml(rec({ url: 'javascript:alert(1)' }));
+  const noLink = prReviewHeadHtml(rec({ url: 'javascript:alert(1)' }), read2(), hub, false);
   assert.ok(!noLink.includes('javascript:') && !noLink.includes('GitHub で開く') && noLink.includes('data-pr-expand'));
 });
 
@@ -131,28 +139,45 @@ test('the CI of a record is one word: a failure first, then a run under way, the
   assert.strictEqual(prCiWord(undefined), 'なし');
 });
 
-test('the middle\'s heading: number and title, then repository, author, size, files and CI, and the two buttons at the right', () => {
-  const head = prReviewHeadHtml(rec());
+test('the middle\'s heading: number and title, then repository, author, size, files and CI, and the buttons at the right', () => {
+  const head = prReviewHeadHtml(rec(), read2(), hub, false);
   assert.ok(head.includes('<div class="wk-term-title">#12 Round the amounts</div>'));
   assert.ok(head.includes('<div class="wk-term-sub">acme/widget · @alice · +30 −4 · 3 files · CI 実行中</div>'));
   const acts = head.slice(head.indexOf('wk-head-acts'));
-  assert.ok(acts.indexOf('GitHub で開く') < acts.indexOf('data-pr-expand'));
-  assert.ok(prReviewHeadHtml(rec({ author: null })).includes('（削除されたアカウント）'));
-  assert.ok(prReviewHeadHtml(rec({ ci: { pass: 0, fail: 1, pending: 0 } })).includes('CI 失敗 1'));
-  assert.ok(prReviewHeadHtml(rec({ title: '<b>x</b>' })).includes('#12 &lt;b&gt;x&lt;/b&gt;'));
+  assert.ok(acts.indexOf('GitHub で開く') < acts.indexOf('data-pr-reread') && acts.indexOf('data-pr-reread') < acts.indexOf('data-pr-expand'));
+  assert.ok(prReviewHeadHtml(rec({ author: null }), read2(), hub, false).includes('（削除されたアカウント）'));
+  assert.ok(prReviewHeadHtml(rec({ ci: { pass: 0, fail: 1, pending: 0 } }), read2(), hub, false).includes('CI 失敗 1'));
+  assert.ok(prReviewHeadHtml(rec({ title: '<b>x</b>' }), read2(), hub, false).includes('#12 &lt;b&gt;x&lt;/b&gt;'));
+});
+
+test('the heading has 読み直す only while a read-through exists, the PR is live and it is not out of review', () => {
+  const again = html => html.match(/<button[^>]*data-pr-reread[^>]*>.*?<\/button>/)?.[0] || '';
+  const on = again(prReviewHeadHtml(rec(), read2(), hub, false));
+  assert.ok(on.includes('btn-m3-text tp-jump') && on.includes('>refresh</span>') && on.includes('読み直す') && !on.includes('disabled') && !on.includes('aria-disabled'));
+  // A read-through that is still on its way counts (its record says there is one); a PR with none has no button.
+  assert.ok(prReviewHeadHtml(rec(), undefined, hub, false).includes('data-pr-reread'));
+  assert.ok(!prReviewHeadHtml(rec({ ai: null }), null, hub, false).includes('data-pr-reread'));
+  // A PR that is done, and one out of review (its card has its own buttons), are not offered it.
+  assert.ok(!prReviewHeadHtml(rec({ state: 'done' }), read2(), hub, false).includes('data-pr-reread'));
+  const big = rec({ files: [{ path: 'big.rs', additions: 3000, deletions: 0, change: 'modified' }] });
+  assert.ok(!prReviewHeadHtml(big, read2(), hub, false).includes('data-pr-reread'));
+  // Busy and unavailable states are the usual ones.
+  const busy = again(prReviewHeadHtml(rec(), read2(), hub, true));
+  assert.ok(busy.includes('aria-disabled="true"') && busy.includes('依頼中…'));
+  assert.ok(again(prReviewHeadHtml(rec(), read2(), { canRead: false, why: 'stopped' }, false)).includes('disabled title="stopped"'));
 });
 
 test('before the first read the middle says it is under way, with the queue place, or that none was made, with the button', () => {
   const queued = rec({ ai: { status: 'queued', startedAt: '20261001T000000Z' }, state: 'ai-reading' });
   const q = prNoReadHtml(queued, ctx.othersAiView(queued, [queued], T0), hub, false);
-  assert.ok(q.includes('progress_activity') && q.includes('下読み中です') && q.includes('読み終わると、ここに要点と見るポイントが出ます。') && q.includes('順番待ち（1 番目）'));
+  assert.ok(q.includes('progress_activity') && q.includes('下読み中です') && q.includes('読み終わると、ここに要点と差分の解説が出ます。') && q.includes('順番待ち（1 番目）'));
   assert.ok(!q.includes('data-pr-ai'));
   const running = rec({ ai: { status: 'running', launchedAt: '20261001T000000Z' }, state: 'ai-reading' });
   const r = prNoReadHtml(running, ctx.othersAiView(running, [running], T0), hub, false);
   assert.ok(r.includes('下読み中です') && !r.includes('順番待ち'));
   const none = rec({ ai: null, state: 'requested' });
   const n = prNoReadHtml(none, ctx.othersAiView(none, [none], T0), hub, false);
-  assert.ok(n.includes('auto_stories') && n.includes('まだ下読みしていません') && n.includes('コードレビュー hub の読み手が、要点と見るポイントをまとめます。'));
+  assert.ok(n.includes('auto_stories') && n.includes('まだ下読みしていません') && n.includes('コードレビュー hub の読み手が、要点をまとめ、差分の行に解説を書きます。'));
   assert.ok(n.includes('data-pr-ai') && n.includes('下読みする') && !n.includes('disabled'));
   // The hub's reason when no read can be asked for, and 依頼中… while a request is out.
   assert.match(prNoReadHtml(none, ctx.othersAiView(none, [none], T0), { canRead: false, why: 'hub が止まっています' }, false), /data-pr-ai disabled title="hub が止まっています"/);
@@ -296,22 +321,75 @@ test('a draft that is in the pending review is read-only with a chip and keeps i
   assert.ok(html.includes('role="status">1 件を積みました／1 件は積めませんでした／1 件は対象外でした</div>'));
 });
 
-test('the dialog\'s groups: since, top, points, order, more, diff; before a read only the first two', () => {
+test('the dialog\'s groups: since, top, points, order, diff, more, about; before a read only the first, top and about', () => {
   const pushed = rec({ state: 'pushed', commitsSinceReview: 3 });
   const r = read({ sinceReview: { commit: B, comments: [], newChanges: [] } });
   const groups = prDialogGroups(pushed, r, [pushed], hub, T0);
-  assert.deepStrictEqual(plain(groups.map(g => g.key)), ['since', 'top', 'points', 'order', 'more', 'diff']);
+  assert.deepStrictEqual(plain(groups.map(g => g.key)), ['since', 'top', 'points', 'order', 'diff', 'more', 'about']);
   assert.strictEqual(groups[0].badge, '+3');
-  assert.deepStrictEqual(plain(groups[1].cards.map(c => c.key)), ['top:facts', 'top:three', 'footer']);
+  assert.deepStrictEqual(plain(groups[1].cards.map(c => c.key)), ['top:old', 'top:three']);
+  assert.deepStrictEqual(plain(groups[6].cards.map(c => c.key)), ['top:facts', 'footer']);
   // The files in reading order, then the rest of the record's.
-  assert.deepStrictEqual(plain(groups[5].cards.map(c => c.key)), ['diff:src/b.rs', 'diff:src/a.rs', 'diff:docs/x.md']);
-  assert.ok(groups[5].cards[0].html.includes('src/b.rs（+8 −1）') && groups[5].cards[0].html.includes('GitHub で開いて読んでください'));
+  assert.deepStrictEqual(plain(groups[4].cards.map(c => c.key)), ['diff:src/b.rs', 'diff:src/a.rs', 'diff:docs/x.md']);
+  assert.ok(groups[4].cards[0].html.includes('src/b.rs（+8 −1）') && groups[4].cards[0].html.includes('GitHub で開いて読んでください'));
   // The keys are the same on a second call, which is what marks a change.
   assert.deepStrictEqual(plain(prDialogGroups(pushed, r, [pushed], hub, T0).map(g => [g.key, g.cards.map(c => c.key)])), plain(groups.map(g => [g.key, g.cards.map(c => c.key)])));
   const none = rec({ ai: null, state: 'pushed', commitsSinceReview: 3 });
-  assert.deepStrictEqual(plain(prDialogGroups(none, null, [none], hub, T0).map(g => g.key)), ['since', 'top']);
-  assert.deepStrictEqual(plain(prDialogGroups(rec({ ai: null, state: 'requested' }), null, [], hub, T0).map(g => g.key)), ['top']);
-  assert.deepStrictEqual(plain(prDialogGroups(rec({ ai: null, state: 'requested' }), null, [], hub, T0)[0].cards.map(c => c.key)), ['top:facts', 'top:ai']);
+  assert.deepStrictEqual(plain(prDialogGroups(none, null, [none], hub, T0).map(g => g.key)), ['since', 'top', 'about']);
+  assert.deepStrictEqual(plain(prDialogGroups(rec({ ai: null, state: 'requested' }), null, [], hub, T0).map(g => g.key)), ['top', 'about']);
+  assert.deepStrictEqual(plain(prDialogGroups(rec({ ai: null, state: 'requested' }), null, [], hub, T0)[0].cards.map(c => c.key)), ['top:ai']);
+});
+
+test('a read-through of the newer form has no points and no order; the diff is in the file order and the facts and footer come last', () => {
+  const pushed = rec({ state: 'pushed', commitsSinceReview: 3 });
+  const r = read2({ sinceReview: { commit: B, comments: [], newChanges: [] } });
+  const groups = prDialogGroups(pushed, r, [pushed], hub, T0);
+  assert.deepStrictEqual(plain(groups.map(g => g.key)), ['since', 'top', 'diff', 'more', 'about']);
+  assert.deepStrictEqual(plain(groups[1].cards.map(c => c.key)), ['top:three']);
+  assert.deepStrictEqual(plain(groups[2].cards.map(c => c.key)), ['diff:src/b.rs', 'diff:src/a.rs', 'diff:docs/x.md']);
+  assert.deepStrictEqual(plain(groups[3].cards.map(c => c.key)), ['more:decisions', 'more:tests', 'more:unwritten']);
+  assert.deepStrictEqual(plain(groups[4].cards.map(c => c.key)), ['top:facts', 'footer']);
+  assert.strictEqual(groups[4].label, 'この PR について');
+  // Without the hook's head card there is none; with a blank one there is none either.
+  const blank = prDialogGroups(rec(), r, [rec()], hub, T0, { diffHeadHtml: '', diffPaths: ['a'], diffFileHtml: () => 'A' }).find(g => g.key === 'diff');
+  assert.deepStrictEqual(plain(blank.cards.map(c => c.key)), ['diff:a']);
+  // The older form keeps both, and says which it is, with a button to read again while the PR is live.
+  const old = prDialogGroups(rec(), read(), [rec()], hub, T0);
+  assert.deepStrictEqual(plain(old.map(g => g.key)), ['top', 'points', 'order', 'diff', 'more', 'about']);
+  const band = old[0].cards.find(c => c.key === 'top:old').html;
+  assert.ok(band.includes('前の形式の下読みです（') && band.includes('見るポイントはそのまま出します。') && band.includes('data-pr-reread') && band.includes('下読みし直す') && band.includes('で新しい形式になります。'));
+  const done = prDialogGroups(rec({ state: 'done' }), read(), [], hub, T0)[0].cards.find(c => c.key === 'top:old').html;
+  assert.ok(!done.includes('data-pr-reread') && !done.includes('で新しい形式になります。'));
+  const noTime = prDialogGroups(rec(), read({ madeAt: undefined }), [rec()], hub, T0)[0].cards.find(c => c.key === 'top:old').html;
+  assert.ok(noTime.includes('前の形式の下読みです。') && !noTime.includes('（'));
+  const asking = prDialogGroups(rec(), read(), [rec()], hub, T0, { asking: true })[0].cards.find(c => c.key === 'top:old').html;
+  assert.ok(asking.includes('依頼中…') && asking.includes('aria-disabled="true"'));
+});
+
+test('a read-through is of the older form when its version is below 2, or has no version but points or drafts', () => {
+  assert.strictEqual(ctx.prOldForm(read()), true);
+  assert.strictEqual(ctx.prOldForm({ version: 1 }), true);
+  assert.strictEqual(ctx.prOldForm({ version: '1' }), true);
+  assert.strictEqual(ctx.prOldForm({ points: [] }), true);
+  assert.strictEqual(ctx.prOldForm({ drafts: [] }), true);
+  assert.strictEqual(ctx.prOldForm({}), false);
+  assert.strictEqual(ctx.prOldForm({ points: 'x' }), false);
+  assert.strictEqual(ctx.prOldForm(read2()), false);
+  assert.strictEqual(ctx.prOldForm({ version: 3 }), false);
+  assert.strictEqual(ctx.prOldForm(null), false);
+  assert.strictEqual(ctx.prOldForm(undefined), false);
+  // A split proposal is not a read-through of a form.
+  assert.strictEqual(ctx.prOldForm({ mode: 'split', version: 1, points: [] }), false);
+});
+
+test('your comments of the last review are buttons to their lines when the diff can be shown', () => {
+  const r = read2({ sinceReview: { commit: B, comments: [{ commentId: 1, path: 'src/a.rs', line: 7, status: 'untouched', note: 'still' }, { commentId: 2, path: 'src/b.rs', line: 9, status: 'addressed', note: 'ok' }], newChanges: [] } });
+  const pushed = rec({ state: 'pushed' });
+  const on = prDetailHtml(pushed, r, [pushed], hub, T0, { diff: true });
+  assert.ok(on.includes('<button type="button" class="pr-loc-btn" data-pr-goto-since="0" title="差分で見る"><code class="pr-loc">src/a.rs:7</code></button>'));
+  assert.ok(on.includes('data-pr-goto-since="1"'));
+  const off = prDetailHtml(pushed, r, [pushed], hub, T0, {});
+  assert.ok(!off.includes('data-pr-goto-since') && off.includes('src/a.rs:7'));
 });
 
 test('with the annotated diff on: 読む順 paths are buttons, and the diff group takes the hook\'s head, paths and labels', () => {
@@ -441,14 +519,12 @@ test('a split proposal is a card of its own, as text, and its read has no diff',
   assert.strictEqual(prSplitProposal(null), null);
   assert.deepStrictEqual(secKeys(prDetailHtml(r, splitRead(), [r], hub, T0)), ['top:facts', 'top:oor', 'top:three', 'top:split', 'footer']);
   const groups = prDialogGroups(r, splitRead(), [r], hub, T0);
-  assert.deepStrictEqual(plain(groups.map(g => g.key)), ['top']);
-  assert.deepStrictEqual(plain(groups[0].cards.map(c => c.key)), ['top:facts', 'top:oor', 'top:three', 'top:split', 'footer']);
+  assert.deepStrictEqual(plain(groups.map(g => g.key)), ['top', 'about']);
+  assert.deepStrictEqual(plain(groups[0].cards.map(c => c.key)), ['top:oor', 'top:three', 'top:split']);
+  assert.deepStrictEqual(plain(groups[1].cards.map(c => c.key)), ['top:facts', 'footer']);
   // A full read-through of the same PR keeps its diff group, and the card of the files over the limit.
   const full = prDialogGroups(big({ ai: { status: 'ready', sha: A, stale: false }, state: 'ai-ready' }), read(), [], hub, T0);
   assert.ok(full.some(g => g.key === 'diff') && full[0].cards.some(c => c.key === 'top:oor'));
-  // 差分 is disabled for a proposal, with the reason.
-  const tabs = prTabsHtml(r, splitRead(), 'detail', 0, true);
-  assert.ok(tabs.includes('分割案では差分を読んでいません'));
 });
 
 test('the overall comment of a read that the person\'s file lacks is offered, and one it holds is not', () => {

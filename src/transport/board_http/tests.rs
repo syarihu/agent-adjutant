@@ -196,7 +196,6 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         "function showMidTabs(",
         "function drawReadMiddle(",
         "function drawReaderTerm(",
-        "function readPaneGroups(",
         "function renderPrRead(",
         "function renderPrPanel(",
     ] {
@@ -235,7 +234,7 @@ fn the_page_shows_a_tasks_read_through_in_the_middle() {
         assert!(pane < at(id) && at(id) < read, "{id}");
         assert!(at("id=\"wk-term-host\"") < at(id), "{id}");
     }
-    assert!(at(".prd-bar {") < at(".wk-mid-row {"));
+    assert!(at(".prd-stale {") < at(".wk-mid-row {"));
     // The review request's tabs control the read-through, which names them back.
     assert!(
         UI_HTML.contains(

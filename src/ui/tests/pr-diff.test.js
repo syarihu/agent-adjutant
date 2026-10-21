@@ -16,7 +16,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.
 }
 const plain = x => JSON.parse(JSON.stringify(x));
 const { prParseDiff, prDiffCategory, prDiffIsGenerated, prDiffLayout, prDiffAnchor, prDiffCommentBlock, prDiffResolve, prDiffDraft, prDiffSideOf,
-  prDiffShownNo, prDiffFindLine, prDiffBarHtml, prDiffShellHtml, prDiffBodyHtml, prDiffLabels, prDiffAtOf } = ctx;
+  prDiffShownNo, prDiffFindLine, prDiffBarHtml, prDiffShellHtml, prDiffBodyHtml, prDiffLabels, prDiffAtOf, prdAnnHtml, prDiffExcerptHtml } = ctx;
 
 const SAMPLE = [
   'diff --git a/src/a.rs b/src/a.rs',
@@ -109,7 +109,7 @@ const readOf = (extra = {}) => ({
   sha: 'a'.repeat(40), madeAt: 'x', order: [{ path: 'docs/new.md', category: 'doc' }, { path: 'nope.rs', category: 'logic' }, { path: 'src/a.rs', category: 'logic' }],
   deleted: [{ path: 'old.rs', reason: 'moved', question: null }], annotations: [], ...extra });
 
-test('the layout puts files in reading order, then the rest, and the shares add up to 100', () => {
+test('the layout puts files in reading order, then the rest, with what the reader said of each file', () => {
   const files = prParseDiff(SAMPLE);
   const rec = { files: [{ path: 'src/a.rs', additions: 3, deletions: 2 }, { path: 'missing/x.rs', additions: 4, deletions: 0 }] };
   const layout = prDiffLayout(files, readOf(), rec);
@@ -118,16 +118,18 @@ test('the layout puts files in reading order, then the rest, and the shares add 
   assert.strictEqual(layout.files[2].whole, true);
   assert.strictEqual(layout.files[2].deleted.reason, 'moved');
   assert.strictEqual(layout.files[0].whole, false);
-  // `missing/x.rs` is not in the diff: it counts in the numbers of its tab and has no file.
-  assert.deepStrictEqual(plain(layout.cats.logic), { count: 4, drawn: 3, lines: 5 + 2 + 4, share: layout.cats.logic.share });
+  // `missing/x.rs` is not in the diff: it has no file and is counted once.
   assert.strictEqual(layout.missing, 1);
-  const shares = Object.values(layout.cats).map(c => c.share);
-  assert.strictEqual(shares.reduce((a, b) => a + b, 0), 100);
+  assert.ok(!('cats' in layout));
+  // Without a word from the reader a file is not skippable and has no note.
+  assert.deepStrictEqual(plain(layout.files.map(f => [f.skippable, f.note])), [[false, ''], [false, ''], [false, ''], [false, ''], [false, '']]);
+  const said = prDiffLayout(files, readOf({ order: [{ path: 'src/a.rs', category: 'logic', note: 'core', skippable: false }, { path: 'docs/new.md', category: 'doc', note: 'just docs', skippable: true }] }), null);
+  assert.deepStrictEqual(plain(said.files.slice(0, 2).map(f => [f.path, f.skippable, f.note])), [['src/a.rs', false, 'core'], ['docs/new.md', true, 'just docs']]);
   assert.strictEqual(layout.rows, files.reduce((n, f) => n + f.all.length + f.hunks.length, 0));
   // Only the diff says a file is deleted whole: the record is of the head now, the diff of the one that was read.
   const l2 = prDiffLayout(files, readOf(), { files: [{ path: 'src/a.rs', change: 'deleted' }] });
   assert.strictEqual(l2.files[1].whole, false);
-  assert.deepStrictEqual(Object.values(prDiffLayout([], null, null).cats).map(c => c.share), [0, 0, 0, 0, 0]);
+  assert.deepStrictEqual(plain(prDiffLayout([], null, null)), { files: [], missing: 0, rows: 0 });
 });
 
 test('an anchor is found as text, then with its marker, then with whitespace made alike; nth picks, and none is null', () => {
@@ -236,16 +238,13 @@ test('everything of the diff and of the reader is escaped in the markup', () => 
   assert.ok(html.includes('&lt;script&gt;'));
 });
 
-test('the bar has five toggle buttons in a group, a disabled one for an empty category, and no state in it', () => {
-  const layout = prDiffLayout(prParseDiff(SAMPLE), readOf(), null);
-  const html = prDiffBarHtml(layout);
-  assert.strictEqual((html.match(/<button type="button" class="prd-tab"/g) || []).length, 5);
-  assert.ok(html.includes('role="group"'));
-  assert.ok(html.includes('data-prd-tab="test" aria-pressed="false" disabled'));
-  assert.ok(!html.includes('prd-missing'));
-  assert.ok(html.includes('data-prd-fold aria-pressed="false"'));
-  assert.ok(/仕様・ロジック<\/span><span class="prd-tab-n">3 · \d+%/.test(html), html);
-  assert.ok(!/id="/.test(html) && !/分前/.test(html));
+test('the bar says only that files of the record are missing from the diff, and is blank when none are', () => {
+  const files = prParseDiff(SAMPLE);
+  assert.strictEqual(prDiffBarHtml(prDiffLayout(files, readOf(), null)), '');
+  assert.strictEqual(prDiffBarHtml(prDiffLayout(files, readOf(), { files: [{ path: 'src/a.rs', additions: 1, deletions: 0 }] })), '');
+  const html = prDiffBarHtml(prDiffLayout(files, readOf(), { files: [{ path: 'tests/x.rs', additions: 5, deletions: 0 }, { path: 'tests/y.rs', additions: 1, deletions: 0 }] }));
+  assert.ok(html.includes('差分にないファイル 2 件（GitHub で見てください）') && html.includes('role="note"'));
+  assert.ok(!html.includes('prd-tab') && !html.includes('data-prd-fold') && !html.includes('<button'));
 });
 
 test('the body puts an annotation after the last line of its block, and the buttons carry the side and line', () => {
@@ -279,20 +278,9 @@ test('a shell has no state, a deleted file starts closed with the reason, and th
   assert.ok(gone.includes('理由: moved') && gone.includes('data-prd-open="2"') && gone.includes('−2 行を表示') && gone.includes(' hidden style="--prd-rows:'));
   const shell = prDiffShellHtml(layout.files[1], { count: 2 });
   assert.ok(shell.includes('data-prd-cat="logic"') && shell.includes('注釈 2') && shell.includes('+3') && !shell.includes('hidden'));
-  assert.ok(!/id="|aria-pressed|prd-folded|分前/.test(shell));
+  assert.ok(!/id="|aria-pressed|prd-folded|分前|飛ばしてよい|prd-file-note/.test(shell));
   const rename = prDiffShellHtml(layout.files.find(f => f.path === 'img/b.png'), null);
   assert.ok(rename.includes('img/a.png → img/b.png'));
-});
-
-test('a tab with no file to draw is disabled, and files the diff lacks are said once in the bar', () => {
-  const files = prParseDiff(SAMPLE);
-  // The record has a test file the diff does not: the tab counts it, but there is nothing to show in it.
-  const layout = prDiffLayout(files, readOf(), { files: [{ path: 'tests/x.rs', additions: 5, deletions: 0 }, { path: 'tests/y.rs', additions: 1, deletions: 0 }] });
-  assert.strictEqual(layout.cats.test.count, 2);
-  assert.strictEqual(layout.cats.test.drawn, 0);
-  const html = prDiffBarHtml(layout);
-  assert.ok(html.includes('data-prd-tab="test" aria-pressed="false" disabled'));
-  assert.ok(html.includes('差分にないファイル 2 件（GitHub で見てください）'));
 });
 
 test('a file of more rows than the limit starts closed behind a button, like a file deleted whole', () => {
@@ -400,4 +388,84 @@ test('an excerpt over a span of hundreds of thousands of lines is built from the
   const got = ctx.prDiffExcerpt({ all, hunks: [{ header: '@@' }] }, { from: 1, to: 2 });
   assert.equal(got.ks.length, 80);
   assert.deepEqual([got.ks[0], got.ks[1], got.ks[78], got.ks[79]], [0, 1, 78, 300001]);
+});
+
+test('a file the reader called skippable says so in its header, and its note is under the header', () => {
+  const files = prParseDiff(SAMPLE);
+  const layout = prDiffLayout(files, readOf({ order: [{ path: 'src/a.rs', category: 'logic', note: 'the <core> change', skippable: false }, { path: 'docs/new.md', category: 'doc', note: '   ', skippable: true }] }), null);
+  const a = prDiffShellHtml(layout.files.find(f => f.path === 'src/a.rs'), { count: 0 });
+  assert.ok(a.includes('<div class="prd-file-note">the &lt;core&gt; change</div>') && !a.includes('飛ばしてよい'));
+  assert.ok(a.indexOf('</header>') < a.indexOf('prd-file-note') && a.indexOf('prd-file-note') < a.indexOf('prd-body'));
+  const doc = prDiffShellHtml(layout.files.find(f => f.path === 'docs/new.md'), { count: 0 });
+  const head = doc.slice(doc.indexOf('<header'), doc.indexOf('</header>'));
+  assert.ok(head.includes('<span class="pr-chip pr-skippable">飛ばしてよい</span>') && head.indexOf('ドキュメント') < head.indexOf('飛ばしてよい'));
+  // A blank note draws nothing.
+  assert.ok(!doc.includes('prd-file-note'));
+  // The note of a closed file stays before the line that says it is closed.
+  const closed = prDiffLayout(files, readOf({ order: [{ path: 'old.rs', category: 'logic', note: 'gone', skippable: true }] }), null);
+  const gone = prDiffShellHtml(closed.files.find(f => f.path === 'old.rs'), { count: 0 });
+  assert.ok(gone.indexOf('prd-file-note') < gone.indexOf('prd-gone'));
+});
+
+test('an annotation is 訳, 解説 or 気になる; 解説 and 気になる have the buttons, 訳 has none, and an unknown kind is 解説', () => {
+  const html = (kind, extra = {}, readerOpen, opts) => prdAnnHtml(4, { kind, text: 'T <b>', ...extra }, 'right:3', readerOpen, opts);
+  const tr = html('tr');
+  assert.ok(tr.includes('prd-ann-tr') && tr.includes('>訳</span>') && !tr.includes('<button'));
+  const ex = html('ex');
+  assert.ok(ex.includes('prd-ann-ex') && ex.includes('>解説</span>') && ex.includes('data-prd-todraft="4" data-prd-at="right:3"') && ex.includes('data-prd-ask="4"'));
+  const concern = html('concern', { draft: 'D' });
+  assert.ok(concern.includes('class="prd-ann prd-ann-concern" data-prd-ann="4"') && concern.includes('>気になる</span>'));
+  assert.ok(concern.includes('data-prd-todraft="4" data-prd-at="right:3"') && concern.includes('data-prd-ask="4"') && concern.includes('T &lt;b&gt;'));
+  // The draft is the author's comment: it is not shown in the line, only used by 「下書きに」.
+  assert.ok(!concern.includes('>D<'));
+  // The reader's window is gone: 「聞く」 is off with the reason; 「下書きに」 stays.
+  const off = html('concern', {}, false);
+  assert.ok(/data-prd-ask="4"[^>]* disabled title="worker が動いていません"/.test(off) && !/data-prd-todraft[^>]*disabled/.test(off));
+  // A place that only reads has no buttons, whatever the kind.
+  for (const kind of ['ex', 'concern', 'tr']) assert.ok(!html(kind, {}, true, { plain: true }).includes('<button'));
+  const odd = html('what');
+  assert.ok(odd.includes('prd-ann-ex') && odd.includes('>解説</span>') && odd.includes('data-prd-todraft'));
+  assert.ok(html(undefined).includes('prd-ann-ex'));
+  // Whole, never folded: the text and the buttons are always in the markup.
+  assert.ok(!/prd-folded|hidden/.test(concern));
+});
+
+test('a concern goes under its line like an explanation, tints it, and shows plain in an excerpt', () => {
+  const files = prParseDiff(SAMPLE);
+  const read = readOf({ annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'concern', text: 'Why?', draft: 'Could you say why?' }] });
+  const res = prDiffResolve(files, read);
+  const r = res.files.get('src/a.rs');
+  assert.deepStrictEqual(plain([...r.byLine]), [[3, [0]]]);
+  assert.strictEqual(r.at.get(0), 'right:3');
+  const e = prDiffLayout(files, read, null).files.find(f => f.path === 'src/a.rs');
+  const html = prDiffBodyHtml(e, r, read);
+  assert.ok(html.includes('prd-ann-concern') && html.indexOf('new();') < html.indexOf('data-prd-ann="0"') && html.includes('prd-l prd-a prd-tint'));
+  const excerpt = prDiffExcerptHtml(files[0], [1, 2, 3], r, read);
+  assert.ok(excerpt.includes('prd-ann-concern') && excerpt.includes('Why?') && !excerpt.includes('<button') && !excerpt.includes('Could you say why?'));
+});
+
+test('the comments of your last review are placed on their lines, without being counted, and the ones not found are left out', () => {
+  const files = prParseDiff(SAMPLE);
+  const since = { commit: 'b'.repeat(40), newChanges: [], comments: [
+    { commentId: 1, path: 'src/a.rs', line: 3, status: 'untouched', note: 'still <here>' },
+    { commentId: 2, path: 'src/a.rs', line: 99, status: 'addressed', note: 'no such line' },
+    { commentId: 3, path: 'nope.rs', line: 1, status: 'replied', note: 'no such file' },
+    { commentId: 4, path: 'src/a.rs', status: 'replied', note: 'no line' },
+    { commentId: 5, path: 'src/a.rs', line: 3, status: 'addressed', note: 'second' }] };
+  const read = readOf({ annotations: [{ path: 'src/a.rs', anchor: 'new();', kind: 'ex', text: 'E1' }], sinceReview: since });
+  const res = prDiffResolve(files, read);
+  const r = res.files.get('src/a.rs');
+  assert.deepStrictEqual(plain([...r.since]), [[3, [0, 4]]]);
+  assert.strictEqual(r.count, 1, 'not counted');
+  assert.deepStrictEqual(plain(res.orphans), []);
+  assert.deepStrictEqual(plain([...res.files.get('docs/new.md').since]), []);
+  assert.deepStrictEqual(plain([...prDiffResolve(files, readOf()).files.get('src/a.rs').since]), []);
+  const e = prDiffLayout(files, read, null).files.find(f => f.path === 'src/a.rs');
+  const html = prDiffBodyHtml(e, r, read);
+  assert.strictEqual((html.match(/prd-ann-prev/g) || []).length, 2);
+  assert.ok(html.includes('<div class="prd-ann prd-ann-prev"><span class="prd-ann-k">前回のあなたのコメント <span class="pr-chip pr-since-untouched">手つかず</span></span><div class="prd-ann-text">still &lt;here&gt;</div></div>'));
+  assert.ok(html.includes('pr-since-addressed">対応済み</span>') && !html.includes('no such line') && !html.includes('no line'));
+  // After the line\'s own annotation.
+  assert.ok(html.indexOf('data-prd-ann="0"') < html.indexOf('prd-ann-prev'));
+  assert.ok(html.indexOf('new();') < html.indexOf('prd-ann-prev'));
 });

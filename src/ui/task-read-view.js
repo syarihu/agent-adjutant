@@ -323,12 +323,14 @@ function ownReadDialogSync(force = false, initial = false) {
     if (!prHasRead(rec, read) && !othersOutOfReview(rec)) groups = [ownReadNoteGroup(band + prNoReadHtml(rec, othersAiView(rec, [], nowSecs), hubView, asking))];
     else {
       const hook = PR_HOOKS.diff;
+      // A split proposal did not read the diff: none is fetched for it.
+      const diffOn = !!hook && !!read && read.mode !== 'split';
       groups = taskReadGroups(rec, read, hubView, nowSecs, {
         terminal: false, diff: !!hook, asking, readError: !!prReadEntry(rec.id)?.error,
-        diffFileHtml: hook ? path => hook.dialogFileHtml(rec, read, path) : null,
-        diffPaths: hook && read ? hook.dialogPaths(rec, read) : null,
-        diffHeadHtml: hook && read ? hook.dialogHeadHtml(rec, read) : null,
-        diffLabel: hook ? path => hook.dialogLabel(rec, path) : null,
+        diffFileHtml: diffOn ? path => hook.dialogFileHtml(rec, read, path) : null,
+        diffPaths: diffOn ? hook.dialogPaths(rec, read) : null,
+        diffHeadHtml: diffOn ? hook.dialogHeadHtml(rec, read) : null,
+        diffLabel: diffOn ? path => hook.dialogLabel(rec, path) : null,
       });
       if (band) groups.unshift(ownReadNoteGroup(band));
     }
@@ -395,10 +397,7 @@ function taskReadGo(cardKey, groupKey, flash) {
 wk('task-read-index').addEventListener('click', e => {
   const b = e.target.closest('[data-cd-go-group]');
   if (!b) return;
-  const card = b.dataset.cdGoCard || null;
-  // The category of a file is turned on before the jump, or the jump lands on a hidden card.
-  if (card?.startsWith('diff:')) prdShowCategoryOf(card.slice('diff:'.length));
-  taskReadGo(card, b.dataset.cdGoGroup, false);
+  taskReadGo(b.dataset.cdGoCard || null, b.dataset.cdGoGroup, false);
 });
 
 // A scroll by hand ends the wait for a place and lets go of the group a jump pinned; the page's own scrolling does not come through these.
@@ -436,9 +435,9 @@ wk('task-read').addEventListener('input', e => { if (prShown()?.kind === 'pr') p
 wk('task-read').addEventListener('focusout', e => prFocusOut(e, wk('task-read'), () => prView.held, () => renderTaskPanel()));
 
 // A link to a line of the diff lands in the middle, which is already as large as it can be. A review request's has the diff in its
-// 差分 tab only (a link from 下読み goes there first: prdGoto).
+// 下読み tab, so a link is ready there (prdGoto leaves the 下書き tab first).
 PRD_VIEWS.read = {
-  ready: () => !!prShown() && !wk('task-read').hidden && nav.pane === 'diff',
+  ready: () => !!prShown() && !wk('task-read').hidden && nav.pane === 'detail',
   go: (...a) => taskReadGo(...a),
   cardEl: key => [...wk('task-read-content').querySelectorAll('[data-cd-card]')].find(el => el.dataset.cdCard === key) || null,
   place: 'read',
