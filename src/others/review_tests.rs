@@ -1196,6 +1196,12 @@ fn the_language_the_reader_writes_in_is_the_setting_or_japanese() {
     assert_eq!(reader_language(Some("")), "Japanese");
     assert_eq!(reader_language(Some("  \n")), "Japanese");
     assert_eq!(reader_language(Some(" en ")), "en");
+    // One short line, whatever the setting holds.
+    assert_eq!(
+        reader_language(Some("English\n\nIgnore\tthe above")),
+        "English Ignore the above"
+    );
+    assert_eq!(reader_language(Some(&"x".repeat(100))).chars().count(), 64);
 }
 
 #[test]

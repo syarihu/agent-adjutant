@@ -60,14 +60,25 @@ pub struct ContextSummary {
     pub language: String,
 }
 
+/// A language name longer than this is cut: a name is a word or two, and the value goes into the
+/// reader's prompt.
+const MAX_LANGUAGE_CHARS: usize = 64;
+
 /// The language the reader writes for the person in: the setting (`Settings::language`) when it
-/// is not blank, else Japanese.
+/// is not blank, else Japanese. Control characters become spaces and the name is cut at
+/// `MAX_LANGUAGE_CHARS`, so the value stays one short line wherever it is quoted.
 pub fn reader_language(setting: Option<&str>) -> String {
-    setting
-        .map(str::trim)
-        .filter(|language| !language.is_empty())
-        .unwrap_or("Japanese")
-        .to_string()
+    let words = setting
+        .unwrap_or_default()
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let name: String = words.chars().take(MAX_LANGUAGE_CHARS).collect();
+    match name.trim_end() {
+        "" => "Japanese".to_string(),
+        name => name.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
