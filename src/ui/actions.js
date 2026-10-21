@@ -334,6 +334,9 @@ function renderBoardHead() {
     : entry ? (entry.hub ? `${repoNameOf(entry)} · ${boardName(entry)}` : boardName(entry))
     : (pageHub()?.parent ? (pageHub().key || '') : (repoName() || 'タスクボード'));
   title.innerHTML = `<strong class="board-head-name">${esc(name)}</strong><span class="board-head-sub">エージェントの作業</span>`;
+  // On the resident server a hub opens from its row in the list; a board served alone has no list, so the head keeps the way in.
+  const hubBtn = document.getElementById('board-hub');
+  if (hubBtn) hubBtn.hidden = multiBoard;
 }
 
 /* Start the hub of the board at `base`. The route is the resident's, so it works from any

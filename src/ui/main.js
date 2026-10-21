@@ -105,6 +105,8 @@ const ACTIONS = {
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
+  // A board served alone: its hub's panel, where its detail (再同期 among it) and its terminal are.
+  'own-hub': () => openTaskPanel(HUB_REF + (pageHub()?.id || 'hub'), 'term'),
   'handover-close': () => closeHandoverDialog(),
   'nudge-hub': () => nudgeHub(),
 };

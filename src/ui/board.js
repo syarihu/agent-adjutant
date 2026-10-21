@@ -1,4 +1,4 @@
-/* The decision a board button's `data-act` ends up sending: act() remaps these by kind. */
+/* The decision a gate button of the task panel ends up sending, for the label it is drawn with. */
 const sentDecision = (action, kind) =>
   action === 'approve' ? (kind === 'result' ? 'ack' : 'approve')
   : action === 'start' ? 'approve'

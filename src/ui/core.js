@@ -76,7 +76,7 @@ if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 if (prefs.listWidth === undefined && Number(prefs.railWidth) !== 300) prefs.listWidth = prefs.railWidth;
 prefs.listWidth = Math.min(560, Math.max(240, Number(prefs.listWidth) || 330));
 delete prefs.railWidth;
-// The terminal beside the board: its width is clamped when read, and to the window when it is applied (applyBoardSide).
+// The terminal beside the board: its width is clamped when read, and to the window when it is applied (applyLayout).
 prefs.boardSideWidth = Math.min(1400, Math.max(360, Number(prefs.boardSideWidth) || 640));
 delete prefs.workListWidth;
 delete prefs.workGroup;

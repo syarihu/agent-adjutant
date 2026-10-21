@@ -120,6 +120,8 @@
     <div id="board-view" role="tabpanel">
       <div class="board-head" id="board-head">
         <h1 class="board-head-title" id="board-title"></h1>
+        <!-- A board served alone has no list of boards to open its hub from (renderBoardHead). -->
+        <button type="button" class="btn-m3-tonal board-head-hub" id="board-hub" data-action="own-hub" title="このボードの hub を開く" hidden><span class="material-symbols-outlined" aria-hidden="true">terminal</span><span>hub</span></button>
       </div>
       <div id="boards">
         <section class="pane" id="pane-agent">
