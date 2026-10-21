@@ -56,6 +56,18 @@ pub struct ContextSummary {
     pub mode: &'static str,
     /// What could not be collected and was left out, which is not a failure.
     pub notes: Vec<String>,
+    /// The language the person reads, which the reader writes for them in.
+    pub language: String,
+}
+
+/// The language the reader writes for the person in: the setting (`Settings::language`) when it
+/// is not blank, else Japanese.
+pub fn reader_language(setting: Option<&str>) -> String {
+    setting
+        .map(str::trim)
+        .filter(|language| !language.is_empty())
+        .unwrap_or("Japanese")
+        .to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -74,8 +86,9 @@ pub fn read_context(
     pr: &PrRef,
     out: &Path,
     session: Option<&str>,
+    language: &str,
 ) -> Result<ContextSummary, String> {
-    read_context_with(root, pr, out, session, &|args, deadline| {
+    read_context_with(root, pr, out, session, language, &|args, deadline| {
         crate::infra::gh::run(None, args, deadline)
     })
 }
@@ -86,6 +99,7 @@ pub(crate) fn read_context_with(
     pr: &PrRef,
     out: &Path,
     session: Option<&str>,
+    language: &str,
     gh: Gh,
 ) -> Result<ContextSummary, String> {
     // Before anything is read or written: `out` is a place the reader names, and the reader is
@@ -163,6 +177,7 @@ pub(crate) fn read_context_with(
             mode: "split",
             rereview: false,
             notes,
+            language: language.to_string(),
         });
     }
 
@@ -171,7 +186,7 @@ pub(crate) fn read_context_with(
     match get(gh, &["pr", "diff", &url], deadline) {
         Ok(diff) => put_text(&out, "diff.patch", &diff, &mut written)?,
         Err(why) => notes.push(format!(
-            "diff.patch could not be fetched ({why}); put what you could not read in `points` or `unwritten`, and do not guess"
+            "diff.patch could not be fetched ({why}); put what you could not read in `unwritten`, and do not guess"
         )),
     }
 
@@ -217,6 +232,7 @@ pub(crate) fn read_context_with(
         mode: "read",
         rereview,
         notes,
+        language: language.to_string(),
     })
 }
 

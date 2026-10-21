@@ -69,7 +69,8 @@ pub fn run_reader(root: &Path, pr: &PrRef, session: &str) -> String {
             return why;
         }
     };
-    let prompt = reader_prompt(&id, mode);
+    let language = others::reader_language(ctx.settings.language.as_deref());
+    let prompt = reader_prompt(&id, mode, &language);
     let command = runner::reviewer_command(
         template,
         &env,
@@ -113,13 +114,13 @@ pub(crate) fn reader_env(mut env: Vec<(String, String)>, agent: Agent) -> Vec<(S
 
 /// What the reader's agent is told to do: the procedure is fetched, and the mode picks the part
 /// of it that applies.
-fn reader_prompt(id: &str, mode: ReadMode) -> String {
+fn reader_prompt(id: &str, mode: ReadMode, language: &str) -> String {
     match mode {
         ReadMode::Read => format!(
-            "Fetch the adj-reviewer procedure with `adj skill adj-reviewer` (no MCP tools are available to you), and read the pull request {id} as it says."
+            "Fetch the adj-reviewer procedure with `adj skill adj-reviewer` (no MCP tools are available to you), and read the pull request {id} as it says. The person reads {language}: write for them in it, as the procedure says."
         ),
         ReadMode::Split => format!(
-            "Fetch the adj-reviewer procedure with `adj skill adj-reviewer` (no MCP tools are available to you), and draft a split proposal for the pull request {id} as its section \"Split proposal\" says."
+            "Fetch the adj-reviewer procedure with `adj skill adj-reviewer` (no MCP tools are available to you), and draft a split proposal for the pull request {id} as its section \"Split proposal\" says. The person reads {language}: write for them in it, as the procedure says."
         ),
     }
 }
@@ -174,11 +175,19 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_split_section_only_for_a_split() {
-        let read = reader_prompt("o/r#1", ReadMode::Read);
+        let read = reader_prompt("o/r#1", ReadMode::Read, "Japanese");
         assert!(read.contains("read the pull request o/r#1 as it says"));
         assert!(!read.contains("Split proposal"));
-        let split = reader_prompt("o/r#1", ReadMode::Split);
+        let split = reader_prompt("o/r#1", ReadMode::Split, "Japanese");
         assert!(split.contains("draft a split proposal for the pull request o/r#1"));
         assert!(split.contains("\"Split proposal\""));
+    }
+
+    #[test]
+    fn the_prompt_names_the_language_the_person_reads() {
+        for mode in [ReadMode::Read, ReadMode::Split] {
+            let prompt = reader_prompt("o/r#1", mode, "English");
+            assert!(prompt.contains("The person reads English: write for them in it"));
+        }
     }
 }

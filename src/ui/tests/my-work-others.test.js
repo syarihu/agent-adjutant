@@ -161,6 +161,7 @@ test('what a row says of its state, for every state', () => {
   assert.equal(line('ai-reading', { ai: { status: 'queued' } }).text, 'AI 下読みの順番待ち');
   assert.equal(line('ai-ready').text, '下読み済み');
   assert.equal(line('ai-ready', { ai: { status: 'ready', counts: { attention: 2, check: 0, drafts: 3 } } }).text, '下読み済み · 要注意 2 · 確認 0 · 下書き 3');
+  assert.equal(line('ai-ready', { ai: { status: 'ready', counts: { concerns: 2, drafts: 2 } } }).text, '下読み済み · 気になる 2 · 下書き 2');
   assert.equal(line('pushed', { commitsSinceReview: 3 }).text, '前回のレビューから +3 コミット');
   assert.equal(line('pushed', { commitsSinceReview: 0 }).text, '前回のレビューから +0 コミット');
   assert.equal(line('pushed', { commitsSinceReview: null }).text, '前回のレビューのあとに push されました');

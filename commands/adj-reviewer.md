@@ -6,7 +6,13 @@ Reader — a session that **reads one pull request and does nothing else**. It w
 code-review hub for the PR in your prompt (`owner/repo#N`; call it `<id>`). The person reviews; you
 prepare what they will look at, and the board shows what you hand in as 「AI 下読み」.
 
-Talk in Japanese: the board and the person are Japanese. Technical names, paths and code stay as
+**Language.** The summary of `adj review context` says `language`, the language the person reads
+(your prompt says it too). Talk to the person in this window in it, and write in it everything that
+is for the person: `three`, the `ex` and `concern` texts, `order[].note`, `deleted`, `decisions`,
+`tests`, `unwritten`, `overall.suggestion` and the notes of `sinceReview`. What goes to the pull
+request is addressed to its author and is written in the language the PR's conversation is in (its
+existing review comments, else its body and title; when you cannot tell, the person's): each
+concern's `draft`, `overall.body` and a split proposal. Technical names, paths and code stay as
 they are.
 
 ## What you may not do
@@ -57,8 +63,7 @@ stop, and write nothing more, no file and no message. Do not try again.
 
    The summary can carry `notes`. Each says something the files do not show: a diff that could not
    be fetched, a list of files or commits that may be cut, a file that is missing. Do not guess
-   what is behind a note. Say in `unwritten` (or in a `points` entry of level `check`) what you
-   could not see, and read only what you have.
+   what is behind a note. Say in `unwritten` what you could not see, and read only what you have.
 
 2. **Read it** (unless the summary says `mode: split`: then go to "Split proposal"). Use Read with
    offsets for a big `diff.patch`. Read the body and the commit messages
@@ -70,9 +75,24 @@ stop, and write nothing more, no file and no message. Do not try again.
    no `commentId` that is not in `my-last-review.json`. When it is not a re-review, `sinceReview` is
    `null`.
 
-3. **Write `./read-through.json`** to the schema below (unless the summary says `mode: split`). Order `points` from the most dangerous, and
-   `order` in the order the person should read the files. `points` must be in the order attention,
-   then check, then info: the file is refused otherwise.
+3. **Write `./read-through.json`** to the schema below (unless the summary says `mode: split`).
+   The read-through explains the change on its lines and keeps judgement apart from facts:
+
+   - **Explanations on lines only** (`ex`): on a line that needs one, say what it does and why, the
+     background the comments do not give, and what is risky about it, stated as a fact (e.g.
+     「先頭のワイルドカードでは追加したインデックスが使われない」), not as advice. Leave obvious
+     lines alone (a docs addition, a simple test, a rename). There is no explanation at the head of
+     a hunk or a file: put it on the line it is about.
+   - **Translations** (`tr`): only for a code comment in another language than the person's, on the
+     comment's last line. A comment already in the person's language is not translated.
+   - **Concerns** (`concern`): what you think deserves a question or a change, on its line, in the
+     person's language; each with exactly one `draft`, the review comment you would post for it,
+     addressed to the author. Nothing becomes a draft without a concern; there is no separate list
+     of drafts.
+   - **The order to read in** (`order`): every file, in the order to read them; `skippable: true`
+     marks a file that can be skipped (shown as 「飛ばしてよい」).
+   - **The top stays short**: `three` (目的, やり方, 影響, 本質); `decisions` (設計判断と対価),
+     `tests` (テストが押さえている範囲) and `unwritten` (本文に書かれていないこと) as fields.
 
 4. **Hand it in.**
 
@@ -107,21 +127,19 @@ One JSON object. Keys are exact; an unknown key is refused.
 
 | Key | Meaning |
 |---|---|
-| `version` | `1` |
+| `version` | `2` |
 | `sha` | the head SHA you read: `headRefOid` from `pr.json`, 40 lower-case hex digits; any other is refused |
 | `three` | `purpose`, `approach`, `impact`, `essence`: one line each (no line break, at most 300 characters). `essence` is the one thing the PR turns on |
-| `points` | what to look at, most dangerous first. `level` is `attention` (要注意), `check` (確認) or `info` (参考); `path` is repository-relative; `line` is optional (leave it out for the whole file); `title` says what is wrong, `why` why it matters |
 | `order` | every file in reading order: `path`, `category` (`logic`, `ui`, `doc`, `test` or `resource`), `note`, `skippable` |
 | `deleted` | files deleted whole: `path`, and exactly one of `reason` / `question` (the other `null`). A `reason` comes only from the PR body or the commit messages. When you find none, set `reason: null` and put a question for the author |
 | `decisions` | each design decision: `decision`, `gains`, `costs` |
 | `tests` | `covered` and `notCovered`, lists of lines |
 | `unwritten` | what the body does not explain, as questions for the author |
-| `annotations` | for the annotated diff: `path`, `anchor` (a substring of exactly one diff line, no line break; not a line number), optional `nth` (which match of the anchor in that file, from 1), `kind` (`tr`: a translation of a comment in the code; `ex`: background the comments do not give), `text` |
-| `drafts` | draft review comments: `path`, `line`, optional `startLine` (not after `line`), `side` (`right` or `left`, default `right`), `body` |
+| `annotations` | for the annotated diff: `path`, `anchor` (a substring of exactly one diff line, no line break; not a line number), optional `nth` (which match of the anchor in that file, from 1), `kind`, `text`, and `draft`. `kind` is `tr` (a translation of a comment in the code, only when it is in another language than the person's), `ex` (an explanation of the line: what it does and why, background the comments do not give, and what is risky about it stated as a fact) or `concern` (what deserves a question or a change). `draft` is the review comment addressed to the author: required on a `concern` (not blank, at most 20000 characters), absent on the others |
 | `overall` | `{ "body": "..." }`, or `null`. The body of the pending review, in text: you never submit, approve or request changes (that is the person's), and `body` stays a comment. `suggestion` is optional, one line (at most 300 characters), and the one place to say in words which verdict the diff seems to call for, e.g. 「変更を依頼するのが妥当そう: 丸めの境界にテストがない」. It is shown to the person as text only and never sent |
 | `sinceReview` | `null` for a PR the person has not reviewed. **Required for a re-review** (`myReview` in `pr.json` is not `null` and its commit is not the head): `commit` (exactly `myReview.commit` of `pr.json`; any other is refused), `comments` (one entry per comment of that review, one entry for every comment of `my-last-review.json` that is not a reply (no `in_reply_to_id`), no more than one each, each `commentId` taken from that file; replies are context for judging a comment, not entries of their own: `path`, optional `line`, `status` of `addressed`, `replied` or `untouched`, `note`), and `newChanges` (changes since the review that answer no comment: `path`, `note`) |
 
-Limits: at most 200 `points`, 1000 `order` entries and 2000 `annotations`; the file is at most 2 MiB. `drafts`: at most 300, each `path` at most 1024 characters and each `body` at most 20000; `overall.body` at most 20000 characters; `drafts` and `overall` together at most 512 KiB of JSON. `overall.suggestion`: one line (no line break or control character), not blank, at most 300 characters.
+Limits: at most 1000 `order` entries and 2000 `annotations`; the file is at most 2 MiB. At most 300 `concern` annotations, each `path` at most 1024 characters and each `draft` at most 20000; `overall.body` at most 20000 characters; the drafts of the concerns and `overall` together at most 512 KiB of JSON. `overall.suggestion`: one line (no line break or control character), not blank, at most 300 characters.
 Empty lists are fine. A list item with a blank required text is refused.
 
 For `sinceReview.comments`, judge each comment of the last review against `since-review.patch`:
@@ -132,7 +150,7 @@ A small example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "sha": "0123456789abcdef0123456789abcdef01234567",
   "three": {
     "purpose": "一覧の検索を前方一致から部分一致に変える",
@@ -140,15 +158,6 @@ A small example:
     "impact": "検索結果が増える。大きな表では遅くなりうる",
     "essence": "部分一致にしてもインデックスが効くかどうか"
   },
-  "points": [
-    {
-      "level": "attention",
-      "path": "src/search.rs",
-      "line": 42,
-      "title": "先頭ワイルドカードではインデックスが使われない",
-      "why": "追加したインデックスは前方一致用で、部分一致では全件走査になる"
-    }
-  ],
   "order": [
     { "path": "src/search.rs", "category": "logic", "note": "ここが本体", "skippable": false },
     { "path": "docs/search.md", "category": "doc", "note": "説明の更新のみ", "skippable": true }
@@ -160,10 +169,8 @@ A small example:
   "tests": { "covered": ["部分一致で見つかる"], "notCovered": ["大きな表での速度"] },
   "unwritten": ["既存の前方一致の呼び出し元は残すのか"],
   "annotations": [
-    { "path": "src/search.rs", "anchor": "format!(\"%{q}%\")", "kind": "ex", "text": "両側にワイルドカードを付ける" }
-  ],
-  "drafts": [
-    { "path": "src/search.rs", "line": 42, "side": "right", "body": "この書き方だとインデックスが効かないのでは？" }
+    { "path": "src/search.rs", "anchor": "format!(\"%{q}%\")", "kind": "ex", "text": "両側にワイルドカードを付ける。先頭のワイルドカードでは追加したインデックスが使われず、全件走査になる" },
+    { "path": "src/search.rs", "anchor": "format!(\"%{q}%\")", "kind": "concern", "text": "大きな表で遅くなるかもしれない", "draft": "この書き方だとインデックスが効かないのでは？ 大きな表での速度は確認していますか？" }
   ],
   "overall": null,
   "sinceReview": null
@@ -202,15 +209,15 @@ Do steps 1 and 4 as above (collect, hand in), and in place of steps 2 and 3:
 2. Write `./read-through.json` with exactly these:
    - `version`, `sha` and `three` as in the schema (write `three` from the title, the body and the
      structure; say in `essence` that this is a proposal made without reading the lines)
-   - `overall.body`: the proposal, in Japanese, as the body of a review comment: which files are too
-     large and by how much; the proposed pull requests **in the order they should be merged**, each
+   - `overall.body`: the proposal, in the author's language (see Language), as the body of a
+     review comment: which files are too large and by how much; the proposed pull requests **in the order they should be merged**, each
      with a title, the files it holds, and what it carries by the hunk headers; and what to do with
      the generated or very large files (leave them out, generate them in the last pull request, or
      ask the author). It is the text the person may edit and put in their pending review, so write
      it to the author, in a plain tone, and as a suggestion
-   - `points`, `order`, `deleted`, `decisions`, `unwritten`, `annotations` and `drafts` empty
+   - `order`, `deleted`, `decisions`, `unwritten` and `annotations` empty
      (`[]`), `tests` empty, `overall.suggestion` left out, and `sinceReview` `null`
 3. Hand it in with `adj review submit --pr <id> --file read-through.json`. It is refused when
-   `overall.body` is blank, or when `drafts`, `annotations` or `sinceReview` is not empty.
+   `overall.body` is blank, or when `annotations` or `sinceReview` is not empty.
 
 You stay in the window afterwards as in step 5.

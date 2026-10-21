@@ -79,7 +79,18 @@ pub fn review_context(args: &ReviewContextArgs) -> Result<(), String> {
     let session = std::env::var(REVIEW_SESSION_ENV)
         .ok()
         .filter(|session| !session.trim().is_empty());
-    let summary = others::read_context(&root, &pr, out, session.as_deref())?;
+    // The person's language is told to the reader; a context that cannot be read must not stop
+    // the material from being collected. The default it falls back to is said, so that it is not
+    // taken for the person's setting.
+    let setting = match registry::review_context_for(&root, &pr.nwo()) {
+        Ok(ctx) => ctx.settings.language,
+        Err(why) => {
+            eprintln!("warning: the config could not be read ({why}); the language is the default");
+            None
+        }
+    };
+    let language = others::reader_language(setting.as_deref());
+    let summary = others::read_context(&root, &pr, out, session.as_deref(), &language)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())?

@@ -327,12 +327,17 @@ impl ReadMode {
 /// than making the record unreadable (architecture rule 10).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiCounts {
-    /// Points of level `attention`.
-    #[serde(default)]
-    pub attention: u32,
-    /// Points of level `check`.
-    #[serde(default)]
-    pub check: u32,
+    /// Points of level `attention`: only a record of a version 1 read-through has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention: Option<u32>,
+    /// Points of level `check`: only a record of a version 1 read-through has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<u32>,
+    /// The annotations of kind `concern`: set for every version 2 read-through, `Some(0)`
+    /// included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concerns: Option<u32>,
+    /// The drafts: for a version 2 read-through the number of concerns, each has one.
     #[serde(default)]
     pub drafts: u32,
     #[serde(flatten)]

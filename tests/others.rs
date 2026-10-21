@@ -205,12 +205,13 @@ const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
 /// A read-through that passes the schema, with `sha` as the reader read it.
 fn read_through() -> Value {
     json!({
-        "version": 1,
+        "version": 2,
         "sha": HEAD,
         "three": {"purpose": "p", "approach": "a", "impact": "i", "essence": "e"},
-        "points": [{"level": "attention", "path": "a.rs", "line": 3, "title": "t", "why": "w"}],
         "order": [{"path": "a.rs", "category": "logic", "note": "n", "skippable": false}],
-        "drafts": [{"path": "a.rs", "line": 3, "body": "b"}]
+        "annotations": [
+            {"path": "a.rs", "anchor": "fn a", "kind": "concern", "text": "t", "draft": "b"}
+        ]
     })
 }
 
@@ -279,7 +280,7 @@ fn a_read_through_is_checked_stored_and_served() {
 
     let mut bad = read_through();
     bad["three"]["purpose"] = json!(" ");
-    bad["points"][0]["line"] = json!(0);
+    bad["annotations"][0]["nth"] = json!(0);
     std::fs::write(&file, bad.to_string()).unwrap();
     let out = fixture.cmd(&[
         "review",
@@ -291,7 +292,7 @@ fn a_read_through_is_checked_stored_and_served() {
     ]);
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(said.contains("three.purpose"), "{said}");
-    assert!(said.contains("points[0]"), "{said}");
+    assert!(said.contains("annotations[0]"), "{said}");
 
     std::fs::write(&file, read_through().to_string()).unwrap();
     let out = fixture.cmd(&[
@@ -315,14 +316,11 @@ fn a_read_through_is_checked_stored_and_served() {
     assert_eq!(stored["id"], "acme/widget#7");
     assert_eq!(stored["sha"], HEAD);
     assert_eq!(stored["three"]["essence"], "e");
-    assert_eq!(stored["drafts"][0]["side"], "right");
+    assert_eq!(stored["annotations"][0]["draft"], "b");
     // The list says what it holds, and when its material was taken (`stale` depends on the
     // second the sync and the hand-in fell in, so the unit tests pin it, not this).
     let record = &body(&resident.get("/api/others").1)["records"][1];
-    assert_eq!(
-        record["ai"]["counts"],
-        json!({"attention": 1, "check": 0, "drafts": 1})
-    );
+    assert_eq!(record["ai"]["counts"], json!({"concerns": 1, "drafts": 1}));
     assert!(record["ai"]["readFrom"].as_str().is_some());
     assert!(record["ai"]["stale"].is_boolean());
     assert_eq!(record["state"], "ai-ready");
