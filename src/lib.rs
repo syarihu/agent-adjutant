@@ -46,8 +46,9 @@ pub(crate) mod testing {
         /// macOS posts a real banner every time a test reaches a delivery path; a string is a
         /// command template, and this one runs `true`. The top level is the lowest-priority
         /// level, so a fixture that sets `notification` in a repo entry or in `defaults` keeps
-        /// its own, and one that sets it at the top level (to anything) is written as given.
-        /// So is a config that is not a JSON object: some tests feed broken ones on purpose.
+        /// its own, and one that sets it at the top level (to anything but `null`) is written as
+        /// given. So is a config that is not a JSON object: some tests feed broken ones on
+        /// purpose.
         pub fn new(config_json: &str) -> Self {
             let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let dir = tempfile::tempdir().unwrap();
@@ -88,10 +89,17 @@ pub(crate) mod testing {
     }
 
     /// `config_json` with a silent `notification` added when it is a JSON object that says
-    /// nothing about one; anything else comes back as it was given.
+    /// nothing about one; anything else comes back as it was given. `Fixture::new` in
+    /// `tests/common/mod.rs` keeps a copy of this rule for the integration tests, which cannot
+    /// reach this module, so a change here goes there too.
     fn quiet_config(config_json: &str) -> String {
         match serde_json::from_str::<serde_json::Value>(config_json) {
-            Ok(serde_json::Value::Object(mut map)) if !map.contains_key("notification") => {
+            // `null` counts as unset, as it does when the config is resolved.
+            Ok(serde_json::Value::Object(mut map))
+                if map
+                    .get("notification")
+                    .is_none_or(serde_json::Value::is_null) =>
+            {
                 map.insert("notification".into(), "true".into());
                 serde_json::Value::Object(map).to_string()
             }
@@ -159,6 +167,12 @@ pub(crate) mod testing {
         fn a_fixtures_own_notification_is_kept() {
             let _sandbox = Sandbox::new(r#"{"notification": false, "repos": {}}"#);
             assert_eq!(notification(), Hook::Off);
+        }
+
+        #[test]
+        fn a_null_notification_is_quiet_too() {
+            let _sandbox = Sandbox::new(r#"{"notification": null, "repos": {}}"#);
+            assert_ne!(notification(), Hook::BuiltIn);
         }
 
         #[test]
