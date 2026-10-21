@@ -96,9 +96,49 @@
 .qc-ask > :first-child { margin-top: 0; }
 .qc-ask > :last-child { margin-bottom: 0; }
 .qc-choices { margin-top: 12px; }
-.qc-choices .choices-container { grid-template-columns: 1fr; gap: 10px; }
-.qc-decide { align-items: center; }
+.qc-choices .choices-container { display: grid; grid-template-columns: 1fr; gap: 10px; }
+/* A choice is a card to read; the foot has the button that picks it. The recommended one has a heavier border and a pill. */
+.qc-choice { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-lg); background: var(--md-sys-color-surface-container-lowest); }
+.qc-choice.rec { border: 2px solid var(--md-sys-color-primary); padding: 11px 13px; }
+.qc-choice h4 { margin: 0; font-size: 14px; font-weight: 700; }
+.qc-choice .why { margin: 0; font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+.qc-choice ul { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.qc-choice .choice-draft { padding: 6px 10px; border-radius: var(--md-shape-corner-sm); font-size: 12px; background: var(--md-sys-color-surface-container-low); color: var(--md-sys-color-on-surface-variant); }
+.qc-choice-pills { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.qc-rec-pill { align-self: flex-start; padding: 2px 8px; border-radius: var(--md-shape-corner-full); font-size: 10.5px; font-weight: 700; line-height: 1.3; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.qc-picked-pill .material-symbols-outlined { font-size: 14px; }
+.qc-decide { align-items: center; flex-wrap: wrap; }
 .qc-spacer { flex: 1 1 auto; }
+.qc-decide-end { margin-left: auto; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+/* The foot's answer for a choice that is not the recommended one. */
+.qc-btn-outline {
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  border: 1px solid var(--md-sys-color-outline);
+  padding: 7px 17px;
+  border-radius: var(--md-shape-corner-full);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.qc-btn-outline:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent); }
+.qc-btn-outline:disabled { opacity: .6; cursor: default; }
+/* The ⋯ menu at the foot's right end: the rarely used close, above the button. */
+.qc-more { position: relative; }
+.qc-more > summary { list-style: none; cursor: pointer; }
+.qc-more > summary::-webkit-details-marker { display: none; }
+.qc-more-menu { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 2; min-width: max-content; padding: 4px; border-radius: var(--md-shape-corner-md); background: var(--md-sys-color-surface-container); box-shadow: var(--md-elevation-2, var(--md-elevation-1)); }
+/* The start check's reading: label and value in two columns. */
+.qc-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 13px; }
+.qc-kv dt { color: var(--md-sys-color-on-surface-variant); }
+.qc-kv dd { margin: 0; overflow-wrap: anywhere; }
+.qc-kv + .body { margin-top: 10px; }
+/* A research result's conclusion, ahead of the rest. */
+.qc-concl { font-size: 14px; font-weight: 700; }
+.qc-concl > :first-child { margin-top: 0; }
 
 /* ── The quick row and the strip, over the terminal ── */
 .qc-quick, .qc-strip {

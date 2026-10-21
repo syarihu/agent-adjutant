@@ -225,3 +225,13 @@ test('the ⋯ menu lists its items in the order given, disabled ones carry their
   assert.ok(!second.includes(' disabled') && second.includes('data-board="b&lt;1"'));
   assert.ok(html.includes('パスをコピー &lt;x&gt;') && !html.includes('<x>'));
 });
+
+test('a folded start check draws the lead answer button: the kind\'s primary, or the recommended choice, or none', () => {
+  const fold = g => api.workTermAskHtml([g], { ctxOf, keyOf, hub: true, folded: new Set([keyOf(g)]) });
+  assert.ok(fold(dispatch).includes('着手する') && fold(dispatch).includes('data-act="approve"'));
+  const rec = fold({ ...dispatch, choices: [{ id: 'a', label: 'A. now' }, { id: 'b', label: 'B. later', recommended: true }] });
+  assert.equal(count(rec, 'data-choice='), 1);
+  assert.ok(rec.includes('data-choice="b"') && !rec.includes('data-act="approve"'));
+  const none = fold({ ...dispatch, choices: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] });
+  assert.ok(!none.includes('data-choice=') && !none.includes('data-act=') && none.includes('data-wk-fold='));
+});

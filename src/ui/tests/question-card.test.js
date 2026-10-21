@@ -25,8 +25,8 @@ run([
   cut(decide, /^function choicesHtml\(g, pickable, opts = \{\}\) \{[\s\S]*?\n\}/m),
 ].join('\n'), 'decide.js');
 run(read('question-card.js'), 'question-card.js');
-const { questionCardHtml, questionCardArticleHtml, quickRowHtml, questionStripHtml, questionAskHtml, questionEarlierHtml, QUESTION_ASK_OF_KIND } = vm.runInContext(
-  '({ questionCardHtml, questionCardArticleHtml, quickRowHtml, questionStripHtml, questionAskHtml, questionEarlierHtml, QUESTION_ASK_OF_KIND })', ctx);
+const { questionCardHtml, questionCardArticleHtml, quickRowHtml, questionStripHtml, questionAskHtml, questionEarlierHtml, QUESTION_ASK_OF_KIND, qcAnswerButtons, qcNeedsComment, qcQuickIcon } = vm.runInContext(
+  '({ questionCardHtml, questionCardArticleHtml, quickRowHtml, questionStripHtml, questionAskHtml, questionEarlierHtml, QUESTION_ASK_OF_KIND, qcAnswerButtons, qcNeedsComment, qcQuickIcon })', ctx);
 
 const DIFF = [
   'diff --git a/src/a.rs b/src/a.rs', 'index 1..2 100644', '--- a/src/a.rs', '+++ b/src/a.rs', '@@ -1,2 +1,3 @@ fn a',
@@ -52,13 +52,14 @@ test('a plan card reads in order: request, found, plan, the question, the choice
   assert.ok(at('あなたの依頼') < at('調べたこと'));
   assert.ok(at('調べたこと') < at('計画'));
   assert.ok(at('計画') < at('qc-ask'));
-  assert.ok(at('qc-ask') < at('data-choice'));
+  assert.ok(at('qc-ask') < at('qc-choice'));
   assert.equal(count(all(c), 'quokka'), 1);
   assert.ok(c.head.includes('Add a timer'));
   assert.ok(c.body.includes('Stop at zero'));
   assert.ok(c.body.includes('懸念点') && c.body.includes('決めたこと'));
   assert.ok(c.body.indexOf('Fix tick') < c.body.indexOf('懸念点'));
-  assert.equal(count(c.body, 'data-choice='), 2);
+  assert.equal(c.body.match(/class="qc-choice( rec)?"/g).length, 2);
+  assert.equal(count(c.foot, 'data-choice='), 2);
 });
 
 test('a question with nothing around it draws no empty heading', () => {
@@ -228,8 +229,149 @@ test('a read-only card has the choices with nothing to pick, and no foot', () =>
   assert.equal(count(c.body, 'data-choice='), 0);
   assert.equal(count(c.body, 'data-gate='), 0);
   assert.ok(c.body.includes('選ばれた案'));
-  // The same gate not read-only still has both.
+  // The same gate not read-only still has both, as buttons in the foot.
   const live = card(planGate);
-  assert.equal(count(live.body, 'data-choice='), 2);
+  assert.equal(count(live.body, 'data-choice='), 0);
+  assert.equal(count(live.foot, 'data-choice='), 2);
   assert.ok(live.foot.includes('gate-comment'));
+});
+
+test('a plan with choices: one button to a choice in the foot, the recommended first and filled; the choices are cards with no button', () => {
+  const c = card(planGate);
+  assert.ok(!c.body.includes('pick'));
+  assert.ok(c.body.includes('qc-choice rec') && c.body.includes('>推し<') && !c.body.includes('AI の推し案'));
+  const a = c.foot.indexOf('data-choice="a"');
+  const b = c.foot.indexOf('data-choice="b"');
+  assert.ok(a >= 0 && a < b);
+  assert.ok(/class="pick btn-m3-primary" data-choice="a"/.test(c.foot));
+  assert.ok(/class="pick qc-btn-outline" data-choice="b"/.test(c.foot));
+  assert.ok(c.foot.includes('title="Integers"') && !c.foot.includes('aria-label="Integers"') && c.foot.includes('title="Floats"'));
+  assert.ok(c.foot.includes('計画を直してほしい') && c.foot.includes('data-act="changes"'));
+  assert.ok(!c.foot.includes('見送る') && !c.foot.includes('data-act="reject"') && !c.foot.includes('承認する'));
+  const more = c.foot.slice(c.foot.indexOf('<details class="qc-more">'));
+  assert.ok(more.includes('data-act="close"') && more.includes('qc-more-menu') && more.includes('aria-label="ほかの操作"'));
+  assert.ok(c.foot.indexOf('qc-spacer') < c.foot.indexOf('data-act="talk"') && c.foot.indexOf('data-act="talk"') < c.foot.indexOf('qc-more'));
+  // The recommended choice is first even when the worker listed it later; with none recommended none is filled.
+  const later = qcAnswerButtons({ kind: 'plan', options: [], choices: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y', recommended: true }] });
+  assert.ok(later[0].lead && later[0].html.includes('data-choice="y"') && !later[1].lead);
+  const none = qcAnswerButtons({ kind: 'plan', options: [], choices: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }] });
+  assert.ok(none.every(x => !x.lead && !x.html.includes('btn-m3-primary')));
+});
+
+test('a choice button says its label when short, its leading id and a verb when long, else the label cut short; the title keeps all', () => {
+  const html = (kind, label) => qcAnswerButtons({ kind, options: [], choices: [{ id: 'c', label }] })[0].html;
+  assert.ok(html('plan', 'Short label').includes('<span>Short label</span>'));
+  const long = 'A. a label that is much longer than sixteen characters';
+  assert.ok(html('plan', long).includes('<span>A で進める</span>') && html('plan', long).includes(`title="${long}"`));
+  assert.ok(html('diff', long).includes('<span>A で PR に</span>'));
+  assert.ok(html('plan', 'B) ' + 'x'.repeat(30)).includes('<span>B で進める</span>'));
+  const bare = 'This label has no leading id and is long';
+  assert.ok(html('plan', bare).includes(`<span>${[...bare].slice(0, 15).join('')}…</span>`) && html('plan', bare).includes(`title="${bare}"`));
+  // Counted in characters, not code units.
+  const jp = 'あ'.repeat(16);
+  assert.ok(html('plan', jp).includes(`<span>${jp}</span>`));
+  assert.ok(html('plan', 'あ'.repeat(17)).includes(`<span>${'あ'.repeat(15)}…</span>`));
+});
+
+test('with no choices the kind has one primary button, only when its decision is in options', () => {
+  const only = (kind, options) => qcAnswerButtons({ kind, options });
+  assert.ok(only('plan', ['approve', 'changes'])[0].html.includes('この計画で進める'));
+  assert.ok(only('diff', ['approve'])[0].html.includes('PR にする'));
+  assert.ok(only('verify', ['approve'])[0].html.includes('確認した'));
+  assert.ok(only('result', ['ack'])[0].html.includes('分かった（閉じる）'));
+  assert.ok(only('question', ['answer'])[0].html.includes('答える'));
+  assert.ok(only('issue', ['approve'])[0].html.includes('起票する') && only('relay', ['approve'])[0].html.includes('Jules に回す'));
+  assert.deepEqual(only('plan', ['changes']), []);
+  assert.deepEqual(only('diff', []), []);
+  assert.ok(only('other', ['answer', 'approve'])[0].html.includes('data-act="approve"'));
+  const c = card({ id: 'd9', kind: 'diff', title: 'D', wait: true, options: ['changes'], diff: DIFF });
+  assert.ok(!c.foot.includes('PR にする') && c.foot.includes('直してほしい'));
+});
+
+test('a research result is 調査結果 with the conclusion first and bold; buttons follow the choices', () => {
+  const g = {
+    id: 'r2', kind: 'result', title: 'R', wait: true, options: ['ack', 'ask', 'task'], focus: 'Enough?',
+    sections: [{ heading: 'Conclusion', body: 'It is the cache' }, { heading: 'Cause', body: 'stale keys' }],
+  };
+  const c = card(g);
+  assert.ok(c.body.includes('調査結果') && !c.body.includes('調べたこと'));
+  assert.ok(c.body.includes('<div class="qc-concl">') && c.body.indexOf('qc-concl') < c.body.indexOf('It is the cache'));
+  assert.ok(!c.body.includes('Conclusion') && c.body.includes('Cause'));
+  assert.ok(c.body.indexOf('It is the cache') < c.body.indexOf('stale keys'));
+  for (const label of ['分かった（閉じる）', '続けて聞く', 'これをタスクにする']) assert.ok(c.foot.includes(label), label);
+  // A result with a plan is the same as before.
+  const planned = card({ ...g, sections: [...g.sections, { heading: 'Next', body: 'n', stage: 'plan' }] });
+  assert.ok(planned.body.includes('調べたこと') && !planned.body.includes('qc-concl'));
+  // With choices: 「もう少し調べて」, and no task button.
+  const withChoices = card({ ...g, choices: [{ id: 'a', label: 'A. fix it', recommended: true }, { id: 'end', label: 'B. end' }] });
+  assert.ok(withChoices.foot.includes('もう少し調べて') && !withChoices.foot.includes('続けて聞く') && !withChoices.foot.includes('これをタスクにする'));
+});
+
+test('a dispatch card reads the hub\'s reading as a table, then the question, with 着手する / 直す and the text button 「やめる」', () => {
+  const g = {
+    id: 'h1', kind: 'dispatch', title: 'Start', wait: true, options: ['approve', 'changes', 'reject'], focus: 'Start on this reading?',
+    facts: ['やること: add a timer', 'Issue: https://github.com/acme/widget/issues/7', 'a plain fact'],
+    decided: '- 完了条件: tests pass\n* 止める所：PR まで\nnot a pair\n- a very long label that is not a label: v',
+    unsure: 'scope', sections: [{ heading: 'Extra', body: 'more' }],
+  };
+  const c = card(g);
+  assert.ok(c.body.includes('あなたの依頼') && c.body.includes('hub の読み取り'));
+  assert.ok(!c.body.includes('調べたこと') && !c.body.includes('>計画<'));
+  assert.ok(c.body.includes('<dl class="qc-kv">'));
+  assert.ok(c.body.includes('<dt>やること</dt><dd>add a timer</dd>') && c.body.includes('<dt>完了条件</dt><dd>tests pass</dd>') && c.body.includes('<dt>止める所</dt><dd>PR まで</dd>'));
+  assert.ok(c.body.includes('<dt>Issue</dt><dd><a href="https://github.com/acme/widget/issues/7"'));
+  assert.equal(count(c.body, '<dt>'), 4);
+  assert.ok(c.body.includes('a plain fact') && c.body.includes('not a pair') && c.body.includes('a very long label'));
+  assert.ok(c.body.indexOf('<dl class="qc-kv">') < c.body.indexOf('a plain fact') && c.body.includes('懸念点') && c.body.includes('Extra'));
+  assert.ok(c.body.indexOf('hub の読み取り') < c.body.indexOf('qc-ask') && c.body.includes('Start on this reading?'));
+  assert.ok(c.foot.includes('着手する') && c.foot.includes('data-act="changes"') && c.foot.includes('>直す<'));
+  assert.ok(c.foot.includes('placeholder="直してほしいところ（任意）"'));
+  assert.ok(/class="btn-m3-text reject" data-act="reject"/.test(c.foot) && c.foot.includes('>やめる<'));
+  assert.ok(c.foot.indexOf('qc-spacer') < c.foot.indexOf('data-act="reject"'));
+  // Values from a gate are escaped.
+  assert.ok(!card({ ...g, facts: ['x: <script>1</script>'] }).body.includes('<script>'));
+  // The other kinds say a send-back needs a comment.
+  assert.ok(card(planGate).foot.includes('直してほしいときは必須'));
+});
+
+test('qcNeedsComment is true for the two send-backs only', () => {
+  assert.equal(qcNeedsComment('changes'), true);
+  assert.equal(qcNeedsComment('ask'), true);
+  for (const act of ['approve', 'reject', 'ack', 'task', 'answer', 'choice', 'close', 'talk']) assert.equal(qcNeedsComment(act), false, act);
+});
+
+test('a quick row takes its icon by what it asks', () => {
+  assert.equal(qcQuickIcon({ kind: 'question', choices: [{ id: 'cleanup' }, { id: 'keep' }] }), 'cleaning_services');
+  assert.equal(qcQuickIcon({ kind: 'permission' }), 'front_hand');
+  assert.equal(qcQuickIcon({ kind: 'question', choices: [{ id: 'y' }] }), 'bolt');
+  assert.ok(quickRowHtml({ id: 'k', kind: 'question', quick: true, focus: 'Clean?', choices: [{ id: 'cleanup', label: 'Yes' }] }).includes('>cleaning_services<'));
+  assert.ok(quickRowHtml({ id: 'k', kind: 'permission', quick: true, focus: 'Allow?', options: ['answer'] }).includes('>front_hand<'));
+  assert.ok(quickRowHtml({ id: 'k', kind: 'question', quick: true, focus: 'Q', choices: [{ id: 'y', label: 'Yes' }] }).includes('>bolt<'));
+});
+
+test('a question with choices keeps a way to answer in words; without choices it has the one 答える', () => {
+  const q = { id: 'q1', kind: 'question', title: 'Q', wait: true, options: ['answer'], focus: 'Which?' };
+  const withChoices = card({ ...q, choices: [{ id: 'a', label: 'A. One', recommended: true }, { id: 'b', label: 'B. Two' }] });
+  assert.ok(withChoices.foot.includes('data-act="answer"') && withChoices.foot.includes('書いて答える'));
+  assert.ok(withChoices.foot.indexOf('data-choice="a"') < withChoices.foot.indexOf('書いて答える'));
+  const plain = card(q);
+  assert.ok(plain.foot.includes('答える') && !plain.foot.includes('書いて答える'));
+});
+
+test('a result of a task with an approved plan is a report on that plan, not a research result', () => {
+  const r = { id: 'r9', kind: 'result', title: 'R', wait: true, options: ['ack', 'ask', 'task'], focus: 'ok?', sections: [{ heading: '結論', body: 'Done' }] };
+  const approved = { id: 'ap9', kind: 'plan', title: 'P', steps: [{ text: 'step' }], wait: false };
+  const c = card(r, { plan: approved });
+  assert.ok(!c.body.includes('調査結果') && c.body.includes('調べたこと') && c.body.includes('step'));
+  assert.ok(card(r).body.includes('調査結果'));
+});
+
+test('a long label is named by its id only when the id is marked off; a dashed fact is a row of the reading', () => {
+  const g = { id: 'p8', kind: 'plan', title: 'P', wait: true, options: ['approve', 'changes'], focus: 'which?',
+    choices: [{ id: 'a', label: 'A) keep the cache as it is today' }, { id: 'b', label: 'I want to keep the cache as it is' }] };
+  const foot = card(g).foot;
+  assert.ok(foot.includes('>A で進める<') && !foot.includes('I で進める') && foot.includes('I want to keep …'));
+  const d = { id: 'd8', kind: 'dispatch', title: 'D', wait: true, options: ['approve', 'changes', 'reject'], facts: ['- やること: add a timer'] };
+  const body = card(d).body;
+  assert.ok(body.includes('<dt>やること</dt>') && !body.includes('- やること'));
 });
