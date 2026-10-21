@@ -86,6 +86,15 @@ pub fn board_counts(
     (waiting, working)
 }
 
+/// The tasks of a board still to be finished: every status but done and cancelled, so a task
+/// that is parked, queued or in the backlog counts as well as one at work.
+pub fn open_count(tasks: &[task::Task]) -> usize {
+    tasks
+        .iter()
+        .filter(|t| !matches!(t.status, task::Status::Done | task::Status::Cancelled))
+        .count()
+}
+
 /// A gate waiting on the person, as the boards index lists it. The fields are in alphabetical
 /// order of their JSON names because the index used to be written with its keys sorted and
 /// `/api/boards` serializes in field order.
@@ -116,6 +125,8 @@ pub struct BoardSummary {
     pub hub_stale: bool,
     pub hub_started_at: Option<String>,
     pub nwo: String,
+    /// Tasks that are neither done nor cancelled: what the sidebar's row counts for the board.
+    pub open: usize,
     pub queued: usize,
     pub slug: String,
     pub title: Option<String>,
@@ -218,6 +229,7 @@ pub fn boards(root: &Path, port: u16, token: &str) -> Vec<BoardSummary> {
                 hub_stale: status.as_ref().is_some_and(|s| s.stale),
                 hub_started_at: status.as_ref().and_then(|s| s.started_at.clone()),
                 nwo: a.nwo.clone(),
+                open: open_count(&tasks),
                 queued,
                 slug: a.slug.clone(),
                 title: a

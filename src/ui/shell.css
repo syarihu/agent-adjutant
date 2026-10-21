@@ -129,43 +129,6 @@ body.single-board #side-list { display: none; }
   padding: 8px 14px 2px;
 }
 
-/* ── The board's views: tabs under its title, the layout switches at their right ── */
-.view-tabs-row {
-  flex: 1 0 100%;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-}
-.view-tabs-row[hidden], .view-tools[hidden], .view-tab[hidden] { display: none; }
-.view-tabs { display: flex; gap: 2px; }
-.view-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--md-shape-corner-sm) var(--md-shape-corner-sm) 0 0;
-  background: transparent;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.view-tab:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
-.view-tab.active { color: var(--md-sys-color-primary); border-bottom-color: var(--md-sys-color-primary); }
-.view-tab .material-symbols-outlined { font-size: 18px; }
-.view-tab .rail-badge, .view-tab .rail-count { margin-left: 2px; }
-.view-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-bottom: 5px; }
-.view-tools .m3-seg-tab { padding: 4px 10px; font-size: 12px; gap: 4px; }
-.view-tools .m3-seg-tab .material-symbols-outlined { font-size: 15px; }
-@media (max-width: 720px) {
-  .view-tab .lbl { display: none; }
-}
-body:not(.layout-split) #arrange-switch { display: none; }
-
 /* The hub's status dot and buttons */
 .hub-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .hub-dot.good { background: var(--md-sys-color-success); }
@@ -216,18 +179,18 @@ main { flex: 1; overflow: hidden; position: relative; }
 @media (max-width: 900px) {
   #board-view { position: relative; }
 }
-/* The board's head: its name and hub, the hub's buttons, then the views' tabs and the layout switches. */
+/* The board's head: one line, its name in bold and what the board shows. */
 .board-head {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  padding: 10px 20px 0;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
 }
-.board-head-title { font-size: 18px; font-weight: 800; letter-spacing: -.02em; min-width: 0; overflow-wrap: anywhere; }
-.board-head-acts { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.board-head-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; font-size: 18px; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.board-head-name { font-weight: 800; }
+.board-head-sub { font-size: 12.5px; font-weight: 500; letter-spacing: 0; color: var(--md-sys-color-on-surface-variant); }
 
 /* ── Boards in the rail ── */
 .field[hidden] { display: none; }
@@ -352,10 +315,6 @@ main { flex: 1; overflow: hidden; position: relative; }
   text-overflow: ellipsis;
 }
 .origin-chip .material-symbols-outlined { font-size: 12px; }
-.hub-pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: var(--md-shape-corner-full); }
-.hub-pill.good { background: color-mix(in srgb, var(--md-sys-color-success) 18%, transparent); color: var(--md-sys-color-success); }
-.hub-pill.off { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
-.hub-pill.bad { background: color-mix(in srgb, var(--md-sys-color-error) 14%, transparent); color: var(--md-sys-color-error); }
 
 body { --rail-w: 76px; --list-w: var(--list-w-set, 330px); }
 body.single-board { --list-w: 0px; }
@@ -412,5 +371,3 @@ body.panel-pop #task-panel {
 }
 
 .single-board .rail-boards-label, .single-board #board-rows { display: none; }
-#btn-hub[hidden], #btn-resync[hidden] { display: none; }
-#btn-hub.on { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }

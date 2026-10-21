@@ -207,6 +207,7 @@ function renderTaskPanel() {
 function renderTaskPanelNow() {
   const panel = tp('task-panel');
   if (!panel) return;
+  syncBoardSide();
   // A session that has been linked to a task since is shown as that task, and the address follows;
   // its terminal is kept (syncTermSlot).
   if (isSessRef(selectedTaskId)) {
@@ -224,6 +225,16 @@ function renderTaskPanelNow() {
       if (nav.task === from) setNav({ task: landed.id, pane: landed.pane });
       markSelectedCards();
     }
+  }
+  // On a resident server a terminal asked for on the board is the work view's, beside the board (my-work.js): the panel is not shown for
+  // it, and only the terminal and what is laid over it are drawn. The panel's own for any other pane, and for a gate, stays.
+  if (boardSideOn()) {
+    if (panelTerm.term) disposePanelTerminal();
+    panel.hidden = true;
+    tp('tp-scrim').hidden = true;
+    document.body.classList.remove('panel-open', 'panel-pop');
+    renderHandForm(null);
+    return renderWorkTerm();
   }
   const hub = hubOfRef(selectedTaskId);
   const task = selectedTaskId && !isHubRef(selectedTaskId) ? taskById(selectedTaskId) : null;
@@ -265,7 +276,6 @@ function renderTaskPanelNow() {
   cls.toggle('panel-right', prefs.panelDock === 'right' || view === 'work');
   cls.toggle('panel-pop', shown && panelPop());
   document.body.style.setProperty('--panel-w', `${prefs.panelWidth}px`);
-  markHubButtons();
   // Closed, not just out of view: what was typed for the task goes with it.
   if (!task && !hub && !sess && !parent && !gateOf && !gone) return renderHandForm(null);
   if (!shown) return;
@@ -491,7 +501,7 @@ function judgeClick(e) {
 function panelHeadHtml(task) {
   const hcol = humanColOf(task);
   const stuck = stuckOf(task);
-  const colObj = COLUMNS.find(c => c.id === columnOf(task));
+  const colObj = AGENT_COLUMNS.find(c => c.id === columnOf(task));
   const park = parkOf(task);
   const pill = park ? `<span class="m3-pill pill-neutral">置いている — ${esc(parkLabel(park))}</span>`
     : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています${taskPassedGate(task) ? '（答えないまま進行中）' : ''}</span>`
@@ -558,8 +568,7 @@ const kv = (label, value) => `<div class="tp-kv"><span>${label}</span><strong>${
 const monoKv = (label, value, title = '') => `<div class="tp-kv"><span>${label}</span><code title="${esc(title)}">${esc(value)}</code></div>`;
 
 /* The open gate. A decision that needs no comment is one click; reading the plan or the diff,
-   and anything that wants a comment, is the judging screen. Not humanActions(): its reply box
-   is found by `textarea[data-reply]`, which two on one page would share. `here` is when the tab
+   and anything that wants a comment, is the judging screen. `here` is when the tab
    open already shows this gate: its panel is further down, so there is no screen to go to. */
 function panelGateHtml(task, gate, here = false) {
   if (!gate) return '';
@@ -953,7 +962,7 @@ tp('task-panel').addEventListener('click', e => {
   let b;
   if ((b = hit('[data-pane]'))) {
     // 「ターミナルで答える」 in the work view moves to the middle terminal, and the tab stays.
-    if (view === 'work' && b.dataset.pane === 'term') return focusWorkTerm();
+    if (workTermOn() && b.dataset.pane === 'term') return focusWorkTerm();
     if (!b.disabled) go({ pane: b.dataset.pane }, { replace: true });
     return;
   }
@@ -967,7 +976,7 @@ tp('task-panel').addEventListener('click', e => {
     // A dialog covers the card, so it closes first; a docked panel stays beside it.
     const id = task.id;
     if (panelPop()) closeTaskPanel(); else renderTaskPanel();
-    return jump('agent', id);
+    return jump(id);
   }
   if (parkClick(e)) return;
   if ((b = hit('[data-tp-act]'))) return act(b.dataset.tpAct, task.id);

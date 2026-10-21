@@ -37,7 +37,9 @@ put the human-side rules on the server and [#466](https://github.com/syarihu/age
 removed the page's copies of them; this one stayed in the page because the server had no copy of
 it to share.
 
-**The human board** has six columns: `dispatch` 着手確認, `plan` 計画の承認, `diff` 差分レビュー,
+The human board has been removed from the page (#734): what waits on the person is in the TODO view, and an agent card that waits is marked on the board itself. The ids below are still the server's `humanCol` and the page's `humanColOf`; the parts of this note that speak of the human board's cards describe the page before the removal.
+
+**The human board** had six columns: `dispatch` 着手確認, `plan` 計画の承認, `diff` 差分レビュー,
 `verify` 動作確認, `prreview` PRレビュー, `question` 質問. Since
 [#465](https://github.com/syarihu/agent-adjutant/issues/465) the server decides the inputs and the
 page joins them (`humanColOf`):
@@ -63,8 +65,8 @@ Other things read the same inputs:
   `src/ui/sessions.js`).
 - Through `humanColOf` or `columnOf`: the shelve and requeue actions (`ALLOWED` and `canDrop` in
   `src/ui/core.js`, used by `move` in `src/ui/actions.js`; the board has no drag and drop), the page's waiting counts
-  (`waitingIn`, `renderCounts`), the panel's 「…を待っています」 pill, the card's waiting mark, the
-  stuck strip, and the agent board's sort (cards waiting on the person go last).
+  (`waitingIn`), the panel's 「…を待っています」 pill, the card's waiting mark,
+  and the agent board's sort (cards waiting on the person go last).
 - Gates with no card on the board are placed by `g.humanCol`.
 - The server's sidebar counts (`board_counts`) read an open gate or `waitsOnPerson`.
 - `FINISHED_PHASES` in the sessions view reads the phase; the stuck badge (`stuckOf`) reads how

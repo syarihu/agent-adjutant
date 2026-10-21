@@ -1,8 +1,9 @@
 /* ── Where the page is: one board, every board, or the work under way ────────────────────────
    Navigation state lives in the address, so back/forward and a pasted link land on the same
    screen without a reload; what is only a preference (layout, folded repositories) does not.
-     /b/<slug>/?view=human&task=<id>&pane=term             one board; pane is detail (the default),
-                                                           term, review, check or history
+     /b/<slug>/?task=<id>&pane=term                        one board; pane is detail (the default),
+                                                           term, review, check or history. On the resident server
+                                                           term is the terminal beside the board (boardSideOn)
      /b/<slug>/?task=hub:<id>&pane=term                    one board, a hub in the panel
      /b/<slug>/?task=session:<id>                          one board, a session with no task in the panel
      /b/<slug>/?task=gate:<slug>/<id>                      one board, a gate in the panel (`gate:<id>` on a board
@@ -57,8 +58,8 @@ function parseUrl(loc = location) {
   // `/` on a server with several boards opens the view its constant names; a board's own address, the one before.
   if (multiBoard && out.board === 'all') out.view = DEFAULT_MULTI_VIEW;
   const v = q.get('view');
-  // `/` on a resident server is the work view, so 「すべて」 has to be asked for by name.
-  if (v === 'human' || v === 'agent') out.view = v;
+  // `/` on a resident server is the work view, so 「すべて」 has to be asked for by name. The human board is gone: its old address opens the board.
+  if (v === 'human' || v === 'agent') out.view = 'agent';
   // The work view reads every board of a resident server: a board served alone has none.
   if (v === 'work' && multiBoard) out.view = 'work';
   // 「レビュー」 is the work view on a resident server with list: 'review' and board: 'all'.
@@ -87,7 +88,7 @@ function urlOf(n = nav) {
   const path = n.board && n.board !== 'all' ? `/b/${n.board}/` : '/';
   let url = path + '?token=' + encodeURIComponent(TOKEN);
   if (n.view === 'work') url += n.list === 'review' ? '&view=review' : '&view=work';
-  else if (n.view === 'human' || n.view === 'todo') url += `&view=${n.view}`;
+  else if (n.view === 'todo') url += `&view=${n.view}`;
   // 「すべて」 is what `/` no longer opens.
   else if (n.view === 'agent' && multiBoard && path === '/') url += '&view=agent';
   if (n.task) url += `&task=${encodeURIComponent(n.task)}`;
@@ -182,7 +183,7 @@ function applyNav(boardChanged, panelOnly = false) {
   // The address names the card that is open: back to one with none closes the panel, back to
   // the card that is open shows its tab, and another card is opened below.
   if (view === 'board' || view === 'work') {
-    if (!nav.task) { if (selectedTaskId) hideTaskPanelState(); }
+    if (!nav.task) { if (selectedTaskId || boardSideShown) hideTaskPanelState(); }
     else if (selectedTaskId === nav.task) renderTaskPanel();
   }
   pendingTask = wantTask;
@@ -199,7 +200,6 @@ function drawScreen(boardChanged) {
     } else if (nav.view === 'todo') {
       setView('todo');
     } else {
-      prefs.tab = nav.view === 'agent' ? 'agent' : 'human';
       if (view !== 'board') setView('board'); else applyLayout();
     }
   } finally { navApplying = false; }
@@ -221,7 +221,7 @@ function applyPendingTask(final = false) {
     // A parent is in the work document, which may not have come yet: the pending task waits for it (refreshWork).
     if (final && !isParentRef(id) && !isPrRef(id)) {
       pendingTask = null;
-      if (view === 'work') { selectedTaskId = id; renderTaskPanel(); }
+      if (view === 'work' || boardSideOn()) { selectedTaskId = id; renderTaskPanel(); }
     }
     return;
   }
@@ -234,7 +234,7 @@ function applyPendingTask(final = false) {
    after its first state is in, since what `fn` opens is read from that state. */
 function onBoard(slug, fn) {
   if (!slug || !multiBoard || nav.board === slug) return fn();
-  go({ board: slug, view: nav.view === 'human' ? 'human' : 'agent' });
+  go({ board: slug, view: 'agent' });
   boardJob = { slug, fn };
 }
 function runBoardJob() {

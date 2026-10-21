@@ -50,12 +50,13 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
         page.contains("boardApi(BASE, path"),
         "the page does not use BASE"
     );
-    // The two boards are tabs under the board's title; the sidebar no longer lists them.
+    // The board has its title line and the six agent columns; the terminal of a card sits beside it, with a handle and a button to close it.
     for piece in [
-        "id=\"view-tabs-row\"",
-        "1つずつ",
+        "id=\"board-head\"",
+        "id=\"board-agent\"",
+        "id=\"board-side-resize\"",
+        "id=\"board-side-close\"",
         "id=\"task-panel\"",
-        "id=\"btn-hub\"",
         "data-hub-term",
         "hubterm-btn",
         // Judging a gate with no task card, and the Issue and PR rows at the top of its 判断 and of a
@@ -72,15 +73,20 @@ fn a_resident_serves_a_board_for_a_repository_with_no_hub() {
     ] {
         assert!(page.contains(piece), "{piece}");
     }
-    // The セッション tab and 要対応 are gone: the tabs run エージェント, 人.
+    // The セッション tab and 要対応 are gone, and so is the human board with its tabs, switches and the hub strip.
     assert!(!page.contains("id=\"nav-sessions\""));
     assert!(!page.contains("data-tab=\"sessions\""));
     assert!(!page.contains("id=\"review\""));
-    let tab = |name: &str| page.find(&format!("data-tab=\"{name}\"")).expect(name);
-    assert!(
-        tab("agent") < tab("human"),
-        "the view tabs are not ordered agent, human"
-    );
+    for gone in [
+        "id=\"view-tabs-row\"",
+        "id=\"pane-human\"",
+        "id=\"board-human\"",
+        "id=\"hub-strip\"",
+        "id=\"btn-hub\"",
+        "id=\"btn-resync\"",
+    ] {
+        assert!(!page.contains(gone), "{gone}");
+    }
     // 要対応 is not in the rail: the rail has 「いまの仕事」, the PRs to review and the boards.
     assert!(page.contains("id=\"nav-work\""));
     assert!(page.contains("id=\"nav-review\""));
@@ -319,6 +325,8 @@ fn the_board_list_counts_what_waits_and_who_works() {
     assert_eq!(board["waiting"], 2, "{board}");
     assert_eq!(board["working"], 1, "{board}");
     assert_eq!(board["queued"], 1, "{board}");
+    // The three tasks made here are all still open.
+    assert_eq!(board["open"], 3, "{board}");
     assert_eq!(board["gates"].as_array().unwrap().len(), 1, "{board}");
     assert_eq!(board["gates"][0]["kind"], "verify", "{board}");
     assert!(board["gates"][0]["worktree"].is_string(), "{board}");

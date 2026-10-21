@@ -13,8 +13,8 @@ use crate::task;
 
 use super::view::{
     GateCard, HumanCol, WorkerRow, WorkerSeen, board_counts, board_session, branch_of, cut_chars,
-    history_of, hub_task_cards, session_last_message, socket_key_in, state, waits_on_person,
-    with_records, worker_of, worker_session_ids,
+    history_of, hub_task_cards, open_count, session_last_message, socket_key_in, state,
+    waits_on_person, with_records, worker_of, worker_session_ids,
 };
 use super::*;
 
@@ -424,6 +424,20 @@ fn dispatched_tasks_work_and_finished_ones_do_neither() {
         on_pr("t5", task::Status::Done),
     ];
     assert_eq!(counts(&tasks, &[], None), (0, 1));
+}
+
+#[test]
+fn the_open_count_has_every_task_but_the_finished_ones() {
+    let tasks = [
+        a_task("t1", task::Status::Backlog),
+        a_task("t2", task::Status::Queued),
+        a_task("t3", task::Status::Dispatched),
+        on_pr("t4", task::Status::Pr),
+        a_task("t5", task::Status::Done),
+        a_task("t6", task::Status::Cancelled),
+    ];
+    assert_eq!(open_count(&tasks), 4);
+    assert_eq!(open_count(&[]), 0);
 }
 
 #[test]

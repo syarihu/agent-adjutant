@@ -482,7 +482,6 @@ fn a_session_with_no_task_is_a_card_on_the_agent_board() {
     for piece in [
         "function sessionCard",
         "data-sess-link=",
-        "data-sess-open=",
         "タスクなし",
         "lastOutputText(s)",
         "+ bareIn.length;",
@@ -492,7 +491,8 @@ fn a_session_with_no_task_is_a_card_on_the_agent_board() {
     ] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
-    for gone in ["function ghostEl", ".card.ghost"] {
+    // Pressing the card opens its terminal beside the board, so it has no terminal button of its own.
+    for gone in ["function ghostEl", ".card.ghost", "data-sess-open="] {
         assert!(!UI_HTML.contains(gone), "{gone}");
     }
 }
@@ -753,14 +753,19 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
     let phase_label = page_table("const PHASE_LABEL = {", "};");
     let phase_col = page_table("const AGENT_COL_OF_PHASE = {", "};");
     let decision_label = page_table("const DECISION_LABEL = {", "};");
-    let human_columns = page_table("const HUMAN_COLUMNS = [", "];");
-    let turn_why = page_table("const PR_TURN_WHY = {", "};");
+    let human_label = page_table("const HUMAN_LABEL = {", "};");
+    let wait_of_kind = page_table("const WAIT_OF_KIND = {", "};");
+    let turn_wait = page_table("const PR_TURN_WAIT = {", "};");
     let turn_pill = page_table("const PR_TURN = {", "};");
     let work_progress = page_table("const WORK_PROGRESS = {", "};");
 
     for kind in kinds {
         let name = serde_name(kind);
         assert!(has_key(kinds_table, &name), "KINDS has no gate kind {name}");
+        assert!(
+            has_key(wait_of_kind, &name),
+            "WAIT_OF_KIND has no gate kind {name}, which a card waits on"
+        );
         for option in kind.default_options() {
             assert!(
                 has_key(decision_label, &option),
@@ -783,8 +788,8 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
         }
         if turn.persons() {
             assert!(
-                has_key(turn_why, &name),
-                "PR_TURN_WHY has no turn {name}, which waits on the person"
+                has_key(turn_wait, &name),
+                "PR_TURN_WAIT has no turn {name}, which waits on the person"
             );
         }
     }
@@ -798,8 +803,8 @@ fn the_page_has_a_word_for_every_value_the_server_sends() {
     for column in columns {
         let name = serde_name(column);
         assert!(
-            human_columns.contains(&format!("id:'{name}'")),
-            "HUMAN_COLUMNS has no column {name}"
+            has_key(human_label, &name),
+            "HUMAN_LABEL has no column {name}"
         );
     }
     let park_labels = page_table("const PARK_REASON_LABEL = {", "};");
@@ -1380,7 +1385,7 @@ fn the_views_register_themselves() {
         .map(|n| n.trim().trim_matches('\''))
         .filter(|n| !n.is_empty())
         .collect();
-    assert_eq!(names.len(), 11);
+    assert_eq!(names.len(), 10);
     assert_eq!(
         names.iter().collect::<BTreeSet<_>>().len(),
         names.len(),
@@ -1485,8 +1490,8 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "view=work",
         "const DEFAULT_MULTI_VIEW = 'work'",
         "const PARENT_REF = 'parent:'",
-        // 「ターミナルで話す」 goes to the middle terminal in this view.
-        "if (view === 'work') return focusWorkTerm();",
+        // 「ターミナルで話す」 goes to the middle terminal in this view, and beside the board.
+        "if (workTermOn()) return focusWorkTerm();",
         // The organisation the page looks at: one API for every view that narrows itself to it.
         "function currentOrg",
         "function setCurrentOrg",
@@ -1671,22 +1676,14 @@ fn the_state_asks_for_the_last_lines_of_all_sessions_or_of_the_hubs_only() {
 }
 
 #[test]
-fn the_page_has_the_hubs_entry_and_its_wake_button() {
-    for piece in [
-        "id=\"hub-strip-slot\"",
-        "data-action=\"wake-hub\"",
-        "data-action=\"hub-strip-open\"",
-        "function renderHubStrip",
-        "/api/hub/wake",
-        "/api/state?lines=hub",
-    ] {
+fn the_page_wakes_the_hub_from_its_panel_and_has_no_hub_strip_over_the_columns() {
+    for piece in ["/api/hub/wake", "/api/state?lines=hub"] {
         assert!(UI_HTML.contains(piece), "{piece}");
     }
-    // Above the agent columns, not inside them: a redraw of the columns must not be needed
-    // to move it.
-    let at = |piece: &str| UI_HTML.find(piece).unwrap();
-    assert!(at("id=\"pane-agent\"") < at("id=\"hub-strip-slot\""));
-    assert!(at("id=\"hub-strip-slot\"") < at("id=\"board-agent\""));
+    // The hub's entry above the agent columns is gone: the board's head is its name, and the hub is opened from its row.
+    for gone in ["id=\"hub-strip-slot\"", "function renderHubStrip"] {
+        assert!(!UI_HTML.contains(gone), "{gone}");
+    }
 }
 
 #[test]
@@ -1702,10 +1699,14 @@ fn the_wake_button_is_in_the_hub_panel_and_beside_the_chip_in_the_work_view() {
 }
 
 #[test]
-fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_320px() {
+fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_six_equal_ones() {
     assert!(UI_HTML.contains("<span class=\"card-gh-chips\">${issue}${pr}</span>"));
     assert!(UI_HTML.contains("PR #${esc(prNumber)}"));
-    assert!(UI_HTML.contains("#board-agent .col { flex: 0 0 320px; max-width: 320px; }"));
+    assert!(UI_HTML.contains("grid-template-columns: repeat(6, minmax(0, 1fr));"));
+    // With the terminal beside the board the columns keep a width they can be read at, and the board scrolls.
+    assert!(UI_HTML.contains(
+        "body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1fr)); }"
+    ));
 }
 
 #[test]

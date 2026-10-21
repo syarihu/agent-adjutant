@@ -18,7 +18,7 @@ const nav = (url, multi) => {
 const LIST = { board: 'all', view: 'work', task: null, pane: 'detail' };
 
 test('addresses that are not old ones are left alone', () => {
-  for (const url of ['/', '/?token=t', '/?view=work', '/b/acme/?view=human', '/b/acme/?task=hub:hub&pane=term',
+  for (const url of ['/', '/?token=t', '/?view=work', '/b/acme/?view=agent', '/b/acme/?task=hub:hub&pane=term',
     '/b/acme/?view=work&task=session:w1', '/b/acme/#task/t1/review', '/review/other']) {
     assert.strictEqual(nav(url, true), null, url);
     assert.strictEqual(nav(url, false), null, url);

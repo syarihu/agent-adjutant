@@ -29,14 +29,14 @@ function setView(v) {
   const prev = view;
   view = v;
   const boardView = document.getElementById('board-view');
-  const workView = document.getElementById('work-view');
   const todoView = document.getElementById('todo-view');
 
   if (boardView) boardView.style.display = v === 'board' ? 'flex' : 'none';
-  if (workView) workView.style.display = v === 'work' ? 'grid' : 'none';
   if (todoView) todoView.style.display = v === 'todo' ? 'flex' : 'none';
   document.body.classList.toggle('view-work', v === 'work');
   document.body.classList.toggle('view-todo', v === 'todo');
+  // The work view's terminal also sits beside the board, so which of the two shows it is decided there.
+  syncBoardSide();
   // The TODO has no task panel of its own: the one left open on the board is closed.
   if (v === 'todo' && selectedTaskId) hideTaskPanelState();
   // Opening 「いまの仕事」 with nothing selected brings back the selection last made (workRestoreSelection).
@@ -49,7 +49,7 @@ function setView(v) {
 
   // The address follows the screen when something other than `go` moved it.
   if (!navApplying) {
-    const want = v === 'board' ? (prefs.tab === 'human' ? 'human' : 'agent') : v;
+    const want = v === 'board' ? 'agent' : v;
     if (nav.view !== want) {
       nav.view = want;
       if (want !== 'work' && (isSessRef(nav.task) || isPrRef(nav.task))) { nav.task = null; nav.pane = 'detail'; }
@@ -100,20 +100,13 @@ const ACTIONS = {
   work: () => { if (view !== 'work' || nav.list !== 'task') go({ board: 'all', view: 'work', list: 'task', task: null, pane: 'detail' }); },
   review: () => openReviewList(),
   todo: () => todoOpen(),
-  boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: prefs.tab === 'human' ? 'human' : 'agent', task: null, pane: 'detail' }); },
+  boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: 'agent', task: null, pane: 'detail' }); },
   'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; applyLayout(); },
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
-  'own-hub': () => openOwnHub(),
-  resync: () => refreshAll(),
-  layout: el => setBoardLayout(el.dataset.layout),
-  arrange: el => setBoardArrange(el.dataset.arrange),
   'handover-close': () => closeHandoverDialog(),
   'nudge-hub': () => nudgeHub(),
-  'wake-hub': () => wakeHub(),
-  'hub-title-read': () => readHubTitle(pageHub(), BASE),
-  'hub-strip-open': () => { const h = pageHub(); if (h) openTaskPanel(HUB_REF + h.id, 'detail'); },
 };
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');

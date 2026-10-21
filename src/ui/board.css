@@ -17,6 +17,7 @@
   max-width: none;
   overflow: hidden;
 }
+/* The head of the list of 「いまの仕事」 (#wk-list) wears this; the board has no such head. */
 .pane-head {
   display: flex;
   align-items: center;
@@ -28,86 +29,6 @@
   min-width: 0;
 }
 .pane-head .material-symbols-outlined { font-size: 19px; flex-shrink: 0; }
-.pane-head .pane-title { font-weight: 800; white-space: nowrap; flex-shrink: 0; }
-.pane-head .pane-sub {
-  font-weight: 500;
-  font-size: 11.5px;
-  color: var(--md-sys-color-on-surface-variant);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-#pane-human .pane-head { color: var(--md-sys-color-warning); }
-#pane-human .pane-head .pane-title { color: var(--md-sys-color-on-surface); }
-#pane-agent .pane-head { color: var(--md-sys-color-primary); }
-#pane-agent .pane-head .pane-title { color: var(--md-sys-color-on-surface); }
-
-#boards.layout-tabs .pane:not(.active) { display: none; }
-
-#boards.layout-split.arrange-top { flex-direction: column; }
-#boards.layout-split.arrange-top #pane-human {
-  flex: 1 1 0;
-  min-height: 240px;
-  border-bottom: 2px solid var(--md-sys-color-outline-variant);
-}
-#boards.layout-split.arrange-top #pane-human .board { min-height: 180px; }
-#boards.layout-split.arrange-top #pane-agent {
-  flex: 1 1 0;
-  min-height: 240px;
-}
-#boards.layout-split.arrange-top .col {
-  min-width: 145px;
-}
-
-#boards.layout-split.arrange-left { flex-direction: row; }
-#boards.layout-split.arrange-left #pane-human {
-  flex: 1 1 50%;
-  width: 50%;
-  min-width: 320px;
-  border-right: 2px solid var(--md-sys-color-outline-variant);
-}
-#boards.layout-split.arrange-left #pane-agent {
-  flex: 1 1 50%;
-  width: 50%;
-  min-width: 320px;
-}
-#boards.layout-split.arrange-left .board {
-  overflow-x: auto;
-}
-#boards.layout-split.arrange-left .col {
-  flex: 0 0 200px;
-  min-width: 200px;
-  max-width: 240px;
-}
-#boards.layout-split.arrange-left .col.empty {
-  flex: 0 0 135px;
-  min-width: 135px;
-}
-/* The .col rule above caps both boards' columns at 240px; the agent board's columns with
-   cards lift that cap and stay 320px here too. */
-#boards.layout-split.arrange-left #board-agent .col:not(.empty) {
-  flex: 0 0 320px;
-  max-width: 320px;
-}
-#boards.layout-split.arrange-left .col.human.empty {
-  flex: 0 0 135px;
-  min-width: 135px;
-}
-
-#boards.layout-split .card {
-  padding: 8px 10px;
-  gap: 6px;
-}
-#boards.layout-split .card .title {
-  font-size: 12px;
-  line-height: 1.35;
-}
-#boards.layout-split .hcard-actions .btn-m3-primary,
-#boards.layout-split .hcard-actions .btn-m3-tonal {
-  padding: 3px 8px;
-  font-size: 11px;
-}
 
 .board {
   flex: 1;
@@ -136,10 +57,15 @@
   background: var(--md-sys-color-outline);
 }
 
+/* The six columns of the agent board are equal; with the sidebar open they keep a width they can be read at and the board scrolls sideways. */
+#board-agent {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1fr)); }
 .col {
-  flex: 1.2 1 195px;
-  min-width: 175px;
-  max-width: 320px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -149,71 +75,6 @@
   min-height: 0;
   border: 1px solid transparent;
   transition: border-color .15s ease, background-color .15s ease;
-}
-.col.narrow {
-  flex: 0.8 1 145px;
-  min-width: 135px;
-  max-width: 240px;
-  background: transparent;
-  border: 1px dashed var(--md-sys-color-outline-variant);
-}
-.col.empty {
-  flex: 0.7 1 142px;
-  min-width: 135px;
-  max-width: 165px;
-  padding: 10px 6px;
-}
-/* The agent board's columns keep one width whether a sidebar is open or not; what no longer
-   fits scrolls sideways instead of narrowing them. A column with cards is 320px wide, even
-   'before'/'done' (max-width lifts the caps of .col and .col.narrow); only an empty column
-   stays narrow. */
-#board-agent .col { flex: 0 0 320px; max-width: 320px; }
-#board-agent .col.empty { flex: 0 0 142px; }
-.col.empty .col-title-badge {
-  font-size: 11.5px;
-  gap: 3px;
-}
-.col.empty .col-title-badge .material-symbols-outlined {
-  font-size: 14px;
-}
-.col.empty .col-count-pill {
-  font-size: 10px;
-  padding: 0 4px;
-}
-.col.human {
-  background: color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface-container-low));
-}
-.col.human.empty {
-  background: var(--md-sys-color-surface-container-low);
-  flex: 0 1 145px;
-  min-width: 135px;
-  max-width: 160px;
-  opacity: .75;
-  padding: 10px 6px;
-}
-/* When all human columns are empty, distribute evenly across the board */
-#board-human:not(:has(.col.human:not(.empty))) .col.human.empty {
-  flex: 1 1 0;
-  min-width: 135px;
-  max-width: 220px;
-}
-/* When some human columns have items, active columns take priority */
-#board-human:has(.col.human.empty) .col.human:not(.empty) {
-  flex: 1.5 1 220px;
-  min-width: 180px;
-}
-.col.human:not(.empty) .col-count-pill {
-  background: var(--md-sys-color-warning);
-  color: var(--md-sys-color-on-warning);
-}
-.col-section {
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--md-sys-color-on-surface-variant);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
 }
 .col.attention {
   background: color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface-container-low));
@@ -282,18 +143,7 @@
   padding: 1px 5px;
   border-radius: var(--md-shape-corner-full);
 }
-.col-subtext {
-  font-size: 10.5px;
-  color: var(--md-sys-color-outline);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.col.empty .col-subtext {
-  display: none;
-}
-/* Not a `col-subtext`: it is shown even when the column is empty, since a poll that has
-   stopped is the reason it would be. */
+/* The reason the PR column's automatic reading has stopped, under its head. */
 .col-warn {
   font-size: 10.5px;
   color: var(--md-sys-color-error);
@@ -381,8 +231,8 @@
   border-color: var(--md-sys-color-outline-variant);
 }
 .card.selected {
-  border-color: var(--md-sys-color-primary);
-  box-shadow: 0 0 0 2px var(--md-sys-color-primary), var(--md-elevation-2);
+  outline: 2px solid var(--md-sys-color-primary);
+  box-shadow: var(--md-elevation-2);
 }
 .card.attention-card {
   border-left: 4px solid var(--md-sys-color-warning);
@@ -603,214 +453,14 @@
 .card.compact { padding: 7px 10px; gap: 4px; }
 .card.compact .title { font-size: 12px; }
 
-/* Agent card waiting on human */
-.card.waiting {
-  background: var(--md-sys-color-surface-container-low);
-  box-shadow: none;
-  border: 1px dashed var(--md-sys-color-outline);
-}
-.card.waiting > :not(.wait-link) { opacity: .55; }
-.wait-link {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  border-radius: var(--md-shape-corner-sm);
-  background: var(--md-sys-color-warning-container);
-  color: var(--md-sys-color-on-warning-container);
-  padding: 6px 8px;
+/* A card whose ball is the person's: a warning edge on its left, and one line that says what for. */
+.card.waiting { border-left: 3px solid var(--md-sys-color-warning); }
+.card-wait-line {
   font-size: 11.5px;
   font-weight: 700;
-  cursor: pointer;
+  color: var(--md-sys-color-warning);
 }
-.wait-link:hover { filter: brightness(.96); }
-.wait-link-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  width: 100%;
-}
-.wait-link-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-.wait-link-badge .material-symbols-outlined { font-size: 15px; flex-shrink: 0; }
-.wait-link .go {
-  white-space: nowrap;
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.wait-link-target {
-  font-size: 11px;
-  font-weight: 600;
-  opacity: .9;
-  padding-left: 19px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Human card */
-.hcard {
-  border-left: 4px solid var(--md-sys-color-warning);
-}
-.hcard .why {
-  font-size: 12px;
-  color: var(--md-sys-color-on-surface-variant);
-  overflow-wrap: anywhere;
-}
-.hcard .question-box {
-  font-size: 12px;
-  background: var(--md-sys-color-surface-container);
-  border-radius: var(--md-shape-corner-sm);
-  padding: 6px 8px;
-  overflow-wrap: anywhere;
-}
-.wait-time {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11.5px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-.wait-time .material-symbols-outlined { font-size: 14px; }
-.wait-time.t0 { color: var(--md-sys-color-on-surface-variant); }
-.wait-time.t1 { color: var(--md-sys-color-warning); }
-.wait-time.t2 { color: var(--md-sys-color-error); }
-.hcard-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.hcard-actions .btn-m3-primary, .hcard-actions .btn-m3-tonal {
-  padding: 5px 12px;
-  font-size: 12px;
-  gap: 4px;
-}
-.hcard-actions .material-symbols-outlined { font-size: 16px; }
-.hcard-reply {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.hcard-reply textarea {
-  width: 100%;
-  min-height: 52px;
-  resize: vertical;
-  font-size: 12px;
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: var(--md-shape-corner-sm);
-  background: var(--md-sys-color-surface-container-lowest);
-  padding: 6px 8px;
-}
-.agent-back {
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  border: 0;
-  background: transparent;
-  color: var(--md-sys-color-primary);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 0;
-  cursor: pointer;
-}
-.agent-back:hover { text-decoration: underline; }
-.agent-back .material-symbols-outlined { font-size: 14px; }
-.hcard-foot-links { display: inline-flex; align-items: center; gap: 10px; }
-.hcard-foot > span:first-child { white-space: nowrap; }
-.hcard-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--md-sys-color-surface-container-high);
-  font-size: 11px;
-  color: var(--md-sys-color-outline);
-}
-
-.stuck-strip {
-  margin: 8px 16px 0;
-  padding: 6px 10px;
-  border-radius: var(--md-shape-corner-sm);
-  background: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-  font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.stuck-strip button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-decoration: underline;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-/* The hub's entry above the agent columns: its session on one line, its inbox on the next. */
-.hub-strip {
-  margin: 8px 16px 0;
-  padding: 6px 10px;
-  border-radius: var(--md-shape-corner-sm);
-  background: var(--md-sys-color-surface-container-low);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  color: var(--md-sys-color-on-surface);
-  font-size: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.hub-strip-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.hub-strip-main:hover .hub-strip-name { text-decoration: underline; }
-.hub-strip-name { flex: 0 1 auto; max-width: 40%; font-weight: 700; overflow-wrap: anywhere; }
-.hub-strip-last {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--md-sys-color-on-surface-variant);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.hub-strip[hidden], .hub-strip-inbox[hidden] { display: none; }
-.hub-strip-inbox { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
-.hub-strip-line2-body { display: contents; }
-.hub-strip-counts { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-.hub-strip-wake:disabled { opacity: .5; cursor: default; }
+.card-wait-line.err { color: var(--md-sys-color-error); }
 .hub-wake-why { min-width: 0; font-size: 11px; color: var(--md-sys-color-error); overflow-wrap: anywhere; }
 /* Empty, the live region takes no room: it is kept in the page so that its text is announced. */
 .hub-wake-why:empty { margin: 0; padding: 0; }

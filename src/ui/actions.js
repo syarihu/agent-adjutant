@@ -171,10 +171,21 @@ function boardState(b) {
   };
 }
 
-function boardRowHtml(b, { child, working, chevron, folded }) {
+/* What a row of the list says under its name: the kind of hub, and that it is stopped. A hub that is being started says so
+   in place of the stop. */
+function boardSubText(b, st) {
+  const kind = b.hub ? '親タスク hub' : 'リポジトリ hub';
+  if (!st.stopped) return kind;
+  return rowStartingNow(b) ? '起動しています…' : `${kind} · 止まっています`;
+}
+
+/* The number of tasks still open on a board, at the right of its row; nothing at zero. */
+const openCountHtml = n => `<span class="rail-count${n ? '' : ' zero'}" title="開いているタスク">${n}</span>`;
+
+function boardRowHtml(b, { child, open, chevron, folded }) {
   const st = boardState(b);
   const current = nav.board === b.slug && nav.view !== 'work';
-  const sub = st.stopped ? st.text : (b.hub ? '親タスク hub' : `${(b.nwo || '').split('/')[0]} · リポジトリ hub`);
+  const sub = boardSubText(b, st);
   const start = st.stopped
     ? `<button type="button" class="start-btn" data-start-slug="${esc(b.slug)}" title="hub を起動します" ${rowStartingNow(b) ? 'disabled' : ''}>起動</button>` : '';
   const term = st.stopped ? ''
@@ -185,7 +196,7 @@ function boardRowHtml(b, { child, working, chevron, folded }) {
     <span class="avatar" aria-hidden="true">${esc(initialsOf(b))}</span>
     <span class="hub-dot ${st.tone}" title="${esc(st.stopped ? '停止中' : '稼働中')}"></span>
     <span class="txt"><span class="name">${esc(boardName(b))}</span><span class="sub">${esc(sub)}</span></span>
-    <span class="counts"><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span>
+    <span class="counts">${openCountHtml(open)}</span>
     ${start}${term}${toggle}</div>`;
 }
 
@@ -215,12 +226,12 @@ function renderBoardRows() {
   const shown = boards.filter(b => !b.finished || nav.board === b.slug);
   const repos = repoGroups(shown);
   const live = boards.filter(b => !b.finished);
-  const working = live.reduce((n, b) => n + (b.working || 0), 0);
+  const open = live.reduce((n, b) => n + (b.open || 0), 0);
   const allCurrent = scopeAll() && nav.view !== 'work';
   let html = `<div class="board-row all" role="link" tabindex="0" data-board="all"${allCurrent ? ' aria-current="page"' : ''} title="すべてのボード">
     <span class="avatar" aria-hidden="true"><span class="material-symbols-outlined" style="font-size:18px;">dashboard</span></span>
     <span class="txt"><span class="name">すべて</span><span class="sub">${repos.length} リポジトリ</span></span>
-    <span class="counts"><span class="rail-count${working ? '' : ' zero'}" title="作業中の worker">${working}</span></span></div>`;
+    <span class="counts">${openCountHtml(open)}</span></div>`;
   for (const r of repos) {
     const folded = prefs.boardsFolded.includes(r.nwo);
     const own = r.repo;
@@ -228,8 +239,9 @@ function renderBoardRows() {
     let rows = '';
     if (own) {
       const hidden = folded && withChildren;
-      const busy = (own.working || 0) + (hidden ? r.children.reduce((n, c) => n + (c.working || 0), 0) : 0);
-      rows += boardRowHtml(own, { child: false, working: busy, chevron: withChildren, folded });
+      // Folded away, the parent-task hubs' tasks are counted on the repository's row.
+      const count = (own.open || 0) + (hidden ? r.children.reduce((n, c) => n + (c.open || 0), 0) : 0);
+      rows += boardRowHtml(own, { child: false, open: count, chevron: withChildren, folded });
     } else {
       // Parent-task hubs whose repository has no board of its own: a header with no page.
       rows += `<div class="board-row repo unlinked" title="${esc(r.nwo)}">
@@ -238,7 +250,7 @@ function renderBoardRows() {
         <button type="button" class="repo-toggle" data-fold="${esc(r.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button></div>`;
     }
     for (const c of r.children) {
-      rows += boardRowHtml(c, { child: true, working: c.working || 0 });
+      rows += boardRowHtml(c, { child: true, open: c.open || 0 });
     }
     html += `<div class="repo-group${folded && withChildren ? ' collapsed' : ''}">${rows}</div>`;
   }
@@ -290,29 +302,18 @@ function openBoard(slug) {
   go({ board: slug, view: nav.view === 'work' ? 'agent' : nav.view, task: null });
 }
 
-/* A board's hub in the task panel, on its terminal: in place when this page's state lists the
+/* A board's hub on its terminal, beside the board: in place when this page's state lists the
    hub, else on the board it belongs to, where the address opens it after the first poll. */
 function openHubPanelOf(b) {
   const ref = HUB_REF + b.hubId;
-  const listed = !scopeAll() && nav.view !== 'work' && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
+  const listed = view === 'board' && !scopeAll() && (state.hubs || []).some(h => h.id === b.hubId && h.slug === b.slug);
   if (listed) return openTaskPanel(ref, 'term');
-  go({ board: b.slug, view: nav.view === 'work' ? 'agent' : nav.view, task: ref, pane: 'term' });
+  go({ board: b.slug, view: 'agent', task: ref, pane: 'term' });
 }
-
-/* The hub of the board on screen, which the board head's 「hub」 button opens. */
-const ownHubId = () => selectedBoard()?.hubId || pageHub()?.id || 'hub';
 
 /* The hub panel draws from client-side markers (starting, resetting) as well as from state, which
    change without a poll. */
 function redrawHubPanel() { if (isHubRef(selectedTaskId)) renderTaskPanel(); }
-
-function openOwnHub() { openTaskPanel(HUB_REF + ownHubId(), 'term'); }
-
-/* The buttons that open a hub's panel are lit while it is open. */
-function markHubButtons() {
-  const btn = document.getElementById('btn-hub');
-  if (btn) btn.classList.toggle('on', !!selectedTaskId && selectedTaskId === HUB_REF + ownHubId());
-}
 
 /* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, both lists of it, on
    a board served alone what waits on the person on it. */
@@ -321,27 +322,18 @@ function renderDocTitle() {
   document.title = (sum ? `(${sum}) ` : '') + boardTitle();
 }
 
-/* The board's head: its name and the state of its hub, and the hub's own buttons. A board's own screen is the only one that has
+/* The board's head: its name in bold, and what the board is. A board's own screen is the only one that has
    it; the tab's title (renderDocTitle) is the page's for every view. */
 function renderBoardHead() {
-  // The hub's own buttons have no board to act on in 「すべて」 and 「いまの仕事」.
-  const resync = document.getElementById('btn-resync');
-  if (resync) resync.hidden = scopeAll() || view === 'work';
-  const hubBtn = document.getElementById('btn-hub');
-  if (hubBtn) hubBtn.hidden = scopeAll() || view === 'work';
-  markHubButtons();
   renderDocTitle();
   const title = document.getElementById('board-title');
   if (!title || view !== 'board') return;
-  if (scopeAll()) { title.textContent = 'すべて'; return; }
   const entry = selectedBoard();
-  const hubState = entry ? boardState(entry)
-    : (state.hub?.present ? { tone: 'good' } : { tone: state.hub?.stale ? 'bad' : 'off' });
-  const present = entry ? !!entry.hubPresent : !!state.hub?.present;
   // A repository's board is named for the repository, a hub's board for the repository and the hub.
-  const name = entry ? (entry.hub ? `${repoNameOf(entry)} · ${boardName(entry)}` : boardName(entry))
+  const name = scopeAll() ? 'すべて'
+    : entry ? (entry.hub ? `${repoNameOf(entry)} · ${boardName(entry)}` : boardName(entry))
     : (pageHub()?.parent ? (pageHub().key || '') : (repoName() || 'タスクボード'));
-  title.innerHTML = `${esc(name)} <span class="hub-pill ${present ? 'good' : hubState.tone === 'bad' ? 'bad' : 'off'}">${present ? 'hub 稼働中' : 'hub 停止中'}</span>`;
+  title.innerHTML = `<strong class="board-head-name">${esc(name)}</strong><span class="board-head-sub">エージェントの作業</span>`;
 }
 
 /* Start the hub of the board at `base`. The route is the resident's, so it works from any
@@ -653,7 +645,7 @@ async function nudgeHub(base = BASE) {
   }
 }
 
-/* The hub's wake button, wherever the page draws it: the board's hub entry (renderHubStrip), the 受信箱 card of the
+/* The hub's wake button, wherever the page draws it: the 受信箱 card of the
    hub's panel and the button beside a hub's row in 「いまの仕事」 (or its chip on a folded heading). It types the hub's
    wake line and leaves it no message.
    `busy` (by the hub's slug, so a press on one board leaves another's button alone) keeps a second press from sending
@@ -680,7 +672,6 @@ function hubWakeWhy(h) {
 
 /* Every place a hub is drawn, for a change `hubWake` made that no poll brings. */
 function redrawHubWake() {
-  renderHubStrip();
   redrawHubPanel();
   if (view === 'work') renderWorkList();
 }
@@ -696,7 +687,6 @@ async function wakeHub(h = pageHub(), base = BASE) {
   // The hub's slug is on every wake button, so a hub opened while the request is on its way never takes the focus.
   const mine = `[data-wake-slug="${CSS.escape(slug)}"]`;
   const refocus = at?.dataset?.wakeSlug !== slug ? null
-    : at.dataset.action === 'wake-hub' ? `#hub-strip [data-action="wake-hub"]${mine}`
     : at.dataset.tpHub === 'wake' ? `[data-tp-hub="wake"]${mine}`
     : at.dataset.wkWake != null ? `[data-wk-wake="${CSS.escape(at.dataset.wkWake)}"]${mine}` : null;
   // The work list can draw a hub twice (the band and its group): the copy in the same cell is the one to come back to.
@@ -718,10 +708,9 @@ async function wakeHub(h = pageHub(), base = BASE) {
   } finally {
     delete hubWake.busy[slug];
     redrawHubWake();
-    // Only where the button was: a person who has moved on is left where they are. The strip moves focus to its next control
-    // while the button is disabled, and the other places lose it to the page.
+    // Only where the button was: a person who has moved on is left where they are. A disabled button loses the focus to the page.
     const now = document.activeElement;
-    if (refocus && (now === document.body || now?.dataset?.action === 'hub-strip-open')) {
+    if (refocus && now === document.body) {
       const usable = b => !b.disabled;
       const scope = cell ? [...document.querySelectorAll('[data-wk-cell]')].find(el => el.dataset.wkCell === cell) : null;
       (scope && [...scope.querySelectorAll(refocus)].find(usable) || [...document.querySelectorAll(refocus)].find(usable))?.focus();
@@ -732,8 +721,8 @@ async function wakeHub(h = pageHub(), base = BASE) {
 }
 
 /* The title of a parent-task hub's issue: where it stands (the hub's `titleState`, which the server sends as codes and this
-   words) and the button that reads that one issue now. They are drawn wherever the page draws a parent-task hub: the board's
-   hub entry, the hub panel and 「いまの仕事」. `busy` (by the hub's slug, as `hubWake`'s) keeps a second press from sending
+   words) and the button that reads that one issue now. They are drawn wherever the page draws a parent-task hub: the hub
+   panel and 「いまの仕事」. `busy` (by the hub's slug, as `hubWake`'s) keeps a second press from sending
    another while one is on its way; `why` is what the last press that read nothing was told, kept until the next press or until
    the issue has been read since. */
 const hubTitleRead = { busy: {}, why: {} };
@@ -832,7 +821,7 @@ async function readHubTitle(h, base) {
     redrawHubWake();
     // Only where the button was: a person who has moved on is left where they are.
     const now = document.activeElement;
-    if (refocus && (now === document.body || now?.dataset?.action === 'hub-strip-open')) {
+    if (refocus && now === document.body) {
       const usable = b => !b.disabled;
       const scope = cell ? [...document.querySelectorAll('[data-wk-cell]')].find(el => el.dataset.wkCell === cell) : null;
       (scope && [...scope.querySelectorAll(refocus)].find(usable) || [...document.querySelectorAll(refocus)].find(usable))?.focus();

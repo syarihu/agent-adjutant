@@ -14,273 +14,34 @@ function originChip(item) {
   return `<span class="origin-chip" title="${esc(title)}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(name)}</span></span>`;
 }
 
-function humanActions(task, col, gate) {
-  const open = openReplies[task.id];
-  if (open) {
-    const ph = open === 'answer' ? '回答を入力してください...'
-             : open === 'ask' ? '追加で聞きたい内容を入力してください...'
-             : open === 'changes' ? '修正指示や指摘を入力してください...'
-             : '理由を入力してください...';
-    const sendLabel = !gate && open === 'changes' ? '指摘をメモ' : actLabel(open, gate?.kind);
-    return `
-      <div class="hcard-reply">
-        <textarea data-reply="${esc(task.id)}" placeholder="${esc(ph)}"></textarea>
-        <div class="hcard-actions">
-          <button type="button" class="btn-m3-primary" data-act="send-${open}" data-id="${esc(task.id)}">
-            <span class="material-symbols-outlined">send</span>
-            <span>${esc(sendLabel)}</span>
-          </button>
-          <button type="button" class="btn-m3-text" data-act="cancel" data-id="${esc(task.id)}">やめる</button>
-        </div>
-      </div>
-    `;
-  }
-  let buttons = '';
-  if (col === 'dispatch') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="start" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">play_arrow</span><span>${esc(actLabel('start', gate?.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="shelve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">undo</span><span>${gate ? esc(actLabel('shelve', gate.kind)) : 'Backlog に戻す'}</span>
-      </button>
-    `;
-  } else if (col === 'plan') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate?.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">reply</span><span>${esc(actLabel('reject', gate?.kind))}</span>
-      </button>
-    `;
-  } else if (col === 'diff') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate?.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">reply</span><span>${esc(actLabel('reject', gate?.kind))}</span>
-      </button>
-    `;
-  } else if (col === 'verify') {
-    const isResult = gate?.kind === 'result';
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate?.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${esc(actLabel(isResult ? 'ask' : 'reject', gate?.kind))}</span>
-      </button>
-    `;
-  } else if (col === 'prreview') {
-    buttons = `
-      ${scopeAll() ? '' : `<button type="button" class="btn-m3-primary" data-act="refresh-prs" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">sync</span><span>PR確認</span>
-      </button>`}
-      <button type="button" class="${scopeAll() ? 'btn-m3-tonal' : 'btn-m3-text'}" data-act="changes" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">rate_review</span><span>指摘をメモ</span>
-      </button>
-    `;
-  } else if (col === 'question') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(task.id)}">
-        <span class="material-symbols-outlined">chat</span><span>${esc(actLabel('answer', gate?.kind))}</span>
-      </button>
-      ${readySessionOfTask(task) ? `<button type="button" class="btn-m3-tonal" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}">
-        <span class="material-symbols-outlined">terminal</span><span>ターミナルで答える</span>
-      </button>` : ''}
-    `;
-  }
-  if (gate && gate.choices && gate.choices.length) {
-    buttons += gate.choices.map(c => `
-      <button type="button" class="btn-m3-tonal" data-act="choice" data-choice="${esc(c.id)}" data-id="${esc(task.id)}">
-        <span>${esc(c.label || c.id)}</span>
-      </button>
-    `).join('');
-  }
-  return `<div class="hcard-actions">${buttons}</div>`;
-}
-
-function humanGateActions(gate, col) {
-  const open = openReplies[gateRef(gate)];
-  if (open) {
-    const ph = open === 'answer' ? '回答を入力してください...'
-             : open === 'ask' ? '追加で聞きたい内容を入力してください...'
-             : open === 'changes' ? '修正指示や指摘を入力してください...'
-             : '理由を入力してください...';
-    const sendLabel = actLabel(open, gate.kind);
-    return `
-      <div class="hcard-reply">
-        <textarea data-reply="${esc(gateRef(gate))}" placeholder="${esc(ph)}"></textarea>
-        <div class="hcard-actions">
-          <button type="button" class="btn-m3-primary" data-act="send-${open}" data-id="${esc(gateRef(gate))}">
-            <span class="material-symbols-outlined">send</span>
-            <span>${esc(sendLabel)}</span>
-          </button>
-          <button type="button" class="btn-m3-text" data-act="cancel" data-id="${esc(gateRef(gate))}">やめる</button>
-        </div>
-      </div>
-    `;
-  }
-  let buttons = '';
-  if (col === 'dispatch') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">play_arrow</span><span>${esc(actLabel('approve', gate.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">undo</span><span>${esc(actLabel('reject', gate.kind))}</span>
-      </button>
-    `;
-  } else if (col === 'plan' || col === 'diff') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="reject" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">reply</span><span>${esc(actLabel('reject', gate.kind))}</span>
-      </button>
-    `;
-  } else if (col === 'verify') {
-    const isResult = gate.kind === 'result';
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="approve" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">check</span><span>${esc(actLabel('approve', gate.kind))}</span>
-      </button>
-      <button type="button" class="btn-m3-tonal" data-act="${isResult ? 'ask' : 'reject'}" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">${isResult ? 'help' : 'reply'}</span><span>${esc(actLabel(isResult ? 'ask' : 'reject', gate.kind))}</span>
-      </button>
-    `;
-  } else if (col === 'question') {
-    buttons = `
-      <button type="button" class="btn-m3-primary" data-act="answer" data-id="${esc(gateRef(gate))}">
-        <span class="material-symbols-outlined">chat</span><span>${esc(actLabel('answer', gate.kind))}</span>
-      </button>
-    `;
-  }
-  if (gate.choices && gate.choices.length) {
-    buttons += gate.choices.map(c => `
-      <button type="button" class="btn-m3-tonal" data-act="choice" data-choice="${esc(c.id)}" data-id="${esc(gateRef(gate))}">
-        <span>${esc(c.label || c.id)}</span>
-      </button>
-    `).join('');
-  }
-  return `<div class="hcard-actions">${buttons}</div>`;
-}
-
-/* What a person is asked to do about a PR, by whose turn it is. A turn not listed is today's
-   plain 「GitHub でレビューしてください」. */
-const PR_TURN_WHY = {
-  changes: 'レビューで修正の依頼がありました。worker に直させるか自分で対応してください',
-  merge: '承認されました。マージしてください',
-  'ci-failed': 'CI が失敗しています',
-  closed: 'PR がマージされずに閉じられました。別の PR で続けるか、取り消すかを決めてください',
+/* What a card that waits on the person says it waits for, by the kind of the gate that is open. */
+const WAIT_OF_KIND = {
+  dispatch: '着手確認',
+  issue: '起票の確認',
+  plan: '計画',
+  diff: '差分',
+  verify: '動作確認',
+  result: '報告',
+  question: '回答',
+  relay: '指摘の転送',
 };
 
-function humanCard(task, col) {
-  const el = document.createElement('div');
-  el.className = 'card hcard' + (selectedTaskId === task.id ? ' selected' : '');
-  el.id = `human-${task.id}`;
-  el.dataset.id = task.id;
-  if (task._slug) el.dataset.slug = task._slug;
+/* The same for a PR on the person's turn with no gate open, by whose turn it is. A turn not listed is the plain review. */
+const PR_TURN_WAIT = {
+  changes: '修正の依頼への対応',
+  merge: 'マージ',
+  'ci-failed': 'CI の失敗への対応',
+  closed: '閉じた PR の判断',
+};
 
+/* The words after 「…を待っています」 on a card whose ball is the person's (`hcol` is its column, from `humanColOf`). A card of a
+   parent-task hub on the repository's board has no gate or PR turn of its own to read, only the column. */
+function waitWordOf(task, hcol) {
+  if (task.ownerHub) return humanLabel(hcol);
   const gate = openGate(task);
-  const mins = waitingMinutes(task);
-  const issueUrl = httpUrl(task.issueUrl);
-  const issueNumber = issueUrl ? issueNumberOf(issueUrl) : null;
-
-  let why = '';
-  if (gate) {
-    if (gate.problem) why = gate.problem;
-    else if (gate.why) why = gate.why;
-    else if (stopWhy(gate).length) why = stopWhy(gate).join(' / ');
-    else why = gate.title;
-  } else if (col === 'prreview') {
-    why = PR_TURN_WHY[task.prTurn] || 'worker は PR を出して待っています。GitHub でレビューしてください';
-  }
-
-  const w = workerOf(task);
-  // A worker that went on past this gate (answered in its terminal) is not stopped: the gate is still open and answerable.
-  const went = taskPassedGate(task);
-  const wentState = went ? ledgerState(sessionOfTask(task), state) : '';
-  const phaseLabel = w?.phase ? PHASE_LABEL[w.phase] || w.phase : task.status;
-  const wentWord = wentState === 'permission' ? `${phaseLabel}で許可待ち` : wentState === 'failed' ? `${phaseLabel}でエラー` : `${phaseLabel}中`;
-  const phaseStr = task.status === 'queued' ? '着手前'
-    : went ? `${wentWord}（答えないまま進行中）`
-    : (w?.phase ? `${PHASE_LABEL[w.phase] || w.phase}で停止中` : `${task.status}で停止中`);
-
-  el.innerHTML = `
-    <div class="card-header-row">
-      ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
-      ${ghChipsHtml(task)}
-      ${col === 'prreview' ? prTurnPill(task) : ''}
-      <span class="wait-time ${waitTone(mins)}" title="待たせている時間">
-        <span class="material-symbols-outlined">schedule</span>
-        <span>${minutesLabel(mins)}待ち</span>
-      </span>
-    </div>
-    ${originChip(task)}
-    <div class="title">${esc(task.title)}${titlePendingPill(task)}</div>
-    ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : (why ? `<div class="why">${esc(why)}</div>` : '')}
-    ${humanActions(task, col, gate)}
-    <div class="hcard-foot">
-      <span>${esc(phaseStr)}</span>
-      <span class="hcard-foot-links">
-        ${readySessionOfTask(task) ? `<button type="button" class="agent-back" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}">
-          <span class="material-symbols-outlined">terminal</span>
-          <span>ターミナル</span>
-        </button>` : ''}
-        <button type="button" class="agent-back" data-jump-agent="${esc(task.id)}" title="エージェントのボードでこのカードを見る">
-          <span class="material-symbols-outlined">smart_toy</span>
-          <span>エージェントで見る</span>
-        </button>
-      </span>
-    </div>
-  `;
-
-  el.onclick = (e) => {
-    if (e.target.closest('button') || e.target.closest('a') || e.target.closest('textarea') || e.target.closest('input')) return;
-    onBoard(task._slug, () => openTaskPanel(task.id));
-  };
-  return el;
-}
-
-function humanGateCard(gate, col) {
-  const el = document.createElement('div');
-  el.className = 'card hcard';
-  el.id = `human-${gate.id}`;
-  el.dataset.id = gateRef(gate);
-  if (gate._slug) el.dataset.slug = gate._slug;
-
-  const opened = stampSecs(gate.openedAt);
-  const mins = opened ? minutesSince(opened, Date.now() / 1000) : 0;
-  const wtName = baseName(gate.worktree) || gate.id;
-  const why = gate.problem || gate.why || stopWhy(gate).join(' / ') || gate.title;
-
-  el.innerHTML = `
-    <div class="card-header-row">
-      <span class="card-task-id" title="${esc(gate.id)}">${esc(wtName)}</span>
-      <span class="wait-time ${waitTone(mins)}" title="待たせている時間">
-        <span class="material-symbols-outlined">schedule</span>
-        <span>${minutesLabel(mins)}待ち</span>
-      </span>
-    </div>
-    ${originChip(gate)}
-    <div class="title">${esc(gate.title)}</div>
-    ${col === 'question' ? `<div class="question-box">${esc(why)}</div>` : `<div class="why">${esc(why)}</div>`}
-    ${humanGateActions(gate, col)}
-    <div class="hcard-foot">
-      <span>${esc(wtName)}</span>
-      <button type="button" class="btn-m3-text" style="padding:0;font-size:11px;" data-gate="${esc(gate.id)}">詳細判定画面 →</button>
-    </div>
-  `;
-
-  el.onclick = (e) => {
-    if (e.target.closest('button') || e.target.closest('a') || e.target.closest('textarea') || e.target.closest('input')) return;
-    onBoard(gate._slug, () => judgeGate(gate.id));
-  };
-  return el;
+  if (gate) return WAIT_OF_KIND[gate.kind] || humanLabel(hcol);
+  if (task.waitsOnPerson) return PR_TURN_WAIT[task.prTurn] || 'PR のレビュー';
+  return humanLabel(hcol);
 }
 
 function agentCard(task) {
@@ -328,13 +89,21 @@ function agentCard(task) {
       ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
       ${ghChipsHtml(task)}
       ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
-      ${task.status === 'queued' && task.order != null && !owner ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>${task.order}</span>` : ''}
+      ${task.status === 'queued' && task.order != null && !owner ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>キュー ${task.order}</span>` : ''}
+      ${task.status === 'backlog' ? '<span class="m3-pill pill-neutral" title="まだキューに渡していません">Backlog</span>' : ''}
     </div>
   `;
 
   // 2. Title
   h += originChip(task);
   h += `<div class="title">${esc(task.title)}${titlePendingPill(task)}</div>`;
+
+  // 2.5 What the card waits for, on one line: the person's turn, or a permission prompt (which is the worker's own question)
+  if (hcol) {
+    h += `<div class="card-wait-line">${esc(waitWordOf(task, hcol))}を待っています</div>`;
+  } else if (asks) {
+    h += `<div class="card-wait-line err">${esc(permissionLabel(asking))}</div>`;
+  }
 
   // 3. Worker Status (or Jules)
   if (live && task.jules) {
@@ -354,7 +123,6 @@ function agentCard(task) {
                : stopped ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">pause</span>'
                : '<span class="pulse-dot"></span>'}
         <span style="font-weight:700;${alarm ? 'color:var(--md-sys-color-error);' : ''}">${esc(PHASE_LABEL[worker.phase] || worker.phase)}${alarm ? ' (停止)' : ''}</span>
-        ${asks ? `<span style="font-weight:700;color:var(--md-sys-color-warning);">${permissionLabel(asking)}</span>` : ''}
         ${went && wentStatus === 'permission' ? `<span style="font-weight:700;color:var(--md-sys-color-warning);">${permissionLabel(wentSession)}</span>` : ''}
         ${went && wentStatus === 'failed' ? '<span style="font-weight:700;color:var(--md-sys-color-error);">エラー</span>' : ''}
         ${went ? '<span style="font-weight:700;color:var(--md-sys-color-warning);">判定待ち（答えないまま進行中）</span>' : ''}
@@ -372,11 +140,9 @@ function agentCard(task) {
   if (!task.autoStart && task.status !== 'done') {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
   }
-  // A PR that waits on somebody else, or on the bots, is off the person's board but is not the
-  // worker's to act on either; say whose it is.
-  if (!hcol && ['other-reviewer', 'checks'].includes(task.prTurn)) {
-    metaBadges.push(prTurnPill(task));
-  }
+  // Whose turn the PR is on (the person's, somebody else's, or the bots'), where it has a word for it.
+  const turnPill = prTurnPill(task);
+  if (turnPill) metaBadges.push(turnPill);
   if (!httpUrl(task.pr) && live && worker?.phase === 'pr') {
     metaBadges.push('<span class="m3-pill pill-neutral"><span class="material-symbols-outlined" style="font-size:12px;">hourglass_top</span>PR 作成中</span>');
   }
@@ -444,31 +210,10 @@ function agentCard(task) {
             : ''}
         </div>
         <div class="card-button-row">
-          ${readySessionOfTask(task) && (!owner || multiBoard) ? `<button type="button" class="m3-icon-button" title="内蔵ターミナルをパネルで開く" data-term-session="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">terminal</span><span>ターミナル</span></button>` : ''}
           ${task.worktree && (!owner || multiBoard) ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(task.worktree)}"><span class="material-symbols-outlined" style="font-size:14px;">code</span><span>IDE</span></button>` : ''}
           ${task.status === 'backlog' && (!owner || multiBoard) ? `<button type="button" class="m3-icon-button" style="color:var(--md-sys-color-primary);" title="待ちキューへ渡す" data-hand="${esc(task.id)}"><span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span><span>渡す</span></button>` : ''}
         </div>
       </div>
-    `;
-  }
-
-  // 10. Wait link if waiting on human
-  if (hcol) {
-    const mins = waitingMinutes(task);
-    // The person's board of this page does not hold the card, so there is nothing to jump to.
-    const [open, close, attrs] = owner ? ['div', 'div', ' style="cursor:default;"']
-      : ['button', 'button', ` type="button" data-jump-human="${esc(task.id)}" title="人のボードでこのカードを開く"`];
-    h += `
-      <${open} class="wait-link"${attrs}>
-        <div class="wait-link-row">
-          <span class="wait-link-badge">
-            <span class="material-symbols-outlined">person_alert</span>
-            <span>人の確認待ち</span>
-          </span>
-          <span class="go">${minutesLabel(mins)}${owner ? '' : '<span class="material-symbols-outlined">arrow_outward</span>'}</span>
-        </div>
-        <div class="wait-link-target">${esc(humanLabel(hcol))}</div>
-      </${close}>
     `;
   }
 
@@ -479,7 +224,12 @@ function agentCard(task) {
   }
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('a')) return;
-    onBoard(owner ? owner.slug : task._slug, () => openTaskPanel(task.id));
+    const slug = owner ? owner.slug : task._slug;
+    // A board served alone has no terminal beside it: its card opens the task panel.
+    if (!multiBoard) return onBoard(slug, () => openTaskPanel(task.id));
+    // A card with a worker, or with a question waiting, opens its terminal beside the board; the others have none, so their detail opens.
+    if (live || hcol) return onBoard(slug, () => openTaskPanel(task.id, 'term'));
+    onBoard(slug, () => openTaskDetail((state.tasks || []).find(t => t.id === task.id) || task, el));
   };
   return el;
 }
@@ -518,7 +268,6 @@ function sessionCard(w) {
   h += `<div class="card-footer-row">
     <div class="card-meta-slug" title="${esc(w.worktree || '')}"><span class="material-symbols-outlined" style="font-size:13px;">folder_open</span><span>${esc(folder)}</span></div>
     <div class="card-button-row">
-      ${s && boardTerminalReady(s) ? `<button type="button" class="m3-icon-button" title="内蔵ターミナルをセッションの画面で開く" data-sess-open="${esc(sessionRef(s))}">${icon('terminal')}<span>ターミナル</span></button>` : ''}
       ${s && !missing ? link('new', 'タスクにする…') + link('existing', '紐づける…') : ''}
       ${w.worktree ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(w.worktree)}">${icon('code')}<span>IDE</span></button>` : ''}
     </div>

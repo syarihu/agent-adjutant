@@ -50,8 +50,9 @@ const PREF_KEY = 'adj-board-split';
 // panelDock is the side the task panel sits on (left or right), panelDialog is whether panels open as a
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
-// listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle).
-const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
+// listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle);
+// boardSideWidth is how wide the terminal beside the board is.
+const prefs = Object.assign({ boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
   workFolded:[], othersRepo:'', railHidden:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
@@ -59,6 +60,10 @@ const prefs = Object.assign({ layout:'tabs', arrange:'top', tab:'agent', boardsF
 delete prefs.panelSide;
 // The セッション tab, whose folded groups this was, is gone.
 delete prefs.sessionsFolded;
+// The board's tabs, its layout switches and the human board they chose between are gone.
+delete prefs.layout;
+delete prefs.arrange;
+delete prefs.tab;
 if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
 prefs.railHidden = prefs.railHidden === true;
@@ -71,6 +76,8 @@ if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 if (prefs.listWidth === undefined && Number(prefs.railWidth) !== 300) prefs.listWidth = prefs.railWidth;
 prefs.listWidth = Math.min(560, Math.max(240, Number(prefs.listWidth) || 330));
 delete prefs.railWidth;
+// The terminal beside the board: its width is clamped when read, and to the window when it is applied (applyBoardSide).
+prefs.boardSideWidth = Math.min(1400, Math.max(360, Number(prefs.boardSideWidth) || 640));
 delete prefs.workListWidth;
 delete prefs.workGroup;
 // The repository the 「レビュー」 list is narrowed to (lower case; '' is すべて).
@@ -118,66 +125,25 @@ function applyLayout() {
   // The class only takes effect in 「いまの仕事」, whose middle has the toggle (my-work.css).
   document.body.classList.toggle('rail-hidden', prefs.railHidden);
   renderRailToggle();
-  boards.className = `layout-${prefs.layout} arrange-${prefs.arrange}`;
-  document.body.classList.toggle('layout-tabs', prefs.layout === 'tabs');
-  document.body.classList.toggle('layout-split', prefs.layout === 'split');
-  const ph = document.getElementById('pane-human');
-  const pa = document.getElementById('pane-agent');
-  if (ph) ph.classList.toggle('active', prefs.tab === 'human');
-  if (pa) pa.classList.toggle('active', prefs.tab === 'agent');
-  // Side by side, both boards are on screen, so both tabs are lit.
-  const split = prefs.layout === 'split';
-  document.querySelectorAll('.view-tab[data-tab]').forEach(b => {
-    const on = view === 'board' && (split || b.dataset.tab === prefs.tab);
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-selected', String(on));
-  });
-  // The layout switches belong to the two boards; 「いまの仕事」 has no tabs.
-  const tools = document.getElementById('view-tools');
-  if (tools) tools.hidden = view !== 'board';
-  const tabsRow = document.getElementById('view-tabs-row');
-  if (tabsRow) tabsRow.hidden = view !== 'board';
-  document.querySelectorAll('[data-layout]').forEach(b => {
-    const on = b.dataset.layout === prefs.layout;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
-  document.querySelectorAll('[data-arrange]').forEach(b => {
-    const on = b.dataset.arrange === prefs.arrange;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
+  document.body.style.setProperty('--board-side-w', `${prefs.boardSideWidth}px`);
   savePrefs();
 }
-function setBoardLayout(layout) { prefs.layout = layout; applyLayout(); }
-function setBoardArrange(arrange) { prefs.arrange = arrange; applyLayout(); }
-function showBoard(board) {
-  // Side by side both are already on screen: choosing one is choosing to look at it alone. From
-  // another tab nothing was on screen to choose between, and the layout is left as it was.
-  if (prefs.layout === 'split' && view === 'board') { prefs.layout = 'tabs'; savePrefs(); }
-  // The address says which tab it is (and a board shown on its own page keeps it).
-  go({ view: board === 'agent' ? 'agent' : 'human' });
-}
-document.querySelector('.view-tabs').addEventListener('click', e => {
-  const tab = e.target.closest('.view-tab[data-tab]');
-  if (tab) showBoard(tab.dataset.tab);
-});
-function jump(board, id) {
-  const want = board === 'agent' ? 'agent' : 'human';
-  if (view !== 'board' || nav.view !== want) go({ view: want });
-  const el = document.getElementById(`${board}-${id}`);
+/* Brings the card `id` of the board into view, on the board view. */
+function jump(id) {
+  if (view !== 'board' || nav.view !== 'agent') go({ view: 'agent' });
+  const el = document.getElementById(`agent-${id}`);
   if (!el) return;
   el.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
 
 const AGENT_COLUMNS = [
-  { id:'before',     label:'着手前',          icon:'inbox',          hint:'待ち / Backlog' },
-  { id:'plan',       label:'計画',            icon:'edit_note',      hint:'' },
-  { id:'implement',  label:'実装',            icon:'code',           hint:'' },
-  { id:'selfreview', label:'セルフレビュー',  icon:'rule',           hint:'セルフレビュー / 動作確認' },
-  { id:'pr',         label:'PR・レビュー対応', icon:'merge',          hint:'PR / レビュー対応 / 報告' },
-  { id:'done',       label:'完了',            icon:'check_circle',   hint:'' },
+  { id:'before',     label:'着手前',          icon:'inbox' },
+  { id:'plan',       label:'計画',            icon:'edit_note' },
+  { id:'implement',  label:'実装',            icon:'code' },
+  { id:'selfreview', label:'セルフレビュー',  icon:'rule' },
+  { id:'pr',         label:'PR・レビュー対応', icon:'merge' },
+  { id:'done',       label:'完了',            icon:'check_circle' },
 ];
 const AGENT_COL_OF_PHASE = {
   plan:'plan',
@@ -190,22 +156,21 @@ const AGENT_COL_OF_PHASE = {
   report:'pr',
 };
 
-const HUMAN_COLUMNS = [
-  { id:'dispatch', label:'着手確認',          icon:'play_circle',    hint:'始めてよいか / 起票確認' },
-  { id:'plan',     label:'計画の承認',        icon:'edit_note',      hint:'進め方を確認' },
-  { id:'diff',     label:'差分レビュー',      icon:'difference',     hint:'手元の差分 / push 前の確認' },
-  { id:'verify',   label:'動作確認',          icon:'fact_check',     hint:'手で見る項目 / 調査報告' },
-  { id:'prreview', label:'PRレビュー',        icon:'merge',          hint:'PR がこちらのボール' },
-  { id:'question', label:'質問',              icon:'help',           hint:'worker からの質問' },
-];
-
-const COLUMNS = [...AGENT_COLUMNS, ...HUMAN_COLUMNS];
+/* What a card says it waits for, by the person's column (`humanColOf`): the columns of the board that was removed are only these words now. */
+const HUMAN_LABEL = {
+  dispatch: '着手確認',
+  plan: '計画の承認',
+  diff: '差分レビュー',
+  verify: '動作確認',
+  prreview: 'PRレビュー',
+  question: '質問',
+};
 
 /* 要対応 is derived from the gate directory, never stored as a status — so the board reads
    the thing it is describing rather than a second copy of it. */
 const openGate = (t, data = state) => (data.gates || []).find(g => g.task === t.id && (!t._slug || g._slug === t._slug));
 
-const humanLabel = col => (HUMAN_COLUMNS.find(c => c.id === col) || {}).label || col;
+const humanLabel = col => HUMAN_LABEL[col] || col;
 const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label || col;
 
 // A worker that names another task is that task's, whatever worktree a stale record still points
@@ -266,10 +231,6 @@ function waitingSinceMs(t) {
 function waitingMinutes(t) {
   const since = waitingSinceMs(t);
   return minutesSince(since / 1000, Date.now() / 1000);
-}
-
-function waitTone(mins) {
-  return mins >= 480 ? 't2' : mins >= 60 ? 't1' : 't0';
 }
 
 function columnOf(t, data = state) {
@@ -716,6 +677,8 @@ async function refresh(force = false) {
     taskReadRefresh(force);
     if (nav.board === 'all' || !nav.board) return;
   }
+  // The terminal beside the board is drawn from the work document as well, which the board's poll does not read otherwise.
+  if (boardSideOn()) refreshWork(force);
   if (scopeAll()) {
     // Every board is read, so this runs half as often.
     if (!force) {
@@ -782,26 +745,9 @@ function waitingIn(data = state) {
   return humanItems.length + standalone.length;
 }
 
-/* The header's counts: what waits on the person, and the workers at work. */
-function renderCounts() {
-  const totalHuman = waitingIn();
-  const humanBadge = document.getElementById('human-badge');
-  if (humanBadge) {
-    humanBadge.textContent = totalHuman;
-    humanBadge.classList.toggle('zero', !totalHuman);
-  }
-
-  // Count active workers not waiting on human
-  const activeWorkers = (state.tasks || []).filter(t => ['dispatched', 'pr'].includes(t.status) && !humanColOf(t)).length;
-  const agentCount = document.getElementById('agent-count');
-  if (agentCount) {
-    agentCount.textContent = activeWorkers;
-  }
-}
-
 /* The parts of the page, in the order `render` draws them and `resetViews` resets them. Each
    script registers its own parts at its end. */
-const VIEW_ORDER = ['columns', 'counts', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'question-dialog', 'task-detail', 'todo-view', 'layout'];
+const VIEW_ORDER = ['columns', 'board-rows', 'title', 'notify', 'work-view', 'task-panel', 'question-dialog', 'task-detail', 'todo-view', 'layout'];
 const viewsByName = new Map();
 
 /* `render(data)` draws the part (from the page's `state`); `reset()`, where there is one, forgets
@@ -823,6 +769,5 @@ function resetViews() {
   for (const name of VIEW_ORDER) viewsByName.get(name)?.reset?.();
 }
 
-registerView('counts', { render: () => renderCounts() });
 registerView('notify', { render: () => updateNotifyButton() });
 registerView('layout', { render: () => applyLayout() });
