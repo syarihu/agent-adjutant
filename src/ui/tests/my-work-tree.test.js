@@ -85,6 +85,7 @@ vm.runInContext([
   cut(/^const workRepoLabel = [^\n]*;/m),
   cut(/^const WORK_EMPTY_HTML = [^\n]*;/m),
   cut(/^const WORK_MIDDLE_EMPTY_HTML = [^\n]*;/m),
+  cut(/^function reviewMiddleKind[\s\S]*?^}/m),
   cut(/^function reviewMiddleEmptyHtml[\s\S]*?^}/m),
   cut(/^const workInboxHtml = [\s\S]*?^\]\.filter\(Boolean\);/m),
   cut(/^const workMergedEnd = [^\n]*;/m),
@@ -1060,6 +1061,26 @@ test('the middle of レビュー with nothing selected asks for a PR, says there
   assert.ok(loading.includes('<strong>読み込み中…</strong>') && !loading.includes('PR を選んで') && !loading.includes('ありません'));
   const failed = run("reviewMiddleEmptyHtml('failed', 'boom')");
   assert.ok(failed.includes('<strong>読み込めませんでした</strong>') && failed.includes('<span>boom</span>') && !failed.includes('ありません'));
+  // An empty list says there is none only after a sync that finished.
+  const unsynced = run("reviewMiddleEmptyHtml('unsynced')");
+  assert.ok(unsynced.includes('<strong>まだ同期していません</strong>') && !unsynced.includes('ありません'));
+  const partial = run("reviewMiddleEmptyHtml('partial')");
+  assert.ok(partial.includes('一覧に出ていない PR があるかもしれません') && !partial.includes('ありません。'));
+});
+
+test('which empty middle レビュー shows follows what is known of the records and the last sync', () => {
+  const kind = (doc, error = null) => run(`reviewMiddleKind(${JSON.stringify(doc)}, ${JSON.stringify(error)})`);
+  const at = '20261021T000000Z';
+  assert.strictEqual(kind(null), 'loading');
+  assert.strictEqual(kind(null, 'boom'), 'failed');
+  assert.strictEqual(kind({ records: [{ id: 'a/b#1' }], lastSync: null }), 'some');
+  assert.strictEqual(kind({ records: [], lastSync: null }), 'unsynced');
+  assert.strictEqual(kind({ records: [], lastSync: { at: '' } }), 'unsynced');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: false } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true, truncated: true } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true, failed: ['acme'] } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true, error: 'x' } }), 'partial');
+  assert.strictEqual(kind({ records: [], lastSync: { at, complete: true } }), 'none');
 });
 
 /* ── the first session with a task, and the selection kept per organisation ── */

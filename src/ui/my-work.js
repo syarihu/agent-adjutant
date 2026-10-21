@@ -1094,10 +1094,22 @@ const WORK_MIDDLE_EMPTY_HTML = '<div class="wk-mid-empty-in"><span class="materi
 
 /* What the middle of 「レビュー」 says with nothing selected. `kind` is 'some' (the list has PRs to choose from), 'none', or, while the
    records are not here, 'loading' or 'failed' (with `error`): nothing is claimed about a list that is not known. */
+/* Which of those the middle says: nothing is claimed before the records have come, and an empty list is 「ありません」 only after a sync
+   that finished (none ran, or the last one was cut short or failed: the list may be missing requests). */
+function reviewMiddleKind(doc, error) {
+  if (!doc) return error ? 'failed' : 'loading';
+  if ((doc.records || []).length > 0) return 'some';
+  const ls = doc.lastSync;
+  if (!ls?.at) return 'unsynced';
+  return ls.complete === false || ls.truncated || ls.error || (ls.failed || []).length ? 'partial' : 'none';
+}
+
 function reviewMiddleEmptyHtml(kind, error = '') {
   const [head, text] = {
     some: ['PR を選んでください', '左の一覧から選ぶと、ここに AI 下読みが出ます。'],
     none: ['レビューする PR はありません', 'レビューを頼まれた PR と、同期したリポジトリの PR がここに出ます。'],
+    unsynced: ['まだ同期していません', '左の「同期」を押すと、レビューを頼まれた PR がここに出ます。'],
+    partial: ['PR が見つかりませんでした', '最後の同期が終わりきっていないので、一覧に出ていない PR があるかもしれません。'],
     loading: ['読み込み中…', ''],
     failed: ['読み込めませんでした', error],
   }[kind] || ['', ''];
@@ -1432,7 +1444,7 @@ function renderWorkTerm() {
   const empty = !nav.task;
   wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
   const review = nav.list === 'review';
-  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : review ? reviewMiddleEmptyHtml(!others.doc ? (others.error ? 'failed' : 'loading') : othersRecords().length > 0 ? 'some' : 'none', others.error || '') : WORK_MIDDLE_EMPTY_HTML);
+  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : review ? reviewMiddleEmptyHtml(reviewMiddleKind(others.doc, others.error), others.error || '') : WORK_MIDDLE_EMPTY_HTML);
   wk('wk-mid-empty').hidden = !empty;
   // No session's terminal stays in the middle under the review list.
   if (empty && review) { disposeTermSlot(workTerm); workTerm.board = null; }
