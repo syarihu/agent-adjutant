@@ -32,6 +32,25 @@ body.wk-dragging { user-select: none; cursor: col-resize; }
 body.view-work #task-panel { order: 3; border-right: 0; border-left: 1px solid var(--md-sys-color-outline-variant); }
 body.view-work .tp-head-btns [data-tp-place] { display: none; }
 
+/* ── The terminal beside the board ──
+   On a resident server a card's terminal is this view's middle, shown in the board view as a sidebar (body.board-side, set by
+   syncBoardSide in my-work.js). The board keeps what the sidebar leaves, as wide as the person made it (--board-side-w) but never
+   so wide that the board has less than 320px; its edge is the handle for the width, and the button at its top right closes it. */
+.board-side-resize, .board-side-close { display: none; }
+body.board-side main { display: flex; }
+body.board-side #board-view { flex: 1 1 0; width: auto; }
+body.board-side #work-view {
+  position: relative; flex: none;
+  width: min(var(--board-side-w, 640px), calc(100vw - var(--rail-w) - var(--list-w) - 320px));
+  border-left: 1px solid var(--md-sys-color-outline-variant);
+}
+body.board-side .board-side-resize { display: block; position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; z-index: 3; touch-action: none; }
+body.board-side .board-side-resize:hover, body.board-side .board-side-resize:focus-visible, body.wk-dragging .board-side-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+body.board-side .board-side-close { display: inline-flex; position: absolute; top: 6px; right: 8px; z-index: 4; }
+/* The list's toggle and the work tabs belong to 「いまの仕事」; the heading starts at the top, clear of the close button. */
+body.board-side #wk-mid-row { display: none; }
+body.board-side .wk-term-head { padding-right: 44px; }
+
 .wk-list { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* In the list column: the rest of its height. */
 #side-list .wk-list { flex: 1; min-height: 0; }

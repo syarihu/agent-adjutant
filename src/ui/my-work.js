@@ -592,7 +592,11 @@ async function refreshWork(force = false) {
     if (pendingGate && view === 'work') openPendingGate();
     // The usage is under the list column on every view but the TODO's.
     renderWorkRate();
-    if (view !== 'work') return;
+    if (view !== 'work') {
+      // The terminal beside the board is drawn from this document too.
+      if (boardSideOn()) renderWorkTerm();
+      return;
+    }
     const json = JSON.stringify(workSig(doc));
     const minute = Math.floor((doc.now || 0) / 60);
     if (!force && !failed && json === work.json && minute === work.minute) return;
@@ -1337,6 +1341,42 @@ function renderWorkRate() {
 
 /* ── the middle terminal ── */
 
+/* The work view's terminal also stands beside the board, on a resident server: pressing a card (or a hub's terminal button) selects a
+   task, a hub or a session with `pane=term`, and the board's own view then shows #work-view as a sidebar instead of the task panel.
+   Everything the work view draws for its middle (the heading, the questions over the terminal, the floating buttons) is drawn there
+   by the same code, from `nav.board` + `nav.task` and the work document. */
+const boardSideRef = ref => isTaskRef(ref) || isHubRef(ref) || isSessRef(ref);
+const boardSideOn = () => multiBoard && view === 'board' && nav.pane === 'term' && !!nav.board && nav.board !== 'all'
+  && !!nav.task && boardSideRef(nav.task);
+/* Whether the middle terminal is on screen: in the work view, or beside the board. */
+const workTermOn = () => view === 'work' || boardSideOn();
+/* The view a move made from the middle terminal stays in: the board's, when the terminal is the board's sidebar. */
+const workNavView = () => boardSideOn() ? 'agent' : 'work';
+/* Whether the sidebar was shown at the last sync. */
+let boardSideShown = false;
+
+/* Shows #work-view beside the board while the sidebar is on, and takes the terminal down when it goes (to the work view, which draws
+   it itself, it is left to that view). Called when the screen is set (setView) and when the panel is drawn (renderTaskPanel), the two
+   places the address's selection is read. */
+function syncBoardSide() {
+  const on = boardSideOn();
+  const workView = wk('work-view');
+  if (workView) workView.style.display = view === 'work' || on ? 'grid' : 'none';
+  document.body.classList.toggle('board-side', on);
+  if (on === boardSideShown) return;
+  boardSideShown = on;
+  // The heading and the questions are the document's: a fresh one when the sidebar opens.
+  if (on) {
+    // The board narrows under the sidebar: the card that was pressed is brought back into view once it has.
+    requestAnimationFrame(() => document.querySelector('#board-agent .card.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    return void refreshWork(true);
+  }
+  if (view !== 'work') {
+    disposeTermSlot(workTerm);
+    workTerm.board = null;
+  }
+}
+
 const workTermPart = {};
 function setWorkTermPart(name, el, html) {
   if (!el || workTermPart[name] === html) return;
@@ -1439,7 +1479,7 @@ let workHeadFor = null;
 /* The terminal of what is selected, in the middle. A session of the board that was selected is the page's
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
-  if (view !== 'work') return;
+  if (!workTermOn()) return;
   // With nothing selected the middle is the empty state in the place of the terminal and the read-through.
   const empty = !nav.task;
   wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
@@ -1860,8 +1900,9 @@ function parentDetailParts(p) {
 /* ── widths ── */
 
 /* A width the person drags from an edge, or moves with the arrow keys, or puts back with a double click. `at` is the
-   width the pointer's x asks for; `apply` sets it. Saved when the pointer is let go. */
-function bindWidthHandle(handle, { read, apply: set, min, max, reset, at }) {
+   width the pointer's x asks for; `apply` sets it. `dir` is -1 for an edge on the left of what it widens, where the left arrow widens.
+   Saved when the pointer is let go. */
+function bindWidthHandle(handle, { read, apply: set, min, max, reset, at, dir = 1 }) {
   // A separator that can be focused says where it stands.
   const apply = w => { set(w); handle.setAttribute('aria-valuenow', String(w)); };
   handle.setAttribute('aria-valuemin', String(min));
@@ -1888,7 +1929,7 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at }) {
   handle.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    apply(clamp(read() + (e.key === 'ArrowRight' ? 24 : -24)));
+    apply(clamp(read() + (e.key === 'ArrowRight' ? 24 : -24) * dir));
     savePrefs();
   });
   handle.addEventListener('dblclick', () => {
@@ -1902,5 +1943,14 @@ bindWidthHandle(wk('list-resize'), {
   at: x => x - wk('nav-rail').offsetWidth,
   apply: w => { prefs.listWidth = w; document.body.style.setProperty('--list-w-set', `${w}px`); },
 });
+
+/* The sidebar beside the board: as wide as the person made it, within what the window leaves the board (320px and the columns before it). */
+bindWidthHandle(wk('board-side-resize'), {
+  read: () => prefs.boardSideWidth, min: 360, max: () => Math.min(1400, Math.max(360, innerWidth - wk('nav-rail').offsetWidth - wk('side-list').offsetWidth - 320)),
+  reset: 640, dir: -1,
+  at: x => innerWidth - x,
+  apply: w => { prefs.boardSideWidth = w; document.body.style.setProperty('--board-side-w', `${w}px`); },
+});
+wk('board-side-close').addEventListener('click', () => go({ task: null, pane: 'detail' }));
 
 registerView('work-view', { render: () => renderWorkView() });

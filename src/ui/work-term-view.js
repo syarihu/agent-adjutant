@@ -214,7 +214,7 @@ function workMoreAct(b) {
   if (!s) return;
   const act = b.dataset.wkMoreAct;
   if (act === 'link-new' || act === 'link-existing') return openLinkDialog(s, act === 'link-new' ? 'new' : 'existing');
-  if (act === 'goto-board') return s.task ? go({ board: b.dataset.board, view: 'work', task: s.task, pane: 'detail' }) : undefined;
+  if (act === 'goto-board') return s.task ? go({ board: b.dataset.board, view: workNavView(), task: s.task, pane: boardSideOn() ? 'term' : 'detail' }) : undefined;
   if (['restart', 'open', 'copy', 'cleanup'].includes(act)) return runSessionAction(act, s);
 }
 
@@ -489,7 +489,7 @@ questionDialogEl().addEventListener('click', e => {
   const queued = e.target.closest('[data-tp-task]');
   if (queued) {
     dialogStack.closeAll();
-    return go({ board: nav.board, view: 'work', task: queued.dataset.tpTask, pane: 'detail' });
+    return go({ board: nav.board, view: workNavView(), task: queued.dataset.tpTask, pane: boardSideOn() ? 'term' : 'detail' });
   }
   hubPanelClick(e, hub);
 });

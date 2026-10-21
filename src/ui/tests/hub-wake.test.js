@@ -1,5 +1,5 @@
 /* The rules of the hub's wake button (hubWakeBlocked, src/ui/actions.js), run with `node --test`. The rules are the same wherever the
-   button is drawn: the board's hub entry, the hub panel and the chip in 「いまの仕事」. */
+   button is drawn: the hub panel and the chip in 「いまの仕事」. */
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -104,12 +104,10 @@ test('focus after a wake goes back only to the woken hub\'s button', async () =>
     await p;
     return looked.slice();
   };
-  const strip = slug => ({ dataset: { action: 'wake-hub', wakeSlug: slug } });
-  assert.deepStrictEqual(await wake(strip('a'), 'a'), ['#hub-strip [data-action="wake-hub"][data-wake-slug="a"]']);
   assert.deepStrictEqual(await wake({ dataset: { tpHub: 'wake', wakeSlug: 'a' } }, 'a'), ['[data-tp-hub="wake"][data-wake-slug="a"]']);
   assert.deepStrictEqual(await wake({ dataset: { wkWake: 'k/hub:a', wakeSlug: 'a' } }, 'a'), ['[data-wk-wake="k/hub:a"][data-wake-slug="a"]']);
   // Focus that was not on this hub's button is not restored anywhere.
-  assert.deepStrictEqual(await wake(strip('b'), 'a'), []);
+  assert.deepStrictEqual(await wake({ dataset: { tpHub: 'wake', wakeSlug: 'b' } }, 'a'), []);
 });
 
 test('focus after a wake prefers the copy of the button in its own cell of the work list', async () => {

@@ -145,6 +145,20 @@ What waits on you, across every repository. The rail's TODO entry carries a badg
 
 An answered item leaves the list at once. The selected item is page state; only `?view=todo` is in the address. The list is narrowed in one place, `todoInScope` in `src/ui/todo-view.js`.
 
+---
+
+### 4. ボード (Board: `?view=agent`)
+
+The rail's ボード shows the list of boards in the list column and the cards of the selected board in the middle.
+
+- **The list of boards**: 「すべて」 (with the number of repositories) first, then each repository with its parent-task hubs under it. A row says what its hub is (リポジトリ hub or 親タスク hub, with 「 · 止まっています」 added when the hub is stopped), shows a dot for its state (green running, grey stopped, red stale) and, at the right, how many tasks of that board are still open (`open` of `/api/boards`: every task that is neither done nor cancelled; nothing is shown at zero). 「すべて」 shows the sum. Every row has a terminal button that opens its hub beside the board (a stopped hub shows 「hub を起動」 there); a stopped hub's row also has 起動.
+- **The head** is one line: the board's name in bold (「すべて」, the repository, or `<repository> · <hub key and title>` for a parent-task hub's board) and 「エージェントの作業」.
+- **Six columns** of equal width, each with its name and count: 着手前, 計画, 実装, セルフレビュー, PR・レビュー対応 and 完了. 着手前 lists the queue first (each card with 「キュー N」, N being its order) and then the backlog (「Backlog」), and has 「次を流す」. 完了 folds the cards older than a day behind 「以前の完了」. The PR・レビュー対応 column has 「PR確認」 and says when the automatic reading of PRs has stopped.
+- **A card that waits on you** has a warning-coloured edge on its left and a line 「…を待っています」. The words come from the gate that is open (着手確認, 起票の確認, 計画, 差分, 動作確認, 報告, 回答, 指摘の転送) or, with no gate and a PR on your turn, from the PR (修正の依頼への対応, マージ, CI の失敗への対応, 閉じた PR の判断; otherwise PR のレビュー). A worker on a permission prompt shows 許可待ち in the error colour. A card with a PR also carries the pill of whose turn the PR is on.
+- **The terminal beside the board** (resident server): pressing a card whose task is at work (`dispatched` or `pr`) or is your turn (a gate open, or its PR waiting on you), a card of a session with no task, or the terminal button of a hub's row opens that terminal in a sidebar at the right of the board, with the heading, the questions that slide down over it and the two floating buttons of いまの仕事. The board stays on the left and keeps scrolling; the columns keep at least 140px and scroll sideways. The sidebar is closed with its × button, and its width is dragged by its left edge (360px to 1400px, arrow keys and a double click work too) and remembered. The address keeps it: `?task=<id>&pane=term` (or `hub:<id>`, `session:<id>`), so back and forward work. A backlog, queued, done or cancelled card opens its detail dialog instead. A board served alone has no sidebar: a card opens the task panel.
+
+The old `?view=human` address (the human board has been removed; what waits on you is in the TODO view) opens this view.
+
 ## Task Panel & Gates
 
 Clicking any task card opens its detail panel:
@@ -184,11 +198,11 @@ Cards automatically advance across board columns based on worker phases and GitH
 | Draft | Worker | In Progress (Agents) |
 | Ready, assigned to other reviewers | Other reviewer | Agents column (レビュー待ち（他の人）) |
 | Waiting on review bots or CI | Bots / CI | Agents column (bot・CI 待ち) |
-| Changes requested | You | PR Review (修正の依頼あり) |
-| Approved | You (to merge) | PR Review (マージ待ち) |
-| Failing CI | You | PR Review (CI 失敗) |
+| Changes requested | You | PR・レビュー対応 column, with the 修正の依頼あり pill |
+| Approved | You (to merge) | PR・レビュー対応 column, with the マージ待ち pill |
+| Failing CI | You | PR・レビュー対応 column, with the CI 失敗 pill |
 | Merged | Nobody | Done |
-| Closed without merge | You (decision) | PR Review (閉じられた) |
+| Closed without merge | You (decision) | PR・レビュー対応 column, with the 閉じられた pill |
 
 The resident server polls GitHub notification events (`GET /notifications`) with `If-Modified-Since` and queries updated PRs in single GraphQL batches. Cards refresh every 5 minutes as a fallback. Manual refresh is available via `adjutant task refresh` or clicking "PR確認". A refresh also corrects the PR state kept on done tasks, and moving a card to done reads its PR once.
 

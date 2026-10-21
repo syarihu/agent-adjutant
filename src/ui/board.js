@@ -1,4 +1,4 @@
-/* The decision a board button's `data-act` ends up sending: act() remaps these by kind. */
+/* The decision a gate button of the task panel ends up sending, for the label it is drawn with. */
 const sentDecision = (action, kind) =>
   action === 'approve' ? (kind === 'result' ? 'ack' : 'approve')
   : action === 'start' ? 'approve'
@@ -213,408 +213,154 @@ function openRecord(id) {
   goToGate(id);
 }
 
-/* ── Inline reply forms on human board ── */
-const openReplies = {}; // task/gate id -> 'reject' | 'changes' | 'answer' | 'ask'
 const acting = new Set(); // guard against duplicate in-flight requests
 
-async function act(action, id, choice) {
-  const isFormOpen = ['reject', 'changes', 'answer', 'ask'].includes(action);
-  if (isFormOpen) {
-    openReplies[id] = action;
-    renderColumns(true);
-    const ta = document.querySelector(`textarea[data-reply="${id}"]`);
-    if (ta) ta.focus();
-    return;
+/* A button of the task panel's gate (`data-tp-act`) and the 「PR確認」 button of the PR column (`data-act`). */
+async function act(action, id) {
+  // 「PR確認」 names no task: it is kept from running twice at once under its own name.
+  const key = action === 'refresh-prs' ? action : id;
+  if (acting.has(key)) return;
+  if (action === 'refresh-prs') {
+    acting.add(key);
+    try { return await refreshPrs(); } finally { acting.delete(key); }
   }
-  if (action === 'cancel') {
-    delete openReplies[id];
-    renderColumns(true);
-    return;
-  }
-
-  if (acting.has(id)) return;
   acting.add(id);
-
-  let succeeded = true;
-  const submitAnswer = async (...args) => {
-    succeeded = await answer(...args);
-  };
 
   try {
     const t = (state.tasks || []).find(x => x.id === id);
     const gate = t ? openGate(t) : (state.gates || []).find(g => gateRef(g) === id);
-    const replyEl = document.querySelector(`textarea[data-reply="${id}"]`);
-    const reply = replyEl ? replyEl.value.trim() : '';
+    let succeeded = true;
 
-    switch (action) {
-      case 'start': {
-        if (gate) {
-          await submitAnswer('approve', undefined, gateRef(gate), '');
-        } else if (t) {
-          try {
-            await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
-              method: 'POST', body: JSON.stringify({ autoStart: true }),
-            });
-          } catch (e) {
-            note(`adj task update --id ${t.id} → ${e.message}`, true);
-            succeeded = false;
-          }
+    if (action === 'start') {
+      if (gate) {
+        succeeded = await answer('approve', undefined, gateRef(gate), '');
+      } else if (t) {
+        try {
+          await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
+            method: 'POST', body: JSON.stringify({ autoStart: true }),
+          });
+        } catch (e) {
+          note(`adj task update --id ${t.id} → ${e.message}`, true);
+          succeeded = false;
         }
-        break;
       }
-      case 'shelve': {
-        if (gate) {
-          await submitAnswer('reject', undefined, gateRef(gate), '');
-        } else if (t) {
-          // The queue is one board's; from 「すべて」 the card's own board takes it.
-          if (scopeAll()) {
-            try {
-              await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
-                method: 'POST', body: JSON.stringify({ status: 'backlog' }),
-              });
-            } catch (e) {
-              note(`adj task update --id ${t.id} --status backlog → ${e.message}`, true);
-              succeeded = false;
-            }
-          } else await move(t.id, 'backlog');
-        }
-        break;
-      }
-      case 'approve': {
-        const decision = gate?.kind === 'result' ? 'ack' : 'approve';
-        if (gate) {
-          await submitAnswer(decision, undefined, gateRef(gate), reply);
-        }
-        break;
-      }
-      case 'choice': {
-        if (gate && choice) {
-          await submitAnswer('choice', choice, gateRef(gate), reply);
-        }
-        break;
-      }
-      case 'send-reject': {
-        const decision = sentDecision('reject', gate?.kind);
-        if (gate) {
-          await submitAnswer(decision, undefined, gateRef(gate), reply || '差し戻し');
-        }
-        break;
-      }
-      case 'send-changes': {
-        if (gate) {
-          await submitAnswer('changes', undefined, gateRef(gate), reply || '修正指示');
-        } else if (t && reply) {
-          try {
-            await boardApi(baseOf(t), `/api/tasks/${encodeURIComponent(t.id)}`, {
-              method: 'POST', body: JSON.stringify({ note: `PR指摘: ${reply}` }),
-            });
-          } catch (e) {
-            note(`adj task update --id ${t.id} → ${e.message}`, true);
-            succeeded = false;
-          }
-        }
-        break;
-      }
-      case 'send-answer': {
-        if (gate) {
-          await submitAnswer('answer', undefined, gateRef(gate), reply || '回答');
-        }
-        break;
-      }
-      case 'send-ask': {
-        if (gate) {
-          await submitAnswer('ask', undefined, gateRef(gate), reply || '追加の質問');
-        }
-        break;
-      }
-      case 'refresh-prs': {
-        await refreshPrs();
-        break;
-      }
+    } else if (action === 'approve') {
+      if (gate) succeeded = await answer(gate.kind === 'result' ? 'ack' : 'approve', undefined, gateRef(gate), '');
     }
-    if (succeeded) {
-      delete openReplies[id];
-      renderColumns(true);
-      await refresh(true);
-    }
+    if (succeeded) await refresh(true);
   } finally {
     acting.delete(id);
   }
 }
 
-/* The hub's entry above the agent columns, on a board other than 「すべて」: how its session is
-   (as a row of the work list says it), and, when something that calls for it is waiting in its
-   inbox, how much is unread and a button that wakes it. The button is drawn from `hubWake` (actions.js) as well as from the
-   state, as are the hub panel's and the one beside a hub's row in 「いまの仕事」. */
-let hubStripKey = null;
-function renderHubStrip() {
-  const strip = document.getElementById('hub-strip');
-  if (!strip) return;
-  const line1 = document.getElementById('hub-strip-line1');
-  const line2 = document.getElementById('hub-strip-line2');
-  const body = document.getElementById('hub-strip-line2-body');
-  const why = document.getElementById('hub-wake-why');
-  const h = scopeAll() ? null : pageHub();
-  // The reason's live region is part of the page, not of what is rewritten here, so a change in
-  // its text is what a screen reader hears; it is set only when it differs.
-  const say = text => { if (why.textContent !== text) why.textContent = text; };
-  // Written only when it differs from what is there, so a redraw that changes nothing leaves the
-  // focus on its buttons.
-  const put = (main, inbox) => {
-    const key = `${main}\0${inbox}`;
-    if (key === hubStripKey) return;
-    hubStripKey = key;
-    const was = strip.contains(document.activeElement) ? document.activeElement.dataset.action : null;
-    strip.hidden = !main;
-    line2.hidden = !inbox;
-    line1.innerHTML = main;
-    body.innerHTML = inbox;
-    // Focus that was on the strip stays on it: on the same control, or on the next best one when
-    // that is gone or cannot take focus (the wake button while its request is on its way).
-    if (was) {
-      const ok = a => [...strip.querySelectorAll('button')].find(b => b.dataset.action === a && !b.disabled);
-      (ok(was) || ok('hub-strip-open') || ok('own-hub'))?.focus();
-    }
-  };
-  if (!h) {
-    say('');
-    return put('', '');
-  }
-  const s = hubSessionOf(h);
-  const st = sessionState(s);
-  const label = sessionLabel(s);
-  const last = sessionLastText(s, state);
-  const unseen = h.unseen || 0;
-  const seen = h.seen || 0;
-  const wakeWhy = hubWakeWhy(h);
-  const main = `<button type="button" class="hub-strip-main" data-action="own-hub" title="hub のターミナルを開く">
-    <span class="m3-pill sess-row-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>
-    <span class="hub-strip-name">hub · ${esc(label.text)}</span>
-    <span class="hub-strip-last">${esc(last)}</span></button>`;
-  // Where the parent issue's title stands, and the button that reads it now: beside the entry's button, never inside it.
-  const titled = h.titleState
-    ? `<span class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, BASE, 'data-action="hub-title-read"')}${hubTitleWhyHtml(h)}</span>` : '';
-  let inbox = '';
-  if (unseen + seen > 0) {
-    const oldest = unseen && h.oldestUnseenAt ? stampSecs(h.oldestUnseenAt) : null;
-    const age = oldest != null && state.now != null ? ` · 最古の未確認 ${agoLabel(minutesSince(oldest, state.now))}` : '';
-    const blocked = hubWakeBlocked(h, BASE);
-    inbox = `<span class="hub-strip-counts">受信箱 未確認 ${unseen} · 確認済み・未処理 ${seen}${esc(age)}</span>
-      <button type="button" class="btn-m3-text hub-strip-subjects" data-action="hub-strip-open">件名を見る</button>
-      <button type="button" class="col-btn-nudge hub-strip-wake" data-action="wake-hub" data-wake-slug="${esc(h.slug)}"${blocked ? ' disabled' : ''} title="${esc(blocked || HUB_WAKE_TITLE)}"><span class="material-symbols-outlined" style="font-size:13px;" aria-hidden="true">notifications_active</span><span>hub を起こす</span></button>`;
-  }
-  say(inbox ? wakeWhy : '');
-  put(main + titled, inbox);
-}
-
-let boardHeld = false;
-/* Draws the columns afresh across both Human board and Agent board. */
-function renderColumns(force = false) {
-  const hb = document.getElementById('board-human');
+/* Draws the six columns afresh. */
+function renderColumns() {
   const ab = document.getElementById('board-agent');
-  if (!hb && !ab) return;
-
-  // Same rule as the task panel's (panelHeld): a redraw loses the IME composition being typed.
-  if (!force && document.activeElement?.matches('textarea[data-reply]')) {
-    boardHeld = true;
-    return;
-  }
-  boardHeld = false;
+  if (!ab) return;
 
   // Preserve scroll positions
   const scrolled = {};
-  for (const cards of document.querySelectorAll('#boards .col-cards')) {
-    const pane = cards.closest('.pane');
+  for (const cards of ab.querySelectorAll('.col-cards')) {
     const colId = cards.parentElement.dataset.col;
-    if (pane && colId) scrolled[`${pane.id}-${colId}`] = cards.scrollTop;
+    if (colId) scrolled[colId] = cards.scrollTop;
   }
 
-  // Preserve typed replies
-  const drafts = {};
-  document.querySelectorAll('textarea[data-reply]').forEach(a => {
-    drafts[a.dataset.reply] = a.value;
-  });
+  ab.innerHTML = '';
+  // A session with no task has no phase to place it by, so it sits with the work that is
+  // under way; a column that does not draw these cards sends them to 実装 so none vanishes.
+  // The repository's board also lists the parent-task hubs' tasks (`hubTasks`), so their workers have cards.
+  const all = [...(state.tasks || []), ...(state.hubTasks || [])];
+  const known = new Set(all.map(t => t.worktree).filter(Boolean));
+  // The hub this worker's board is: its own tag in 「すべて」, else this page's. Unknown means nothing is told apart.
+  const ownSlugOf = w => w._slug || pageHub()?.slug || null;
+  // A task id is only unique within a hub, so a worker belongs to a card of the hub it reports to.
+  const ofHub = (t, w) => t.ownerHub ? t.ownerHub.slug === w.hubSlug : !ownSlugOf(w) || !w.hubSlug || w.hubSlug === ownSlugOf(w);
+  // A worker that names a task of the board belongs to that task's card, which finds its session by `s.task`.
+  const ofBoard = w => w.task && all.some(t => t.id === w.task && (!w._slug || t._slug === w._slug) && ofHub(t, w));
+  // A worker that reports to another hub is that hub's, and its board has the card.
+  const elsewhere = w => !!w.task && !!ownSlugOf(w) && !!w.hubSlug && w.hubSlug !== ownSlugOf(w);
+  const bare = (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w) && !elsewhere(w));
+  const bareCol = w => {
+    const c = AGENT_COL_OF_PHASE[w.phase];
+    return c && c !== 'before' && c !== 'done' ? c : 'implement';
+  };
+  for (const def of AGENT_COLUMNS) {
+    const bareIn = def.id === 'before' || def.id === 'done' ? [] : bare.filter(w => bareCol(w) === def.id);
+    const items = all.filter(t => agentColOf(t) === def.id);
+    let older = [];
+    let displayItems = items;
+    if (def.id === 'done') {
+      const cutoff = Date.now() - DONE_SHOWN_HOURS * 3600 * 1000;
+      older = items.filter(t => updatedMs(t) < cutoff);
+      if (!showOlderDone) displayItems = items.filter(t => updatedMs(t) >= cutoff);
+    }
 
-  const humanItems = (state.tasks || []).filter(t => humanColOf(t));
-  const gateTaskIds = new Set((state.tasks || []).map(t => t.id));
-  const standaloneGates = (state.gates || []).filter(g => !g.task || !gateTaskIds.has(g.task));
+    // Done cards folded away still count: the column holds them behind the 以前の完了 button.
+    const totalCount = (def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length) + bareIn.length;
+    const col = document.createElement('section');
+    col.className = 'col';
+    col.dataset.col = def.id;
 
-  // Render Human Board
-  if (hb) {
-    hb.innerHTML = '';
-    for (const def of HUMAN_COLUMNS) {
-      const tasksInCol = humanItems.filter(t => humanColOf(t) === def.id);
-      const gatesInCol = standaloneGates.filter(g => g.humanCol === def.id);
-      const allItems = [
-        ...tasksInCol.map(t => ({ isGate: false, item: t, at: waitingSinceMs(t) })),
-        ...gatesInCol.map(g => ({ isGate: true, item: g, at: stampSecs(g.openedAt) ? stampSecs(g.openedAt) * 1000 : 0 })),
-      ].sort((a, b) => a.at - b.at);
+    const nextBtn = def.id === 'before' && !scopeAll()
+      ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" data-action="nudge-hub"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
+      : '';
+    // The PR column is where a PR's state is read again, and where it says that the automatic reading has stopped.
+    const prBtn = def.id === 'pr' && !scopeAll()
+      ? '<button type="button" class="col-btn-nudge" title="PR の状態を読み直す" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>'
+      : '';
+    const prWarn = def.id === 'pr' && state.prPoll?.error
+      ? `<div class="col-warn" title="${esc(state.prPoll.error)}">PR の自動確認が止まっています: ${esc(state.prPoll.error)}</div>` : '';
 
-      const col = document.createElement('section');
-      col.className = 'col human' + (allItems.length ? '' : ' empty');
-      col.dataset.col = def.id;
-
-      const headerHtml = `
-        <div class="col-header">
-          <div class="col-header-top">
-            <div class="col-title-badge">
-              <span class="material-symbols-outlined">${def.icon}</span>
-              <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
-              <span class="col-count-pill">${allItems.length}</span>
-            </div>
-            ${def.id === 'prreview' && !scopeAll() ? `<button type="button" class="col-btn-nudge" title="PR の状態を読み直す" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>` : ''}
+    const headerHtml = `
+      <div class="col-header">
+        <div class="col-header-top">
+          <div class="col-title-badge">
+            <span class="material-symbols-outlined">${def.icon}</span>
+            <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
+            <span class="col-count-pill">${totalCount}</span>
           </div>
-          ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
-          ${def.id === 'prreview' && state.prPoll?.error ? `<div class="col-warn" title="${esc(state.prPoll.error)}">PR の自動確認が止まっています: ${esc(state.prPoll.error)}</div>` : ''}
+          ${nextBtn}${prBtn}
         </div>
-      `;
-      col.insertAdjacentHTML('afterbegin', headerHtml);
+        ${prWarn}
+      </div>
+    `;
+    col.insertAdjacentHTML('afterbegin', headerHtml);
 
-      const cards = document.createElement('div');
-      cards.className = 'col-cards';
-      if (!allItems.length) {
+    const cards = document.createElement('div');
+    cards.className = 'col-cards';
+
+    if (def.id === 'before') {
+      // The queue first, in the order the hub takes it, then what is still in the backlog.
+      const queued = items.filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
+      const backlog = items.filter(t => t.status === 'backlog');
+      if (!queued.length && !backlog.length) cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
+      for (const t of [...queued, ...backlog]) cards.appendChild(agentCard(t));
+    } else {
+      // What waits on the person comes last, the newest phase first.
+      displayItems.sort((a, b) => (!!humanColOf(a) - !!humanColOf(b)) || (b.phaseAt || updatedMs(b) || 0) - (a.phaseAt || updatedMs(a) || 0));
+      if (!displayItems.length && !bareIn.length) {
         cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
       } else {
-        for (const entry of allItems) {
-          if (entry.isGate) {
-            cards.appendChild(humanGateCard(entry.item, def.id));
-          } else {
-            cards.appendChild(humanCard(entry.item, def.id));
-          }
-        }
+        for (const t of displayItems) cards.appendChild(agentCard(t));
       }
-      col.appendChild(cards);
-      hb.appendChild(col);
+      for (const w of bareIn) cards.appendChild(sessionCard(w));
+
+      if (older.length && def.id === 'done') {
+        cards.insertAdjacentHTML('beforeend',
+          `<button type="button" class="more" style="width:100%;margin-top:6px;padding:6px;font-size:11.5px;border:1px dashed var(--md-sys-color-outline-variant);border-radius:var(--md-shape-corner-sm);background:transparent;color:var(--md-sys-color-primary);">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
+        cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
+      }
     }
-  }
 
-  // Stuck strip on Human Board
-  const stuckSlot = document.getElementById('stuck-strip-slot');
-  if (stuckSlot) {
-    const activeTasks = (state.tasks || []).filter(t => ['dispatched', 'pr'].includes(t.status));
-    const stuck = activeTasks.filter(t => stuckOf(t) && !humanColOf(t));
-    stuckSlot.innerHTML = stuck.length
-      ? `<div class="stuck-strip">
-          <span class="material-symbols-outlined" style="font-size:16px;">timer</span>
-          <span>止まっている worker があります：</span>
-          ${stuck.map(t => {
-            const w = workerOf(t);
-            const p = w?.phase ? (PHASE_LABEL[w.phase] || w.phase) : t.status;
-            return `<button type="button" data-jump-agent="${esc(t.id)}">${esc(t.id)}（${esc(p)}: ${esc(stuckOf(t))}）</button>`;
-          }).join(' ')}
-        </div>`
-      : '';
-  }
-
-  renderHubStrip();
-
-  // Render Agent Board
-  if (ab) {
-    ab.innerHTML = '';
-    // A session with no task has no phase to place it by, so it sits with the work that is
-    // under way; a column that does not draw these cards sends them to 実装 so none vanishes.
-    // The repository's board also lists the parent-task hubs' tasks (`hubTasks`), so their workers have cards.
-    const all = [...(state.tasks || []), ...(state.hubTasks || [])];
-    const known = new Set(all.map(t => t.worktree).filter(Boolean));
-    // The hub this worker's board is: its own tag in 「すべて」, else this page's. Unknown means nothing is told apart.
-    const ownSlugOf = w => w._slug || pageHub()?.slug || null;
-    // A task id is only unique within a hub, so a worker belongs to a card of the hub it reports to.
-    const ofHub = (t, w) => t.ownerHub ? t.ownerHub.slug === w.hubSlug : !ownSlugOf(w) || !w.hubSlug || w.hubSlug === ownSlugOf(w);
-    // A worker that names a task of the board belongs to that task's card, which finds its session by `s.task`.
-    const ofBoard = w => w.task && all.some(t => t.id === w.task && (!w._slug || t._slug === w._slug) && ofHub(t, w));
-    // A worker that reports to another hub is that hub's, and its board has the card.
-    const elsewhere = w => !!w.task && !!ownSlugOf(w) && !!w.hubSlug && w.hubSlug !== ownSlugOf(w);
-    const bare = (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w) && !elsewhere(w));
-    const bareCol = w => {
-      const c = AGENT_COL_OF_PHASE[w.phase];
-      return c && c !== 'before' && c !== 'done' ? c : 'implement';
-    };
-    for (const def of AGENT_COLUMNS) {
-      const bareIn = def.id === 'before' || def.id === 'done' ? [] : bare.filter(w => bareCol(w) === def.id);
-      const items = all.filter(t => agentColOf(t) === def.id);
-      const isNarrow = def.id === 'before' || def.id === 'done';
-      let older = [];
-      let displayItems = items;
-      if (def.id === 'done') {
-        const cutoff = Date.now() - DONE_SHOWN_HOURS * 3600 * 1000;
-        older = items.filter(t => updatedMs(t) < cutoff);
-        if (!showOlderDone) displayItems = items.filter(t => updatedMs(t) >= cutoff);
-      }
-
-      const totalCount = (def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length) + bareIn.length;
-      // Done cards folded away still count: the column holds them behind the 以前の完了 button.
-      const isEmpty = totalCount === 0 && !older.length;
-      const col = document.createElement('section');
-      col.className = 'col' + (isNarrow ? ' narrow' : '') + (isEmpty ? ' empty' : '');
-      col.dataset.col = def.id;
-
-      const nextBtn = def.id === 'before' && !scopeAll()
-        ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" data-action="nudge-hub"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
-        : '';
-
-      const headerHtml = `
-        <div class="col-header">
-          <div class="col-header-top">
-            <div class="col-title-badge">
-              <span class="material-symbols-outlined">${def.icon}</span>
-              <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
-              <span class="col-count-pill">${totalCount}</span>
-            </div>
-            ${nextBtn}
-          </div>
-          ${def.hint ? `<div class="col-subtext" title="${esc(def.hint)}">${esc(def.hint)}</div>` : ''}
-        </div>
-      `;
-      col.insertAdjacentHTML('afterbegin', headerHtml);
-
-      const cards = document.createElement('div');
-      cards.className = 'col-cards';
-
-      if (def.id === 'before') {
-        const queued = items.filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
-        const backlog = items.filter(t => t.status === 'backlog');
-        cards.insertAdjacentHTML('beforeend', `<div class="col-section"><span class="material-symbols-outlined" style="font-size:14px;">hourglass_empty</span><span>待ち ${queued.length}</span></div>`);
-        if (!queued.length) cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder" style="margin-bottom:8px;">待ちタスクなし</div>');
-        for (const t of queued) cards.appendChild(agentCard(t));
-
-        cards.insertAdjacentHTML('beforeend', `<div class="col-section" style="margin-top:10px;"><span class="material-symbols-outlined" style="font-size:14px;">inventory_2</span><span>Backlog ${backlog.length}</span></div>`);
-        if (!backlog.length) cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">Backlog なし</div>');
-        for (const t of backlog) cards.appendChild(agentCard(t));
-      } else {
-        displayItems.sort((a, b) => (!!humanColOf(a) - !!humanColOf(b)) || (b.phaseAt || updatedMs(b) || 0) - (a.phaseAt || updatedMs(a) || 0));
-        if (!displayItems.length && !bareIn.length) {
-          cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
-        } else {
-          for (const t of displayItems) cards.appendChild(agentCard(t));
-        }
-        for (const w of bareIn) cards.appendChild(sessionCard(w));
-
-        if (older.length && def.id === 'done') {
-          cards.insertAdjacentHTML('beforeend',
-            `<button type="button" class="more" style="width:100%;margin-top:6px;padding:6px;font-size:11.5px;border:1px dashed var(--md-sys-color-outline-variant);border-radius:var(--md-shape-corner-sm);background:transparent;color:var(--md-sys-color-primary);">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
-          cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
-        }
-      }
-
-      col.appendChild(cards);
-      ab.appendChild(col);
-    }
+    col.appendChild(cards);
+    ab.appendChild(col);
   }
 
   // Restore scroll positions
-  for (const cards of document.querySelectorAll('#boards .col-cards')) {
-    const pane = cards.closest('.pane');
-    const colId = cards.parentElement.dataset.col;
-    if (pane && colId) {
-      const top = scrolled[`${pane.id}-${colId}`];
-      if (top) cards.scrollTop = top;
-    }
+  for (const cards of ab.querySelectorAll('.col-cards')) {
+    const top = scrolled[cards.parentElement.dataset.col];
+    if (top) cards.scrollTop = top;
   }
-
-  // Restore typed drafts
-  document.querySelectorAll('textarea[data-reply]').forEach(a => {
-    if (drafts[a.dataset.reply] != null) a.value = drafts[a.dataset.reply];
-  });
 }
 
 /* Open the panel of a gate, where the person is: a gate is named by its board and id, since two boards
@@ -637,16 +383,6 @@ function openGateInWork(g) {
   // The row whose entry holds the gate (its task's, the hub's or its own), with the gate shown; else the gate's own panel.
   if (openGateRow(`${slug}/${g.id}`)) return;
   go({ board: slug, view: 'work', task: `${WORK_GATE_REF}${slug}/${g.id}`, pane: 'detail' });
-}
-
-/* Where a waiting gate is read and answered: its task's panel, in the tab of its kind, when the
-   task is on the board. A gate with no task — the hub's, or one whose task is gone — is judged
-   in a panel of its own (`goToGate`). */
-function judgeGate(gateId) {
-  const g = (state.gates || []).find(x => x.id === gateId);
-  const owner = g?.task && (state.tasks || []).find(t => t.id === g.task && (!g._slug || t._slug === g._slug));
-  if (owner) onBoard(g._slug, () => openTask(owner.id, TAB_OF_KIND[g.kind] || 'history', g.id));
-  else goToGate(gateId);
 }
 
 /* The review comments of the task the panel is open on, once a person asked for them.
@@ -739,16 +475,6 @@ document.addEventListener('click', e => {
     e.stopPropagation();
     return act(a.dataset.act, a.dataset.id, a.dataset.choice);
   }
-  const jh = e.target.closest('[data-jump-human]');
-  if (jh) {
-    e.stopPropagation();
-    return jump('human', jh.dataset.jumpHuman);
-  }
-  const ja = e.target.closest('[data-jump-agent]');
-  if (ja) {
-    e.stopPropagation();
-    return jump('agent', ja.dataset.jumpAgent);
-  }
   const dh = e.target.closest('[data-hand]');
   if (dh) {
     e.stopPropagation();
@@ -758,11 +484,6 @@ document.addEventListener('click', e => {
   if (di) {
     e.stopPropagation();
     return worktreeAct('ide', di.dataset.ide, false, slugOf(di));
-  }
-  const so = e.target.closest('[data-sess-open]');
-  if (so) {
-    e.stopPropagation();
-    return onBoard(slugOf(so), () => openSessionRef(so.dataset.sessOpen));
   }
   const sl = e.target.closest('[data-sess-link]');
   if (sl) {
@@ -775,16 +496,6 @@ document.addEventListener('click', e => {
       if (s) openLinkDialog(s, sl.dataset.sessLink);
     });
   }
-  const dt = e.target.closest('[data-term-session]');
-  if (dt) {
-    e.stopPropagation();
-    return onBoard(slugOf(dt), () => openTaskPanel(dt.dataset.termSession, 'term'));
-  }
-  const dg = e.target.closest('[data-gate]');
-  if (dg) {
-    e.stopPropagation();
-    return onBoard(slugOf(dg), () => judgeGate(dg.dataset.gate));
-  }
   const dr = e.target.closest('[data-record]');
   if (dr) {
     e.stopPropagation();
@@ -792,27 +503,4 @@ document.addEventListener('click', e => {
   }
 });
 
-document.addEventListener('keydown', e => {
-  if (e.target.matches('textarea[data-reply]')) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
-      e.preventDefault();
-      const id = e.target.dataset.reply;
-      const open = openReplies[id];
-      if (open) act(`send-${open}`, id);
-    }
-  }
-});
-
-document.getElementById('boards')?.addEventListener('focusout', e => {
-  if (!boardHeld || !e.target.matches('textarea[data-reply]')) return;
-  setTimeout(() => {
-    if (!boardHeld || document.activeElement?.matches('textarea[data-reply]')) return;
-    renderColumns();
-  });
-});
-
-registerView('columns', {
-  render: () => renderColumns(),
-  // Keyed by a bare task id: they belong to the board being left.
-  reset: () => { for (const k of Object.keys(openReplies)) delete openReplies[k]; },
-});
+registerView('columns', { render: () => renderColumns() });

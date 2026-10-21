@@ -54,7 +54,9 @@ test('the PR panes belong to a PR: another task falls back to 詳細, and a PR i
   // A task on 「すべて」 is dropped as before; so is a PR when the view is not the work view.
   assert.strictEqual(w.parse('/?token=t&view=work&task=t1').task, null);
   assert.strictEqual(w.parse(`/?token=t&view=agent&task=${enc}`).task, null);
+  // The human board is gone: its old address reads as the board, which keeps no PR either.
   assert.strictEqual(w.parse(`/?token=t&view=human&task=${enc}`).task, null);
+  assert.strictEqual(w.parse(`/?token=t&view=human&task=${enc}`).view, 'agent');
   // A board served on its own has no work view.
   assert.strictEqual(world(false).parse(`/?token=t&view=work&task=${enc}`).task, null);
 });
@@ -94,6 +96,10 @@ test('an older link to a task\'s AI 下読み opens the task on its own pane and
   w.c.pendingOwnRead = null;
   assert.strictEqual(w.parse('/b/acme/?token=t&task=t1&pane=ai').pane, 'detail');
   assert.strictEqual(w.parse('/b/acme/?token=t&view=human&task=t1&pane=ai-drafts').pane, 'detail');
+  // An old human-board address opens the board with the same task, and the address written for it never says `human`.
+  assert.deepStrictEqual(w.parse('/b/acme/?token=t&view=human&task=t1&pane=term'), { board: 'acme', view: 'agent', list: 'task', task: 't1', pane: 'term' });
+  assert.strictEqual(w.urlOf({ board: 'acme', view: 'agent', task: 't1', pane: 'term' }), '/b/acme/?token=t&task=t1&pane=term');
+  // Not a task: a hub, a session, a parent, a gate, a review request, or nothing.
   for (const ref of ['hub:h1', 'session:s1', 'parent:acme%2Fw%231', 'gate:acme%2Fg1']) {
     assert.strictEqual(w.parse(`/b/acme/?token=t&view=work&task=${ref}&pane=ai`).pane, 'detail', ref);
   }
