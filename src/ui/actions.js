@@ -188,8 +188,8 @@ function boardRowHtml(b, { child, open, chevron, folded }) {
   const sub = boardSubText(b, st);
   const start = st.stopped
     ? `<button type="button" class="start-btn" data-start-slug="${esc(b.slug)}" title="hub を起動します" ${rowStartingNow(b) ? 'disabled' : ''}>起動</button>` : '';
-  const term = st.stopped ? ''
-    : `<button type="button" class="hubterm-btn" data-hub-term="${esc(b.slug)}" title="この hub を開く" aria-label="この hub を開く"><span class="material-symbols-outlined" aria-hidden="true">terminal</span></button>`;
+  // A stopped hub opens too: the sidebar offers 「hub を起動」 over its terminal, and 「hub の詳細」 (再同期 among it) from its heading.
+  const term = `<button type="button" class="hubterm-btn" data-hub-term="${esc(b.slug)}" title="この hub を開く" aria-label="この hub を開く"><span class="material-symbols-outlined" aria-hidden="true">terminal</span></button>`;
   const toggle = chevron
     ? `<button type="button" class="repo-toggle" data-fold="${esc(b.nwo)}" aria-expanded="${!folded}" title="${folded ? 'hub を開く' : 'hub をたたむ'}" aria-label="${folded ? 'hub を開く' : 'hub をたたむ'}"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></button>` : '';
   return `<div class="board-row ${child ? 'child' : 'repo'}${st.stopped ? ' stopped' : ' live'}" role="link" tabindex="0" data-board="${esc(b.slug)}"${current ? ' aria-current="page"' : ''} title="${esc(boardName(b))}">

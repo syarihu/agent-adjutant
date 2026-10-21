@@ -295,8 +295,9 @@ main { flex: 1; overflow: hidden; position: relative; }
 }
 .board-row .hubterm-btn .material-symbols-outlined { font-size: 18px; }
 .board-row .hubterm-btn:hover { background: var(--md-sys-color-surface-container-highest); }
-.board-row.live:hover .hubterm-btn,
-.board-row.live:focus-within .hubterm-btn { display: inline-flex; }
+/* A stopped hub opens too, beside 起動: its sidebar says it is stopped and has 「hub の詳細」. */
+.board-row:hover .hubterm-btn,
+.board-row:focus-within .hubterm-btn { display: inline-flex; }
 .board-row.live:hover .counts .rail-count,
 .board-row.live:focus-within .counts .rail-count { display: none; }
 .origin-chip {

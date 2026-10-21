@@ -217,8 +217,13 @@ const acting = new Set(); // guard against duplicate in-flight requests
 
 /* A button of the task panel's gate (`data-tp-act`) and the 「PR確認」 button of the PR column (`data-act`). */
 async function act(action, id) {
-  if (action === 'refresh-prs') return refreshPrs();
-  if (acting.has(id)) return;
+  // 「PR確認」 names no task: it is kept from running twice at once under its own name.
+  const key = action === 'refresh-prs' ? action : id;
+  if (acting.has(key)) return;
+  if (action === 'refresh-prs') {
+    acting.add(key);
+    try { return await refreshPrs(); } finally { acting.delete(key); }
+  }
   acting.add(id);
 
   try {

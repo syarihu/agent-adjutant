@@ -285,7 +285,7 @@ body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1f
 }
 /* A card's Issue and PR chips, kept together on the left; what follows them in the header
    (wait time, pills) is pushed to the right. They wrap inside the group rather than overflow a
-   narrow human column. */
+   narrow column. */
 .card-gh-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; margin-right: auto; }
 .card .title {
   font-weight: 600;
