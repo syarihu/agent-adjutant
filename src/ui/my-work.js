@@ -1366,7 +1366,11 @@ function syncBoardSide() {
   if (on === boardSideShown) return;
   boardSideShown = on;
   // The heading and the questions are the document's: a fresh one when the sidebar opens.
-  if (on) return void refreshWork(true);
+  if (on) {
+    // The board narrows under the sidebar: the card that was pressed is brought back into view once it has.
+    requestAnimationFrame(() => document.querySelector('#board-agent .card.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    return void refreshWork(true);
+  }
   if (view !== 'work') {
     disposeTermSlot(workTerm);
     workTerm.board = null;
