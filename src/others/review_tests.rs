@@ -81,8 +81,9 @@ fn asking_queues_the_read_and_keeps_what_an_earlier_one_made() {
         status: "ready".to_string(),
         sha: Some("h0".to_string()),
         counts: Some(AiCounts {
-            attention: 2,
-            check: 1,
+            attention: Some(2),
+            check: Some(1),
+            concerns: None,
             drafts: 3,
             extra: Default::default(),
         }),
@@ -256,8 +257,9 @@ fn a_failed_read_keeps_the_earlier_read_through_and_changes_only_a_current_one()
         let ai = r.ai.as_mut().unwrap();
         ai.sha = Some("h0".to_string());
         ai.counts = Some(AiCounts {
-            attention: 1,
-            check: 0,
+            attention: Some(1),
+            check: Some(0),
+            concerns: None,
             drafts: 0,
             extra: Default::default(),
         });
@@ -360,21 +362,19 @@ fn a_pr_is_named_by_its_url_or_its_key_and_nothing_else() {
 
 fn valid() -> Value {
     json!({
-        "version": 1,
+        "version": 2,
         "sha": SHA,
         "three": {"purpose": "p", "approach": "a", "impact": "i", "essence": "e"},
-        "points": [
-            {"level": "attention", "path": "src/a.rs", "line": 4, "title": "t", "why": "w"},
-            {"level": "check", "path": "src/b.rs", "title": "t", "why": "w"},
-            {"level": "info", "path": "src/c.rs", "title": "t", "why": "w"}
-        ],
         "order": [{"path": "src/a.rs", "category": "logic", "note": "n", "skippable": false}],
         "deleted": [{"path": "old.rs", "reason": null, "question": "why?"}],
         "decisions": [{"decision": "d", "gains": "g", "costs": "c"}],
         "tests": {"covered": ["x"], "notCovered": ["y"]},
         "unwritten": ["q"],
-        "annotations": [{"path": "src/a.rs", "anchor": "fn a", "kind": "tr", "text": "t"}],
-        "drafts": [{"path": "src/a.rs", "line": 4, "body": "b"}],
+        "annotations": [
+            {"path": "src/a.rs", "anchor": "fn a", "kind": "tr", "text": "t"},
+            {"path": "src/a.rs", "anchor": "fn a", "kind": "ex", "text": "e"},
+            {"path": "src/b.rs", "anchor": "fn b", "kind": "concern", "text": "c", "draft": "d"}
+        ],
         "overall": {"body": "ok"},
         "sinceReview": null
     })
@@ -413,16 +413,12 @@ fn a_file_that_breaks_the_contract_is_refused_whole_and_leaves_nothing() {
             Box::new(|v| v["three"]["extra"] = json!("x")),
         ),
         (
-            "a bad level",
-            Box::new(|v| v["points"][0]["level"] = json!("severe")),
+            "a bad kind",
+            Box::new(|v| v["annotations"][0]["kind"] = json!("severe")),
         ),
         (
             "a bad category",
             Box::new(|v| v["order"][0]["category"] = json!("misc")),
-        ),
-        (
-            "a bad side",
-            Box::new(|v| v["drafts"][0]["side"] = json!("RIGHT")),
         ),
         (
             "a blank purpose",
@@ -441,21 +437,16 @@ fn a_file_that_breaks_the_contract_is_refused_whole_and_leaves_nothing() {
             "an upper-case sha",
             Box::new(|v| v["sha"] = json!(SHA.to_uppercase())),
         ),
-        ("line 0", Box::new(|v| v["points"][0]["line"] = json!(0))),
-        (
-            "a draft starting after its line",
-            Box::new(|v| v["drafts"][0]["startLine"] = json!(9)),
-        ),
         (
             "a leading slash",
-            Box::new(|v| v["points"][0]["path"] = json!("/src/a.rs")),
+            Box::new(|v| v["annotations"][0]["path"] = json!("/src/a.rs")),
         ),
         (
             "a multi-line anchor",
             Box::new(|v| v["annotations"][0]["anchor"] = json!("a\nb")),
         ),
         ("nth 0", Box::new(|v| v["annotations"][0]["nth"] = json!(0))),
-        ("a wrong version", Box::new(|v| v["version"] = json!(2))),
+        ("a wrong version", Box::new(|v| v["version"] = json!(3))),
         (
             "a verdict",
             Box::new(|v| v["overall"]["verdict"] = json!("approve")),
@@ -485,35 +476,60 @@ fn a_file_that_breaks_the_contract_is_refused_whole_and_leaves_nothing() {
             Box::new(|v| v["overall"]["suggestion"] = json!("a\u{85}b")),
         ),
         (
-            "301 drafts",
+            "a concern without a draft",
             Box::new(|v| {
-                v["drafts"] = json!(vec![json!({"path": "a", "line": 1, "body": "b"}); 301])
+                v["annotations"][2].as_object_mut().unwrap().remove("draft");
             }),
         ),
         (
-            "a draft body the drafts file cannot hold",
-            Box::new(|v| v["drafts"][0]["body"] = json!("x".repeat(20_001))),
+            "a concern with a blank draft",
+            Box::new(|v| v["annotations"][2]["draft"] = json!("  \n")),
         ),
         (
-            "a draft path the drafts file cannot hold",
-            Box::new(|v| v["drafts"][0]["path"] = json!("p".repeat(1025))),
+            "a draft on a translation",
+            Box::new(|v| v["annotations"][0]["draft"] = json!("d")),
+        ),
+        (
+            "a draft on an explanation",
+            Box::new(|v| v["annotations"][1]["draft"] = json!("d")),
+        ),
+        (
+            "301 concerns",
+            Box::new(|v| {
+                v["annotations"] = json!(vec![
+                    json!({"path": "a", "anchor": "x", "kind": "concern", "text": "t", "draft": "d"});
+                    301
+                ])
+            }),
+        ),
+        (
+            "a draft the drafts file cannot hold",
+            Box::new(|v| v["annotations"][2]["draft"] = json!("x".repeat(20_001))),
+        ),
+        (
+            "a concern path the drafts file cannot hold",
+            Box::new(|v| v["annotations"][2]["path"] = json!("p".repeat(1025))),
         ),
         (
             "an overall body the drafts file cannot hold",
             Box::new(|v| v["overall"]["body"] = json!("x".repeat(20_001))),
         ),
         (
-            "drafts that are too big together",
+            "concern drafts that are too big together",
             Box::new(|v| {
-                v["drafts"] = json!(vec![
-                    json!({"path": "a", "line": 1, "body": "x".repeat(20_000)});
+                v["annotations"] = json!(vec![
+                    json!({"path": "a", "anchor": "x", "kind": "concern", "text": "t", "draft": "x".repeat(20_000)});
                     30
                 ])
             }),
         ),
         (
-            "points out of order",
-            Box::new(|v| v["points"].as_array_mut().unwrap().reverse()),
+            "the version 1 points",
+            Box::new(|v| v["points"] = json!([])),
+        ),
+        (
+            "the version 1 drafts",
+            Box::new(|v| v["drafts"] = json!([])),
         ),
         (
             "both reason and question",
@@ -562,7 +578,7 @@ fn every_problem_is_reported_in_one_answer() {
     let mut v = valid();
     v["sha"] = json!("zz");
     v["three"]["purpose"] = json!("");
-    v["points"][0]["line"] = json!(0);
+    v["annotations"][0]["nth"] = json!(0);
     let Err(SubmitError::Invalid(problems)) = submit(root.path(), 1, &v, None) else {
         panic!("accepted");
     };
@@ -600,8 +616,9 @@ fn a_valid_file_is_stored_and_the_record_is_ready() {
     assert_eq!(
         ai.counts,
         Some(AiCounts {
-            attention: 1,
-            check: 1,
+            attention: None,
+            check: None,
+            concerns: Some(1),
             drafts: 1,
             extra: Default::default(),
         })
@@ -616,7 +633,11 @@ fn a_valid_file_is_stored_and_the_record_is_ready() {
     assert_eq!(stored["session"], "sid-a");
     assert_eq!(stored["sha"], SHA);
     assert_eq!(stored["three"]["essence"], "e");
-    assert_eq!(stored["drafts"][0]["side"], "right");
+    assert_eq!(stored["version"], 2);
+    assert_eq!(stored["annotations"][2]["kind"], "concern");
+    assert_eq!(stored["annotations"][2]["draft"], "d");
+    assert!(stored["annotations"][0].get("draft").is_none());
+    assert!(stored.get("points").is_none() && stored.get("drafts").is_none());
     assert_eq!(stored["overall"], json!({"body": "ok"}));
     assert_eq!(stored["sinceReview"], Value::Null);
     assert_eq!(stored["tests"]["notCovered"][0], "y");
@@ -897,7 +918,7 @@ impl Gh {
 }
 
 fn context(root: &Path, gh: &Gh, out: &Path) -> Result<ContextSummary, String> {
-    read_context_with(root, &pr(1), out, None, &|args, _| gh.run(args))
+    read_context_with(root, &pr(1), out, None, "Japanese", &|args, _| gh.run(args))
 }
 
 /// The directory of the reader of `acme/widget#1`: the one place its material may go.
@@ -1072,6 +1093,7 @@ fn only_the_reader_the_record_names_may_fetch_for_its_pr() {
             &pr(1),
             &own(root.path()),
             session,
+            "Japanese",
             &|args, _| gh.run(args),
         )
     };
@@ -1089,6 +1111,7 @@ fn only_the_reader_the_record_names_may_fetch_for_its_pr() {
         &pr(2),
         &reader_dir(root.path(), &pr(2)),
         Some("sid-a"),
+        "Japanese",
         &|a, _| gh.run(a),
     )
     .unwrap_err();
@@ -1105,29 +1128,111 @@ fn material_for_a_pr_with_no_record_is_refused() {
 }
 
 #[test]
-fn points_must_come_attention_then_check_then_info() {
+fn the_version_1_form_is_refused_with_one_line_that_says_how_to_write_it() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    let mut cases: Vec<Value> = Vec::new();
+    for change in [
+        |v: &mut Value| v["version"] = json!(1),
+        |v: &mut Value| v["points"] = json!([]),
+        |v: &mut Value| {
+            v["drafts"] = json!([{"path": "src/a.rs", "line": 4, "body": "b"}]);
+        },
+    ] {
+        let mut v = valid();
+        change(&mut v);
+        cases.push(v);
+    }
+    for v in cases {
+        let Err(SubmitError::Invalid(problems)) = submit(root.path(), 1, &v, None) else {
+            panic!("accepted");
+        };
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].starts_with("this is the version 1 form: write \"version\": 2"),
+            "{problems:?}"
+        );
+        assert!(
+            problems[0].contains("kind concern with its draft"),
+            "{problems:?}"
+        );
+        nothing_changed(root.path(), 1);
+    }
+}
+
+#[test]
+fn a_concern_has_its_draft_and_the_counts_say_so_without_the_old_levels() {
     let root = tempfile::tempdir().unwrap();
     put(root.path(), running(1, "sid-a"));
     let mut v = valid();
-    // check, attention, info: the second is out of place, and the message says which and how to fix it.
-    v["points"].as_array_mut().unwrap().swap(0, 1);
-    let Err(SubmitError::Invalid(problems)) = submit(root.path(), 1, &v, None) else {
-        panic!("accepted");
-    };
-    assert_eq!(problems.len(), 1, "{problems:?}");
-    assert!(problems[0].starts_with("points[1]"), "{problems:?}");
-    assert!(
-        problems[0].contains("attention first, then check, then info"),
-        "{problems:?}"
+    v["annotations"].as_array_mut().unwrap().push(json!(
+        {"path": "src/c.rs", "anchor": "fn c", "kind": "concern", "text": "c2", "draft": "d2"}
+    ));
+    let done = submit(root.path(), 1, &v, None).unwrap();
+    let counts = done.record.ai.unwrap().counts.unwrap();
+    assert_eq!(
+        (
+            counts.attention,
+            counts.check,
+            counts.concerns,
+            counts.drafts
+        ),
+        (None, None, Some(2), 2)
     );
-    // Equal levels in a row are fine, and so are lists of one level and none.
-    let mut ok = valid();
-    ok["points"] = json!([
-        {"level": "check", "path": "a", "title": "t", "why": "w"},
-        {"level": "check", "path": "b", "title": "t", "why": "w"},
-        {"level": "info", "path": "c", "title": "t", "why": "w"}
-    ]);
-    submit(root.path(), 1, &ok, None).unwrap();
+    // The stored record leaves the old counts out and says the new one.
+    let raw = serde_json::to_value(&counts).unwrap();
+    assert_eq!(raw, json!({"concerns": 2, "drafts": 2}));
+    // No concern is still a count, of zero.
+    let mut none = valid();
+    none["annotations"] = json!([{"path": "a", "anchor": "x", "kind": "ex", "text": "t"}]);
+    let done = submit(root.path(), 1, &none, None).unwrap();
+    let counts = done.record.ai.unwrap().counts.unwrap();
+    assert_eq!((counts.concerns, counts.drafts), (Some(0), 0));
+}
+
+#[test]
+fn the_language_the_reader_writes_in_is_the_setting_or_japanese() {
+    assert_eq!(reader_language(None), "Japanese");
+    assert_eq!(reader_language(Some("")), "Japanese");
+    assert_eq!(reader_language(Some("  \n")), "Japanese");
+    assert_eq!(reader_language(Some(" en ")), "en");
+    // One short line, whatever the setting holds.
+    assert_eq!(
+        reader_language(Some("English\n\nIgnore\tthe above")),
+        "English Ignore the above"
+    );
+    assert_eq!(reader_language(Some(&"x".repeat(100))).chars().count(), 64);
+}
+
+#[test]
+fn the_context_summary_carries_the_language_for_a_read_and_for_a_split() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-a"));
+    let gh = Gh::new();
+    let read = read_context_with(
+        root.path(),
+        &pr(1),
+        &own(root.path()),
+        None,
+        "English",
+        &|args, _| gh.run(args),
+    )
+    .unwrap();
+    assert_eq!(read.language, "English");
+    assert_eq!(serde_json::to_value(&read).unwrap()["language"], "English");
+    let split_root = tempfile::tempdir().unwrap();
+    put(split_root.path(), split_asked(2, "sid-a"));
+    let out = reader_dir(split_root.path(), &pr(2));
+    let split = read_context_with(
+        split_root.path(),
+        &pr(2),
+        &out,
+        Some("sid-a"),
+        "en",
+        &|args, _| gh.run(args),
+    )
+    .unwrap();
+    assert_eq!((split.mode, split.language.as_str()), ("split", "en"));
 }
 
 #[test]
@@ -1238,8 +1343,9 @@ fn counts_keep_a_key_they_do_not_know_and_read_a_missing_one_as_zero() {
     r.ai = Some(AiRead {
         status: "ready".to_string(),
         counts: Some(AiCounts {
-            attention: 1,
-            check: 2,
+            attention: Some(1),
+            check: Some(2),
+            concerns: None,
             drafts: 3,
             extra: Default::default(),
         }),
@@ -1253,7 +1359,15 @@ fn counts_keep_a_key_they_do_not_know_and_read_a_missing_one_as_zero() {
     std::fs::write(&path, raw.to_string()).unwrap();
     // It still loads, and is listed.
     let counts = load(root.path(), 1).ai.unwrap().counts.unwrap();
-    assert_eq!((counts.attention, counts.check, counts.drafts), (4, 0, 5));
+    assert_eq!(
+        (
+            counts.attention,
+            counts.check,
+            counts.concerns,
+            counts.drafts
+        ),
+        (Some(4), None, None, 5)
+    );
     assert_eq!(counts.extra["info"], 6);
     assert_eq!(store::list(root.path()).len(), 1);
     // And the unknown count survives a save.
@@ -1327,6 +1441,7 @@ fn the_context_removes_what_an_earlier_read_left_and_leaves_the_record_alone() {
         &pr(2),
         &reader_dir(root.path(), &pr(2)),
         None,
+        "Japanese",
         &|args, _| gh.run(args),
     )
     .unwrap();
@@ -2411,9 +2526,14 @@ fn split_material_for(
     let root = tempfile::tempdir().unwrap();
     put(root.path(), split_asked(number, "sid-a"));
     let out = reader_dir(root.path(), &pr(number));
-    let got = read_context_with(root.path(), &pr(number), &out, Some("sid-a"), &|args, _| {
-        gh.run(args)
-    });
+    let got = read_context_with(
+        root.path(),
+        &pr(number),
+        &out,
+        Some("sid-a"),
+        "Japanese",
+        &|args, _| gh.run(args),
+    );
     (root, out, got)
 }
 
@@ -2438,9 +2558,14 @@ fn the_material_of_a_split_is_pr_json_and_hunks_and_nothing_of_the_diff_or_the_c
     ] {
         std::fs::write(out.join(name), "old").unwrap();
     }
-    let summary = read_context_with(root.path(), &pr(1), &out, Some("sid-a"), &|args, _| {
-        gh.run(args)
-    })
+    let summary = read_context_with(
+        root.path(),
+        &pr(1),
+        &out,
+        Some("sid-a"),
+        "Japanese",
+        &|args, _| gh.run(args),
+    )
     .unwrap();
     assert_eq!(summary.mode, "split");
     assert!(!summary.rereview);
@@ -2544,7 +2669,7 @@ fn when_neither_the_diff_nor_the_files_list_comes_the_split_has_a_note_and_no_hu
 
 fn split_read() -> Value {
     json!({
-        "version": 1,
+        "version": 2,
         "sha": SHA,
         "three": {"purpose": "p", "approach": "a", "impact": "i", "essence": "e"},
         "overall": {"body": "PR 1: the schema\nPR 2: the code"}
@@ -2587,8 +2712,9 @@ fn a_split_proposal_is_accepted_stored_as_split_and_keeps_no_diff() {
     assert_eq!(ai.status, "ready");
     assert_eq!(ai.mode.as_deref(), Some("split"));
     assert_eq!(
-        ai.counts.map(|c| (c.attention, c.check, c.drafts)),
-        Some((0, 0, 0))
+        ai.counts
+            .map(|c| (c.attention, c.check, c.concerns, c.drafts)),
+        Some((None, None, Some(0), 0))
     );
 }
 
@@ -2610,9 +2736,13 @@ fn a_split_proposal_that_is_not_one_is_refused_whole() {
             "must not be blank",
         ),
         (
-            "a draft",
-            Box::new(|v| v["drafts"] = json!([{"path": "a.rs", "line": 1, "body": "b"}])),
-            "drafts must be []",
+            "a concern",
+            Box::new(|v| {
+                v["annotations"] = json!([
+                    {"path": "a.rs", "anchor": "x", "kind": "concern", "text": "t", "draft": "d"}
+                ])
+            }),
+            "annotations must be []",
         ),
         (
             "an annotation",
@@ -2626,13 +2756,6 @@ fn a_split_proposal_that_is_not_one_is_refused_whole() {
             "a sinceReview",
             Box::new(|v| v["sinceReview"] = json!({"commit": "abc1234"})),
             "sinceReview must be null",
-        ),
-        (
-            "a point",
-            Box::new(|v| {
-                v["points"] = json!([{"level": "info", "path": "a.rs", "title": "t", "why": "w"}])
-            }),
-            "points must be empty",
         ),
         (
             "an order",
@@ -2682,7 +2805,7 @@ fn a_split_proposal_that_is_not_one_is_refused_whole() {
 #[test]
 fn a_read_through_is_not_held_to_the_proposal_and_a_proposal_is_what_the_record_says_it_is() {
     let root = tempfile::tempdir().unwrap();
-    // The record asked for a read: a file with drafts and no overall is fine.
+    // The record asked for a read: a file with concerns and no overall is fine.
     put(root.path(), running(1, "sid-a"));
     let mut v = valid();
     v["overall"] = json!(null);

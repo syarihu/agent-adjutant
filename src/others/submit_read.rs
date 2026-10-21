@@ -7,8 +7,11 @@ use crate::task::PrRef;
 
 use super::diff_get::{MAX_DIFF_BYTES, StoredDiff};
 use super::model::{AiCounts, ReadMode, Record};
-use super::read_through::{Level, MAX_READ_BYTES, ReadThrough, Stored, validate, validate_split};
+use super::read_through::{Kind, MAX_READ_BYTES, ReadThrough, Stored, validate, validate_split};
 use super::store;
+
+/// What a hand-in in the version 1 form is told.
+const VERSION_1_FORM: &str = "this is the version 1 form: write \"version\": 2, leave out points and drafts, write what is risky as a fact in an ex annotation, and each concern as an annotation of kind concern with its draft";
 
 /// What a hand-in came to.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +71,18 @@ pub(crate) fn submit_read_with(
             text.len()
         )]));
     }
-    let read: ReadThrough = serde_json::from_str(text)
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| SubmitError::Invalid(vec![format!("cannot read the file: {e}")]))?;
+    // Said before the typed parse, so that the old form gets one clear line and not a list of
+    // unknown keys.
+    if value.as_object().is_some_and(|object| {
+        object.get("version").and_then(serde_json::Value::as_u64) == Some(1)
+            || object.contains_key("points")
+            || object.contains_key("drafts")
+    }) {
+        return Err(SubmitError::Invalid(vec![VERSION_1_FORM.to_string()]));
+    }
+    let read: ReadThrough = serde_json::from_value(value)
         .map_err(|e| SubmitError::Invalid(vec![format!("cannot read the file: {e}")]))?;
     validate(&read).map_err(SubmitError::Invalid)?;
     // Before the lock is taken, so that a refused hand-in leaves not even a lock file.
@@ -178,10 +192,17 @@ pub(crate) fn submit_read_with(
     }
 
     let stamp = utc_stamp(now);
+    let concerns = read
+        .annotations
+        .iter()
+        .filter(|a| a.kind == Kind::Concern)
+        .count() as u32;
     let counts = AiCounts {
-        attention: count(&read, Level::Attention),
-        check: count(&read, Level::Check),
-        drafts: read.drafts.len() as u32,
+        attention: None,
+        check: None,
+        concerns: Some(concerns),
+        // Each concern has exactly one draft.
+        drafts: concerns,
         extra: Default::default(),
     };
     // Read before the first write, so that an unreadable `diff.patch` refuses the hand-in whole.
@@ -324,8 +345,4 @@ fn check_asked(record: Option<Record>) -> Result<Record, SubmitError> {
         Some(_) => Ok(record),
         None => Err(SubmitError::NotAsked),
     }
-}
-
-fn count(read: &ReadThrough, level: Level) -> u32 {
-    read.points.iter().filter(|p| p.level == level).count() as u32
 }

@@ -56,6 +56,29 @@ pub struct ContextSummary {
     pub mode: &'static str,
     /// What could not be collected and was left out, which is not a failure.
     pub notes: Vec<String>,
+    /// The language the person reads, which the reader writes for them in.
+    pub language: String,
+}
+
+/// A language name longer than this is cut: a name is a word or two, and the value goes into the
+/// reader's prompt.
+const MAX_LANGUAGE_CHARS: usize = 64;
+
+/// The language the reader writes for the person in: the setting (`Settings::language`) when it
+/// is not blank, else Japanese. Control characters become spaces and the name is cut at
+/// `MAX_LANGUAGE_CHARS`, so the value stays one short line wherever it is quoted.
+pub fn reader_language(setting: Option<&str>) -> String {
+    let words = setting
+        .unwrap_or_default()
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let name: String = words.chars().take(MAX_LANGUAGE_CHARS).collect();
+    match name.trim_end() {
+        "" => "Japanese".to_string(),
+        name => name.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -74,8 +97,9 @@ pub fn read_context(
     pr: &PrRef,
     out: &Path,
     session: Option<&str>,
+    language: &str,
 ) -> Result<ContextSummary, String> {
-    read_context_with(root, pr, out, session, &|args, deadline| {
+    read_context_with(root, pr, out, session, language, &|args, deadline| {
         crate::infra::gh::run(None, args, deadline)
     })
 }
@@ -86,6 +110,7 @@ pub(crate) fn read_context_with(
     pr: &PrRef,
     out: &Path,
     session: Option<&str>,
+    language: &str,
     gh: Gh,
 ) -> Result<ContextSummary, String> {
     // Before anything is read or written: `out` is a place the reader names, and the reader is
@@ -163,6 +188,7 @@ pub(crate) fn read_context_with(
             mode: "split",
             rereview: false,
             notes,
+            language: language.to_string(),
         });
     }
 
@@ -171,7 +197,7 @@ pub(crate) fn read_context_with(
     match get(gh, &["pr", "diff", &url], deadline) {
         Ok(diff) => put_text(&out, "diff.patch", &diff, &mut written)?,
         Err(why) => notes.push(format!(
-            "diff.patch could not be fetched ({why}); put what you could not read in `points` or `unwritten`, and do not guess"
+            "diff.patch could not be fetched ({why}); put what you could not read in `unwritten`, and do not guess"
         )),
     }
 
@@ -217,6 +243,7 @@ pub(crate) fn read_context_with(
         mode: "read",
         rereview,
         notes,
+        language: language.to_string(),
     })
 }
 

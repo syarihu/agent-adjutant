@@ -1,4 +1,6 @@
-//! The read-through of a PR: what the reader hands in, checked, and what is kept of it.
+//! The read-through of a PR: what the reader hands in, checked, and what is kept of it. The
+//! reader explains the change on its lines (`annotations`), and what it thinks deserves a question
+//! or a change is a `concern` there, with the one draft review comment that goes with it.
 //!
 //! The JSON of these types is a contract with the board page and with the issues built on it
 //! (the panel, the annotated diff, the pending review): see "The read-through" in
@@ -12,13 +14,13 @@ use super::model::ReadMode;
 
 /// The file a read-through is handed in as can be no bigger than this.
 pub const MAX_READ_BYTES: usize = 2 * 1024 * 1024;
-const MAX_POINTS: usize = 200;
 const MAX_ORDER: usize = 1000;
 const MAX_ANNOTATIONS: usize = 2000;
 /// A line of `three`, in characters.
 const MAX_THREE_CHARS: usize = 300;
-/// The one version of the read-through there is.
-pub const READ_VERSION: u32 = 1;
+/// The version a reader hands in. A stored read-through of version 1 (with `points` and `drafts`)
+/// is kept as it is on disk and is only read by the page, which tells the two apart by `version`.
+pub const READ_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -27,9 +29,6 @@ pub struct ReadThrough {
     /// The head SHA the reader read: 40 lower-case hex digits.
     pub sha: String,
     pub three: Three,
-    /// What to look at, most dangerous first.
-    #[serde(default)]
-    pub points: Vec<Point>,
     /// The files in the order to read them.
     #[serde(default)]
     pub order: Vec<OrderEntry>,
@@ -45,8 +44,6 @@ pub struct ReadThrough {
     pub unwritten: Vec<String>,
     #[serde(default)]
     pub annotations: Vec<Annotation>,
-    #[serde(default)]
-    pub drafts: Vec<Draft>,
     /// Text only: adj never submits a review, and never says approve or request changes.
     #[serde(default)]
     pub overall: Option<Overall>,
@@ -63,29 +60,6 @@ pub struct Three {
     pub approach: String,
     pub impact: String,
     pub essence: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Level {
-    /// 要注意
-    Attention,
-    /// 確認
-    Check,
-    /// 参考
-    Info,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Point {
-    pub level: Level,
-    pub path: String,
-    /// Absent for the whole file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line: Option<u32>,
-    pub title: String,
-    pub why: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,10 +114,15 @@ pub struct Tests {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
-    /// A translation of a comment in the code.
+    /// A translation of a comment in the code, written only when the comment is in another
+    /// language than the person's.
     Tr,
-    /// Background the comments do not give.
+    /// An explanation of the line: what it does and why, background the comments do not give,
+    /// and what is risky about it stated as a fact.
     Ex,
+    /// What the reader thinks deserves a question or a change, attached to its line. It comes
+    /// with a draft review comment.
+    Concern,
 }
 
 /// A note on one diff line, found by a substring of the line and not by its number, so it stays
@@ -158,6 +137,10 @@ pub struct Annotation {
     pub nth: Option<u32>,
     pub kind: Kind,
     pub text: String,
+    /// The draft review comment a concern comes with, addressed to the author. One to one: a
+    /// concern has exactly one draft, and nothing else has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -166,18 +149,6 @@ pub enum Side {
     #[default]
     Right,
     Left,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Draft {
-    pub path: String,
-    pub line: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_line: Option<u32>,
-    #[serde(default)]
-    pub side: Side,
-    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -302,32 +273,6 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
         }
     }
 
-    too_many(&mut problems, "points", read.points.len(), MAX_POINTS);
-    // Most dangerous first is what the person reads down, so the order is part of the contract.
-    let rank = |level: Level| match level {
-        Level::Attention => 0,
-        Level::Check => 1,
-        Level::Info => 2,
-    };
-    if let Some(at) = read
-        .points
-        .windows(2)
-        .position(|pair| rank(pair[1].level) < rank(pair[0].level))
-    {
-        problems.push(format!(
-            "points[{}]: a point of a more dangerous level comes after a less dangerous one; \
-             order points attention first, then check, then info, and move it up",
-            at + 1
-        ));
-    }
-    for (i, p) in read.points.iter().enumerate() {
-        let at = format!("points[{i}]");
-        path_problem(&mut problems, &at, &p.path);
-        line_problem(&mut problems, &at, "line", p.line);
-        required(&mut problems, &at, "title", &p.title);
-        required(&mut problems, &at, "why", &p.why);
-    }
-
     too_many(&mut problems, "order", read.order.len(), MAX_ORDER);
     for (i, o) in read.order.iter().enumerate() {
         path_problem(&mut problems, &format!("order[{i}]"), &o.path);
@@ -381,37 +326,53 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
             problems.push(format!("{at}: nth starts at 1"));
         }
         required(&mut problems, &at, "text", &a.text);
+        match (a.kind, &a.draft) {
+            (Kind::Concern, None) => {
+                problems.push(format!("{at}: a concern must have a draft"));
+            }
+            (Kind::Concern, Some(draft)) => {
+                if blank(draft) {
+                    problems.push(format!("{at}: a concern must have a draft"));
+                } else if draft.chars().count() > MAX_DRAFT_CHARS {
+                    problems.push(format!(
+                        "{at}: draft must be at most {MAX_DRAFT_CHARS} characters"
+                    ));
+                }
+                // The path becomes the draft's path.
+                if a.path.chars().count() > MAX_PATH_CHARS {
+                    problems.push(format!(
+                        "{at}: path must be at most {MAX_PATH_CHARS} characters"
+                    ));
+                }
+            }
+            (Kind::Tr | Kind::Ex, Some(_)) => {
+                problems.push(format!("{at}: draft is only for a concern"));
+            }
+            (Kind::Tr | Kind::Ex, None) => {}
+        }
     }
 
-    // The page seeds its drafts from these and saves them as the person's; what the drafts file
-    // could never store, field by field or as a whole request, must not be accepted here, or the
-    // person could never save them. The seeded form adds a key and a source to each draft, which
-    // the headroom under the request limit (see `MAX_DRAFTS_BYTES`) is there for.
-    if json_bytes(&read.drafts, &read.overall) > MAX_DRAFTS_BYTES {
+    // Each concern can become a draft, which the page seeds from it and saves as the person's;
+    // what the drafts file could never store, field by field or as a whole request, must not be
+    // accepted here, or the person could never save them. The seeded form adds a key and a source
+    // to each draft, which the headroom under the request limit (see `MAX_DRAFTS_BYTES`) is there
+    // for.
+    let concerns: Vec<(&str, &str)> = read
+        .annotations
+        .iter()
+        .filter(|a| a.kind == Kind::Concern)
+        .map(|a| (a.path.as_str(), a.draft.as_deref().unwrap_or_default()))
+        .collect();
+    if concerns.len() > MAX_DRAFTS {
         problems.push(format!(
-            "drafts and overall together must be at most {MAX_DRAFTS_BYTES} bytes of JSON"
+            "annotations has {} concerns, at most {MAX_DRAFTS} are kept",
+            concerns.len()
         ));
     }
-    too_many(&mut problems, "drafts", read.drafts.len(), MAX_DRAFTS);
-    for (i, d) in read.drafts.iter().enumerate() {
-        let at = format!("drafts[{i}]");
-        path_problem(&mut problems, &at, &d.path);
-        if d.path.chars().count() > MAX_PATH_CHARS {
-            problems.push(format!(
-                "{at}: path must be at most {MAX_PATH_CHARS} characters"
-            ));
-        }
-        if d.body.chars().count() > MAX_DRAFT_CHARS {
-            problems.push(format!(
-                "{at}: body must be at most {MAX_DRAFT_CHARS} characters"
-            ));
-        }
-        line_problem(&mut problems, &at, "line", Some(d.line));
-        line_problem(&mut problems, &at, "startLine", d.start_line);
-        if d.start_line.is_some_and(|start| start > d.line) {
-            problems.push(format!("{at}: startLine must not come after line"));
-        }
-        required(&mut problems, &at, "body", &d.body);
+    if json_bytes(&concerns, &read.overall) > MAX_DRAFTS_BYTES {
+        problems.push(format!(
+            "the drafts of the concerns and overall together must be at most {MAX_DRAFTS_BYTES} bytes of JSON"
+        ));
     }
 
     if let Some(overall) = &read.overall {
@@ -463,8 +424,9 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
 
 /// What a split proposal must be on top of a valid read-through: the proposal is `overall.body`
 /// (the body of a pending review) and nothing else is taken from it. `three` is still required;
-/// the lines of the diff were not read, so there is nothing to annotate or draft on, and a PR the
-/// person has not read has no earlier review to compare with. Empty means it is acceptable.
+/// the lines of the diff were not read, so there is nothing to annotate (and so no concern to
+/// draft), and a PR the person has not read has no earlier review to compare with. Empty means it
+/// is acceptable.
 pub fn validate_split(read: &ReadThrough) -> Result<(), Vec<String>> {
     let mut problems: Vec<String> = Vec::new();
     match &read.overall {
@@ -479,18 +441,11 @@ pub fn validate_split(read: &ReadThrough) -> Result<(), Vec<String>> {
                 .to_string(),
         );
     }
-    if !read.drafts.is_empty() {
-        problems.push(
-            "this is a split proposal: drafts must be [] (the proposal is overall.body)"
-                .to_string(),
-        );
-    }
     if read.since_review.is_some() {
         problems.push("this is a split proposal: sinceReview must be null".to_string());
     }
     // Nothing was read line by line, so there is nothing to put in these.
     for (name, empty) in [
-        ("points", read.points.is_empty()),
         ("order", read.order.is_empty()),
         ("deleted", read.deleted.is_empty()),
         ("decisions", read.decisions.is_empty()),

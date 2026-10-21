@@ -233,7 +233,7 @@ function othersAiView(rec, records, nowSecs) {
       // A proposal of a PR that is not out of review now is no read of it: the usual button is offered.
       if (split) return asksSplit ? view('done', '分割案あり', null, null) : { kind: 'done', text: '分割案あり', action: live ? '下読みする' : null };
       const c = ai.counts;
-      const parts = [['要注意', c?.attention], ['確認', c?.check], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
+      const parts = [['要注意', c?.attention], ['確認', c?.check], ['気になる', c?.concerns], ['下書き', c?.drafts]].filter(([, n]) => Number.isFinite(n)).map(([w, n]) => `${w} ${n}`);
       return { kind: 'done', text: ['下読み済み', ...parts].join(' · '), action: null };
     }
     case 'failed': {
