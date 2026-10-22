@@ -84,6 +84,50 @@ fn a_taken_port_falls_back_to_a_free_one() {
 }
 
 #[test]
+fn a_prompt_is_read_again_as_soon_as_its_pane_has_moved() {
+    let prompts = PaneCache::<String>::default();
+    let t0 = Instant::now();
+    let reads = std::cell::Cell::new(0);
+    // What each read finds, in order: `Err` is a pane that could not be read.
+    let found = [
+        Ok(Some("asking")),
+        Err(()),
+        Ok(None),
+        Ok(Some("asking")),
+        Ok(Some("asking")),
+    ];
+    let look = |activity: Option<i64>, at: Instant| {
+        prompts.look_unless_moved("pane", activity, at, 1000, || {
+            let read = found[reads.get()];
+            reads.set(reads.get() + 1);
+            read.map(|v| v.map(str::to_string))
+        })
+    };
+    assert_eq!(look(Some(10), t0).as_deref(), Some("asking"));
+    // Nothing moved: the prompt stands.
+    assert_eq!(
+        look(Some(10), t0 + Duration::from_secs(1)).as_deref(),
+        Some("asking")
+    );
+    assert_eq!(reads.get(), 1);
+    // Moved, and the pane could not be read: what was found stands rather than vanishing.
+    assert_eq!(
+        look(Some(11), t0 + Duration::from_secs(2)).as_deref(),
+        Some("asking")
+    );
+    // Read again on the next poll: answered in the terminal, gone at once.
+    assert_eq!(look(Some(11), t0 + Duration::from_secs(3)), None);
+    assert_eq!(reads.get(), 3);
+    // Nothing on screen is kept while the pane is still.
+    assert_eq!(look(Some(11), t0 + Duration::from_secs(4)), None);
+    assert_eq!(reads.get(), 3);
+    // Activity that is not known says nothing: read every time.
+    look(None, t0 + Duration::from_secs(5));
+    look(None, t0 + Duration::from_secs(5));
+    assert_eq!(reads.get(), 5);
+}
+
+#[test]
 fn a_pane_is_read_again_only_when_it_has_moved_and_the_last_read_is_old() {
     let lines = LastLines::default();
     let t0 = Instant::now();
@@ -992,6 +1036,7 @@ fn reading_the_state_leaves_a_resumable_gate_open() {
         jules: Arc::default(),
         hub_titles: Arc::default(),
         last_lines: Arc::default(),
+        prompts: Arc::default(),
         diffs: Arc::default(),
         tmux: None,
         terminals: Arc::default(),
@@ -1036,6 +1081,7 @@ fn a_failed_worktree_listing_keeps_the_last_lines_held_for_workers() {
             jules: Arc::default(),
             hub_titles: Arc::default(),
             last_lines: Arc::default(),
+            prompts: Arc::default(),
             diffs: Arc::default(),
             tmux: None,
             terminals: Arc::default(),
@@ -1174,6 +1220,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         jules: Arc::default(),
         hub_titles: Arc::default(),
         last_lines: Arc::default(),
+        prompts: Arc::default(),
         diffs: Arc::default(),
         tmux: None,
         terminals: Arc::default(),
@@ -1300,6 +1347,7 @@ fn session(id: &str, backend: &str, window: Option<&str>, present: bool) -> Sess
         phases: Vec::new(),
         last_activity_at: None,
         last_line: None,
+        prompt: None,
         attached: None,
         waiting: None,
         agent_session: None,
@@ -1559,6 +1607,7 @@ fn the_last_message_of_a_session_is_read_through_the_boards_join() {
         jules: Arc::default(),
         hub_titles: Arc::default(),
         last_lines: Arc::default(),
+        prompts: Arc::default(),
         diffs: Arc::default(),
         tmux: None,
         terminals: Arc::default(),

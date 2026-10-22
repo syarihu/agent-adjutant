@@ -58,7 +58,16 @@ pub fn parse_pane_screen(output: &str) -> PaneScreen {
 
 /// A tmux pane's screen, or `None` when tmux cannot show it (the pane is gone, no server).
 pub fn look_at_tmux_pane(socket: Option<&str>, pane_id: &str) -> Option<PaneScreen> {
-    look_at_pane(&run_shell, &tmux_capture_script(socket, pane_id)).ok()
+    look_at_tmux_pane_with(&run_shell, socket, pane_id)
+}
+
+/// A tmux pane's screen, using `run` to capture.
+pub fn look_at_tmux_pane_with(
+    run: &impl Fn(&str) -> Result<String, String>,
+    socket: Option<&str>,
+    pane_id: &str,
+) -> Option<PaneScreen> {
+    look_at_pane(run, &tmux_capture_script(socket, pane_id)).ok()
 }
 
 pub(super) fn look_at_pane(

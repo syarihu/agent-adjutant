@@ -626,8 +626,9 @@ async function refreshWork(force = false) {
 
 /* ── the list ── */
 
-const workGlyphHtml = (st, extra = '', icon = null) => {
-  const [glyph, label] = WORK_GLYPH[st] || WORK_GLYPH.idle;
+const workGlyphHtml = (st, extra = '', icon = null, promptKind = null) => {
+  const [glyph, defLabel] = WORK_GLYPH[st] || WORK_GLYPH.idle;
+  const label = st === 'permission' && promptKind === 'permission' ? '許可待ち' : defLabel;
   return `<span class="material-symbols-outlined wk-glyph ${st}${extra}" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon || glyph}</span>`;
 };
 
@@ -680,7 +681,8 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   ].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (merged ? workMergedEnd(prNumber) : diff ? `<span class="wk-end">${diff}</span>` : '');
   // The gate is first unless the worker went on past it; its line is drawn either way, for it can still be answered.
   const first = gateFirst(s, data);
-  const asks = !first && agentStateOf(s) === 'permission' && a.request ? `<span class="wk-line ask">${esc(requestText(s))}</span>` : '';
+  const askText = a.request ? requestText(s) : (s.prompt ? workPromptText(s.prompt, s) : '');
+  const asks = !first && agentStateOf(s) === 'permission' && askText ? `<span class="wk-line ask">${esc(askText)}</span>` : '';
   // In 新着 a row says what the agent last said when it asks for nothing, and a hub's row does wherever it is. A parked row says so wherever it is listed.
   const said = (band || r.isHub) && !asks && !first && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
   const parked = !s.waiting ? workParkedHtml(r) : '';
@@ -690,8 +692,9 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
   const gate = s.waiting ? `<span class="wk-gate">${esc(workGateWho(s.waiting.kind, task, !first))}</span>` : '';
+  const pKind = s.prompt?.kind;
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
-    ${r.isHub ? workGlyphHtml(st, ' hubicon', 'hub') : workGlyphHtml(st)}<span class="wk-main">
+    ${r.isHub ? workGlyphHtml(st, ' hubicon', 'hub', pKind) : workGlyphHtml(st, '', null, pKind)}<span class="wk-main">
       ${agentLine ? `<span class="wk-agent">${agentLine}</span>` : ''}
       <span class="wk-title">${r.isHub ? hubTitleMarkHtml(r.hub) : ''}${esc(parent ? workParentName(parent) || title : title)}</span>
       ${meta ? `<span class="wk-meta">${meta}</span>` : ''}${asks}${gate}${doing}${said}${parked}${tree}

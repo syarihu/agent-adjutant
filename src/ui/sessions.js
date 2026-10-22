@@ -11,7 +11,11 @@ const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
 /* What a `permission` session is called where it is drawn from its own session. The ledger's
    `waiting` also covers other dialogs the agent asks, so it is 許可待ち only with a request to
    say what is asked; the tables below hold the neutral word, for where there is no session. */
-const permissionLabel = s => isQuestion(s) ? '質問への回答待ち' : s?.agentSession?.request ? '許可待ち' : '入力待ち';
+const permissionLabel = s => isQuestion(s) || (!s?.agentSession?.request && s?.prompt?.kind === 'choice')
+  ? '質問への回答待ち'
+  : (s?.agentSession?.request || s?.prompt?.kind === 'permission')
+    ? '許可待ち'
+    : '入力待ち';
 /* A question the agent asks with its AskUserQuestion tool reaches the ledger as a permission
    request whose text starts with this (src/transport/cli/hook.rs, tool_summary). */
 const QUESTION_PREFIX = 'AskUserQuestion: ';
@@ -138,7 +142,7 @@ function agentText(s, data = state) {
   if (!s.present || !a) return '';
   if (a.error) return unknownWhy(s);
   const parts = [];
-  if (agentStateOf(s) === 'permission' && a.request) parts.push(requestText(s));
+  if (agentStateOf(s) === 'permission' && (a.request || s.prompt)) parts.push(a.request ? requestText(s) : (typeof workPromptText === 'function' ? workPromptText(s.prompt, s) : ''));
   // What the row says it is: a `running` the pane has gone quiet on is not doing the tool.
   else if (a.activity && ledgerState(s, data) === 'working') parts.push(a.activity);
   const subs = a.subagents?.length || 0;

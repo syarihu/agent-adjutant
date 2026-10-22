@@ -41,6 +41,16 @@ function workTermMergedAsk(sel, gates) {
   return a ? { a, board: e.board, sid: e.session.id } : null;
 }
 
+/* The prompt waiting on a session's terminal for what is selected, as { p, board, sid, session }, or null:
+   only when no gate is open on the session (gates take priority). */
+function workTermPrompt(sel, gates) {
+  if (gates.length || !sel?.row || !sel.session) return null;
+  const isDone = key => answeredGates.has(key);
+  const e = workEntries(work.doc, isDone).find(x => x.board === sel.row.board && x.session?.id === sel.session.id);
+  const p = e ? workPromptOf(e, { isDone }) : (!sel.session.waiting || isDone(`${sel.session.waiting.slug}/${sel.session.waiting.id}`)) ? sel.session.prompt : null;
+  return p ? { p, board: sel.row.board, sid: sel.session.id, session: sel.session } : null;
+}
+
 /* Drawn as the stage's top layer; the same markup is not drawn twice, and the slide plays only when it comes in from nothing. */
 function drawWorkAsk(html) {
   const el = workAskEl();
@@ -83,8 +93,10 @@ function drawWorkFabs(own, hub) {
 function renderWorkTermOverlays({ sel = null, own, task, hub, stopped = false }) {
   const gates = workTermAskGates(task, own, hub);
   const merged = workTermMergedAsk(sel, gates);
+  const prompt = workTermPrompt(sel, gates);
   // Over a stopped hub the start check is one line, so the block with 「hub を起動」 under it is in reach.
-  drawWorkAsk(merged ? workTermMergedHtml(merged.a, { board: merged.board, sid: merged.sid, busy: workAsk.busy.has(workAskKey(merged.board, merged.sid)) })
+  drawWorkAsk(prompt ? workPromptHtml(prompt.p, { boardSlug: prompt.board, sessionId: prompt.sid, session: prompt.session })
+    : merged ? workTermMergedHtml(merged.a, { board: merged.board, sid: merged.sid, busy: workAsk.busy.has(workAskKey(merged.board, merged.sid)) })
     : workTermAskHtml(gates, {
       ctxOf: questionCtxOf, keyOf: gateKey, hub: !!hub, folded: workAskFolded, draftOf: key => questionDrafts.get(key) || '', foldAll: stopped,
     }));
@@ -94,7 +106,7 @@ function renderWorkTermOverlays({ sel = null, own, task, hub, stopped = false })
   ph.style.paddingTop = !ph.hidden && askBox.height ? `${Math.ceil(askBox.bottom - ph.getBoundingClientRect().top + 12)}px` : '';
   drawWorkFabs(own, hub);
   // Only the count is announced: the questions themselves are read where they are, and a redraw must not read the form out again.
-  setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : merged?.a.ask === 'clean' ? '確認待ちが 1 件あります' : '');
+  setWorkTermPart('askStatus', wk('wk-term-ask-status'), gates.length ? `確認待ちが ${gates.length} 件あります` : (prompt || merged?.a.ask === 'clean') ? '確認待ちが 1 件あります' : '');
 }
 
 /* A press on the merged session's line: 「ターミナルで確かめる」 puts the cursor in the terminal; the other two are the TODO's, run on the same facts. */
@@ -108,6 +120,16 @@ function workTermAskClick(b) {
 }
 
 workAskEl().addEventListener('click', e => {
+  const promptKey = e.target.closest('[data-wk-prompt-key]');
+  if (promptKey) {
+    const { wkPromptBoard, wkPromptSession, wkPromptId, wkPromptKey: key } = promptKey.dataset;
+    return workPromptPress(wkPromptBoard, wkPromptSession, wkPromptId, key)
+      .then(() => renderWorkTerm());
+  }
+  const promptTerm = e.target.closest('[data-wk-prompt-terminal]');
+  if (promptTerm) {
+    return workTerm.term?.focus();
+  }
   const merged = e.target.closest('[data-wk-ask-act]');
   if (merged) return workTermAskClick(merged);
   const fold = e.target.closest('[data-wk-fold]');

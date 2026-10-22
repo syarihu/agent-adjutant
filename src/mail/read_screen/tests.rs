@@ -68,6 +68,160 @@ fn every_captured_screen_reads_as_what_it_was() {
 }
 
 #[test]
+fn prompt_reading_from_captured_screens() {
+    let claude_perm = parse_pane_screen(fixture("claude-permission"));
+    let p = pane_prompt(Agent::Claude, &claude_perm).expect("claude permission prompt");
+    assert_eq!(p.kind, PromptKind::Permission);
+    assert_eq!(p.question.as_deref(), Some("Do you want to proceed?"));
+    assert!(p.detail.iter().any(|d| d.contains("touch probe.txt")));
+    assert_eq!(p.options.len(), 4);
+    assert_eq!(
+        p.options.iter().map(|o| o.key.as_str()).collect::<Vec<_>>(),
+        vec!["1", "2", "3", "4"]
+    );
+
+    let claude_quest = parse_pane_screen(fixture("claude-question"));
+    let p = pane_prompt(Agent::Claude, &claude_quest).expect("claude question prompt");
+    assert_eq!(p.kind, PromptKind::Choice);
+    assert_eq!(p.question.as_deref(), Some("Which tea do you prefer?"));
+    assert_eq!(p.options.len(), 2);
+    assert_eq!(p.options[0].key, "1");
+    assert_eq!(p.options[1].key, "2");
+
+    let agy_perm = parse_pane_screen(fixture("agy-permission"));
+    let p = pane_prompt(Agent::Agy, &agy_perm).expect("agy permission prompt");
+    assert_eq!(p.kind, PromptKind::Permission);
+    assert_eq!(p.question.as_deref(), Some("Run this command?"));
+    assert!(p.detail.iter().any(|d| d.contains("touch probe.txt")));
+    assert_eq!(p.options.len(), 4);
+    assert_eq!(
+        p.options.iter().map(|o| o.key.as_str()).collect::<Vec<_>>(),
+        vec!["1", "2", "3", "4"]
+    );
+
+    let agy_quest = parse_pane_screen(fixture("agy-question"));
+    let p = pane_prompt(Agent::Agy, &agy_quest).expect("agy question prompt");
+    assert_eq!(p.kind, PromptKind::Choice);
+    assert_eq!(
+        p.question.as_deref(),
+        Some("Question 1/1: Which tea do you prefer: green or black tea?")
+    );
+    assert_eq!(p.options.len(), 2);
+    assert_eq!(p.options[0].key, "1");
+    assert_eq!(p.options[1].key, "2");
+
+    // Menus (trust dialogs) return None.
+    assert!(pane_prompt(Agent::Claude, &parse_pane_screen(fixture("claude-menu"))).is_none());
+    assert!(pane_prompt(Agent::Agy, &parse_pane_screen(fixture("agy-menu"))).is_none());
+
+    // Idle and working screens return None.
+    for (agent, name, expected) in FIXTURES {
+        if *expected != PaneState::Asking {
+            let screen = parse_pane_screen(fixture(name));
+            assert!(pane_prompt(*agent, &screen).is_none(), "{name}");
+        }
+    }
+}
+
+#[test]
+fn a_list_with_an_option_numbered_ten_offers_no_answer() {
+    // `10` would be typed as two keys, and the first alone answers option 1.
+    let mut text = String::from("Pick one?\n");
+    for n in 1..=10 {
+        text.push_str(&format!(
+            "{} {n}. Option {n}\n",
+            if n == 1 { "❯" } else { " " }
+        ));
+    }
+    text.push_str("\nEnter to select · ↑/↓ to navigate · Esc to cancel");
+    let screen = PaneScreen {
+        text,
+        in_mode: false,
+        cursor_x: 0,
+        cursor_y: 0,
+    };
+    let prompt = pane_prompt(Agent::Claude, &screen).expect("still a question");
+    assert_eq!(prompt.question.as_deref(), Some("Pick one?"));
+    assert!(prompt.options.is_empty(), "{prompt:?}");
+}
+
+#[test]
+fn a_long_run_of_digits_is_not_an_option_number() {
+    let screen = PaneScreen {
+        text: "Pick one?\n❯ 18446744073709551615. One\n  2. Two\n\nEnter to select · Esc to cancel"
+            .to_string(),
+        in_mode: false,
+        cursor_x: 0,
+        cursor_y: 0,
+    };
+    // Read without overflowing, and the list is cut short there.
+    let prompt = pane_prompt(Agent::Claude, &screen).expect("still a question");
+    assert!(prompt.options.is_empty(), "{prompt:?}");
+}
+
+#[test]
+fn prompt_fingerprint_and_refusals() {
+    let screen = parse_pane_screen(fixture("claude-permission"));
+    let p1 = pane_prompt(Agent::Claude, &screen).unwrap();
+    let p2 = pane_prompt(Agent::Claude, &screen).unwrap();
+    assert_eq!(p1.id, p2.id);
+
+    // Pointer moved gives a different id.
+    let moved_text = screen
+        .text
+        .replace(" ❯ 1. Yes\n   2. Yes", "   1. Yes\n ❯ 2. Yes");
+    let moved_screen = PaneScreen {
+        text: moved_text,
+        ..screen.clone()
+    };
+    let p_moved = pane_prompt(Agent::Claude, &moved_screen).unwrap();
+    assert_ne!(p1.id, p_moved.id);
+
+    // Cut-off screen (drop lines above option 2 so numbering starts at 2).
+    let lines: Vec<&str> = screen.text.lines().collect();
+    let opt2_idx = lines.iter().position(|l| l.contains("2. Yes")).unwrap();
+    let cutoff_text = lines[opt2_idx..].join("\n");
+    let cutoff_screen = PaneScreen {
+        text: cutoff_text,
+        ..screen.clone()
+    };
+    let p_cutoff = pane_prompt(Agent::Claude, &cutoff_screen).unwrap();
+    assert!(p_cutoff.options.is_empty());
+
+    // Cut-off screen (drop question line and lines above option 1).
+    let opt1_idx = lines.iter().position(|l| l.contains("1. Yes")).unwrap();
+    let cutoff_text2 = lines[opt1_idx..].join("\n");
+    let cutoff_screen2 = PaneScreen {
+        text: cutoff_text2,
+        ..screen.clone()
+    };
+    let p_cutoff2 = pane_prompt(Agent::Claude, &cutoff_screen2).unwrap();
+    assert!(p_cutoff2.options.is_empty());
+
+    // prompt_answerable checks.
+    let q_screen = parse_pane_screen(fixture("claude-question"));
+    let q_prompt = pane_prompt(Agent::Claude, &q_screen).unwrap();
+
+    assert!(prompt_answerable(Agent::Claude, &q_screen, &q_prompt.id, "1").is_ok());
+    assert!(prompt_answerable(Agent::Claude, &q_screen, &q_prompt.id, "2").is_ok());
+    // "3" is "Type something." so not among options.
+    assert_eq!(
+        prompt_answerable(Agent::Claude, &q_screen, &q_prompt.id, "3"),
+        Err(PromptRefusal::NotAnOption)
+    );
+    // Stale id gives Gone.
+    assert_eq!(
+        prompt_answerable(Agent::Claude, &q_screen, "stale_id", "1"),
+        Err(PromptRefusal::Gone)
+    );
+    // Unreadable prompt gives Unreadable.
+    assert_eq!(
+        prompt_answerable(Agent::Claude, &cutoff_screen, &p_cutoff.id, "2"),
+        Err(PromptRefusal::Unreadable)
+    );
+}
+
+#[test]
 fn the_trust_dialog_is_read_with_its_directory_and_where_the_pointer_is() {
     let claude = parse_pane_screen(fixture("claude-menu"));
     assert_eq!(

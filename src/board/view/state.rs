@@ -458,6 +458,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
                 main_branch,
                 lines,
                 diffs: true,
+                prompts: true,
                 listed: listed_ok,
             },
             None,
@@ -614,6 +615,10 @@ pub(super) struct Listing<'a> {
     /// Whether the worktrees of the workers listed are asked to be read for their diff. Only
     /// the poll that lists every session does: the others take what is there.
     pub(super) diffs: bool,
+    /// Whether a session that may be asking has its pane read for the question (`prompt`). The
+    /// page's poll and the work document do; a job that watches the sessions, and the lookup
+    /// of one session an action is for, read none.
+    pub(super) prompts: bool,
     /// Whether the worktrees were listed. A listing that failed leaves the linked ones out, which
     /// is not the same as there being none, so what is held for them is not forgotten.
     pub(super) listed: bool,

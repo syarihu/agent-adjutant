@@ -159,7 +159,7 @@
 .qc-quick .pick, .qc-strip button, .qc-quick .qc-quick-act { padding: 4px 14px; font-size: 12.5px; }
 /* The line over a merged session that has work to lose: a warning, not a question. */
 .qc-quick.bad { border-left-color: var(--md-sys-color-error); }
-.qc-quick.bad .material-symbols-outlined { color: var(--md-sys-color-error); }
+.qc-quick.bad .material-symbols-outlined, .wk-prompt .material-symbols-outlined { color: var(--md-sys-color-error); }
 .qc-quick .qc-chips { margin: 0; }
 /* Buttons that answer one question wrap to the next line together, not one at a time. */
 .qc-quick-btns { display: inline-flex; gap: 8px; }

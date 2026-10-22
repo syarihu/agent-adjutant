@@ -8,6 +8,7 @@
 //! up in the board's own records, and the worktree, socket and window come from there and never
 //! from the request.
 
+mod answer_prompt;
 mod clean_up;
 mod keep;
 mod link;
@@ -16,6 +17,7 @@ mod restart;
 mod resume;
 mod start;
 
+pub use answer_prompt::*;
 pub use clean_up::*;
 pub use keep::*;
 pub use link::*;

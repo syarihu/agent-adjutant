@@ -86,6 +86,9 @@ pub struct Session {
     /// in a tmux window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_line: Option<String>,
+    /// A question or approval prompt on the session's pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<SessionPrompt>,
     /// How many clients are attached to the session's window, not counting the board's own
     /// `adjboard-*` sessions. Absent when the window is not found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +136,49 @@ pub struct SessionPr {
     pub url: String,
     /// `open`, `draft`, `merged` or `closed`, as a card's PR status says it.
     pub state: String,
+}
+
+/// A question or approval prompt on the session's pane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPrompt {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    #[serde(default)]
+    pub detail: Vec<String>,
+    #[serde(default)]
+    pub options: Vec<SessionPromptOption>,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPromptOption {
+    pub key: String,
+    pub label: String,
+}
+
+impl From<crate::mail::PanePrompt> for SessionPrompt {
+    fn from(p: crate::mail::PanePrompt) -> Self {
+        SessionPrompt {
+            kind: match p.kind {
+                crate::mail::PromptKind::Permission => "permission".to_string(),
+                crate::mail::PromptKind::Choice => "choice".to_string(),
+            },
+            question: p.question,
+            detail: p.detail,
+            options: p
+                .options
+                .into_iter()
+                .map(|o| SessionPromptOption {
+                    key: o.key,
+                    label: o.label,
+                })
+                .collect(),
+            id: p.id,
+        }
+    }
 }
 
 /// What the agent's hooks last said about a session: its row in the agent session ledger, as
@@ -391,6 +437,7 @@ mod tests {
             phases: Vec::new(),
             last_activity_at: None,
             last_line: None,
+            prompt: None,
             attached: None,
             waiting: None,
             agent_session: None,

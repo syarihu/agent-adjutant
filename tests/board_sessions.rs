@@ -1558,3 +1558,79 @@ fn the_rate_limits_of_an_account_come_from_its_newest_session_with_a_figure() {
     );
     assert!(state["rateLimits"].get("error").is_none());
 }
+
+// ── a question asked only in the terminal ──
+
+#[test]
+fn a_prompt_on_the_pane_is_served_and_answered_only_while_it_is_still_there() {
+    let fixture = Fixture::new(QUIET);
+    write_tmux_config(&fixture);
+    let tmux = FakeTmux::new(&fixture);
+    std::fs::write(
+        &tmux.screen,
+        include_str!("../src/fixtures/panes/claude-permission.txt"),
+    )
+    .unwrap();
+    let running = Sleeper::new();
+    let one = session_worktree(&fixture, "one", None, None, running.pid());
+    place_worker(&one, "@5");
+    std::fs::write(
+        &tmux.panes,
+        "%5\t1\t/dev/ttys005\t@5\tadjutant-test\t1\tone\t1790000000\n",
+    )
+    .unwrap();
+    write_ledger_row(
+        &fixture,
+        "sid-1",
+        serde_json::json!({
+            "sessionId": "sid-1",
+            "status": "waiting",
+            "request": "Bash: touch probe.txt",
+            "pid": running.pid(),
+            "psStarted": ps_started(running.pid()),
+            "updatedAt": 100,
+            "lastEventAt": now_secs(),
+        }),
+    );
+    let resident = resident_with_tmux(&fixture, &tmux, None);
+    let sent = || tmux.logged().matches("send-keys").count();
+
+    // Served on the ordinary poll, which the TODO's work document makes too.
+    let state = state_of(&resident);
+    let prompt = &session_of(&state, "worker-one")["prompt"];
+    assert_eq!(prompt["kind"], "permission", "{state}");
+    assert_eq!(prompt["options"].as_array().unwrap().len(), 4, "{prompt}");
+    let id = prompt["id"].as_str().unwrap().to_string();
+    let path = format!("/b/{SLUG}/api/sessions/worker-one/prompt");
+    let answer = |seen: &str, key: &str| {
+        resident.post(
+            &path,
+            &serde_json::json!({ "id": seen, "key": key }).to_string(),
+        )
+    };
+
+    // Not the prompt on screen, or not one of its options: nothing is typed.
+    assert_eq!(answer("stale", "1").0, 409);
+    assert_eq!(answer(&id, "7").0, 400);
+    assert_eq!(answer(&id, "1; ls").0, 400);
+    assert_eq!(sent(), 0, "{}", tmux.logged());
+
+    // The one key of the option pressed, and nothing else.
+    let (status, body) = answer(&id, "1");
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(sent(), 1, "{}", tmux.logged());
+    assert!(
+        tmux.logged().contains("send-keys -t %5 1\n"),
+        "{}",
+        tmux.logged()
+    );
+
+    // Answered in the terminal: the board's prompt is stale and cannot be answered.
+    std::fs::write(
+        &tmux.screen,
+        include_str!("../src/fixtures/panes/claude-idle-after-turn.txt"),
+    )
+    .unwrap();
+    assert_eq!(answer(&id, "1").0, 409);
+    assert_eq!(sent(), 1, "{}", tmux.logged());
+}

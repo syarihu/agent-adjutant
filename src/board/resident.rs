@@ -62,6 +62,7 @@ impl Resident {
                 jules: Arc::default(),
                 hub_titles: Arc::default(),
                 last_lines: Arc::default(),
+                prompts: Arc::default(),
                 diffs: Arc::default(),
                 tmux: self.tmux,
                 terminals: Arc::clone(&self.terminals),

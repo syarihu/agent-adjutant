@@ -345,7 +345,28 @@ function todoAskClick(b, box) {
     });
 }
 
+function todoPromptClick(b, box) {
+  if (b.disabled) return;
+  const at = box.id !== 'todo-card' ? [...box.querySelectorAll(TODO_FOCUSABLE)].indexOf(b) : -1;
+  const { wkPromptBoard, wkPromptSession, wkPromptId, wkPromptKey: key } = b.dataset;
+  workPromptPress(wkPromptBoard, wkPromptSession, wkPromptId, key)
+    .then(() => {
+      todoFollow(true);
+      if (at >= 0 && (!document.activeElement || document.activeElement === document.body)) todoRefocus(box, at);
+    });
+}
+
 function todoClick(e) {
+  const promptKey = e.target.closest('[data-wk-prompt-key]');
+  if (promptKey) return todoPromptClick(promptKey, e.currentTarget);
+  const promptTerm = e.target.closest('[data-wk-prompt-terminal]');
+  if (promptTerm) {
+    const { wkPromptBoard, wkPromptTerminal: sid } = promptTerm.dataset;
+    const r = typeof workRows === 'function' ? workRows().find(x => (x.board === wkPromptBoard || x.hubSlug === wkPromptBoard) && x.s?.id === sid) : null;
+    if (r && typeof selectWorkRow === 'function') return selectWorkRow(r);
+    if (typeof go === 'function') go({ board: wkPromptBoard || 'all', view: 'work', task: SESS_REF + sid });
+    return;
+  }
   const ask = e.target.closest('[data-wk-ask-act]');
   if (ask) return todoAskClick(ask, e.currentTarget);
   const row = e.target.closest('[data-todo-sel]');

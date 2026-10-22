@@ -118,7 +118,7 @@ function agentCard(task) {
         ${went ? (wentStatus === 'working' ? '<span class="pulse-dot"></span>'
                  : `<span class="material-symbols-outlined" aria-hidden="true" style="font-size:14px;color:var(--md-sys-color-${wentStatus === 'failed' ? 'error' : 'warning'});">${wentStatus === 'failed' ? 'error' : 'front_hand'}</span>`)
                : hcol ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-warning);">pause_circle</span>'
-               : asks ? '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:14px;color:var(--md-sys-color-warning);">front_hand</span>'
+               : asks ? '<span class="material-symbols-outlined" aria-hidden="true" style="font-size:14px;color:var(--md-sys-color-error);">front_hand</span>'
                : alarm ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-error);">pause</span>'
                : stopped ? '<span class="material-symbols-outlined" style="font-size:14px;color:var(--md-sys-color-outline);">pause</span>'
                : '<span class="pulse-dot"></span>'}
@@ -128,7 +128,7 @@ function agentCard(task) {
         ${went ? '<span style="font-weight:700;color:var(--md-sys-color-warning);">判定待ち（答えないまま進行中）</span>' : ''}
         ${mins != null ? `<span class="ago" style="margin-left:auto;color:var(--md-sys-color-outline);font-size:11px;">${minutesLabel(mins)}</span>` : ''}
       </div>
-      ${asks && asking.agentSession.request ? `<div style="font-size:11px;color:var(--md-sys-color-outline);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(isQuestion(asking) ? requestText(asking) : asking.agentSession.request)}">${esc(isQuestion(asking) ? requestText(asking) : asking.agentSession.request)}</div>` : ''}
+      ${asks && (asking.agentSession?.request || asking.prompt) ? `<div style="font-size:11px;color:var(--md-sys-color-outline);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(asking.agentSession?.request ? (isQuestion(asking) ? requestText(asking) : asking.agentSession.request) : workPromptText(asking.prompt, asking))}">${esc(asking.agentSession?.request ? (isQuestion(asking) ? requestText(asking) : asking.agentSession.request) : workPromptText(asking.prompt, asking))}</div>` : ''}
     `;
   }
 
