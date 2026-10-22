@@ -1,6 +1,6 @@
 //! Opening a gate, or keeping one as a record.
 
-use super::store::{claim_id, save, stamp};
+use super::store::{self, claim_id, save, stamp};
 use super::*;
 
 use crate::registry::Context;
@@ -94,6 +94,13 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         .clone()
         .ok_or("not inside a worktree, and no --worktree was given")?;
 
+    // Read and checked before an id is claimed, so a report that is refused leaves nothing
+    // behind. The copy is written after, once there is an id to name it by.
+    let report = match request.report.as_deref() {
+        Some(given) => Some((report::read(&worktree, given)?, given.to_string())),
+        None => None,
+    };
+
     let stamp = stamp();
     let shelf = if request.wait {
         Shelf::Open
@@ -129,6 +136,7 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         findings,
         commands,
         manual,
+        report: _,
     } = request;
     let gate = Gate {
         id,
@@ -156,6 +164,7 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         findings,
         commands,
         manual,
+        report: report.as_ref().map(|(_, given)| file_name(given)),
         stopped_by,
         wait,
         opened_at: stamp,
@@ -168,7 +177,21 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         extra: serde_json::Map::new(),
     };
 
-    save(ctx, shelf, &gate)?;
+    if let Some((html, _)) = &report
+        && let Err(e) = report::write(&ctx.state, &ctx.repo.slug, &gate.id, html)
+    {
+        // The claimed file is empty and nobody has seen it; leaving it would be a gate that
+        // cannot be read in the open queue.
+        let _ = std::fs::remove_file(store::path_of(&store::dir_of(ctx, shelf), &gate.id));
+        return Err(e);
+    }
+    if let Err(e) = save(ctx, shelf, &gate) {
+        // A copy with no gate is a report nobody can open.
+        if report.is_some() {
+            report::remove(&ctx.state, &ctx.repo.slug, &gate.id);
+        }
+        return Err(e);
+    }
     Ok((
         gate,
         crate::registry::running(&ctx.state, &ctx.repo).is_some(),
@@ -219,6 +242,7 @@ fn check_content(request: &GateRequest) -> Result<(), String> {
             ("findings", !request.findings.is_empty()),
             ("commands", !request.commands.is_empty()),
             ("manual", !request.manual.is_empty()),
+            ("report", request.report.is_some()),
         ];
         if let Some((field, _)) = carried.iter().find(|(_, present)| *present) {
             return Err(format!(
@@ -227,4 +251,11 @@ fn check_content(request: &GateRequest) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The last component of a path the caller gave, for the board to name the report by.
+fn file_name(given: &str) -> String {
+    std::path::Path::new(given)
+        .file_name()
+        .map_or_else(|| given.to_string(), |n| n.to_string_lossy().into_owned())
 }

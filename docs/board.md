@@ -174,7 +174,7 @@ Clicking any task card opens its detail panel:
 
 Gates represent explicit decision points where an agent stops and waits for human input:
 - **Frame structure**: What to look at, what was already decided, and where agent confidence is uncertain. A gate that waits always carries the question to answer (`focus`); `adj gate open` refuses one without it.
-- **What a gate carries**: `steps` (a plan's steps, in order; required on a `plan`), `sections` (what was found or planned, as blocks under headings the agent picks, in the `found` or `plan` stage) and `quick` (a fixed confirmation answered with one press, with nothing to read).
+- **What a gate carries**: `steps` (a plan's steps, in order; required on a `plan`), `sections` (what was found or planned, as blocks under headings the agent picks, in the `found` or `plan` stage), `quick` (a fixed confirmation answered with one press, with nothing to read) and `report` (a self-contained HTML file, copied when the gate opens, that the board opens with 「レポートを開く」 in a sandboxed frame).
 - **Gate Types**:
   - `plan`: Approval of implementation plan, problem statement, and goals.
   - `diff`: Code review rounds and findings.

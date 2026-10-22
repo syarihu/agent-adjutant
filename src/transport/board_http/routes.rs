@@ -15,6 +15,7 @@ use super::handlers::{
     focus_hub, hand_to_worker, nudge_hub, read_hub_title, refresh_tasks, relay_findings,
     review_findings, start_parent_hub, update_task, wake_hub,
 };
+use super::report::serve_report;
 use super::sessions::{
     answer_prompt_answer, clean_up_session, git_of_session, keep_session_answer,
     last_message_of_session, link_session, open_session, restart_session, resume_session,
@@ -80,6 +81,8 @@ pub(super) enum Route<Id = String> {
     ReadHubTitle,
     Worktree(String),
     AnswerGate(String),
+    /// `GET <id>/report`: the HTML report a gate carries.
+    GateReport(String),
     Terminal(Id),
 }
 
@@ -148,6 +151,15 @@ impl<'a> Route<&'a str> {
         }
         if let Some(rest) = path.strip_prefix("/api/hubs/") {
             return Ok(Self::hub(method, rest));
+        }
+        // One id and `report`; anything else under `/api/gates/` is not a GET route.
+        if method == "GET"
+            && let Some(rest) = path.strip_prefix("/api/gates/")
+        {
+            return Ok(match rest.split('/').collect::<Vec<_>>()[..] {
+                [id, "report"] if !id.is_empty() => Some(Route::GateReport(id.to_string())),
+                _ => None,
+            });
         }
         Ok(Some(match (method, path) {
             // One document serves the page paths, and the page reads its own address to know
@@ -276,6 +288,7 @@ impl<'a> Route<&'a str> {
             Route::ReadHubTitle => Route::ReadHubTitle,
             Route::Worktree(action) => Route::Worktree(action),
             Route::AnswerGate(id) => Route::AnswerGate(id),
+            Route::GateReport(id) => Route::GateReport(id),
         })
     }
 }
@@ -348,6 +361,7 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::ReadHubTitle => reply(out, read_hub_title(server)),
         Route::Worktree(action) => reply(out, act_on_worktree(server, &action, &req.body)),
         Route::AnswerGate(id) => reply(out, answer_gate(server, &id, &req.body)),
+        Route::GateReport(id) => serve_report(server, &id, req, out),
         Route::Terminal(_) => no_such_route(out),
     }
 }

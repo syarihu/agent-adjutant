@@ -26,6 +26,7 @@ mod get;
 mod list;
 mod model;
 mod open;
+pub mod report;
 mod resume_signals;
 mod send_back_read;
 mod store;

@@ -500,6 +500,10 @@ pub struct Gate {
     /// `verify`: the checks left for a person.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub manual: Vec<String>,
+    /// The file name of the HTML report the gate carries, for the board to show. The copy is
+    /// found by the gate's id, never by this name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<String>,
     /// `diff` / `verify`: the rules that made this gate wait rather than be kept as a record.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stopped_by: Vec<StopRule>,
@@ -561,6 +565,8 @@ pub struct GateRequest {
     pub findings: Vec<Finding>,
     pub commands: Vec<CommandRun>,
     pub manual: Vec<String>,
+    /// A path to a self-contained HTML file, relative to `worktree` or absolute.
+    pub report: Option<String>,
 }
 
 /// The keys of a payload that are shown as they are. The rest of a `GateRequest` is read
@@ -633,6 +639,13 @@ impl GateRequest {
         };
         let steps = read_steps(payload.get("steps"))?;
         let sections = read_sections(payload.get("sections"))?;
+        // A blank path is no report, like a blank focus; a number is a mistake worth naming.
+        let report = match payload.get("report") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(path)) if path.trim().is_empty() => None,
+            Some(serde_json::Value::String(path)) => Some(path.clone()),
+            Some(_) => return Err("report must be a path to an HTML file".to_string()),
+        };
         let worktree = payload
             .get("worktree")
             .and_then(serde_json::Value::as_str)
@@ -667,6 +680,7 @@ impl GateRequest {
             findings: shown.findings,
             commands: shown.commands,
             manual: shown.manual,
+            report,
         })
     }
 }

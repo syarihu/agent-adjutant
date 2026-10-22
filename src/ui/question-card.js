@@ -24,6 +24,9 @@ const QUESTION_ASK_OF_KIND = {
 
 const qcIcon = name => `<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;
 const qcKey = (g, ctx) => ctx?.key ?? gateRef(g);
+/* The button for the HTML report a gate carries (gate-report.js shows it). A quick gate carries nothing to read, so it has none. */
+const qcReportButton = g => (g.report && !g.quick
+  ? `<button type="button" class="qc-link qc-report-open" data-qc-open="html-report">${qcIcon('description')}<span>レポートを開く</span></button>` : '');
 const qcChips = facts => (facts || []).length ? `<div class="qc-chips">${facts.map(f => `<span class="qc-chip">${esc(f)}</span>`).join('')}</div>` : '';
 
 /* A part of the card: drawn only when it has something in it. */
@@ -102,7 +105,8 @@ function qcFoundHtml(g, ctx, body) {
   if (!['diff', 'verify'].includes(g.kind)) h += qcChips(g.facts);
   const place = qcBodyPlace(g);
   if (body && place === 'found') h += `<div class="body">${md(body)}</div>`;
-  if (body && place === 'link') h += `<button type="button" class="qc-link" data-qc-open="report">${qcIcon('description')}<span>レポートを開く</span></button>`;
+  if (body && place === 'link') h += `<button type="button" class="qc-link" data-qc-open="report">${qcIcon('description')}<span>${g.report ? '本文を開く' : 'レポートを開く'}</span></button>`;
+  h += qcReportButton(g);
   return research ? qcStage('lightbulb', '調査結果', h) : qcStage('manage_search', '調べたこと', h);
 }
 
@@ -211,6 +215,7 @@ function qcDispatchReadHtml(g, body) {
   if (body) h += `<div class="body">${md(body)}</div>`;
   if (g.unsure) h += qcSub('warning', '懸念点') + `<div class="qc-unsure">${md(g.unsure)}</div>`;
   for (const s of g.sections || []) h += `<h4>${esc(s.heading)}</h4><div class="body">${md(s.body)}</div>`;
+  h += qcReportButton(g);
   return qcStage('fact_check', 'hub の読み取り', h);
 }
 

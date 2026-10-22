@@ -168,3 +168,12 @@
 .qc-excerpt { font: 12px/1.65 var(--font-mono); overflow-x: auto; max-height: 260px; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest);
   border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-shape-corner-md); }
 .qc-ev-file { padding: 2px 8px; font: 11.5px/1.6 var(--font-mono); background: var(--md-sys-color-surface-container); }
+
+/* The HTML report a worker attached (gate-report.js): the dialog is widened while its layer is on top, and the report sits in a frame
+   on a white page, which is what it was written for. */
+#question-dialog:has(> .qd-layers > .qd-layer.qd-report:not([hidden])) { width: min(1000px, calc(100vw - 32px)); }
+.qc-report { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; overflow: hidden; }
+.qc-report-h { display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px; color: var(--md-sys-color-on-surface-variant);
+  background: var(--md-sys-color-surface-container-high); }
+.qc-report-frame { display: block; width: 100%; height: 70vh; border: 0; background: #fff; }
+.qc-report-err { margin: 0; padding: 12px; color: var(--md-sys-color-error); }

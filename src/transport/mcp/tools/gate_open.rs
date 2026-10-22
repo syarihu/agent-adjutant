@@ -37,6 +37,7 @@ pub(super) fn definition() -> Value {
                 "findings": { "type": "array", "items": { "type": "object" }, "description": "diff: severity (must | want | scope), location, text, outcome (open | fixed | declined), reason when declined." },
                 "commands": { "type": "array", "items": { "type": "object" }, "description": "verify: command, result (pass | fail), time, output, attempts (runs it took; above 1 when it failed first)." },
                 "manual": { "type": "array", "items": { "type": "string" }, "description": "verify: the checks left for a person." },
+                "report": { "type": "string", "description": "A self-contained HTML file (no external scripts, styles, fonts or images; images inline as data: URLs), relative to the worktree or absolute. Copied when the gate opens (up to 5 MiB, UTF-8) and shown on the board in a sandbox. One per gate; not on a quick gate." },
                 "stoppedBy": { "type": "array", "items": { "type": "string" }, "description": "diff / verify that waits: the rules that made it stop rather than be kept as a record — round-limit, verify-failed, manual-check, unsure, stop-at." },
                 "repo": repo_property(),
                 "hub": hub_property(),

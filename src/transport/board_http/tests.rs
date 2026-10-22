@@ -2204,3 +2204,155 @@ mod others_drafts {
         assert_eq!(&frame[4..], b"no reader window for this pull request");
     }
 }
+
+// ── the HTML report a gate carries ──
+
+#[test]
+fn a_report_route_names_one_gate_id_and_nothing_else_under_gates_is_a_get() {
+    assert_eq!(
+        parsed("GET", "/api/gates/20260922T041233Z-diff/report"),
+        Ok(Some(Route::GateReport("20260922T041233Z-diff".to_string())))
+    );
+    for path in [
+        "/api/gates/g1/other",
+        "/api/gates/g1",
+        "/api/gates//report",
+        "/api/gates/a/b/report",
+        "/api/gates/report",
+    ] {
+        assert_eq!(parsed("GET", path), Ok(None), "{path}");
+    }
+    // The answer is still a POST to the id alone.
+    assert_eq!(
+        parsed("POST", "/api/gates/g1"),
+        Ok(Some(Route::AnswerGate("g1".to_string())))
+    );
+    // A board a hub serves shows gates too, so the report is not the resident's alone.
+    assert!(!Route::<String>::GateReport("g1".to_string()).resident_only());
+}
+
+/// A board's server over a sandboxed state directory, with one question gate open that carries
+/// `html` as its report. The gate's id comes back with it.
+fn board_with_report(
+    sandbox: &crate::testing::Sandbox,
+    html: &str,
+) -> (crate::board::Server, String) {
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    let wt = sandbox.state().join("wt");
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::write(wt.join("report.html"), html).unwrap();
+    let request = crate::gate::GateRequest::from_json(&serde_json::json!({
+        "kind": "question", "title": "q", "focus": "f",
+        "worktree": wt.to_string_lossy(), "report": "report.html",
+    }))
+    .unwrap();
+    let (gate, _) = crate::gate::open(&ctx, request).unwrap();
+    let server = crate::board::Server {
+        ctx,
+        token: "secret".to_string(),
+        port: 0,
+        resident: false,
+        jules: Default::default(),
+        hub_titles: Default::default(),
+        last_lines: Default::default(),
+        prompts: Default::default(),
+        diffs: Default::default(),
+        tmux: None,
+        terminals: Default::default(),
+        pr_poll: None,
+        waits: Default::default(),
+    };
+    (server, gate.id)
+}
+
+/// The status line, the header block and the body of what `route` wrote.
+fn answered(server: &crate::board::Server, req: &Request) -> (String, String, String) {
+    let mut out = Vec::new();
+    super::routes::route(server, req, &mut out).unwrap();
+    let text = String::from_utf8(out).unwrap();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap();
+    let (status, headers) = head.split_once("\r\n").unwrap();
+    (status.to_string(), headers.to_string(), body.to_string())
+}
+
+const TOKEN_HEADER: [(&str, &str); 1] = [("X-Adjutant-Token", "secret")];
+
+#[test]
+fn a_report_is_served_as_html_under_a_policy_that_fetches_nothing() {
+    let sandbox = crate::testing::Sandbox::empty();
+    // What a worker might write against the rules: the policy, not the page, is what stops it.
+    let html = "<!doctype html><script src=\"https://example.com/x.js\"></script>\
+                <img src=\"https://example.com/x.png\"><script>parent.document</script>";
+    let (server, id) = board_with_report(&sandbox, html);
+    let (status, headers, body) = answered(
+        &server,
+        &request("GET", &format!("/api/gates/{id}/report"), &TOKEN_HEADER),
+    );
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(
+        headers.contains("Content-Type: text/html; charset=utf-8"),
+        "{headers}"
+    );
+    let policy = headers
+        .lines()
+        .find_map(|l| l.strip_prefix("Content-Security-Policy: "))
+        .unwrap();
+    assert!(policy.contains("default-src 'none'"), "{policy}");
+    assert!(policy.ends_with("; sandbox allow-scripts"), "{policy}");
+    assert!(!policy.contains("allow-same-origin"), "{policy}");
+    assert!(
+        headers.contains("Referrer-Policy: no-referrer"),
+        "{headers}"
+    );
+    assert_eq!(body, html);
+}
+
+#[test]
+fn a_report_is_not_handed_to_a_token_in_the_address() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let (server, id) = board_with_report(&sandbox, "<p>x</p>");
+    let mut by_query = request("GET", &format!("/api/gates/{id}/report"), &[]);
+    by_query.query = vec![("token".to_string(), "secret".to_string())];
+    let (status, _, body) = answered(&server, &by_query);
+    assert_eq!(status, "HTTP/1.1 403 Forbidden");
+    assert!(
+        body.contains("a report is read through the board page"),
+        "{body}"
+    );
+    let by_header = request("GET", &format!("/api/gates/{id}/report"), &TOKEN_HEADER);
+    assert_eq!(answered(&server, &by_header).0, "HTTP/1.1 200 OK");
+}
+
+#[test]
+fn an_unknown_gate_and_an_id_that_climbs_have_no_report() {
+    let sandbox = crate::testing::Sandbox::empty();
+    let (server, _) = board_with_report(&sandbox, "<p>x</p>");
+    // A file a path built from the id would reach if nothing checked it.
+    std::fs::write(sandbox.state().join("gates/secret.html"), "<p>nope</p>").unwrap();
+    for id in ["20260101T000000Z-diff", "..%2F..%2Fsecret", "..", "a%2Fb"] {
+        let (status, _, body) = answered(
+            &server,
+            &request("GET", &format!("/api/gates/{id}/report"), &TOKEN_HEADER),
+        );
+        assert_eq!(status, "HTTP/1.1 404 Not Found", "{id}");
+        assert!(body.contains("no such report"), "{id}: {body}");
+        assert!(!body.contains("nope"), "{id}");
+    }
+}
+
+#[test]
+fn the_page_shows_a_report_in_a_sandbox_that_cannot_reach_it() {
+    assert!(UI_HTML.contains(super::report::REPORT_POLICY));
+    assert!(UI_HTML.contains("sandbox=\"allow-scripts\""));
+    assert!(UI_HTML.contains("referrerpolicy=\"no-referrer\""));
+    assert!(!UI_HTML.contains("allow-same-origin"));
+}

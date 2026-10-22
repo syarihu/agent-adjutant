@@ -62,6 +62,7 @@ fn gate(kind: Kind) -> Gate {
         findings: Vec::new(),
         commands: Vec::new(),
         manual: Vec::new(),
+        report: None,
         stopped_by: Vec::new(),
         wait: true,
         opened_at: "20260922T041233Z".to_string(),
@@ -1401,4 +1402,158 @@ fn a_record_is_not_closed_from_the_mcp_tool_only_sent_back() {
     let err = decide(&ctx, id, "close", None, None, Offered::Only).unwrap_err();
     assert!(matches!(err, DecideError::Refused(_)), "{err:?}");
     assert!(exists(&ctx.state, &ctx.repo.slug, Shelf::Record, id));
+}
+
+// ── the HTML report a gate carries ──
+
+/// A worktree with `files` in it, under the sandbox, and the request to open a question gate
+/// there that names `report`.
+fn with_report(
+    sandbox: &crate::testing::Sandbox,
+    files: &[(&str, &[u8])],
+    report: serde_json::Value,
+) -> (String, serde_json::Value) {
+    let wt = sandbox.state().join("wt");
+    for (name, bytes) in files {
+        let path = wt.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    std::fs::create_dir_all(&wt).unwrap();
+    let wt = wt.to_string_lossy().into_owned();
+    let payload =
+        json!({"kind": "question", "title": "q", "focus": "f", "worktree": wt, "report": report});
+    (wt, payload)
+}
+
+fn open_report(ctx: &Context, payload: &serde_json::Value) -> Result<(Gate, bool), String> {
+    open(ctx, GateRequest::from_json(payload)?)
+}
+
+/// What is under the open shelf: a refused report must leave no gate file, and no copy.
+fn shelf_files(ctx: &Context) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir_of(ctx, Shelf::Open))
+        .map(|dir| {
+            dir.filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_report_is_copied_when_the_gate_opens_and_only_its_file_name_is_kept() {
+    let (sandbox, ctx) = hub();
+    let (_, payload) = with_report(
+        &sandbox,
+        &[(".claude/report.html", "<p>日本語</p>".as_bytes())],
+        json!(".claude/report.html"),
+    );
+    let (gate, _) = open_report(&ctx, &payload).unwrap();
+    assert_eq!(gate.report.as_deref(), Some("report.html"));
+    let copy = dir_of(&ctx, Shelf::Open)
+        .join("reports")
+        .join(format!("{}.html", gate.id));
+    assert_eq!(std::fs::read_to_string(copy).unwrap(), "<p>日本語</p>");
+    assert_eq!(
+        report::load(&ctx.state, &ctx.repo.slug, &gate.id)
+            .unwrap()
+            .as_deref(),
+        Some("<p>日本語</p>")
+    );
+    // The name is what the board shows, and it is written to the gate file.
+    let stored = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
+    assert_eq!(stored.report.as_deref(), Some("report.html"));
+}
+
+#[test]
+fn an_absolute_report_path_is_read_as_it_is() {
+    let (sandbox, ctx) = hub();
+    std::fs::create_dir_all(sandbox.state()).unwrap();
+    let elsewhere = sandbox.state().join("elsewhere.html");
+    std::fs::write(&elsewhere, "<p>x</p>").unwrap();
+    let (_, payload) = with_report(&sandbox, &[], json!(elsewhere.to_string_lossy()));
+    let (gate, _) = open_report(&ctx, &payload).unwrap();
+    assert_eq!(gate.report.as_deref(), Some("elsewhere.html"));
+}
+
+#[test]
+fn a_gate_with_no_copy_has_no_report_to_load() {
+    let (_sandbox, ctx) = hub();
+    assert_eq!(
+        report::load(&ctx.state, &ctx.repo.slug, "20260922T041233Z-plan"),
+        Ok(None)
+    );
+    assert_eq!(report::load(&ctx.state, &ctx.repo.slug, "../x"), Ok(None));
+}
+
+#[test]
+fn a_report_that_cannot_be_shown_is_refused_and_leaves_nothing_behind() {
+    let (sandbox, ctx) = hub();
+    let too_big = vec![b'a'; report::MAX_REPORT_BYTES as usize + 1];
+    let (_, payload) = with_report(
+        &sandbox,
+        &[("big.html", &too_big), ("bad.html", &[0xff, 0xfe, b'x'])],
+        json!("missing.html"),
+    );
+    std::fs::create_dir_all(sandbox.state().join("wt/dir.html")).unwrap();
+    for (name, why) in [
+        ("missing.html", "cannot read report"),
+        ("dir.html", "not a regular file"),
+        ("big.html", "byte limit"),
+        ("bad.html", "not UTF-8"),
+    ] {
+        let mut payload = payload.clone();
+        payload["report"] = json!(name);
+        let err = open_report(&ctx, &payload).unwrap_err();
+        assert!(err.contains(why) && err.contains(name), "{err}");
+    }
+    assert_eq!(shelf_files(&ctx), Vec::<String>::new());
+}
+
+#[test]
+fn a_report_of_exactly_the_limit_is_taken() {
+    let (sandbox, ctx) = hub();
+    let full = vec![b'a'; report::MAX_REPORT_BYTES as usize];
+    let (_, payload) = with_report(&sandbox, &[("full.html", &full)], json!("full.html"));
+    assert!(open_report(&ctx, &payload).is_ok());
+}
+
+#[test]
+fn a_quick_gate_cannot_carry_a_report() {
+    let (sandbox, ctx) = hub();
+    let (_, mut payload) = with_report(&sandbox, &[("r.html", b"<p>x</p>")], json!("r.html"));
+    payload["quick"] = json!(true);
+    payload["choices"] = json!([{"id": "a", "label": "A"}]);
+    let err = open_report(&ctx, &payload).unwrap_err();
+    assert_eq!(
+        err,
+        "a quick gate carries nothing to read: drop report or quick"
+    );
+    assert_eq!(shelf_files(&ctx), Vec::<String>::new());
+}
+
+#[test]
+fn a_blank_report_is_none_and_a_non_string_is_named() {
+    let base = json!({"kind": "question", "title": "q", "focus": "f"});
+    for blank in [json!(null), json!(""), json!("  ")] {
+        let mut payload = base.clone();
+        payload["report"] = blank;
+        assert_eq!(GateRequest::from_json(&payload).unwrap().report, None);
+    }
+    let mut payload = base;
+    payload["report"] = json!(3);
+    let err = GateRequest::from_json(&payload).unwrap_err();
+    assert!(err.contains("report"), "{err}");
+}
+
+#[test]
+fn only_a_gate_id_can_name_a_report() {
+    for bad in ["", "..", "a/b", "a%2Fb", "a.b", "a b"] {
+        assert!(!report::valid_id(bad), "{bad}");
+    }
+    assert!(report::valid_id("20260922T041233Z-diff"));
+    assert!(report::valid_id("20260922T041233Z-diff-record-2"));
 }
