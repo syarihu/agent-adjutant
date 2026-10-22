@@ -38,7 +38,7 @@
 .prd-l:hover .prd-plus, .prd-l:focus-within .prd-plus, .prd-plus:focus-visible { opacity: 1; }
 @media (hover: none) { .prd-plus { opacity: .6; } }
 
-/* An annotation sits under its line like a review comment, not scrolling sideways with the code. */
+/* An annotation and the person's comments sit under their line like a review comment, not scrolling sideways with the code. */
 .prd-ann { position: sticky; left: 0; margin: 3px 8px 3px 52px; padding: 6px 10px; font: 12.5px/1.5 var(--font-sans, inherit);
   white-space: normal; border-radius: var(--md-shape-corner-md); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
 .prd-ann-tr { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
@@ -52,3 +52,26 @@
 .prd-flash { outline: 3px solid var(--md-sys-color-primary); outline-offset: -3px; animation: prd-flash 1.4s ease-out; }
 @keyframes prd-flash { from { outline-color: var(--md-sys-color-primary); } to { outline-color: transparent; } }
 @media (prefers-reduced-motion: reduce) { .prd-flash { animation: none; } }
+.prd-ann-acts button[hidden] { display: none; }
+
+/* The person's comments: on a line, under its annotations and in line with the code column, and the ones on a file (or whose line is gone) in the slot under its
+   header. The text is the person's own, shown as it was typed. */
+.prd-cmt { position: sticky; left: 0; margin: 3px 8px 3px 52px; padding: 6px 10px; font: 12.5px/1.5 var(--font-sans, inherit); white-space: normal;
+  border-radius: var(--md-shape-corner-md); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
+  border: 1px solid var(--md-sys-color-outline-variant); display: flex; flex-direction: column; gap: 4px; }
+.prd-fcmts { display: flex; flex-direction: column; gap: 4px; }
+.prd-fcmts:empty { display: none; }
+.prd-fcmts .prd-cmt { position: static; margin: 0; }
+.prd-cmt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.prd-cmt-who { font-size: 11.5px; font-weight: 800; }
+.prd-cmt-btns { margin-left: auto; display: flex; gap: 2px; }
+.prd-cmt-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.prd-cmt-lost { font-size: 11px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.prd-chip-unsent { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.prd-chip-warn { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.prd-cmt-body { width: 100%; box-sizing: border-box; min-height: 72px; resize: vertical; border-radius: var(--md-shape-corner-xs); border: 1px solid var(--md-sys-color-outline-variant);
+  padding: 6px 8px; background: var(--md-sys-color-surface-container-lowest); color: var(--md-sys-color-on-surface); font: inherit; line-height: 1.5; }
+.prd-cmt-body:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
+.prd-cmt-body:disabled { opacity: .75; }
+.prd-cmt-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.prd-cmt-sent { background: var(--md-sys-color-surface-container-low); }

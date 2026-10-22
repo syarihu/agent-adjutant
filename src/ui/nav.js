@@ -19,7 +19,7 @@
      /?view=review                                         レビュー, every board; nothing selected, so the
                                                            middle is the empty state
      /?view=review&task=pr:<owner/repo#N>&pane=detail      レビュー with a PR waiting on your review in the
-                                                           middle (pane: detail = 下読み, which holds the diff, or drafts; an older pane=diff lands on detail), its reader on the right
+                                                           middle (one view, pane=detail: the read-through with its annotated diff; an older pane=diff or pane=drafts lands on it), its reader on the right
                                                            (/?view=work&task=pr:... from older links lands on the same)
    /b/<slug>/?view=work&task=<id>&pane=ai                 an older link to a task's AI 下読み (pane: ai, or ai-drafts): the task opens
                                                            in いまの仕事 and its AI 下読み dialog opens over it

@@ -13,7 +13,6 @@ const PR_REVIEW_STATE = { approved: '承認', 'changes-requested': '変更を依
 const PR_SINCE_STATUS = { addressed: '対応済み', replied: '返信だけ', untouched: '手つかず' };
 /* The placeholder of a file's card in 「拡大」 where there is no annotated diff hook (a fallback: the page sets one). */
 const PR_DIFF_PLACEHOLDER = 'この PR の差分はまだここに表示できません。GitHub で開いて読んでください。';
-const PR_NO_READ_WHY = 'AI 下読みのあとに使えます';
 
 const prSha7 = sha => String(sha || '').slice(0, 7);
 const prSubText = rec => `${rec?.repo || ''} #${rec?.number ?? ''}`;
@@ -27,29 +26,11 @@ const prHasRead = (rec, read) => !!read || (read === undefined && !!rec?.ai?.sha
 const prReaderOpen = rec => ['running', 'ready'].includes(rec?.ai?.status) && !rec.ai.readerClosedAt && rec.ai.terminal?.backend === 'tmux' && !!rec.ai.terminal.window;
 /* Why 「聞く」 is off: it types into the reader's terminal. */
 const PR_ASK_OFF_WHY = 'worker が動いていません';
-/* The boxes the person types a draft in. */
-const PR_BOX_SEL = '.pr-draft-body, .pr-overall';
+/* The box the person types the overall comment in, in the send dialog (pr-send.js). A comment on a line is typed in a box of the diff
+   (`data-prd-box`, pr-diff-view.js). */
+const PR_BOX_SEL = '.pr-overall';
 /* What the middle and the panel say while the PR's record is not there: the records are still coming, could not be read, or lack it. */
 const prMissingText = (doc, error) => doc ? 'この PR は、いまの一覧にありません' : error ? `読み込めませんでした: ${error}` : '読み込み中…';
-
-/* The tab that is shown: 下読み unless 下書き is asked for and can be used (it needs a read-through). Any other name, such as the
-   `diff` of an older address, is 下読み, which holds the diff. */
-function prPaneOf(pane, hasRead) {
-  return pane === 'drafts' && hasRead ? 'drafts' : 'detail';
-}
-
-/* The tabs over the middle, the same component a task's tabs are (`wk-mid-tab`, task-read.js), named by `data-mid-tab`. A tab that
-   cannot be used is disabled, with why as its title. */
-function prTabsHtml(rec, read, pane, draftCount = 0) {
-  const has = prHasRead(rec, read);
-  const tab = (id, label, extra, off) =>
-    `<button type="button" role="tab" id="wk-mid-tab-pr-${id}" class="wk-mid-tab${pane === id ? ' active' : ''}" data-mid-tab="${id}" aria-selected="${pane === id}" aria-controls="task-read"${off ? ` disabled title="${esc(off)}"` : ''}>`
-      + `<span class="wk-mid-label">${esc(label)}</span>${extra}</button>`;
-  const dot = OTHERS_LIVE.includes(rec?.state) && rec?.events?.pushed ? '<span class="tp-dot" role="img" aria-label="前回のレビューのあとに push されました" title="前回のレビューのあとに push されました"></span>' : '';
-  const badge = draftCount > 0 ? `<span class="m3-tab-badge" style="background:var(--md-sys-color-surface-container-highest);color:var(--md-sys-color-on-surface);">${draftCount}</span>` : '';
-  return tab('detail', '下読み', dot, '')
-    + tab('drafts', '下書き', badge, !has ? PR_NO_READ_WHY : '');
-}
 
 /* 「下読みを閉じる」, while a reader runs that has a process to stop; `closing` is a close of this page's that is out. */
 const prCloseReaderBtnHtml = (rec, closing) => prReaderOpen(rec) && rec.ai.pid
@@ -62,18 +43,33 @@ function prCiWord(ci) {
   return n('pass') > 0 ? '通過' : 'なし';
 }
 
+/* The button that opens the send dialog (pr-send.js): 「レビューを送る」 for a review request (`to` 'pending'), 「worker に渡す」 for a task's
+   own read-through ('worker'). `n` is how many comments it would send now, shown in a badge when above 0; `off` is why it cannot be
+   used, blank when it can. */
+function prSendBtnHtml(to, n, off = '') {
+  const worker = to === 'worker';
+  const label = worker ? 'worker に渡す' : 'レビューを送る';
+  const badge = n > 0 ? `<span class="pr-send-count">${n}</span>` : '';
+  return `<button type="button" class="btn-m3-primary tp-jump" data-pr-send="${worker ? 'worker' : 'pending'}" aria-haspopup="dialog" aria-label="${esc(n > 0 ? `${label}（${n} 件）` : label)}"${off ? ` disabled title="${esc(off)}"` : ''}>`
+    + `<span class="material-symbols-outlined" aria-hidden="true">${worker ? 'send' : 'rate_review'}</span><span>${label}</span>${badge}</button>`;
+}
+const PR_SEND_OFF_WHY = 'この PR はマージされたか、閉じられています。pending review には積めません';
+
 /* The heading of a review request's middle: the number and title, the repository, author, size and CI under it, and at the right
-   「GitHub で開く」, 「読み直す」 and 「拡大」. 「読み直す」 is there while a read-through exists and the PR is live and not out of review
-   (the card of one that is has its own buttons); `hubView` and `asking` are what `prAskAttrs` takes. */
-function prReviewHeadHtml(rec, read, hubView, asking = false) {
+   「GitHub で開く」, 「読み直す」, 「レビューを送る」 and 「拡大」. 「読み直す」 is there while a read-through exists and the PR is live and not
+   out of review (the card of one that is has its own buttons); `hubView` and `asking` are what `prAskAttrs` takes. 「レビューを送る」 is there
+   while a read-through exists and the drafts file is loaded (`sendN`, the comments a push would send now, `prPendable`'s; null until then), and
+   off while the PR is not live. The heading is drawn when its markup changes, so what it counts is passed in. */
+function prReviewHeadHtml(rec, read, hubView, asking = false, sendN = null) {
   const author = rec.author ? `@${rec.author}` : '（削除されたアカウント）';
   const sub = [rec.repo, author, `+${Number(rec.additions) || 0} −${Number(rec.deletions) || 0}`, `${Number(rec.changedFiles) || 0} files`, `CI ${prCiWord(rec.ci)}`].join(' · ');
   const url = httpUrl(rec.url);
   const open = url ? `<a class="btn-m3-text tp-jump" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="GitHub で開く（新しいタブ）"><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>GitHub で開く</a>` : '';
   const again = prHasRead(rec, read) && OTHERS_LIVE.includes(rec.state) && !othersOutOfReview(rec)
     ? `<button type="button" class="btn-m3-text tp-jump" data-pr-reread${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">refresh</span>${esc(asking ? '依頼中…' : '読み直す')}</button>` : '';
+  const send = prHasRead(rec, read) && sendN != null ? prSendBtnHtml('pending', sendN, OTHERS_LIVE.includes(rec.state) ? '' : PR_SEND_OFF_WHY) : '';
   const expand = '<button type="button" class="tool-btn" data-pr-expand aria-haspopup="dialog" title="拡大" aria-label="PR 全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>';
-  return `<div class="wk-head-main"><div class="wk-term-title">${esc(`#${rec.number} ${rec.title}`)}</div><div class="wk-term-sub">${esc(sub)}</div></div><span class="wk-head-acts">${open}${again}${expand}</span>`;
+  return `<div class="wk-head-main"><div class="wk-term-title">${esc(`#${rec.number} ${rec.title}`)}</div><div class="wk-term-sub">${esc(sub)}</div></div><span class="wk-head-acts">${open}${again}${send}${expand}</span>`;
 }
 
 /* ── the sections: `{ key, label, html }`, or null when there is nothing to say ── */
@@ -152,7 +148,7 @@ function prThree(read) {
   return { key: 'top:three', label: '3行でいうと', html: `${line('目的', t.purpose)}${line('やり方', t.approach)}${line('影響', t.impact)}<p class="pr-essence"><b>この差分の本質:</b> ${esc(t.essence)}</p>` };
 }
 
-/* 見るポイント, which only a read-through of the older form has. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off, `opts.noAsk` leaves it out (a place with no reader to type to). */
+/* 見るポイント, which only a read-through of the older form has; 「コメントにする」 opens a comment on the point's line of the diff. `opts.diff` is whether 「差分で見る」 can be offered (the annotated diff is there); `opts.readerOpen` false turns 「聞く」 off, `opts.noAsk` leaves it out (a place with no reader to type to). */
 function prPoints(read, opts = {}) {
   const points = read?.points || [];
   if (!points.length) return null;
@@ -162,7 +158,7 @@ function prPoints(read, opts = {}) {
       <div class="pr-point-head"><span class="pr-level">${esc(PR_LEVEL[p.level] || p.level)}</span>${prLoc(p.path, p.line)}</div>
       <div class="pr-point-title">${esc(p.title)}</div>
       <div class="pr-point-why">${esc(p.why)}</div>
-      <div class="pr-point-acts">${opts.diff ? `<button type="button" class="btn-m3-text pr-act" data-pr-goto-diff="${i}">差分で見る</button>` : ''}${opts.noAsk ? '' : `<button type="button" class="btn-m3-text pr-act" data-pr-ask="${i}"${opts.readerOpen === false ? ` disabled title="${esc(PR_ASK_OFF_WHY)}"` : ''}>聞く</button>`}<button type="button" class="btn-m3-text pr-act" data-pr-todraft="${i}">下書きに</button></div>
+      <div class="pr-point-acts">${opts.diff ? `<button type="button" class="btn-m3-text pr-act" data-pr-goto-diff="${i}">差分で見る</button>` : ''}${opts.noAsk ? '' : `<button type="button" class="btn-m3-text pr-act" data-pr-ask="${i}"${opts.readerOpen === false ? ` disabled title="${esc(PR_ASK_OFF_WHY)}"` : ''}>聞く</button>`}<button type="button" class="btn-m3-text pr-act" data-pr-todraft="${i}">コメントにする</button></div>
     </li>`;
   });
   return { key: 'points:list', label: '見るポイント', badge: String(points.length), html: `<ul class="pr-points">${items.join('')}</ul>` };
@@ -292,11 +288,11 @@ function prOorButtonsHtml(actions, hubView, asking) {
   const split = actions.split ? prSplitButtonHtml(actions.split, hubView, asking) : '';
   const full = actions.full
     ? `<button type="button" class="btn-m3-tonal pr-ai" data-pr-ai${prAskAttrs(hubView, asking)}><span class="material-symbols-outlined" aria-hidden="true">menu_book</span><span>${esc(asking ? '依頼中…' : actions.full)}</span></button>` : '';
-  const note = actions.full ? '<div class="tp-muted">差分を全部読むので時間がかかります。分割案の下書きは、編集していなければ下読みの下書きに置き換わります。</div>' : '';
+  const note = actions.full ? '<div class="tp-muted">差分を全部読むので時間がかかります。</div>' : '';
   return `${split || full ? `<div class="pr-foot-acts">${split}${full}</div>` : ''}${note}`;
 }
 
-/* 「レビュー対象外」: the files over the limit and the two ways on, in the 下読み tab and in 「拡大」. Null for a PR that is not out
+/* 「レビュー対象外」: the files over the limit and the two ways on, in the read-through in the middle and in 「拡大」. Null for a PR that is not out
    of review, and for one that waits for nothing of the person. `ai` is `othersAiView`'s. */
 function prOutOfReview(rec, read, ai, hubView, asking = false, readError = false) {
   const oor = othersOutOfReview(rec);
@@ -306,14 +302,16 @@ function prOutOfReview(rec, read, ai, hubView, asking = false, readError = false
     html: `<div class="tp-line">${esc(PR_OOR_TEXT)}</div>${prOorFilesHtml(oor)}${under}${prOorButtonsHtml(prOorActions(rec, read, ai, readError), hubView, asking)}` };
 }
 
-/* The split proposal of a read-through made as one: its overall comment, as text. It is in the drafts too, where it is edited. */
-function prSplitProposal(read) {
+/* The split proposal of a read-through made as one: its overall comment, as text. It is also the overall comment of the send dialog,
+   where it is edited (`to` 'pending': 「レビューを送る」; 'worker': 「worker に渡す」, a task's own). */
+function prSplitProposal(read, to = 'pending') {
   if (read?.mode !== 'split') return null;
+  const where = to === 'worker' ? '「worker に渡す」で編集・コピー・worker に渡せます。' : '「レビューを送る」で編集・コピー・pending review に積めます。';
   return { key: 'top:split', label: '分割案',
-    html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">下書きタブで編集・コピー・pending review に積めます。</div>` };
+    html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">${where}</div>` };
 }
 
-/* The sections of the 下読み tab. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
+/* The sections of the read-through (the middle, 「拡大」 and a task's own dialog). `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
 function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
   const ai = othersAiView(rec, records, nowSecs);
   const hasRead = !!read;
@@ -324,7 +322,8 @@ function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
     !hasRead && read !== undefined && !(othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state)) ? prBeforeRead(rec, records, hubView, nowSecs, opts.asking, opts.readerWhere) : null,
     prOldBand(rec, read, hubView, opts.asking),
     prThree(read),
-    prSplitProposal(read),
+    // A task's own read-through (`noAsk`) hands its comments to the worker; a review request's go into a pending review.
+    prSplitProposal(read, opts.noAsk ? 'worker' : 'pending'),
     // 見るポイント and 読む順 are the older form's; a newer read-through has its notes on the diff's lines, in the diff's file order.
     prOldForm(read) ? prPoints(read, { diff: opts.diff, readerOpen: prReaderOpen(rec), noAsk: opts.noAsk }) : null,
     prOldForm(read) ? prOrder(read, rec, { diff: opts.diff }) : null,
@@ -397,48 +396,23 @@ function prMiddleHtml(rec, records, hubView, nowSecs, opts = {}) {
   return `<div class="tp-ph-head">${esc(ai.text)}</div>${note ? `<div class="tp-muted">${esc(note)}</div>` : ''}${mountable ? '' : prAiButtonHtml(ai, hubView, opts.asking)}`;
 }
 
-/* ── the drafts ── */
+/* ── the comments ── */
 
-/* The drafts as the page holds them until the first edit: the reader's, as if they were the file. */
+/* The drafts the page holds until the first edit: none. A read-through brings no comments of its own: the person writes them on the lines
+   of the diff (a concern's draft becomes one only when 「コメントにする」 is pressed). `fromSha` and `fromMode` say which read-through the page is on. */
 function prSeedDrafts(read) {
   return {
     version: 1, fromSha: read?.sha ?? null, ...(read?.mode === 'split' ? { fromMode: 'split' } : {}),
-    drafts: (read?.drafts || []).map((d, i) => ({ key: `r${i + 1}`, source: 'reader', ...d })),
-    overall: { body: read?.overall?.body || '' },
+    drafts: [], overall: null,
   };
 }
 
-const prDraftSame = (a, b) => a.path === b.path && (a.line ?? null) === (b.line ?? null) && (a.side || 'right') === (b.side || 'right') && a.body === b.body;
-
-/* The reader's drafts of `read` that `doc` does not hold, with keys that nothing in `doc` uses. After a re-read the person's
-   own are never replaced: these are offered to be added. */
-function prNewReaderDrafts(doc, read) {
-  const have = new Set((doc?.drafts || []).map(d => d.key));
-  const out = [];
-  (read?.drafts || []).forEach((d, i) => {
-    if ((doc?.drafts || []).some(x => prDraftSame(x, d))) return;
-    let key = `r${prSha7(read.sha)}-${i + 1}`;
-    for (let n = 2; have.has(key); n++) key = `r${prSha7(read.sha)}-${i + 1}-${n}`;
-    have.add(key);
-    out.push({ key, source: 'reader', ...d });
-  });
-  return out;
-}
-
-/* Whether the drafts `doc` were taken from another read-through than `read`: another head, or the other mode at the same head
-   (`fromMode` is absent for a read-through, in files from before it). */
-function prFromElsewhere(doc, read) {
-  return doc?.fromSha !== read?.sha || (doc?.fromMode || 'read') !== (read?.mode === 'split' ? 'split' : 'read');
-}
-
-/* The overall comment of a split proposal when `doc` does not hold it already (one made after the person's file exists): the text,
-   else null. A read-through's own overall comment is a summary the person writes over, so it is not offered again. It is offered
-   to be added, never put over what the person wrote. */
-function prNewReaderOverall(doc, read) {
-  if (read?.mode !== 'split') return null;
-  const body = prNormComment(read?.overall?.body);
-  if (body === '') return null;
-  return prNormComment(doc?.overall?.body).includes(body) ? null : read.overall.body;
+/* Say in `doc` which read-through its comments were last written on: its head, and its mode (`fromMode` is absent for a read-through). */
+function prStampDoc(doc, read) {
+  if (!read) return doc;
+  doc.fromSha = read.sha ?? doc.fromSha ?? null;
+  if (read.mode === 'split') doc.fromMode = 'split'; else delete doc.fromMode;
+  return doc;
 }
 
 /* The first `<prefix><n>` that no draft of `doc` uses. */
@@ -447,15 +421,6 @@ function prNextKey(doc, prefix) {
   let n = 1;
   while (have.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
-}
-
-/* A point as the person's own draft: a file draft when the point has no line. */
-function prDraftFromPoint(point, doc) {
-  const d = { key: prNextKey(doc, 'p'), source: 'person', path: point.path };
-  if (point.line) d.line = point.line;
-  d.side = 'right';
-  d.body = `${point.title}: ${point.why}`;
-  return d;
 }
 
 function prDraftLocation(d) {
@@ -471,38 +436,15 @@ function prCopyAllText(doc) {
   return parts.join('\n\n');
 }
 
-/* What 「pending review に積む」 would put in: the drafts with a file and something written that are not in the review yet, and
-   whether the overall comment is new (it is not when it is the one already in the review). The server decides the same way. */
 /* A comment as the server compares it: line ends as \n, no trailing space (GitHub may trim it, and what is stored is that). */
 const prNormComment = t => String(t ?? '').replace(/\r\n/g, '\n').trimEnd();
+/* What 「pending review に積む」 would put in: the drafts with a file and something written that are not in the review yet, and
+   whether the overall comment is new (it is not when it is the one already in the review). The server decides the same way. */
 function prPendable(doc) {
   const drafts = (doc?.drafts || []).filter(d => d.path && String(d.body || '').trim() && !d.sentAt).length;
   const body = prNormComment(doc?.overall?.body);
   const overall = body !== '' && prNormComment(doc?.pending?.overall) !== body;
   return { drafts, overall };
-}
-
-/* The button, what a pending review is, and how the last push went: the slot under the drafts. `pend`: `sending`, `result`
-   ({ sent, failed: [{ key, why }], skipped: [{ key, why }] } of the last push), `prUrl`. */
-function prPendHtml(doc, pend = {}) {
-  const n = prPendable(doc);
-  const empty = !n.drafts && !n.overall;
-  const label = n.drafts ? `${n.drafts} 件を pending review に積む` : n.overall ? '全体のコメントを pending review に積む' : 'pending review に積む';
-  const title = empty ? '積めるものがありません。ファイルのある下書きに、書き込みがあると積めます' : '';
-  const button = `<button type="button" class="btn-m3-filled" data-pr-pend${empty || pend.sending ? ' disabled' : ''}${pend.sending ? ' aria-busy="true"' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(pend.sending ? '積んでいます…' : label)}</button>`;
-  const url = httpUrl(pend.prUrl);
-  // The review itself when it is known, else the PR's files, where a pending review can be finished.
-  const href = httpUrl(doc?.pending?.url) || (url ? `${url}/files` : null);
-  const link = href ? ` <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">GitHub で仕上げる</a>` : '';
-  const why = empty && !pend.sending ? '<div class="pr-pend-note">積めるものがありません。</div>' : '';
-  const note = `${why}<div class="pr-pend-note">pending review はあなたにしか見えません。判定を選んで送信するのは GitHub です。${link}</div>`;
-  const r = pend.result;
-  const out = r ? [`${r.sent || 0} 件を積みました`, r.failed?.length ? `${r.failed.length} 件は積めませんでした` : '', r.skipped?.length ? `${r.skipped.length} 件は対象外でした` : ''].filter(Boolean).join('／') : '';
-  const done = [out, r && r.overall && r.overall !== 'none' ? '全体のコメントも積みました' : ''].filter(Boolean).join('／');
-  // A refused overall comment has no box of its own to say why under.
-  const refused = r?.failed?.find(f => f.key === 'overall');
-  const status = done || refused ? `<div class="pr-pend-result" role="status">${esc(done)}</div>${refused ? `<div class="pr-why" role="note">全体のコメントは積めませんでした: ${esc(refused.why)}</div>` : ''}` : '';
-  return `<div class="pr-pend">${button}${note}${status}</div>`;
 }
 
 /* What handing the drafts of a task's PR to its worker would send: the drafts with something written that are not sent yet (a draft
@@ -514,63 +456,101 @@ function prHandable(doc) {
   return { drafts, overall };
 }
 
-/* The button that hands the drafts of a task's PR to its worker, what it does, and how the last hand-over went: the slot under the
-   drafts of 「worker への指示」. `hand`: `sending`, `result` ({ sent, overall, present, woken } of the last one, or { error }). */
-function prHandHtml(doc, hand = {}) {
-  const n = prHandable(doc);
-  const empty = !n.drafts && !n.overall;
-  const label = (n.drafts ? `${n.drafts} 件を worker に渡す` : '全体のコメントを worker に渡す') + (n.drafts && n.overall ? '（全体のコメントも）' : '');
-  const title = empty ? '渡せるものがありません。書き込みのある下書きか、全体のコメントがあると渡せます' : '';
-  const button = `<button type="button" class="btn-m3-filled" data-pr-hand${empty || hand.sending ? ' disabled' : ''}${hand.sending ? ' aria-busy="true"' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(hand.sending ? '渡しています…' : empty ? 'worker に渡す' : label)}</button>`;
-  const why = empty && !hand.sending ? '<div class="pr-pend-note">渡せるものがありません。</div>' : '';
-  const note = `${why}<div class="pr-pend-note">worker が差分の確認を待っているときは、その確認を「差し戻す」で答えます。待っていないときは、最新の差分の記録に差し戻しとして渡します。渡した下書きは「渡しました」と印が付き、残ります。</div>`;
-  const r = hand.result;
-  const done = r && !r.error ? [`${(r.sent || []).length} 件を渡しました`, r.overall ? '全体のコメントも渡しました' : ''].filter(Boolean).join('／') : '';
-  const status = r ? (r.error ? `<div class="pr-why" role="note">${esc(r.error)}</div>` : `<div class="pr-pend-result" role="status">${esc(done)}</div>`) : '';
-  return `<div class="pr-pend">${button}${note}${status}</div>`;
+/* The overall comment as the send dialog shows it: the stored one when the document has an `overall` (even a blank one: it is the
+   person's), else the reader's own (for a split proposal, the proposal), until the person types in it or a push writes it into the
+   document. `reader` is whether the text is the reader's untouched one. */
+function prOverallShown(doc, read) {
+  if (doc?.overall) return { text: String(doc.overall.body ?? ''), reader: false };
+  const text = String(read?.overall?.body ?? '');
+  return { text, reader: text.trim() !== '' };
+}
+/* `doc` with the overall comment that is shown in it: what the dialog counts and copies is what a push would send, which is what is on screen. */
+function prDocShown(doc, read) {
+  if (doc?.overall) return doc;
+  const { text } = prOverallShown(doc, read);
+  return text.trim() === '' ? doc : { ...doc, overall: { body: text } };
 }
 
-const PR_SAVE_TEXT = { saved: '保存しました', saving: '保存しています…' };
-/* The drafts: one box each, the overall comment, and the buttons. `opts`: `place` ('read' for a review request's 下書き tab, 'panel' for a task's 「worker への指示」, which is the right column of its dialog, 'dock' for 「拡大」: only the class of the
-   wrapper), `notice` (how many drafts a re-read brought that the doc lacks), `save` ({ status, error }), `to` (where they go:
-   'pending', the default, a pending review on GitHub, with `pend` (`prPendHtml`'s); or 'worker', a task's worker, with `hand`
-   (`prHandHtml`'s) and no pending review). */
-function prDraftsHtml(doc, read, opts = {}) {
-  const drafts = doc?.drafts || [];
-  const toWorker = opts.to === 'worker';
-  // What is going somewhere is not edited, and its buttons are off.
-  const sending = toWorker ? !!opts.hand?.sending : !!opts.pend?.sending;
-  const failed = new Map(toWorker ? [] : (opts.pend?.result?.failed || []).map(f => [f.key, f.why]));
-  const sentChip = toWorker ? '<span class="pr-chip pr-chip-sent" title="worker に渡した指示です">渡しました</span>' : '<span class="pr-chip pr-chip-sent" title="pending review に積んだ下書きです">積みました</span>';
-  const items = drafts.map(d => {
-    const loc = prDraftLocation(d);
-    // What is in the pending review is read-only here (edit it on GitHub), and so is everything while a push is on its way.
-    const locked = !!d.sentAt || sending;
-    const why = !d.sentAt && failed.has(d.key) ? `<div class="pr-why" role="note">積めませんでした: ${esc(failed.get(d.key))}</div>` : '';
-    return `<div class="pr-draft" data-pr-draft="${esc(d.key)}">
-      <div class="pr-draft-head"><code class="pr-loc">${esc(loc)}</code>${d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの下書きです">AI</span>' : ''}${d.sentAt ? sentChip : ''}<span class="pr-draft-btns"><button type="button" class="btn-m3-text pr-act" data-pr-copy="${esc(d.key)}">コピー</button><button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${sending ? ' disabled' : ''}>捨てる</button></span></div>
-      <textarea class="pr-draft-body" data-pr-body="${esc(d.key)}" aria-label="${esc(`${loc} への下書き`)}" spellcheck="false"${locked ? ' readonly' : ''}>
-${esc(d.body)}</textarea>${why}
-    </div>`;
-  });
-  const suggestion = read?.overall?.suggestion
+/* ── the send dialog: 「レビューを送る」 and 「worker に渡す」 (pr-send.js draws it) ── */
+
+/* The overall comment's box, with the reader's verdict hint under it for a review request (`to` 'pending'). The page draws it once when the
+   dialog opens, so that what is typed in it is never drawn over; `prSendChipSync` keeps the chip in place. */
+function prSendTextHtml(doc, read, to = 'pending') {
+  const shown = prOverallShown(doc, read);
+  const suggestion = to !== 'worker' && read?.overall?.suggestion
     ? `<div class="pr-suggestion">AI の判定の目安: <b>${esc(read.overall.suggestion)}</b>（文字だけ。判定を選んで送るのは GitHub です）</div>` : '';
-  const notice = opts.notice > 0
-    ? `<div class="pr-notice" role="status">下読みし直した下書きが ${opts.notice} 件あります <button type="button" class="btn-m3-tonal" data-pr-take-new${sending ? ' disabled' : ''}>新しい下書きを足す</button> <button type="button" class="btn-m3-text" data-pr-keep${sending ? ' disabled' : ''}>このままにする</button></div>` : '';
-  const save = opts.save?.status === 'error'
-    ? `保存できませんでした: ${opts.save.error || ''} 入力はこのページに残っています`
-    : PR_SAVE_TEXT[opts.save?.status] || '';
-  return `<div class="pr-drafts" data-pr-place="${esc(opts.place || 'read')}">
-    ${notice}
-    ${items.length ? items.join('') : '<div class="tp-muted">下書きはまだありません。差分の行の「＋」や、解説・気になるの「下書きに」から足せます。</div>'}
-    <label class="pr-overall-label">全体のコメント
-      ${suggestion}
-      <textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false"${sending ? ' readonly' : ''}>
-${esc(doc?.overall?.body || '')}</textarea>
-    </label>
-    <div class="pr-draft-acts"><button type="button" class="btn-m3-tonal" data-pr-copy-all>すべてコピー</button><div data-pr-pending-slot>${toWorker ? prHandHtml(doc, opts.hand) : opts.pend ? prPendHtml(doc, opts.pend) : ''}</div></div>
-    <div class="pr-save${opts.save?.status === 'error' ? ' err' : ''}" role="status" data-pr-save>${esc(save)}</div>
-  </div>`;
+  return `<label class="pr-overall-label"><span>全体のコメント <span class="pr-chip" data-pr-send-chip${shown.reader ? '' : ' hidden'}>AI の文から</span></span>`
+    + `<textarea class="pr-overall" data-pr-overall aria-label="全体のコメント" spellcheck="false">\n${esc(shown.text)}</textarea></label>${suggestion}`;
+}
+
+/* The comments the diff cannot show, as a list of the dialog: where each was meant to be, its text and 「削除」. */
+function prSendOffHtml(title, drafts, locked) {
+  if (!drafts.length) return '';
+  const items = drafts.map(d => `<li><div class="pr-send-off-head"><code class="pr-loc">${esc(prDraftLocation(d))}</code>${d.sentAt ? '<span class="pr-chip pr-chip-sent">送りました</span>' : ''}`
+    + `<button type="button" class="btn-m3-text pr-act" data-pr-discard="${esc(d.key)}"${locked ? ' disabled' : ''}>削除</button></div><div class="pr-send-off-text">${esc(d.body)}</div></li>`);
+  return `<div class="pr-send-off"><div class="pr-sub">${esc(`${title}（${drafts.length}）`)}</div><ul class="pr-list">${items.join('')}</ul></div>`;
+}
+
+/* How the last push into the pending review went, as lines: what it sent, failed and skipped, whether the overall comment went in, and why
+   a refused overall was (`result` is the page's `pendResult`: { sent, failed: [{ key, why }], skipped: [{ key, why }], overall }). */
+function prPendResultHtml(result) {
+  const r = result;
+  const out = r ? [`${r.sent || 0} 件を積みました`, r.failed?.length ? `${r.failed.length} 件は積めませんでした` : '', r.skipped?.length ? `${r.skipped.length} 件は対象外でした` : ''].filter(Boolean).join('／') : '';
+  const done = [out, r && r.overall && r.overall !== 'none' ? '全体のコメントも積みました' : ''].filter(Boolean).join('／');
+  // A refused overall comment has no box of its own to say why under.
+  const refused = r?.failed?.find(f => f.key === 'overall');
+  return done || refused ? `<div class="pr-pend-result" role="status">${esc(done)}</div>${refused ? `<div class="pr-why" role="note">全体のコメントは積めませんでした: ${esc(refused.why)}</div>` : ''}` : '';
+}
+/* The same for the last hand-over to a worker (`result`: { sent, overall, present, woken }, or { error }). */
+function prHandResultHtml(result) {
+  const r = result;
+  if (!r) return '';
+  if (r.error) return `<div class="pr-why" role="note">${esc(r.error)}</div>`;
+  const done = [`${(r.sent || []).length} 件を渡しました`, r.overall ? '全体のコメントも渡しました' : ''].filter(Boolean).join('／');
+  return `<div class="pr-pend-result" role="status">${esc(done)}</div>`;
+}
+
+/* Everything in the dialog but the overall comment's box: what would be sent, the comments the diff cannot show, how the last send went, the
+   link and the line that says how the saving goes (empty here: the page fills it in place, `prShowSave`). `o`: `to` ('pending' or 'worker'),
+   `sending`, `result` (`prPendResultHtml`'s or `prHandResultHtml`'s), `prUrl`, `off` and `whole` (`prDiffUnplaced`'s: the drafts with a path the
+   diff does not have, and the ones with no path; for a review request both are 差分に出せないコメント, for a worker the second is
+   「PR 全体へのコメント」). */
+function prSendRestHtml(doc, read, o = {}) {
+  const worker = o.to === 'worker';
+  const shown = prDocShown(doc, read);
+  const n = worker ? prHandable(shown) : prPendable(shown);
+  const empty = !n.drafts && !n.overall;
+  const note = worker
+    ? '<div class="pr-pend-note">worker が差分の確認を待っているときは、その確認を「差し戻す」で答えます。待っていないときは、最新の差分の記録に差し戻しとして渡します。渡したコメントは「渡しました」と印が付き、残ります。</div>'
+    : `<div class="pr-pend-note">${esc(`行のコメント ${n.drafts} 件と一緒に、PR の pending review に積みます。承認・変更の依頼は GitHub で選びます。`)}</div>`;
+  const why = empty && !o.sending ? `<div class="pr-pend-note">${worker ? '渡せるものがありません。' : '積めるものがありません。'}</div>` : '';
+  const locked = !!o.sending;
+  const off = worker ? prSendOffHtml('差分に出せないコメント', o.off || [], locked) + prSendOffHtml('PR 全体へのコメント', o.whole || [], locked)
+    : prSendOffHtml('差分に出せないコメント', [...(o.whole || []), ...(o.off || [])], locked);
+  const url = httpUrl(o.prUrl);
+  // The review itself when it is known, else the PR's files, where a pending review can be finished.
+  const href = worker ? null : httpUrl(doc?.pending?.url) || (url ? `${url}/files` : null);
+  const link = href ? `<div class="pr-pend-note"><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">GitHub で仕上げる</a></div>` : '';
+  const result = worker ? prHandResultHtml(o.result) : prPendResultHtml(o.result);
+  return `${note}${why}${off}${result}${link}<div class="pr-save" role="status" data-pr-save></div>`;
+}
+
+/* The dialog's buttons: 「すべてコピー」, 「閉じる」 and the one that sends (`data-pr-pend`, or `data-pr-hand` for a worker), labelled by what it
+   would send; disabled with its title when there is nothing, and while a send is on its way. `o`: `to`, `sending`. */
+function prSendFootHtml(doc, read, o = {}) {
+  const worker = o.to === 'worker';
+  const shown = prDocShown(doc, read);
+  const n = worker ? prHandable(shown) : prPendable(shown);
+  const empty = !n.drafts && !n.overall;
+  const label = worker
+    ? (n.drafts ? `${n.drafts} 件を worker に渡す` : '全体のコメントを worker に渡す') + (n.drafts && n.overall ? '（全体のコメントも）' : '')
+    : n.drafts ? `${n.drafts} 件を pending review に積む` : n.overall ? '全体のコメントを pending review に積む' : 'pending review に積む';
+  const title = empty ? (worker ? '渡せるものがありません。書き込みのあるコメントか、全体のコメントがあると渡せます' : '積めるものがありません。ファイルのあるコメントに、書き込みがあると積めます') : '';
+  const busy = o.sending ? ' aria-busy="true"' : '';
+  const sendLabel = o.sending ? (worker ? '渡しています…' : '積んでいます…') : empty && worker ? 'worker に渡す' : label;
+  return '<button type="button" class="btn-m3-tonal pr-send-copy" data-pr-copy-all>すべてコピー</button>'
+    + '<button type="submit" value="cancel" class="btn-m3-text">閉じる</button>'
+    + `<button type="button" class="btn-m3-primary" ${worker ? 'data-pr-hand' : 'data-pr-pend'}${empty || o.sending ? ' disabled' : ''}${busy}${title ? ` title="${esc(title)}"` : ''}>${esc(sendLabel)}</button>`;
 }
 
 /* ── 「拡大」 ── */

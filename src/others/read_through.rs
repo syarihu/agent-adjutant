@@ -352,11 +352,11 @@ pub fn validate(read: &ReadThrough) -> Result<(), Vec<String>> {
         }
     }
 
-    // Each concern can become a draft, which the page seeds from it and saves as the person's;
-    // what the drafts file could never store, field by field or as a whole request, must not be
-    // accepted here, or the person could never save them. The seeded form adds a key and a source
-    // to each draft, which the headroom under the request limit (see `MAX_DRAFTS_BYTES`) is there
-    // for.
+    // Each concern can become a comment when the person presses its button on the page, and is
+    // saved as a draft; what the drafts file could never store, field by field or as a whole
+    // request, must not be accepted here, or the person could never save them. The page adds a
+    // key, a source and a sha to each draft, which the headroom under the request limit (see
+    // `MAX_DRAFTS_BYTES`) is there for.
     let concerns: Vec<(&str, &str)> = read
         .annotations
         .iter()

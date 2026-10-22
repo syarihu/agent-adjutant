@@ -1,20 +1,13 @@
 /* ── 「拡大」 for a PR waiting on your review ─────────────────────────────────────────────────────────────────
-   The dialog of a whole task (card-dialog.js) with a PR in it: the index on the left, the read-through in one scroll, and the
-   drafts in the column on the right, where a task's gate answers sit. Its machinery is the task dialog's: `cardDialogTaskHtml`
+   The dialog of a whole task (card-dialog.js) with a PR in it: the index on the left and the read-through in one scroll, with the
+   annotated diff and the person's comments on its lines; the column on the right, where a task's gate answers sit, has only what a PR
+   with no read-through yet says. Its heading has 「レビューを送る」. Its machinery is the task dialog's: `cardDialogTaskHtml`
    draws the index and the content from groups, `cardDialogChanged` marks what changed while it is open. The groups are
    pr-read.js's (`prDialogGroups`); this file draws them, keeps the column, and follows the panel. Loaded after pr-panel.js. */
 
 const PR_DIALOG_GONE = 'パネルからこの PR がなくなりました（最後に表示した内容です）';
-const PR_DIALOG_NO_READ = 'AI 下読みすると下書きの候補が入ります。';
-const PR_DIALOG_NO_SPLIT = '分割を提案すると、下書きに分割案が入ります。';
-
-/* A control of the column, found again after the column is drawn anew: by the first `data-pr-*` attribute it has. */
-function prFocusSel(el) {
-  const key = Object.keys(el?.dataset || {}).find(k => k.startsWith('pr'));
-  if (!key) return null;
-  const attr = key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
-  return `[data-${attr}="${CSS.escape(el.dataset[key])}"]`;
-}
+const PR_DIALOG_NO_READ = 'AI 下読みすると、差分の行の解説と気になるところが入ります。';
+const PR_DIALOG_NO_SPLIT = '分割を提案すると、分割案が「レビューを送る」の全体のコメントに入ります。';
 
 /* The diff's cards are not marked as changed: they come and go with the read-through and with the diff's own loading, and what
    they say is the diff itself, not news about the PR. The other cards keep their marks. */
@@ -98,8 +91,8 @@ function openPrDialog(btn) {
   cardDialogSpy();
 }
 
-/* `cardDialogSync` for a PR: the content is drawn from the records, the read-through and the drafts. `force` redraws although a
-   box of the column has focus; `initial` is the first fill, before the dialog is open. */
+/* `cardDialogSync` for a PR: the content is drawn from the records and the read-through, the heading's 「レビューを送る」 from the drafts. `force`
+   redraws what would otherwise be left; `initial` is the first fill, before the dialog is open. */
 function prDialogSync(force = false, initial = false) {
   const dlg = cardDialogEl();
   if (!dlg.open && !initial) return;
@@ -136,15 +129,20 @@ function prDialogSync(force = false, initial = false) {
     diffHeadHtml: diffOn ? hook.dialogHeadHtml(rec, read) : null,
     diffLabel: diffOn ? path => hook.dialogLabel(rec, path) : null,
   });
-  const dockHtml = prHasRead(rec, read) ? prDraftsBodyHtml(rec, read, 'dock')
+  // With a read-through there is no column; before one, what it will bring and the button that asks for it.
+  const dockHtml = prHasRead(rec, read) ? ''
     : othersOutOfReview(rec) && OTHERS_LIVE.includes(rec?.state) ? `<div class="tp-muted">${esc(PR_DIALOG_NO_SPLIT)}</div>`
     : `<div class="tp-muted">${esc(PR_DIALOG_NO_READ)}</div>${prAiButtonHtml(othersAiView(rec, records, nowSecs), hubView, asking)}`;
+  // The same button as the middle's heading: what a push would send now, once the drafts are loaded.
+  const entry = prDraftsEntry(id);
+  const send = prHasRead(rec, read) && entry.loaded ? prSendBtnHtml('pending', prPendable(prDoc(id, read || null)).drafts, OTHERS_LIVE.includes(rec.state) ? '' : PR_SEND_OFF_WHY) : '';
+  cardDialogHead({ acts: send });
   prDialogPaint(groups, dockHtml, { force, initial, loading: read === undefined });
 }
 
 /* Draw `groups` into the dialog's content and `dockHtml` into its column (hidden when empty), against what was drawn last: a redraw is
-   marked with what changed since, the files of the diff are drawn again, and what the person has open, where they are reading and the
-   box they are typing in survive it. `force` redraws although a box of the column has focus; `initial` is the first fill, before the
+   marked with what changed since, the files of the diff are drawn again (with the comments on their lines), and what the person has open and
+   where they are reading survive it. `force` redraws although nothing changed; `initial` is the first fill, before the
    dialog is open; `loading` that the read-through is still on its way (what it brings in is the first fill of its cards, not a change).
    Shared by the review dialog and a task's own AI 下読み (task-read-view.js). */
 function prDialogPaint(groups, dockHtml, { force = false, initial = false, loading = false } = {}) {
@@ -156,10 +154,8 @@ function prDialogPaint(groups, dockHtml, { force = false, initial = false, loadi
   cardDialog.groups = groups;
   const contentSame = sig === cardDialog.sig && !force;
   const dockSame = dockHtml === cardDialog.dockSig && !force;
-  // The column is where things are typed: it is drawn again when the box is left, never under the caret.
-  const typing = !force && !prView.force && dlg.open && prBoxFocused(col);
-  cardDialog.held = typing && !dockSame;
-  if (contentSame && (dockSame || typing)) return;
+  cardDialog.held = false;
+  if (contentSame && dockSame) return;
 
   // Against what was last drawn, so a redraw is marked with what changed since. The first fill is not a change.
   let changes = null;
@@ -184,7 +180,6 @@ function prDialogPaint(groups, dockHtml, { force = false, initial = false, loadi
   // What the person has open, and where they are reading, survive the redraw.
   const restore = keepReadingPlace(body, content, dlg.open);
   const focus = cardDialogFocusOf(dlg);
-  const dockKeep = dlg.open ? prFocusKeep(col) : null;
 
   if (!contentSame) {
     dlg.querySelector('.card-dialog-index').innerHTML = html.index;
@@ -192,14 +187,12 @@ function prDialogPaint(groups, dockHtml, { force = false, initial = false, loadi
     // The files that were drawn are drawn again, here, so that the position kept below is measured on the same page.
     hook?.onDrawn?.();
   }
-  if (!dockSame && !typing) {
+  if (!dockSame) {
     cardDialog.dockSig = dockHtml;
     const dockScroll = col.scrollTop;
     col.innerHTML = dockHtml;
     col.hidden = !dockHtml;
     col.scrollTop = dockScroll;
-    // The box an action asked for, else the control that had the keyboard; one that is gone goes to the overall comment.
-    if (!prRestoreFocus(col, dockKeep, true) && dockKeep) col.querySelector('[data-pr-overall]')?.focus({ preventScroll: true });
   }
   restore(!contentSame);
   if (!contentSame) {
@@ -215,22 +208,19 @@ function prDialogPaint(groups, dockHtml, { force = false, initial = false, loadi
   }
 }
 
-/* The dialog was closed: what was written in the column is saved now, and the panel behind it shows it. */
+/* The dialog was closed: what was written is saved now, and the panel behind it shows it. */
 function prDialogClosed() {
   if (isPrRef(cardDialog.subject)) prScheduleSave(prIdOfRef(cardDialog.subject), true);
   prRedraw();
 }
 
-// The column's buttons and boxes are the panel's (`prAct`, `prInput`); 「聞く」 closes the dialog first. A task's own AI 下読み
+// The buttons of the dialog are the panel's (`prAct`, and the diff's own through it); 「聞く」 closes the dialog first. A task's own AI 下読み
 // (task-read-view.js) has its own click, which adds what only it has.
 cardDialogEl().addEventListener('click', e => {
   if (cardDialog.mode === 'review') prAct(e, { place: 'dialog' });
   else if (cardDialog.mode === 'own-read') ownReadDialogClick(e);
 });
+// What is typed in a comment's box on a line of the diff.
 cardDialogEl().addEventListener('input', e => {
-  if (cardDialogOnPr()) prInput(e);
-});
-cardDialogEl().addEventListener('focusout', e => {
-  // A press on one of the column's buttons that was not given focus ends in `cardDialogPressEnd`, which redraws what was held.
-  if (cardDialogOnPr()) prFocusOut(e, cardDialogDockEl(), () => cardDialog.held && !cardDialog.pressing, () => cardDialogSync());
+  if (cardDialogOnPr()) PR_HOOKS.diff?.input?.(e);
 });

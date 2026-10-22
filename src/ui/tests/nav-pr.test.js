@@ -41,15 +41,15 @@ const enc = encodeURIComponent(PR);
 test('a PR in the address keeps its task and its pane on 「すべて」, in the work view', () => {
   const w = world();
   assert.deepStrictEqual(w.parse(`/?token=t&view=work&task=${enc}`), { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' });
-  for (const pane of ['detail', 'drafts']) {
-    assert.deepStrictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=${pane}`), { board: 'all', view: 'work', list: 'review', task: PR, pane });
-  }
-  // An address from when the diff was a tab of its own lands on the one view.
+  assert.deepStrictEqual([...vm.runInContext('PR_PANES', w.c)], ['detail']);
+  assert.deepStrictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=detail`), { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' });
+  // An address from when the diff, or the drafts, were a tab of their own lands on the one view.
   assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=diff`).pane, 'detail');
+  assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=drafts`).pane, 'detail');
   assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}&pane=nonsense`).pane, 'detail');
 });
 
-test('the PR panes belong to a PR: another task falls back to 詳細, and a PR is never kept outside the work view', () => {
+test('a PR has the one pane: another task falls back to 詳細, and a PR is never kept outside the work view', () => {
   const w = world();
   assert.strictEqual(w.parse('/b/acme/?token=t&task=t1&pane=drafts').pane, 'detail');
   assert.strictEqual(w.parse('/b/acme/?token=t&task=t1&pane=review').pane, 'review');
@@ -65,10 +65,9 @@ test('the PR panes belong to a PR: another task falls back to 詳細, and a PR i
 
 test('the address round-trips, and the plain link has no pane', () => {
   const w = world();
-  const nav = { board: 'all', view: 'work', list: 'review', task: PR, pane: 'drafts' };
-  assert.strictEqual(w.urlOf(nav), `/?token=t&view=review&task=${enc}&pane=drafts`);
+  const nav = { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' };
   assert.deepStrictEqual(w.parse(w.urlOf(nav)), nav);
-  const plainLink = w.urlOf({ ...nav, pane: 'detail' });
+  const plainLink = w.urlOf(nav);
   assert.ok(!plainLink.includes('pane='));
   assert.deepStrictEqual(w.parse(plainLink), { ...nav, pane: 'detail' });
   // The `#` and `/` of the id are escaped, so the link survives being pasted.
@@ -133,7 +132,7 @@ test('レビュー has an address of its own, and an older PR link from the work
   assert.strictEqual(w.urlOf({ board: 'all', view: 'work', list: 'review', task: null, pane: 'detail' }), '/?token=t&view=review');
   assert.strictEqual(w.urlOf({ board: 'all', view: 'work', list: 'task', task: null, pane: 'detail' }), '/?token=t&view=work');
   // It survives a reload: what is written reads back as the same.
-  const review = { board: 'all', view: 'work', list: 'review', task: PR, pane: 'drafts' };
+  const review = { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' };
   assert.deepStrictEqual(w.parse(w.urlOf(review)), review);
   assert.deepStrictEqual(w.parse(`/?token=t&view=review&task=${enc}`), { board: 'all', view: 'work', list: 'review', task: PR, pane: 'detail' });
   assert.strictEqual(w.parse(`/?token=t&view=work&task=${enc}`).list, 'review');

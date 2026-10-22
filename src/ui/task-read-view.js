@@ -1,7 +1,8 @@
 /* ── 「AI 下読み」 of a task: its document, and the dialog the terminal's heading opens ───────────────────────────────────────────
    A task whose PR has a read-through (docs/architecture.md, "A task's PR") has 「下読みを見る」 (or 「下読みする」) in the heading of its
    terminal. It opens the read-through in the card dialog (`#card-dialog`, mode 'own-read'): the read-through in one scroll laid out as
-   「拡大」 lays out a review request's, with no index and no reader's terminal, and 「worker への指示」 in the column at the right. What
+   「拡大」 lays out a review request's, with no index and no reader's terminal, the person's comments on the lines of its diff, and 「worker に渡す」 in its heading, which opens the dialog that
+   hands them over (pr-send.js). What
    the markup says is task-read.js's (pure) and, below it, pr-read.js's; what is drawn is the review dialog's machinery
    (`prDialogPaint`), and the buttons are the review request's (`prAct`, with `place: 'dialog'`). This file keeps what the page holds
    of it: the task's document, its poll, the dialog, and the middle's drawing for a review request (pr-panel.js uses it). Loaded after
@@ -17,7 +18,7 @@ const taskRead = {
   headMode: '',       // what the terminal's heading button says as it was drawn (`taskReadHeadMode`), so that a document that changes it draws the heading
   drawn: { order: '', html: new Map() },  // what the middle was last drawn from (`prDialogPatch`)
   contentSig: '',     // the middle's markup as drawn
-  drawnKey: null,     // what `drawn` and `contentSig` are of: a review request's `pr:<id>/<tab>`
+  drawnKey: null,     // what `drawn` and `contentSig` are of: a review request's `pr:<id>`
   groups: [],         // the groups drawn
   shownFor: null,     // the key the middle is drawn for while it is on screen, null while the terminal is
   draftsFor: null,    // `<key>#<opening>`: the opening of the dialog the PR's drafts were last asked for, asked again at the next
@@ -27,11 +28,6 @@ const taskRead = {
   pinnedAt: 0,
   spying: false,
 };
-
-/* What task-read-drafts.js fills in to put the drafts in the dialog's column: `html(rec, read)` is what 「worker への指示」 shows,
-   `act(e)` answers a click in the dialog (true when it was one of its own); typing goes through `prInput` like a review request's. While `drafts` is set the
-   middle's draft buttons are drawn (`data-drafts` on #task-read). */
-const OWN_HOOKS = { drafts: null };
 
 /* The dialog is open on a task that has a PR: the work view is on it, and the dialog was opened for it (it stays 'own-read' with no subject once closed). */
 const taskReadActive = task => !!task && view === 'work' && !!task.pr && task.id === nav.task && cardDialog.mode === 'own-read' && cardDialog.subject === task.id;
@@ -141,16 +137,13 @@ const TASK_READ_WHY = {
 /* ── the tabs ── */
 
 /* Show `html` as the tabs of the row over the middle (the row itself is always shown, it leads with the sidebar's toggle), and either
-   the read-through (`reading`) or the terminal of what is selected. Only a review request has tabs (pr-panel.js). Returns whether
-   the terminal pane has just been revealed, so that the caller can have it sized. */
+   the read-through (`reading`) or the terminal of what is selected. Nothing has tabs now (a review request's read-through is one view,
+   pr-panel.js), so `html` is blank. Returns whether the terminal pane has just been revealed, so that the caller can have it sized. */
 function showMidTabs(html, reading) {
   const pane = wk('wk-term-pane');
   const read = wk('task-read');
   const tabs = wk('wk-mid-tabs');
-  const focused = document.activeElement?.closest?.('#wk-mid-tabs [data-mid-tab]')?.dataset.midTab;
-  const before = workTermPart.tabs;
   setWorkTermPart('tabs', tabs, html);
-  if (focused && workTermPart.tabs !== before) tabs.querySelector(`[data-mid-tab="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
   tabs.hidden = !html;
   // The other view is not kept at a place to come back to by the page: it is the address's.
   const revealed = pane.hidden && !reading;
@@ -159,19 +152,13 @@ function showMidTabs(html, reading) {
   return { revealed };
 }
 
-/* What is selected is not a review request: the terminal is the middle, with no tabs. A task with a PR has its document read when
+/* What is selected is not a review request: the terminal is the middle. A task with a PR has its document read when
    the selection comes to it (and on every poll after), which the heading's button reads. Returns what the caller needs to finish its draw. */
 function taskReadFollow(task) {
   taskRead.shownFor = null;
   if (task?.pr && taskRead.key !== taskReadKey(task)) taskReadRefresh(true);
   return showMidTabs('', false);
 }
-
-wk('wk-mid-tabs').addEventListener('click', e => {
-  const b = e.target.closest('[data-mid-tab]');
-  // A review request's tabs are its panes of the read-through, named by the address.
-  if (b && isPrRef(nav.task) && !b.disabled && b.dataset.midTab !== nav.pane) go({ pane: b.dataset.midTab }, { replace: true });
-});
 
 /* ── the middle ── */
 
@@ -272,9 +259,9 @@ function ownReadRepoHint(task, doc = taskRead.key === taskReadKey(task) ? taskRe
 /* The text of the dialog's body when there is nothing to lay out in groups: one note, in a group of its own. */
 const ownReadNoteGroup = html => ({ key: 'note', label: '下読みの状態', badge: '', cards: [{ key: 'note', label: '下読みの状態', badge: '', wide: true, html, expand: null }] });
 
-/* `cardDialogSync` for a task's own AI 下読み: the head, the band and the groups of its read-through in one scroll, and 「worker への指示」
-   in the column. It follows the page while open (every poll of the task's document draws it), and closes quietly when the selection
-   leaves the task. `force` redraws although a box of the column has focus; `initial` is the first fill, before the dialog is open. */
+/* `cardDialogSync` for a task's own AI 下読み: the head (with 「worker に渡す」), the band and the groups of its read-through in one scroll, with the
+   person's comments on the lines of the diff. It follows the page while open (every poll of the task's document draws it), and closes quietly when the selection
+   leaves the task. `force` redraws although nothing changed; `initial` is the first fill, before the dialog is open. */
 function ownReadDialogSync(force = false, initial = false) {
   const dlg = cardDialogEl();
   if (!dlg.open && !initial) return;
@@ -307,7 +294,9 @@ function ownReadDialogSync(force = false, initial = false) {
   const sub = dlg.querySelector('#card-dialog-sub');
   const subText = ownReadSubText(rec, task, ownReadRepoHint(task, doc));
   if (sub.textContent !== subText) sub.textContent = subText;
-  cardDialogHead({ line: ownReadHeadLine(doc, nowSecs), acts: ownReadActsHtml(rec, read, hubView, asking, !!rec && others.closing.has(rec.id)) });
+  // What 「worker に渡す」 counts: the comments a hand-over would send now, once the drafts are loaded.
+  const sendN = rec && prHasRead(rec, read) && prDraftsEntry(rec.id).loaded ? prHandable(prDoc(rec.id, read || null)).drafts : null;
+  cardDialogHead({ line: ownReadHeadLine(doc, nowSecs), acts: ownReadActsHtml(rec, read, hubView, asking, !!rec && others.closing.has(rec.id), sendN) });
 
   // A poll that failed keeps the last document: say that what is shown may be behind.
   const failed = doc && taskRead.error
@@ -335,11 +324,10 @@ function ownReadDialogSync(force = false, initial = false) {
       if (band) groups.unshift(ownReadNoteGroup(band));
     }
   }
-  const dockHtml = rec && prHasRead(rec, read) && OWN_HOOKS.drafts ? `<p class="cd-dock-label">worker への指示</p>${OWN_HOOKS.drafts.html(rec, read)}` : '';
-  prDialogPaint(groups, dockHtml, { force, initial, loading: read === undefined });
+  prDialogPaint(groups, '', { force, initial, loading: read === undefined });
 }
 
-/* The dialog's own clicks, on top of the review request's buttons: the hub's start button, 「下読みを閉じる」 and 「worker に渡す」. */
+/* The dialog's own clicks, on top of the review request's buttons: the hub's start button and 「下読みを閉じる」. */
 function ownReadDialogClick(e) {
   const start = e.target.closest('[data-task-read-hub-start]');
   if (start) {
@@ -353,11 +341,10 @@ function ownReadDialogClick(e) {
     return;
   }
   if (e.target.closest('[data-pr-close-reader]')) return prCloseReader();
-  if (OWN_HOOKS.drafts?.act?.(e)) return;
   prAct(e, { place: 'dialog' });
 }
 
-/* The dialog was closed: what was written in the column is saved now. */
+/* The dialog was closed: what was written is saved now. */
 function ownReadDialogClosed() {
   const id = taskRead.doc?.pr;
   if (id) prScheduleSave(id, true);
@@ -430,12 +417,10 @@ wk('task-read').addEventListener('click', e => {
   }
   prAct(e, { place: 'read' });
 });
-// What is typed in the drafts of a review request's middle; a task's are in its dialog's column.
-wk('task-read').addEventListener('input', e => { if (prShown()?.kind === 'pr') prInput(e); });
-wk('task-read').addEventListener('focusout', e => prFocusOut(e, wk('task-read'), () => prView.held, () => renderTaskPanel()));
+// What is typed in a comment's box on a line of a review request's middle; a task's are in its dialog.
+wk('task-read').addEventListener('input', e => { if (prShown()?.kind === 'pr') PR_HOOKS.diff?.input?.(e); });
 
-// A link to a line of the diff lands in the middle, which is already as large as it can be. A review request's has the diff in its
-// 下読み tab, so a link is ready there (prdGoto leaves the 下書き tab first).
+// A link to a line of the diff lands in the middle, which is already as large as it can be.
 PRD_VIEWS.read = {
   ready: () => !!prShown() && !wk('task-read').hidden && nav.pane === 'detail',
   go: (...a) => taskReadGo(...a),

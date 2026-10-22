@@ -7,21 +7,23 @@ const vm = require('node:vm');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'pr-panel.js'), 'utf8');
 const viewSrc = fs.readFileSync(path.join(__dirname, '..', 'task-read-view.js'), 'utf8');
+const readSrc = fs.readFileSync(path.join(__dirname, '..', 'pr-read.js'), 'utf8');
 const cut = re => { const m = src.match(re); assert.ok(m, `not found: ${re}`); return m[0]; };
 const fn = name => cut(new RegExp(`^(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm'));
+// A function of pr-read.js, the pure half the page's drafts are made of.
+const readFn = name => { const m = readSrc.match(new RegExp(`^function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`, 'm')); assert.ok(m, `not found: ${name}`); return m[0]; };
 
 function world({ stored = null } = {}) {
   const w = { notes: [], redrawn: 0, posts: [], gets: 0, stored, gate: null, selected: 'pr:acme/widget#1', order: [], pends: [], refreshed: 0, pendGate: null, pendFail: null, pendRes: { sent: [], failed: [], skipped: [] } };
   const c = vm.createContext({
     structuredClone, wk: () => null, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-draft-body, .pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console,
     get selectedTaskId() { return w.selected; }, PR_REF: 'pr:', PR_SAVE_MS: 800,
-    note: (...a) => { w.notes.push(a); }, prRedrawNow: () => { w.redrawn++; },
+    note: (...a) => { w.notes.push(a); }, prDraftsChanged: () => { w.redrawn++; }, document: { getElementById: () => null },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => ({ id: 'acme/widget#1' }), prReadOf: () => c.read,
     prNextKey: (doc, prefix) => { let n = 1; while (doc.drafts.some(d => d.key === `${prefix}${n}`)) n++; return `${prefix}${n}`; },
     // What the page is on, as pr-panel.js says it: the selected review request.
     prShown: () => (typeof w.selected === 'string' && w.selected.startsWith('pr:') ? { id: w.selected.slice(3), rec: { id: w.selected.slice(3) }, kind: 'pr' } : null),
     refreshOthers: async () => { w.refreshed++; }, tp: () => null, cardDialogEl: () => null, renderTaskPanel() {}, prRedrawFor() {},
-    prSeedDrafts: read => ({ version: 1, fromSha: read?.sha ?? null, drafts: (read?.drafts || []).map((d, i) => ({ key: `r${i + 1}`, source: 'reader', ...d })), overall: { body: '' } }),
     boardApi: async (base, url, o) => {
       if (url === '/api/others/pending') {
         w.order.push('pend'); w.pends.push(JSON.parse(o.body));
@@ -35,29 +37,54 @@ function world({ stored = null } = {}) {
       return {};
     },
   });
-  vm.runInContext(['prView', 'prDraftsEntry', 'prDocOfStored', 'prEnsureDrafts', 'prEditDrafts', 'prScheduleSave', 'prSave', 'prShowSave', 'prSaveState', 'prInput', 'prSaveSettled', 'prPend'].map(n => {
+  vm.runInContext(['prView', 'prDraftsEntry', 'prDocOfStored', 'prEnsureDrafts', 'prEditDrafts', 'prEditRefused', 'prScheduleSave', 'prSave', 'prShowSave', 'prSaveState', 'prInput', 'prFocusOut', 'prSettleOverall', 'prSaveSettled', 'prPend'].map(n => {
     return n === 'prView' ? `const prView = { drafts: new Map() };` : n === 'prSaveState' ? cut(/^const prSaveState = [^\n]*;/m) : fn(n);
-  }).concat([cut(/^const PR_DRAFT_KEYS = [^\n]*;/m), fn('prSaveBody'), cut(/^const prDoc = [^\n]*;/m)]).join('\n'), c);
+  }).concat([cut(/^const PR_DRAFT_KEYS = [^\n]*;/m), fn('prSaveBody'), cut(/^const prDoc = [^\n]*;/m), readFn('prSeedDrafts'), readFn('prStampDoc'), readFn('prOverallShown')]).join('\n'), c);
   const run = e => vm.runInContext(e, c);
   return { w, c, run };
 }
 const tick = () => new Promise(r => setImmediate(r));
 const read = { sha: 'a'.repeat(40), drafts: [{ path: 'a.rs', line: 1, side: 'right', body: 'seed' }] };
+// A file with one comment in it, for the tests that edit one.
+const seeded = () => ({ id: 'acme/widget#1', savedAt: '20261011T000000Z', version: 1, fromSha: read.sha, drafts: [{ key: 'p1', source: 'person', path: 'a.rs', line: 1, side: 'right', body: 'seed' }], overall: null });
 
-test('no file yet: the first edit saves the seed with the edit in it', async () => {
+test('no file yet: the first edit makes the file from an empty document, and saves it with the edit in it', async () => {
   const { w, c, run } = world();
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
-  assert.strictEqual(run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'edited'; })`), true);
+  // The read-through brings no comments of its own: even one of the older form, with drafts, seeds nothing.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(run(`prDoc('acme/widget#1', read)`))), { version: 1, fromSha: read.sha, drafts: [], overall: null });
+  assert.strictEqual(run(`prEditDrafts('acme/widget#1', read, d => { d.drafts.push({ key: 'p1', source: 'person', path: 'a.rs', line: 1, side: 'right', body: 'edited', sha: read.sha }); prStampDoc(d, read); })`), true);
   await run(`prSave('acme/widget#1')`);
   assert.strictEqual(w.posts.length, 1);
   assert.strictEqual(w.posts[0].id, 'acme/widget#1');
-  assert.strictEqual(w.posts[0].drafts.drafts[0].body, 'edited');
+  // The head it was written on is a top-level map, never a field of the draft (an older binary refuses unknown fields there).
+  assert.deepStrictEqual(w.posts[0].drafts.drafts, [{ key: 'p1', source: 'person', path: 'a.rs', line: 1, side: 'right', body: 'edited' }]);
+  assert.deepStrictEqual(w.posts[0].drafts.shas, { p1: read.sha });
   assert.strictEqual(w.posts[0].drafts.fromSha, read.sha);
+  assert.strictEqual(w.posts[0].drafts.overall, null);
+});
+
+test('a read-through seeds nothing: an empty document with the head and the mode it is on', () => {
+  const { run, c } = world();
+  c.old = { sha: 'b'.repeat(40), drafts: [{ path: 'a.rs', line: 1, body: 'x' }], overall: { body: 'summary', suggestion: 'approve' } };
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(run('prSeedDrafts(old)'))), { version: 1, fromSha: 'b'.repeat(40), drafts: [], overall: null });
+  c.split = { sha: 'c'.repeat(40), mode: 'split', overall: { body: 'plan' } };
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(run('prSeedDrafts(split)'))), { version: 1, fromSha: 'c'.repeat(40), fromMode: 'split', drafts: [], overall: null });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(run('prSeedDrafts(null)'))), { version: 1, fromSha: null, drafts: [], overall: null });
+  // Every edit that writes a comment says which head it was written on, and the mode (the older one is not a split).
+  const doc = { fromSha: 'a'.repeat(40), fromMode: 'split', drafts: [] };
+  c.doc = doc;
+  run('prStampDoc(doc, old)');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(doc)), { fromSha: 'b'.repeat(40), drafts: [] });
+  run('prStampDoc(doc, split)');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(doc)), { fromSha: 'c'.repeat(40), fromMode: 'split', drafts: [] });
+  run('prStampDoc(doc, null)');
+  assert.strictEqual(doc.fromSha, 'c'.repeat(40));
 });
 
 test('an edit made while a save is in flight is saved afterwards', async () => {
-  const { w, c, run } = world();
+  const { w, c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   let release; w.gate = { promise: new Promise(r => { release = r; }) };
@@ -71,8 +98,8 @@ test('an edit made while a save is in flight is saved afterwards', async () => {
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), false);
 });
 
-test('a failed save keeps the edit and says so', async () => {
-  const { w, c, run } = world();
+test('a failed save keeps the edit, and says so once when it starts to fail', async () => {
+  const { w, c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   c.boardApi = async () => { throw new Error('boom'); };
@@ -81,23 +108,33 @@ test('a failed save keeps the edit and says so', async () => {
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), true);
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').saveError`), 'boom');
   assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].body`), 'keep');
+  // The comments are on the lines, where no save line is: the failure is a note, once.
+  assert.deepStrictEqual(w.notes, [['コメントの保存', true, 'boom 入力はこのページに残っています']]);
+  await run(`prSave('acme/widget#1')`);
+  assert.strictEqual(w.notes.length, 1);
 });
 
 test('the save body has only the known keys, even when the stored document had another', async () => {
   const stored = { id: 'acme/widget#1', savedAt: '20261011T000000Z', version: 1, fromSha: read.sha, pending: { x: 1 },
-    drafts: [{ key: 'p1', source: 'person', path: 'a.rs', line: 2, body: 'b', extra: 1 }], overall: { body: 'o', more: 1 } };
+    drafts: [{ key: 'p1', source: 'person', path: 'a.rs', line: 2, body: 'b', extra: 1 }], shas: { p1: read.sha, gone: read.sha }, overall: { body: 'o', more: 1 } };
   const { w, c, run } = world({ stored });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'c'; })`);
   await run(`prSave('acme/widget#1')`);
-  assert.deepStrictEqual(Object.keys(w.posts[0].drafts).sort(), ['drafts', 'fromSha', 'overall', 'version']);
+  assert.deepStrictEqual(Object.keys(w.posts[0].drafts).sort(), ['drafts', 'fromSha', 'overall', 'shas', 'version']);
   assert.deepStrictEqual(Object.keys(w.posts[0].drafts.drafts[0]).sort(), ['body', 'key', 'line', 'path', 'source']);
+  // Read back from the server, the map is put on the drafts again; a draft deleted drops its entry; no map when none has a head.
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].sha`), read.sha);
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).shas`), undefined);
+  run(`prEditDrafts('acme/widget#1', read, d => { d.drafts = []; })`);
+  await run(`prSave('acme/widget#1')`);
+  assert.strictEqual(w.posts[1].drafts.shas, undefined);
   assert.deepStrictEqual(Object.keys(w.posts[0].drafts.overall), ['body']);
 });
 
 test('the file is not asked for again while an unsaved edit is held', async () => {
-  const { w, c, run } = world();
+  const { w, c, run } = world({ stored: seeded() });
   Object.assign(c, { prEnsureRead() {} });
   run(fn('prEnter'));
   run(`prView.shownFor = null;`);
@@ -116,24 +153,32 @@ test('the file is not asked for again while an unsaved edit is held', async () =
   assert.strictEqual(w.gets, 2);
 });
 
-test('typing into a box whose draft is gone keeps the text as a draft of its own', async () => {
-  const { w, c, run } = world();
+const overallBox = value => ({ value, dataset: {}, matches: sel => sel.split(',').some(x => x.trim() === '.pr-overall') });
+
+test('typing in the overall comment edits the document and schedules a save, and what else is typed in is not a box of the drafts', async () => {
+  const { w, c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
-  run(`prEditDrafts('acme/widget#1', read, d => { d.drafts = []; })`);
-  const box = { value: 'typed into a stale box', dataset: { prBody: 'r1' }, matches: sel => sel.includes('.pr-draft-body') && !sel.startsWith('.pr-overall') };
-  run('0'); c.input = { target: box };
+  c.input = { target: overallBox('my summary') };
   run('prInput(input)');
-  const drafts = run(`prDoc('acme/widget#1', read).drafts`);
-  assert.strictEqual(drafts.length, 1);
-  assert.strictEqual(drafts[0].body, 'typed into a stale box');
-  assert.strictEqual(drafts[0].source, 'person');
-  assert.strictEqual(w.notes.length, 1);
-  assert.strictEqual(w.redrawn, 1);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(run(`prDoc('acme/widget#1', read).overall`))), { body: 'my summary' });
+  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), true);
+  // A textarea of a comment on a line is the diff's own, typed in without a document.
+  const comment = { value: 'x', dataset: { prdBox: 'p1' }, matches: () => false };
+  c.input = { target: comment };
+  run('prInput(input)');
+  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].body`), 'seed');
+  assert.strictEqual(w.notes.length, 0);
+  // Leaving the box saves at once.
+  c.out = { target: overallBox('my summary') };
+  run('prFocusOut(out)');
+  await tick(); await tick();
+  assert.strictEqual(w.posts.length, 1);
+  assert.strictEqual(w.posts[0].drafts.overall.body, 'my summary');
 });
 
 test('a refused save shows the server\'s problems with the message', async () => {
-  const { c, run } = world();
+  const { c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   c.boardApi = async () => { throw Object.assign(new Error('the drafts are not valid'), { problems: ['drafts[0].key: bad', 'overall: too long'] }); };
@@ -144,7 +189,7 @@ test('a refused save shows the server\'s problems with the message', async () =>
 
 function miscWorld() {
   const c = vm.createContext({});
-  vm.runInContext(['const prView = { last: null, focusNext: null, shownFor: "acme/widget#1" };', fn('prRestoreFocus'), fn('prLeft')].join('\n'), c);
+  vm.runInContext(['const prView = { last: null, shownFor: "acme/widget#1" };', fn('prLeft')].join('\n'), c);
   return { c, run: e => vm.runInContext(e, c) };
 }
 
@@ -162,31 +207,8 @@ test('the PR shown last is remembered in memory, and only a new selection sets i
   assert.strictEqual(run('prView.last'), 'acme/widget#2');
 });
 
-test('after a forced redraw the box an action asked for has focus, else the one that had it keeps its caret', () => {
-  const { run, c } = miscWorld();
-  const box = key => ({ key, focused: 0, range: null, matches: () => true, focus() { this.focused++; }, setSelectionRange(a, b) { this.range = [a, b]; } });
-  const boxes = { '[data-pr-body="p2"]': box('p2'), '[data-pr-body="r1"]': box('r1') };
-  c.root = { querySelector: sel => boxes[sel] || null };
-  // An action asked for p2 (in the panel): it gets focus, and the old box's caret is not forced onto it.
-  c.keep = { sel: '[data-pr-body="r1"]', a: 3, b: 5 };
-  run(`prView.focusNext = { sel: '[data-pr-body="p2"]', inDialog: false }`);
-  run('prRestoreFocus(root, keep, false)');
-  assert.strictEqual(boxes['[data-pr-body="p2"]'].focused, 1);
-  assert.strictEqual(boxes['[data-pr-body="p2"]'].range, null);
-  // Asked for the dialog's, the panel's redraw leaves it alone and keeps the box that had focus, with its caret.
-  run('prRestoreFocus(root, keep, true)');
-  run(`prView.focusNext = { sel: '[data-pr-body="p2"]', inDialog: true }`);
-  run('prRestoreFocus(root, keep, false)');
-  assert.strictEqual(boxes['[data-pr-body="p2"]'].focused, 1);
-  assert.deepStrictEqual(boxes['[data-pr-body="r1"]'].range, [3, 5]);
-  // Nothing asked and the control is gone: nothing is focused.
-  run('prView.focusNext = null');
-  c.keep = { sel: '[data-pr-body="gone"]', a: 0, b: 0 };
-  assert.strictEqual(run('prRestoreFocus(root, keep, false)'), null);
-});
-
 test('only three of the server\'s problems are shown, and how many more there are', async () => {
-  const { c, run } = world();
+  const { c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   c.boardApi = async () => { throw Object.assign(new Error('bad'), { problems: ['a', 'b', 'c', 'd', 'e'] }); };
@@ -201,13 +223,13 @@ test('leaving the PR makes the next showing of it a new selection', () => {
   assert.strictEqual(run('prView.shownFor'), null);
 });
 
-test('an input in a dialog about another subject is ignored', async () => {
+test('typing in a box while nothing is on show is ignored', async () => {
   const { w, c, run } = world();
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
-  c.cardDialog = { subject: 'pr:other/repo#2' };
-  const box = { value: 'x', dataset: { prBody: 'r1' }, matches: sel => sel.includes('.pr-draft-body'), closest: sel => sel === '#card-dialog' ? {} : null };
-  c.input = { target: box };
+  c.selected = 'pr:acme/widget#1';
+  w.selected = 'work:somewhere';
+  c.input = { target: overallBox('x') };
   run('prInput(input)');
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), false);
   assert.strictEqual(w.notes.length, 0);
@@ -219,17 +241,17 @@ const withSent = { id: 'acme/widget#1', savedAt: '20261011T000000Z', version: 1,
   drafts: [{ key: 'r1', source: 'reader', path: 'a.rs', line: 1, side: 'right', body: 'seed', sentAt: '20261011T000100Z' }],
   overall: { body: '' }, pending: { reviewId: 'PRR_1', url: 'https://github.com/acme/widget/pull/1#pullrequestreview-1', at: '20261011T000100Z' } };
 
-test('a push saves what is unsaved first, and the reader\'s drafts become the file before it', async () => {
+test('a push saves what is unsaved first, and makes the file with the overall comment the dialog shows before it', async () => {
   const { w, c, run } = world();
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
-  c.read = read;
+  c.read = { ...read, overall: { body: 'the reader\'s summary' } };
   await run(`prPend('acme/widget#1', read)`);
-  // No file yet: the seed was saved as it stood, then pushed.
+  // No file yet: the file was made with what is on screen in it, then pushed.
   assert.deepStrictEqual(w.order, ['save', 'pend']);
-  assert.strictEqual(w.posts[0].drafts.drafts[0].body, 'seed');
+  assert.deepStrictEqual(w.posts[0].drafts.overall, { body: 'the reader\'s summary' });
   assert.deepStrictEqual(w.pends, [{ id: 'acme/widget#1' }]);
 
-  const b = world();
+  const b = world({ stored: seeded() });
   b.run(`prEnsureDrafts('acme/widget#1')`); await tick();
   b.c.read = read;
   b.run(`prEditDrafts('acme/widget#1', read, d => { d.drafts[0].body = 'typed'; })`);
@@ -238,8 +260,46 @@ test('a push saves what is unsaved first, and the reader\'s drafts become the fi
   assert.strictEqual(b.w.posts[0].drafts.drafts[0].body, 'typed');
 });
 
+test('the overall comment shown is the stored one when the document has one, even blank, else the reader\'s; a push writes the shown one into the document first', async () => {
+  // The reader's own text is shown while the document has no overall comment, and it is the reader's untouched one.
+  const a = world({ stored: seeded() });
+  a.run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  a.c.read = { ...read, overall: { body: 'summary' } };
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(a.run(`prOverallShown(prDoc('acme/widget#1', read), read)`))), { text: 'summary', reader: true });
+  // Blank reader text: nothing to show, nothing the reader said.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(a.run(`prOverallShown(prDoc('acme/widget#1', read), { overall: { body: ' ' } })`))), { text: ' ', reader: false });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(a.run(`prOverallShown(prDoc('acme/widget#1', read), null)`))), { text: '', reader: false });
+  // What the push sends is what was shown.
+  await a.run(`prPend('acme/widget#1', read)`);
+  assert.deepStrictEqual(a.w.posts[0].drafts.overall, { body: 'summary' });
+  // The person's own, even blank, wins: the reader's text does not come back.
+  const b = world({ stored: { ...seeded(), overall: { body: '' } } });
+  b.run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  b.c.read = { ...read, overall: { body: 'summary' } };
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(b.run(`prOverallShown(prDoc('acme/widget#1', read), read)`))), { text: '', reader: false });
+  await b.run(`prPend('acme/widget#1', read)`);
+  assert.strictEqual(b.w.posts.length, 0, 'nothing was written, so nothing is saved');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(b.run(`prDoc('acme/widget#1', read).overall`))), { body: '' });
+  // Nothing to write when the reader had nothing: the file has no overall comment.
+  const c2 = world({ stored: seeded() });
+  c2.run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  c2.c.read = { ...read, overall: null };
+  await c2.run(`prPend('acme/widget#1', read)`);
+  assert.strictEqual(c2.w.posts.length, 0);
+  assert.strictEqual(c2.run(`prDoc('acme/widget#1', read).overall`), null);
+  // A hand-over does the same through `prSettleOverall`, which is a no-op once the document has one.
+  const d = world({ stored: seeded() });
+  d.run(`prEnsureDrafts('acme/widget#1')`); await tick();
+  d.c.read = { ...read, overall: { body: 'summary' } };
+  d.run(`prSettleOverall('acme/widget#1', read)`);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(d.run(`prDoc('acme/widget#1', read).overall`))), { body: 'summary' });
+  d.run(`prEditDrafts('acme/widget#1', read, d => { d.overall = { body: 'changed' }; })`);
+  d.run(`prSettleOverall('acme/widget#1', read)`);
+  assert.strictEqual(d.run(`prDoc('acme/widget#1', read).overall.body`), 'changed');
+});
+
 test('a push waits for the save that is already in flight', async () => {
-  const { w, c, run } = world();
+  const { w, c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   let release; w.gate = { promise: new Promise(r => { release = r; }) };
@@ -255,7 +315,7 @@ test('a push waits for the save that is already in flight', async () => {
 });
 
 test('a push that cannot save first does not push, and keeps the drafts', async () => {
-  const { w, c, run } = world();
+  const { w, c, run } = world({ stored: seeded() });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
   c.boardApi = async (b, url) => { if (url === '/api/others/pending') w.order.push('pend'); throw new Error('boom'); };
@@ -311,7 +371,7 @@ test('a push that failed keeps the document and says why', async () => {
   assert.strictEqual(w.refreshed, 0);
 });
 
-test('a save sends the marks back, and typing into a draft that was sent changes nothing', async () => {
+test('a save sends the marks back', async () => {
   const { w, c, run } = world({ stored: withSent });
   run(`prEnsureDrafts('acme/widget#1')`); await tick();
   c.read = read;
@@ -319,12 +379,6 @@ test('a save sends the marks back, and typing into a draft that was sent changes
   await run(`prSave('acme/widget#1')`);
   assert.strictEqual(w.posts[0].drafts.drafts[0].sentAt, '20261011T000100Z');
   assert.strictEqual(w.posts[0].drafts.pending, undefined);
-
-  const box = { value: 'edited anyway', dataset: { prBody: 'r1' }, matches: sel => sel.includes('.pr-draft-body') };
-  c.input = { target: box };
-  run('prInput(input)');
-  assert.strictEqual(run(`prDoc('acme/widget#1', read).drafts[0].body`), 'seed');
-  assert.strictEqual(run(`prDraftsEntry('acme/widget#1').dirty`), false);
 });
 
 test('when adj could not write its file after GitHub took the drafts, they are marked here and are not sent again', async () => {
@@ -365,14 +419,13 @@ test('what the last push said about refused drafts goes when the drafts are edit
   assert.strictEqual(run(`prDraftsEntry('acme/widget#1').pendResult`), null);
 });
 
-/* A split proposal after the person's file exists: the overall comment is offered with the new drafts, and added after what the
-   person wrote. The pure parts are pr-read.js's, loaded with it. */
+/* What a click does for the buttons that belong to a PR (`prAct`), against the page's drafts. The pure parts are pr-read.js's, loaded with it. */
 function offerWorld(doc, read, rec = { id: 'acme/widget#1', url: 'u' }) {
   const w = { redrawn: [], edits: 0 };
   const c = vm.createContext({
     CSS: { escape: x => x }, structuredClone, JSON, console, selectedTaskId: 'pr:acme/widget#1', PR_REF: 'pr:', PR_HOOKS: { diff: null },
     isPrRef: id => typeof id === 'string' && id.startsWith('pr:'), prIdOfRef: id => id.slice(3), othersById: () => rec, OTHERS_LIVE: ['requested', 'ai-reading', 'ai-ready', 'pushed'],
-    prReadOf: () => read, prRedrawNow: sel => { w.redrawn.push(sel); }, prScheduleSave() {}, prShowSave() {}, note() {}, othersRequestAi() {}, cardDialog: {},
+    prReadOf: () => read, prDraftsChanged: id => { w.redrawn.push(id); }, prScheduleSave() {}, prShowSave() {}, note() {}, othersRequestAi() {}, cardDialog: {},
     // What the page is on, as pr-panel.js says it: the selected review request, asked through the list's endpoint.
     prShown: () => ({ id: 'acme/widget#1', rec, kind: 'pr', ask: mode => c.othersRequestAi('acme/widget#1', mode) }),
     secTitle: t => t, panelBtnsHtml: () => '',
@@ -380,28 +433,24 @@ function offerWorld(doc, read, rec = { id: 'acme/widget#1', url: 'u' }) {
   const files = ['util.js', 'my-work-seen.js', 'my-work-others.js', 'pr-read.js', 'pr-diff.js'];
   vm.runInContext(files.map(f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n'), c);
   vm.runInContext([
-    'const prView = { drafts: new Map() };', fn('prDraftsEntry'), fn('prEditDrafts'), cut(/^const prDoc = [^\n]*;/m), cut(/^const prSaveState = [^\n]*;/m), fn('prDraftsBodyHtml'), fn('prAct'),
+    'const prView = { drafts: new Map() };', fn('prDraftsEntry'), fn('prEditDrafts'), cut(/^const prDoc = [^\n]*;/m), cut(/^const prSaveState = [^\n]*;/m), fn('prAct'),
   ].join('\n'), c);
   const e = vm.runInContext(`prDraftsEntry('acme/widget#1')`, c);
   Object.assign(e, { doc, saved: true, loaded: true });
   return { w, c, e };
 }
-test('a proposal made after the file exists is counted in the notice, and 「新しい下書きを足す」 adds it after what is written', () => {
+test('a split proposal is the overall comment the dialog shows until the person types in it; the re-read notice is gone', () => {
   const proposal = { sha: 'b'.repeat(40), mode: 'split', drafts: [], overall: { body: 'split plan' } };
   const doc = { version: 1, fromSha: 'a'.repeat(40), drafts: [{ key: 'p1', source: 'person', path: 'a.rs', body: 'mine' }], overall: { body: 'my note' } };
-  const { w, c, e } = offerWorld(doc, proposal);
-  const html = vm.runInContext(`prDraftsBodyHtml({ id: 'acme/widget#1', url: 'u' }, ${JSON.stringify(proposal)}, 'panel')`, c);
-  assert.ok(html.includes('下読みし直した下書きが 1 件あります'), html.slice(0, 400));
-  assert.strictEqual(vm.runInContext(`prAct(${'{ target: { closest: s => s.includes("data-pr-take-new") ? { matches: () => false } : null } }'})`, c), true);
-  assert.strictEqual(e.doc.overall.body, 'my note\n\nsplit plan');
-  assert.strictEqual(e.doc.fromSha, proposal.sha);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(w.redrawn[0])), { sel: '[data-pr-overall]', inDialog: false });
-  // An empty overall comment takes it as it is; one that holds it already is not offered.
-  const empty = offerWorld({ ...doc, overall: { body: '' } }, proposal);
-  vm.runInContext(`prAct({ target: { closest: s => s.includes("data-pr-take-new") ? { matches: () => false } : null } })`, empty.c);
-  assert.strictEqual(empty.e.doc.overall.body, 'split plan');
-  const held = offerWorld({ ...doc, overall: { body: 'split plan' } }, proposal);
-  assert.ok(!vm.runInContext(`prDraftsBodyHtml({ id: 'acme/widget#1', url: 'u' }, ${JSON.stringify(proposal)}, 'panel')`, held.c).includes('下読みし直した下書き'));
+  const { c } = offerWorld(doc, proposal);
+  const shown = d => JSON.parse(JSON.stringify(vm.runInContext(`prOverallShown(${JSON.stringify(d)}, ${JSON.stringify(proposal)})`, c)));
+  // The person's own note stays, and the proposal is not put after it or over it.
+  assert.deepStrictEqual(shown(doc), { text: 'my note', reader: false });
+  assert.deepStrictEqual(shown({ ...doc, overall: { body: '' } }), { text: '', reader: false });
+  assert.deepStrictEqual(shown({ ...doc, overall: null }), { text: 'split plan', reader: true });
+  // Nothing of the older notice is left to be clicked or drawn.
+  for (const gone of ['prNewReaderDrafts', 'prNewReaderOverall', 'prFromElsewhere', 'prDraftsBodyHtml', 'prDraftsHtml']) assert.strictEqual(vm.runInContext(`typeof ${gone}`, c), 'undefined', gone);
+  assert.ok(!src.includes('data-pr-take-new') && !src.includes('data-pr-keep'));
 });
 
 test('only the split button asks for a proposal; the re-read button asks for a read, whatever is stored', () => {
@@ -422,22 +471,6 @@ test('only the split button asks for a proposal; the re-read button asks for a r
   // Small now: the same.
   click('[data-pr-reread]', { mode: 'split', sha: 'a'.repeat(40) }, { ...bigRec, files: [] });
   assert.deepStrictEqual(asked, [['acme/widget#1', 'split'], ['acme/widget#1', undefined], ['acme/widget#1', undefined], ['acme/widget#1', undefined], ['acme/widget#1', undefined]]);
-});
-
-test('a full read-through at the head a proposal was made at offers its drafts, and the file then says it is of that read', () => {
-  const full = { sha: 'a'.repeat(40), drafts: [{ path: 'a.rs', line: 1, side: 'right', body: 'from the read' }], overall: { body: 'summary' } };
-  const doc = { version: 1, fromSha: 'a'.repeat(40), fromMode: 'split', drafts: [], overall: { body: 'split plan' } };
-  const { c, e } = offerWorld(doc, full);
-  const html = vm.runInContext(`prDraftsBodyHtml({ id: 'acme/widget#1', url: 'u' }, ${JSON.stringify(full)}, 'panel')`, c);
-  // The drafts only: the summary of a plain read is not offered.
-  assert.ok(html.includes('下読みし直した下書きが 1 件あります'), html.slice(0, 300));
-  vm.runInContext('prAct({ target: { closest: s => s.includes("data-pr-take-new") ? { matches: () => false } : null } })', c);
-  assert.strictEqual(e.doc.drafts.length, 1);
-  assert.strictEqual(e.doc.overall.body, 'split plan');
-  assert.ok(!('fromMode' in e.doc));
-  // The same read again is not news.
-  const same = offerWorld({ ...doc, fromMode: undefined, drafts: [{ key: 'r1', source: 'reader', ...full.drafts[0] }] }, full);
-  assert.ok(!vm.runInContext(`prDraftsBodyHtml({ id: 'acme/widget#1', url: 'u' }, ${JSON.stringify(full)}, 'panel')`, same.c).includes('下読みし直した'));
 });
 
 test('the reader\'s place is drawn with the stored read-through, so a PR out of review with a stale one is offered its buttons', () => {

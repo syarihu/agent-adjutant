@@ -3,9 +3,10 @@
    and strings come out, with no page and no storage, so `src/ui/tests/pr-diff.test.js` runs them under `node --test`. The
    page's half (what is fetched, filled, shown and clicked) is pr-diff-view.js. Loaded after pr-read.js.
 
-   Everything that came from the diff or from the reader goes through `esc`, and nothing of it is Markdown. No markup here
-   carries an `id`, a time, a draft, or which files were opened: those are set in place by the page, so a redraw of the panel or
-   of 「拡大」 (which compares markup) does not empty the files that were filled. */
+   Everything that came from the diff, from the reader or from the person goes through `esc`, and nothing of it is Markdown. The markup of a
+   file (`prDiffShellHtml`, `prDiffBodyHtml`) carries no `id`, no time, no comment, and not which files were opened: those are set in place by the
+   page, so a redraw of the panel or of 「拡大」 (which compares markup) does not empty the files that were filled. The comments on the lines
+   are made here too (`prdCommentItems`), as items the page puts into the drawn files in place. */
 
 /* A file with more rows than this starts closed behind a button, as a file deleted whole does: drawing it is one write to the page. */
 const PRD_BIG_ROWS = 1500;
@@ -345,12 +346,54 @@ function prDiffFindLine(file, line) {
   const hit = file.all.find(l => (l.kind === 'add' || l.kind === 'ctx') && l.new === n) || file.all.find(l => l.kind === 'del' && l.old === n);
   return hit ? hit.k : null;
 }
-/* A draft of the person's own, from a line of the diff (or a file, with no `line`): the body may be empty. */
-function prDiffDraft(doc, { path, line = null, side = 'right', body = '' }) {
-  const d = { key: prNextKey(doc, 'p'), source: 'person', path };
+/* The place (`k`) of the line numbered `line` on `side`, as GitHub numbers them: on the right the added or context line with that new
+   number, on the left the removed line with that old number. Null when the file has none. (`prDiffFindLine` does not know the side.) */
+const PRD_AT_CACHE = new WeakMap();
+function prDiffFindAt(file, side, line) {
+  const n = Number(line);
+  if (!file || !n) return null;
+  let at = PRD_AT_CACHE.get(file);
+  if (!at) {
+    at = new Map();
+    for (const l of file.all) {
+      if (l.kind === 'del') { if (!at.has(`left:${l.old}`)) at.set(`left:${l.old}`, l.k); }
+      else if ((l.kind === 'add' || l.kind === 'ctx') && !at.has(`right:${l.new}`)) at.set(`right:${l.new}`, l.k);
+    }
+    PRD_AT_CACHE.set(file, at);
+  }
+  return at.get(`${side === 'left' ? 'left' : 'right'}:${n}`) ?? null;
+}
+/* Where the comment `d` (a draft, or an open editor, which has the same `path`, `side` and `line`) goes among the layout's files `entries`:
+   `{ entry, k, lost }`, `k` being the place of its line, or null when it is a comment on the file (no `line`) or its line is not in the file's
+   diff (`lost`). Null when it has no `path` or the diff has no such file. */
+function prDiffPlaceOf(entries, d) {
+  if (!d?.path) return null;
+  const entry = (entries || []).find(x => x.path === d.path);
+  if (!entry) return null;
+  if (!d.line) return { entry, k: null, lost: false };
+  const k = prDiffFindAt(entry.file, d.side, d.line);
+  return { entry, k, lost: k == null };
+}
+/* The drafts the diff cannot show: `{ whole, off }`, the ones with no `path` and the ones with a path the diff does not have. `entries` is
+   the layout's files, null when there is no diff to show (every draft with a path is off), undefined while it is still on its way (only the
+   ones with no path are listed, since the rest are not known to be off). */
+function prDiffUnplaced(entries, drafts) {
+  const whole = [];
+  const off = [];
+  for (const d of drafts || []) {
+    if (!d.path) whole.push(d);
+    else if (entries !== undefined && !prDiffPlaceOf(entries, d)) off.push(d);
+  }
+  return { whole, off };
+}
+/* A draft of the person's own, from a line of the diff (or a file, with no `line`), as a comment: `source` 'reader' when it is a concern's
+   draft the person made theirs, and `sha` the head of the read-through whose diff was on screen. */
+function prDiffDraft(doc, { path, line = null, side = 'right', body = '', source = 'person', sha = null }) {
+  const d = { key: prNextKey(doc, 'p'), source: source === 'reader' ? 'reader' : 'person', path };
   if (line) d.line = line;
   d.side = side === 'left' ? 'left' : 'right';
   d.body = body;
+  if (sha) d.sha = sha;
   return d;
 }
 /* "right:42" (or "3:right:42", with the file's place in front) as `{ side, line }`, or null. */
@@ -370,7 +413,8 @@ const prdFileName = e => (e.file.status === 'renamed' && e.file.oldPath ? `${e.f
 const prdStat = e => `<span class="prd-stat"><span class="add">+${e.add}</span> <span class="del">−${e.del}</span></span>`;
 
 /* A file's header and an empty body to be filled later (`--prd-rows` holds its height). The header has the file's kind and, when the
-   reader said so, 飛ばしてよい; the reader's note on the file is under it. A file deleted whole, or a very long one,
+   reader said so, 飛ばしてよい; under it an empty slot for the comments on the file (`data-prd-fcmts`, filled in place), and the reader's note
+   on the file. A file deleted whole, or a very long one,
    starts closed behind a button (a deleted one with what the reader said of it). */
 function prDiffShellHtml(e, res) {
   const n = res?.count || 0;
@@ -381,17 +425,18 @@ function prDiffShellHtml(e, res) {
     ? `<div class="prd-gone">${why} <button type="button" class="btn-m3-text prd-open" data-prd-open="${e.i}">${e.whole ? `−${e.del} 行を表示` : `${e.rows} 行を表示`}</button></div>` : '';
   return `<section class="m3-filled-card pr-sec prd-file" data-prd-file="${e.i}" data-prd-cat="${e.cat}">`
     + `<header class="prd-file-head"><code class="pr-loc prd-path">${esc(prdFileName(e))}</code><span class="pr-chip">${esc(PRD_CAT_TAB[e.cat])}</span>${e.skippable ? '<span class="pr-chip pr-skippable">飛ばしてよい</span>' : ''}${prdStat(e)}${n ? `<span class="tp-muted">注釈 ${n}</span>` : ''}</header>`
-    + `${String(e.note ?? '').trim() ? `<div class="prd-file-note">${esc(e.note)}</div>` : ''}${gone}<div class="prd-body" data-prd-body="${e.i}"${e.closed ? ' hidden' : ''} style="--prd-rows:${e.rows}"></div></section>`;
+    + `<div class="prd-fcmts" data-prd-fcmts></div>${String(e.note ?? '').trim() ? `<div class="prd-file-note">${esc(e.note)}</div>` : ''}${gone}<div class="prd-body" data-prd-body="${e.i}"${e.closed ? ' hidden' : ''} style="--prd-rows:${e.rows}"></div></section>`;
 }
 
 const PRD_ANN_LABEL = { tr: '訳', ex: '解説', concern: '気になる' };
 /* One annotation under its line: 訳 (a translated comment), 解説 (what the line does) or 気になる (what deserves a question); a kind
-   not known is drawn as 解説. The text is shown whole. 解説 and 気になる have 「下書きに」 and 「聞く」, unless `opts.plain` leaves out
-   the buttons, for a place that only reads (the question card's evidence); the default is the diff's own. */
+   not known is drawn as 解説. The text is shown whole. 解説 has 「コメント」, which opens an empty comment on the line as its 「＋」 does, and 気になる
+   has 「コメントにする」, which opens one filled with the reader's draft; both have 「聞く」, unless `opts.plain` leaves out the buttons, for a place
+   that only reads (the question card's evidence); the default is the diff's own. */
 function prdAnnHtml(idx, ann, at, readerOpen = true, opts = {}) {
   const kind = ann.kind === 'tr' || ann.kind === 'concern' ? ann.kind : 'ex';
   const acts = kind !== 'tr' && !opts.plain
-    ? `<div class="prd-ann-acts"><button type="button" class="btn-m3-text pr-act" data-prd-todraft="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}>下書きに</button><button type="button" class="btn-m3-text pr-act" data-prd-ask="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}${readerOpen ? '' : ` disabled title="${esc(PR_ASK_OFF_WHY)}"`}>聞く</button></div>` : '';
+    ? `<div class="prd-ann-acts"><button type="button" class="btn-m3-text pr-act" data-prd-todraft="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}${kind === 'concern' ? ' title="AI の文を、この行のコメントにします"' : ''}>${kind === 'concern' ? 'コメントにする' : 'コメント'}</button><button type="button" class="btn-m3-text pr-act" data-prd-ask="${idx}"${at ? ` data-prd-at="${esc(at)}"` : ''}${readerOpen ? '' : ` disabled title="${esc(PR_ASK_OFF_WHY)}"`}>聞く</button></div>` : '';
   return `<div class="prd-ann prd-ann-${kind}" data-prd-ann="${idx}"><span class="prd-ann-k">${PRD_ANN_LABEL[kind]}</span><div class="prd-ann-text">${esc(ann.text)}</div>${acts}</div>`;
 }
 
@@ -415,10 +460,10 @@ function prDiffBodyHtml(e, res, read, readerOpen = true) {
     if (l.kind === 'meta') return `<div class="prd-l prd-m"><span class="prd-no"></span><span class="prd-sign"></span><span class="prd-code">${esc(l.text)}</span></div>`;
     const no = prDiffShownNo(l);
     const side = prDiffSideOf(l);
-    const label = `${e.path}:${no}${side === 'left' ? '（削除された側）' : ''} に下書き`;
+    const label = `${e.path}:${no}${side === 'left' ? '（削除された側）' : ''} にコメント`;
     const line = `<div class="prd-l ${cls[l.kind]}${res?.tint.has(l.k) ? ' prd-tint' : ''}" data-prd-i="${l.k}"><span class="prd-no">${no}</span>`
       + `<span class="prd-sign">${l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span><span class="prd-code">${esc(l.text)}</span>`
-      + `<button type="button" class="prd-plus" data-prd-plus="${e.i}:${side}:${no}" aria-label="${esc(label)}" title="この行に下書き">＋</button></div>`;
+      + `<button type="button" class="prd-plus" data-prd-plus="${e.i}:${side}:${no}" aria-label="${esc(label)}" title="この行にコメント">＋</button></div>`;
     return line + (res?.byLine.get(l.k) || []).map(idx => prdAnnHtml(idx, anns[idx], res.at.get(idx), readerOpen)).join('')
       + (res?.since?.get(l.k) || []).map(i => prdPrevHtml(prevs[i])).join('');
   }).join('')).join('');
@@ -439,6 +484,81 @@ function prDiffLabels(paths) {
     while (n < s.length && count.get(`${n}\0${suffix(n)}`) > 1) n++;
     return [p, { label: suffix(n) || p, title: p }];
   }));
+}
+
+/* ── comments on the lines ── */
+
+/* The key of an open editor for a new comment: one per line (or per file, with no line). */
+const prdBoxKey = ({ path, side, line }) => `new:${path}|${side === 'left' ? 'left' : 'right'}|${line ?? ''}`;
+const prdHash = text => {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${(h >>> 0).toString(36)}-${text.length.toString(36)}`;
+};
+const PRD_STALE_TITLE = '下読みし直す前の差分の行です。行がずれていないか確かめてください';
+const PRD_SENT_DELETE_TITLE = 'adj の一覧から消します（GitHub の pending review や worker への指示は消えません）';
+
+/* One comment as an element: saved (text, with 編集 and 削除), or an editor (`o.box` is `{ text }`: 保存 for a saved one being edited, コメントを足す for a
+   new one, which `d.key` is not one of). A comment already sent (`sentAt`) is read-only, with 削除 only. `o`: `readSha` (the head of the read-through on
+   screen: a comment written on another head says so), `to` ('worker': a task's own read-through, where sent is 渡しました), `lost` (its line is
+   not in the file's diff), `failedWhy` (why the last push left it out). Buttons and boxes are not disabled here: the page does that in place
+   (`locked`), since it changes without the markup. */
+function prdCommentHtml(d, o = {}) {
+  const sent = !!d.sentAt;
+  const box = o.box || null;
+  const isNew = !!box && !!box.isNew;
+  const state = sent ? (o.to === 'worker' ? '渡しました' : '積みました') : '未送信';
+  const chips = `<span class="pr-chip ${sent ? 'pr-chip-sent' : 'prd-chip-unsent'}">${state}</span>`
+    + (d.source === 'reader' ? '<span class="pr-chip" title="AI 下読みの文を元にしたコメントです">AI の文から</span>' : '')
+    + (d.sha && o.readSha && d.sha !== o.readSha ? `<span class="pr-chip prd-chip-warn" title="${esc(PRD_STALE_TITLE)}">${esc(`${prSha7(d.sha)} の差分で書きました`)}</span>` : '')
+    + (o.lost ? `<span class="prd-cmt-lost">${esc(`行が見つからないコメント（${prDraftLocation(d)}）`)}</span>` : '');
+  const btn = (act, label, cls, extra = '') => `<button type="button" class="${cls} pr-act" data-prd-cmt-act="${act}"${extra}>${label}</button>`;
+  const key = isNew ? prdBoxKey(d) : d.key;
+  let kind;
+  let acts;
+  let body;
+  if (box) {
+    kind = isNew ? 'new' : 'edit';
+    const text = String(box.text ?? '');
+    acts = `<div class="prd-cmt-acts">${btn('cancel', 'やめる', 'btn-m3-text')}${isNew ? btn('add', 'コメントを足す', 'btn-m3-primary', text.trim() ? '' : ' disabled') : btn('save', '保存', 'btn-m3-primary', text.trim() ? '' : ' disabled')}</div>`;
+    body = `<textarea class="prd-cmt-body" data-prd-box="${esc(key)}" aria-label="${esc(`${prDraftLocation(d)} へのコメント`)}" placeholder="コメントを書く" spellcheck="false">\n${esc(text)}</textarea>`;
+  } else {
+    kind = sent ? 'sent' : 'saved';
+    acts = `<span class="prd-cmt-btns">${sent ? '' : btn('edit', '編集', 'btn-m3-text')}${btn('delete', '削除', 'btn-m3-text', sent ? ` title="${esc(PRD_SENT_DELETE_TITLE)}"` : '')}</span>`;
+    body = `<div class="prd-cmt-text">${esc(d.body)}</div>`;
+  }
+  const why = !box && !sent && o.failedWhy ? `<div class="pr-why" role="note">積めませんでした: ${esc(o.failedWhy)}</div>` : '';
+  return `<div class="prd-cmt prd-cmt-${kind}" data-prd-cmt="${esc(key)}"><div class="prd-cmt-head"><span class="prd-cmt-who">あなた</span>${chips}${box ? '' : acts}</div>${body}${box ? acts : ''}${why}</div>`;
+}
+
+/* The comments to put on a diff, from the document's drafts and the editors that are open: `[{ key, kind, i, k, lost, html, sig }]` in the order
+   to draw them (the drafts as the document has them, then the open editors), each with the file it is in (`i`, the layout's index of it), and
+   `k` the place of its line (null: in the file's slot). A comment that cannot be placed is not here (`prDiffUnplaced`). `boxes` maps a key to
+   what is being typed: `{ text, ... }` of a saved comment's editor (`kind` 'edit'), or `{ kind: 'new', path, side, line, source, text }` of a
+   new one (`prdBoxKey`'s key). `sig` changes when what the element says changes, not with the text being typed in it, which the page keeps. `o`:
+   `readSha`, `to` and `failed` (a Map of key -> why the last push left a draft out). */
+function prdCommentItems(entries, doc, boxes, o = {}) {
+  const items = [];
+  for (const d of doc?.drafts || []) {
+    const place = prDiffPlaceOf(entries, d);
+    if (!place) continue;
+    const typed = boxes?.get(d.key);
+    // What is in the pending review is not edited here.
+    const box = typed && typed.kind === 'edit' && !d.sentAt ? { text: typed.text } : null;
+    const opts = { readSha: o.readSha, to: o.to, lost: place.lost, failedWhy: o.failed?.get(d.key) || '', box };
+    const bare = prdCommentHtml(d, { ...opts, box: box && { text: '' } });
+    items.push({ key: d.key, kind: box ? 'edit' : d.sentAt ? 'sent' : 'saved', i: place.entry.i, k: place.k, lost: place.lost, html: prdCommentHtml(d, opts), sig: prdHash(bare) });
+  }
+  for (const [key, typed] of boxes || []) {
+    if (typed.kind !== 'new') continue;
+    const place = prDiffPlaceOf(entries, typed);
+    if (!place) continue;
+    const d = { path: typed.path, line: typed.line || undefined, side: typed.side, source: typed.source, body: '' };
+    const opts = { readSha: o.readSha, to: o.to, lost: place.lost, box: { isNew: true, text: typed.text } };
+    const bare = prdCommentHtml(d, { ...opts, box: { isNew: true, text: '' } });
+    items.push({ key, kind: 'new', i: place.entry.i, k: place.k, lost: place.lost, html: prdCommentHtml(d, opts), sig: prdHash(bare) });
+  }
+  return items;
 }
 
 /* ── a few lines of a file ── */

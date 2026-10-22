@@ -140,8 +140,8 @@
       <button type="button" class="tool-btn board-side-close" id="board-side-close" aria-label="閉じる" title="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
       <section class="wk-term" id="wk-term" aria-label="選んだ仕事のターミナル">
         <!-- The row over the middle is always shown in this view. #wk-mid-lead holds the toggle that hides and shows the list column
-             (core.js applyLayout); the tabs of a review request (下読み, 差分, 下書き) are shown for one only, and #task-read, their
-             read-through, in place of the terminal's pane (pr-panel.js). -->
+             (core.js applyLayout); #task-read, the read-through of a review request (the groups and the annotated diff, with the person's
+             comments on its lines), is shown in place of the terminal's pane for one (pr-panel.js). -->
         <div class="wk-mid-row" id="wk-mid-row"><div class="wk-mid-lead" id="wk-mid-lead"><button type="button" class="tool-btn rail-toggle" id="rail-toggle" data-action="rail-toggle" aria-controls="side-list" aria-expanded="true" aria-label="一覧を隠す" title="一覧を隠す"><span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span><span class="rail-badge zero" id="rail-toggle-count" title="新着の数">0</span></button></div><div class="wk-mid-tabs" id="wk-mid-tabs" role="tablist" aria-label="真ん中の表示" hidden></div></div>
         <div class="wk-mid-empty" id="wk-mid-empty" hidden></div>
         <div class="wk-term-head" id="wk-term-head"></div>
@@ -157,7 +157,7 @@
           </div>
           <div class="tp-term-ph" id="wk-term-ph"></div>
         </div>
-        <div class="task-read" id="task-read" role="tabpanel" aria-labelledby="wk-mid-tab-pr-detail" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
+        <div class="task-read" id="task-read" hidden data-drafts="off"><nav class="cd-index task-read-index" id="task-read-index" aria-label="目次"></nav><div class="task-read-body" id="task-read-body" role="region" tabindex="0" aria-label="AI 下読み"><div class="task-read-band" id="task-read-band"></div><div class="task-read-content" id="task-read-content"></div></div></div>
       </section>
     </div>
     <!-- What waits on the person: the list is in the list column (#todo-list), the selected question's card here (todo-view.js). -->
@@ -501,6 +501,23 @@
   </form>
 </dialog>
 
+<!-- 「レビューを送る」 (a review request) and 「worker に渡す」 (a task's own read-through): the overall comment, what would be sent, and the result of the last send (pr-send.js). -->
+<dialog id="review-send-dialog" aria-labelledby="review-send-title">
+  <form method="dialog">
+    <div class="head">
+      <span id="review-send-title">レビューを送る</span>
+      <button type="submit" value="cancel" class="m3-icon-button" style="padding:4px;" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <div id="review-send-text"></div>
+      <div id="review-send-rest"></div>
+    </div>
+    <div class="foot" id="review-send-foot"></div>
+  </form>
+</dialog>
+
 <dialog id="reader-close-dialog">
   <form method="dialog">
     <div class="head">
@@ -517,7 +534,7 @@
         <div id="reader-close-name" class="name"></div>
       </div>
       <p>この PR の下読みをしている worker のウィンドウを閉じます。worker は止まります。</p>
-      <p>下読みと下書きは残ります。あとで「下読みし直す」と、新しい worker が読みます。</p>
+      <p>下読みと、書いたコメントは残ります。あとで「下読みし直す」と、新しい worker が読みます。</p>
       <p id="reader-close-running">いまは下読みの途中です。閉じると、この下読みは失敗として扱われます。もう一度頼めます。</p>
     </div>
     <div class="foot">

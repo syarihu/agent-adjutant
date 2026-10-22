@@ -31,7 +31,7 @@ const cardDialogDockEl = () => cardDialogEl().querySelector('.card-dialog-dock')
 /* A whole task and a whole PR (pr-dialog.js) are read under the index; a single card is not. A task's own read-through
    (task-read-view.js, 'own-read') is drawn like a PR's, but is one scroll with no index. */
 const cardDialogIndexed = () => cardDialog.mode === 'task' || cardDialog.mode === 'review' || cardDialog.mode === 'own-read';
-/* The modes whose content is a PR's read-through with its drafts in the column: they share the PR buttons and the diff. */
+/* The modes whose content is a PR's read-through with the person's comments on its diff: they share the PR buttons and the diff. */
 const cardDialogOnPr = () => cardDialog.mode === 'review' || cardDialog.mode === 'own-read';
 
 /* What a card says about itself, drawn into the panel's markup by task-view.js and decide.js. */
@@ -223,7 +223,7 @@ function cardDialogShell(mode, title, sub, head = {}) {
   const content = dlg.querySelector('.card-dialog-content');
   content.replaceChildren();
   content.dataset.mode = mode;
-  dock.setAttribute('aria-label', mode === 'review' ? '下書き' : mode === 'own-read' ? 'worker への指示' : '判定');
+  dock.setAttribute('aria-label', mode === 'review' || mode === 'own-read' ? 'AI 下読み' : '判定');
   const index = dlg.querySelector('.card-dialog-index');
   index.hidden = mode === 'card' || mode === 'own-read';
   index.replaceChildren();
