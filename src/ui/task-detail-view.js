@@ -259,6 +259,7 @@ questionDialogEl().addEventListener('click', e => {
     if (!issue) return note('開く', true, 'Issue の本文は保存されていません');
     return void dialogStack.push({ key: `issue:${layer.dataset.qdKey}`, opener: open, ...issue });
   }
+  if (open.dataset.qcOpen === 'html-report') return void openGateReport(g, open, title);
   if (open.dataset.qcOpen === 'report') {
     return void dialogStack.push({ key: `report:${layer.dataset.qdKey}`, opener: open, title: `レポート — ${title}`, body: `<div class="body">${md(g.body)}</div>` });
   }

@@ -584,7 +584,24 @@ JSON
 | `unsure` | Where you were not confident. **Do not swallow it** |
 | `steps` | `plan`: the plan, one `{ "text", "detail" }` per step, in order (a bare string is a step with that text). **A plan is refused without them** |
 | `sections` | What you found or planned, in order: `{ "heading", "body", "stage" }`, the heading picked to fit, the body markdown, `stage` `found` (the default) or `plan`. A `result` needs these or a `body` |
-| `quick` | `true` for a fixed confirmation answered with one press. It needs `choices`, and carries no `body`, `diff`, `run`, `steps`, `sections`, `findings`, `commands` or `manual` |
+| `quick` | `true` for a fixed confirmation answered with one press. It needs `choices`, and carries no `body`, `diff`, `run`, `steps`, `sections`, `findings`, `commands`, `manual` or `report` |
+| `report` | A self-contained HTML file, relative to the worktree (or absolute): the detail behind the conclusion in `sections`, opened from the card with 「レポートを開く」. It is **copied when the gate opens**, so it outlives the worktree. Up to 5 MiB, as UTF8 text. One per gate; not on a `quick` gate |
+
+### Attaching an HTML report
+
+Use `report` when the detail reads badly as markdown: tables, charts, a long analysis. The gate's
+`sections` still carry the conclusion, because that is what is read first; the report is the detail
+behind 「レポートを開く」.
+
+Write it as one `.html` file in the worktree (for example under `.claude/`) that is self-contained:
+inline `<style>` and `<script>`, images and fonts as `data:` URLs, and inline SVG for charts. Start it
+with `<!doctype html>`, with nothing before it (not even a comment), so it is drawn in standards mode.
+Anything loaded from elsewhere is blocked and simply does not appear. The board shows it in a
+sandbox: its scripts run with no network and no access to the board.
+
+```json
+{ "kind": "result", "title": "...", "focus": "...", "sections": [ ... ], "report": ".claude/report.html" }
+```
 
 **`focus` is required on every gate that waits; `adj gate open` refuses one without it.** The question
 card (in the TODO, and over the terminal in 「いまの仕事」) shows it as the question, so a gate with no
@@ -608,7 +625,7 @@ card (in the TODO, and over the terminal in 「いまの仕事」) shows it as t
 - Write `title`, `focus`, `decided`, `unsure`, `problem`, `goal`, `steps[].text`, `steps[].detail`,
   `sections[].heading`, `sections[].body`, `facts`, the choices' `label`,
   `why` and `points` (not `id`, which you branch on), `body`, `findings[].text`,
-  `findings[].reason` and `manual[]` in the brief's "Language"; the examples here are in English
+  `findings[].reason`, `manual[]` and the text of the `report` file in the brief's "Language"; the examples here are in English
   only because this file is. `commands[].command` and `output` stay as the command printed them.
 
 A `result` and a quick `question`, each as a person gets it:

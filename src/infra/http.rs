@@ -161,6 +161,18 @@ pub fn respond(
     content_type: &str,
     body: &[u8],
 ) -> io::Result<()> {
+    respond_with(out, status, content_type, &[], body)
+}
+
+/// `respond` with more header lines, for an answer that has to say how it may be used: the
+/// caller names the headers, and none of them is checked here.
+pub fn respond_with(
+    out: &mut impl Write,
+    status: u16,
+    content_type: &str,
+    extra: &[(&str, &str)],
+    body: &[u8],
+) -> io::Result<()> {
     let reason = match status {
         200 => "OK",
         204 => "No Content",
@@ -182,9 +194,13 @@ pub fn respond(
          Content-Length: {}\r\n\
          Cache-Control: no-store\r\n\
          X-Content-Type-Options: nosniff\r\n\
-         Connection: close\r\n\r\n",
+         Connection: close\r\n",
         body.len()
     )?;
+    for (name, value) in extra {
+        write!(out, "{name}: {value}\r\n")?;
+    }
+    out.write_all(b"\r\n")?;
     out.write_all(body)?;
     out.flush()
 }

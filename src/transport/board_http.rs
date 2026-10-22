@@ -5,6 +5,7 @@
 mod assets;
 mod auth;
 mod handlers;
+mod report;
 mod resident;
 mod routes;
 mod sessions;

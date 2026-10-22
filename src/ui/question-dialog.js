@@ -217,7 +217,7 @@ function issueLayerOf(task, number) {
   };
 }
 
-/* `what` is the `data-qc-open` of the button: diff, issue or report. */
+/* `what` is the `data-qc-open` of the button: diff, issue, report (the gate's markdown body) or html-report (the HTML file it carries). */
 function questionOpenLayer(what, root) {
   const key = root.closest('[data-qc-gate]')?.dataset.qcGate;
   const g = key && (questionBase?.key === key ? questionBase.g : questionLive(key));
@@ -236,6 +236,7 @@ function questionOpenLayer(what, root) {
     if (!issue) return note('開く', true, 'Issue の本文は保存されていません');
     return dialogStack.push({ ...layer, ...issue });
   }
+  if (what === 'html-report') return openGateReport(g, root, title);
   if (what === 'report') return dialogStack.push({ ...layer, title: `レポート — ${title}`, body: `<div class="body">${md(g.body)}</div>` });
 }
 
