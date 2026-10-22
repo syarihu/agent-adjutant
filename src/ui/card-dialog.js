@@ -166,6 +166,7 @@ function cardDialogLastMessage(content) {
 /* The whole text has come (or failed to): drawn again where the dialog shows it. A sync that a typed comment holds
    waits for its turn. A task's dialog takes the redraw over without marking the card 「更新」, as nothing was said. */
 function lastMessageArrived() {
+  workTermDialogsFollow();
   const dlg = cardDialogEl();
   if (!dlg?.open) return;
   if (cardDialog.mode === 'card' && cardDialog.section === 'lastmsg') {

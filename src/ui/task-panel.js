@@ -774,7 +774,7 @@ function hubCountsOf(h) {
   counts.push(['受信箱', `${h.inboxCount || 0} 件`]);
   return counts;
 }
-function hubDetailHtml(h, s) {
+function hubDetailHtml(h, s, opts = {}) {
   const other = hubOther(h);
   const row = hubRowOf(h);
   const startWhy = hubStartWhy(h) || hubWaitWhy(h);
@@ -792,7 +792,7 @@ function hubDetailHtml(h, s) {
   if (pend.length) html += `<div class="m3-filled-card">${secTitle('起動を依頼中')}${pend.map(pendingRowHtml).join('')}</div>`;
 
   const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
-  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${hubCountsOf(h).map(([label, value]) => kv(label, value)).join('')}</div>${agentFactsHtml(s)}</div>`;
+  html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${hubCountsOf(h).map(([label, value]) => kv(label, value)).join('')}</div>${agentFactsHtml(s, opts)}</div>`;
 
   // Only the page's own board has its tasks to name; another board's are read on its own page.
   if (!other) {

@@ -440,9 +440,13 @@ function workHubWaitingHtml(h, s) {
   return s.waiting && !open.some(g => g.id === s.waiting.id) ? sessGateHtml(s) : '';
 }
 
-const workHubInfoHtml = (h, s) => workHubWaitingHtml(h, s) + (h.titleState ? `<div class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, hubPanelWakeBase(h))}${hubTitleWhyHtml(h)}</div>` : '')
-  // The button that expands a card is the panel's own; nothing in a dialog answers it.
-  + hubDetailHtml(h, s).replace(/<button[^>]*data-expand-open[\s\S]*?<\/button>/g, '');
+const workHubInfoHtml = (h, s) => {
+  // The dialog shows the last message whole, in a box of its own; a no-op unless the message is cut.
+  ensureLastMessage(s);
+  return workHubWaitingHtml(h, s) + (h.titleState ? `<div class="hub-title-tools">${hubTitleMarkHtml(h)}${hubTitleReadButtonHtml(h, hubPanelWakeBase(h))}${hubTitleWhyHtml(h)}</div>` : '')
+    // The button that expands a card is the panel's own; the dialog shows the whole text instead, so nothing answers it.
+    + hubDetailHtml(h, s, { expanded: true }).replace(/<button[^>]*data-expand-open[\s\S]*?<\/button>/g, '');
+};
 
 /* The hub dialog that is open: { key, board, id, html (as drawn), gone }. */
 let workHubInfo = null;
@@ -451,6 +455,7 @@ function openWorkHubInfo(hub, opener) {
   const key = `hubinfo:${nav.board}/${hub.id}`;
   if (dialogStack.has(key)) return;
   if (dialogStack.isOpen()) dialogStack.closeAll();
+  forgetLastMessage();
   const html = workHubInfoHtml(hub, hubSessionOf(hub));
   workHubInfo = { key, board: nav.board, id: hub.id, html, gone: false };
   dialogStack.push({
@@ -480,7 +485,9 @@ function workTermDialogsFollow() {
   if (html === info.html || (document.activeElement !== body && body.contains(document.activeElement))) return;
   const top = body.scrollTop;
   const open = [...body.querySelectorAll('details')].map(d => d.open);
+  const msgTops = lastMessageScrolls(body);
   body.innerHTML = html;
+  restoreLastMessageScrolls(body, msgTops);
   body.scrollTop = top;
   body.querySelectorAll('details').forEach((d, i) => { if (open[i] != null) d.open = open[i]; });
   info.html = html;
