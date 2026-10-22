@@ -107,6 +107,9 @@ pub struct Fixture {
     pub repo: PathBuf,
     pub state: PathBuf,
     pub config: PathBuf,
+    /// Whether `new` added the top-level `"preset": "iterm2"` itself, rather than the config
+    /// under test saying so (see `config_warnings`).
+    pub guard_preset: bool,
 }
 
 impl Fixture {
@@ -143,6 +146,7 @@ impl Fixture {
         // a `preset` that is present, `null` included, is left as written. Anything else is
         // written as given. The same rule as `testing::Sandbox::new` in `src/lib.rs`; change
         // both together.
+        let mut guard_preset = false;
         let config_json = match serde_json::from_str::<serde_json::Value>(config_json) {
             Ok(serde_json::Value::Object(mut map)) => {
                 if map
@@ -154,11 +158,13 @@ impl Fixture {
                 match map.get_mut("terminal") {
                     None | Some(serde_json::Value::Null) => {
                         map.insert("terminal".into(), serde_json::json!({"preset": "iterm2"}));
+                        guard_preset = true;
                     }
                     Some(serde_json::Value::Object(terminal))
                         if !terminal.contains_key("preset") =>
                     {
                         terminal.insert("preset".into(), "iterm2".into());
+                        guard_preset = true;
                     }
                     _ => {}
                 }
@@ -174,6 +180,7 @@ impl Fixture {
             repo: std::fs::canonicalize(&repo).unwrap(),
             _dir: dir,
             config,
+            guard_preset,
         }
     }
 
@@ -201,6 +208,19 @@ impl Fixture {
         command
     }
 
+    /// `adj config`'s `warnings`, less the one this fixture's guard brought
+    /// (`GUARD_PRESET_WARNING`). Dropped only when the guard added the preset: one the config
+    /// under test set itself is that config's warning and stays.
+    pub fn config_warnings(&self, out: &serde_json::Value) -> Vec<serde_json::Value> {
+        out["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| !(self.guard_preset && w.as_str() == Some(GUARD_PRESET_WARNING)))
+            .cloned()
+            .collect()
+    }
+
     pub fn cmd(&self, args: &[&str]) -> std::process::Output {
         self.command(args).output().unwrap()
     }
@@ -222,23 +242,10 @@ impl Fixture {
 }
 
 /// The warning the fixture's own `"preset": "iterm2"` (see `Fixture::new`) brings on a machine
-/// that is not macOS, where the resolver says iTerm2 does not run. It is the guard talking, not
-/// the config under test, and only the top-level spelling is the guard's: one a fixture set
-/// itself in `defaults` or a repository carries that level's prefix and is kept.
+/// that is not macOS, where the resolver says iTerm2 does not run. The guard puts the preset at
+/// the top level, whose warnings carry no prefix.
 pub const GUARD_PRESET_WARNING: &str =
     "terminal.preset \"iterm2\" drives iTerm2, which runs only on macOS";
-
-/// `adj config`'s `warnings`, less the one the fixture's guard brings (`GUARD_PRESET_WARNING`).
-/// On macOS that warning is never raised, so nothing is dropped there.
-pub fn config_warnings(out: &serde_json::Value) -> Vec<serde_json::Value> {
-    out["warnings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|w| cfg!(target_os = "macos") || w.as_str() != Some(GUARD_PRESET_WARNING))
-        .cloned()
-        .collect()
-}
 
 /// A config that notifies by doing nothing. Every test that sends uses it: the built-in
 /// notifier puts a banner on the developer's screen, which is not something a test suite
