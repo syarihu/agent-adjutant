@@ -343,6 +343,12 @@ impl Resident {
     }
 
     pub fn start_with(fixture: &Fixture, env: &[(&str, &str)]) -> Resident {
+        Resident::start_logging(fixture, env, Stdio::null())
+    }
+
+    /// `start_with`, with what the resident prints on stderr (the startup check's warnings)
+    /// going to `stderr`, for a test that reads it.
+    pub fn start_logging(fixture: &Fixture, env: &[(&str, &str)], stderr: Stdio) -> Resident {
         let child = fixture
             .command([
                 "server",
@@ -354,7 +360,7 @@ impl Resident {
             ])
             .envs(env.iter().copied())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .spawn()
             .unwrap();
         // The guard first, so that whatever is wrong with what it says does not leave it running.
@@ -924,7 +930,25 @@ pub fn eventually(what: &str, mut check: impl FnMut() -> bool) {
 
 /// A stand-in for the tool `name`: `script` written to `dir/name` and made executable, `dir`
 /// made first if it is not there. Put `path_with(dir)` in the child's `PATH`.
+///
+/// A stub `gh` answers `--version` and `auth status` with success before its own script runs (when
+/// that starts with `#!/bin/sh`): the resident looks at `gh` and its login when it starts, and
+/// those two calls are not what a test that counts or forbids the server's GitHub calls is
+/// about. A test that wants its own answer to them writes the stub with `stub_bin_exact`.
 pub fn stub_bin(dir: &Path, name: &str, script: &str) -> PathBuf {
+    const SHEBANG: &str = "#!/bin/sh\n";
+    match script.strip_prefix(SHEBANG) {
+        Some(rest) if name == "gh" => stub_bin_exact(
+            dir,
+            name,
+            &format!("{SHEBANG}case \"$*\" in --version|\"auth status\") exit 0 ;; esac\n{rest}"),
+        ),
+        _ => stub_bin_exact(dir, name, script),
+    }
+}
+
+/// `stub_bin`, with the script written as given.
+pub fn stub_bin_exact(dir: &Path, name: &str, script: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir).unwrap();
     let bin = dir.join(name);

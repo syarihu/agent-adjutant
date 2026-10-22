@@ -2,7 +2,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::{Resident, board_url, jobs, token};
+use super::{MachineChecks, MachineState, Resident, board_url, jobs, token};
 use crate::gate;
 use crate::registry::{
     addresses, forget_server, live_resident, note_board, record_server, recorded_server,
@@ -104,7 +104,16 @@ pub fn resident_command(
 
     let mut command = std::process::Command::new(exe);
     command
-        .args(["server", "start", "--foreground", "--no-open", "--port"])
+        // `--checked`: this process was started by one that has run the startup check and
+        // printed what it found, and its own output goes to a log.
+        .args([
+            "server",
+            "start",
+            "--foreground",
+            "--no-open",
+            "--checked",
+            "--port",
+        ])
         .arg(port.to_string())
         .stdin(std::process::Stdio::null())
         .stdout(stdout)
@@ -193,8 +202,14 @@ impl BoundResident {
     }
 
     /// Poll the pull requests, sweep the gates and answer connections with `handle`, for as long
-    /// as the process lives.
-    pub fn run(self, handle: fn(&Resident, TcpStream) -> std::io::Result<()>) {
+    /// as the process lives. `first` is the result of the startup check the caller already made;
+    /// without one the check runs on a thread of its own right after serving starts, and again
+    /// every five minutes.
+    pub fn run(
+        self,
+        first: Option<MachineChecks>,
+        handle: fn(&Resident, TcpStream) -> std::io::Result<()>,
+    ) {
         let BoundResident {
             lock,
             listener,
@@ -203,15 +218,16 @@ impl BoundResident {
             bound,
             ..
         } = self;
-        // Built here rather than in `bind_resident`: asking tmux for its version is a process to
-        // wait for, and neither the record (a starting `adj server start` waits for it) nor the
-        // serving line (read from the log right after the record) should wait on it.
+        // Built here rather than in `bind_resident`, and the machine check run on a thread: it
+        // runs programs (`gh auth status` can take 15 s), and neither the record (a starting
+        // `adj server start` waits 5 s for it) nor the serving line should wait on that.
+        let nwo = checkout_here().map(|repo| repo.nwo).unwrap_or_default();
         let resident = Arc::new(Resident {
             root,
             token,
             port: bound,
             boards: Mutex::default(),
-            tmux: board_terminal_tmux(),
+            machine: MachineState::new(&nwo, first),
             terminals: Arc::default(),
             pr_poll: Arc::default(),
             waits: Arc::default(),
@@ -276,6 +292,18 @@ impl BoundResident {
                         parents,
                     }
                 });
+            });
+        }
+        {
+            let machine = Arc::clone(&resident.machine);
+            std::thread::spawn(move || {
+                if machine.latest().is_none() {
+                    machine.refresh();
+                }
+                loop {
+                    std::thread::sleep(MACHINE_RECHECK);
+                    machine.refresh();
+                }
             });
         }
         {
@@ -347,6 +375,10 @@ impl BoundResident {
     }
 }
 
+/// How often the resident looks at the machine again, so that a tmux or a `gh` login done while
+/// it runs is noticed without a restart.
+const MACHINE_RECHECK: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// How long a stop waits for the resident to exit before giving up.
 const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -392,20 +424,6 @@ pub fn stop_resident(root: &Path, restarting: bool) -> Result<Option<(u32, u16)>
     }
     forget_server(root, pid, started.as_deref());
     Ok(Some((pid, port)))
-}
-
-/// The tmux version when the board terminal can be offered at all: a unix machine with tmux 3.1
-/// or later. Older tmux has neither `window-size latest` nor the hook that ends the terminal with
-/// its window, so the board would follow tmux on to another agent's window when the target closes.
-fn board_terminal_tmux() -> Option<(u32, u32)> {
-    #[cfg(unix)]
-    {
-        crate::infra::terminal::tmux_version().filter(|&v| v >= (3, 1))
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
 }
 
 /// The repository this process stands in, if it stands in one. Whether it is one is not the

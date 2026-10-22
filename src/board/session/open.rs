@@ -37,7 +37,10 @@ fn tmux_failure(stderr: String) -> String {
 /// (`terminal::board_attach_prepare_script`): a plain attach to the shared session would move
 /// every other client's current window to this one.
 pub fn open(server: &Server, id: &str) -> Result<Opened, String> {
-    let version = server.tmux.ok_or("tmux 3.1 or later is not available")?;
+    let version = server
+        .machine
+        .tmux()
+        .ok_or("tmux 3.1 or later is not available")?;
     let settings = settings_now(server);
     let session = find_session(server, &settings, id)?;
     let (socket, window) =

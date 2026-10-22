@@ -236,6 +236,8 @@ fn the_resident_is_started_with_the_root_it_was_given() {
         Stdio::null(),
         Stdio::null(),
     );
+    // The child does not run the startup check again: its output goes to a log.
+    assert!(command.get_args().any(|arg| arg == "--checked"));
     let value = command
         .get_envs()
         .find(|(name, _)| *name == crate::infra::env::STATE_DIR_ENV)
@@ -1038,7 +1040,7 @@ fn reading_the_state_leaves_a_resumable_gate_open() {
         last_lines: Arc::default(),
         prompts: Arc::default(),
         diffs: Arc::default(),
-        tmux: None,
+        machine: Default::default(),
         terminals: Arc::default(),
         pr_poll: None,
         waits: Arc::default(),
@@ -1083,7 +1085,7 @@ fn a_failed_worktree_listing_keeps_the_last_lines_held_for_workers() {
             last_lines: Arc::default(),
             prompts: Arc::default(),
             diffs: Arc::default(),
-            tmux: None,
+            machine: Default::default(),
             terminals: Arc::default(),
             pr_poll: None,
             waits: Arc::default(),
@@ -1222,7 +1224,7 @@ fn one_session_is_the_entry_the_whole_list_holds() {
         last_lines: Arc::default(),
         prompts: Arc::default(),
         diffs: Arc::default(),
-        tmux: None,
+        machine: Default::default(),
         terminals: Arc::default(),
         pr_poll: None,
         waits: Arc::default(),
@@ -1609,7 +1611,7 @@ fn the_last_message_of_a_session_is_read_through_the_boards_join() {
         last_lines: Arc::default(),
         prompts: Arc::default(),
         diffs: Arc::default(),
-        tmux: None,
+        machine: Default::default(),
         terminals: Arc::default(),
         pr_poll: None,
         waits: Arc::default(),

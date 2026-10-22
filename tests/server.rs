@@ -637,3 +637,164 @@ fn a_board_follows_its_address_when_the_checkout_changes() {
     std::fs::remove_file(fixture.state.join("boards").join(format!("{SLUG}.json"))).unwrap();
     assert_eq!(resident.get(&format!("/b/{SLUG}/api/state")).0, 404);
 }
+
+// ── the startup check ───────────────────────────────────────────────
+
+/// A machine the startup check can look at without touching the developer's: stub `tmux` and
+/// `gh` ahead on `PATH`, and the agents' config directories (`HOME`, `CLAUDE_CONFIG_DIR`,
+/// `CODEX_HOME`) in the fixture's own temp directory, empty. No stub starts a tmux server; the
+/// tmux one only answers `-V`, or says it is not there, and logs what it was asked.
+struct Machine {
+    env: Vec<(&'static str, String)>,
+    tmux_log: std::path::PathBuf,
+}
+
+impl Machine {
+    fn new(fixture: &Fixture, tmux: &str, gh: &str) -> Machine {
+        let root = fixture._dir.path();
+        let bin = root.join("stub-bin");
+        let tmux_log = root.join("tmux-calls.log");
+        stub_bin(
+            &bin,
+            "tmux",
+            &format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\n{tmux}\n",
+                tmux_log.display()
+            ),
+        );
+        stub_bin_exact(&bin, "gh", &format!("#!/bin/sh\n{gh}\n"));
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env = vec![
+            ("PATH", path_with(&bin)),
+            ("HOME", home.to_string_lossy().to_string()),
+            (
+                "CLAUDE_CONFIG_DIR",
+                root.join("claude").to_string_lossy().to_string(),
+            ),
+            (
+                "CODEX_HOME",
+                root.join("codex").to_string_lossy().to_string(),
+            ),
+        ];
+        Machine { env, tmux_log }
+    }
+
+    /// tmux 3.4 is there; `gh` answers `--version` and says it is logged in.
+    fn healthy(fixture: &Fixture) -> Machine {
+        Machine::new(fixture, "echo 'tmux 3.4'", "exit 0")
+    }
+
+    fn pairs(&self) -> Vec<(&str, &str)> {
+        self.env.iter().map(|(k, v)| (*k, v.as_str())).collect()
+    }
+
+    fn start(&self, fixture: &Fixture) -> std::process::Output {
+        fixture
+            .command([
+                "server",
+                "start",
+                "--foreground",
+                "--no-open",
+                "--port",
+                "0",
+            ])
+            .envs(self.pairs())
+            .output()
+            .unwrap()
+    }
+}
+
+#[test]
+fn a_config_that_does_not_parse_stops_the_start_and_names_the_file() {
+    let fixture = Fixture::new("{ not json");
+    let machine = Machine::healthy(&fixture);
+    let out = machine.start(&fixture);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("error:"), "{stderr}");
+    assert!(
+        stderr.contains(&fixture.config.display().to_string()),
+        "{stderr}"
+    );
+    assert!(
+        !fixture.state.join("server.json").exists(),
+        "nothing was bound"
+    );
+}
+
+#[test]
+fn a_missing_tmux_stops_the_start_when_workers_open_in_tmux() {
+    let fixture = Fixture::new(r#"{"terminal": {"preset": "tmux"}}"#);
+    let machine = Machine::new(&fixture, "exit 127", "exit 0");
+    let out = machine.start(&fixture);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("tmux was not found"), "{stderr}");
+    assert!(stderr.contains("iterm2"), "{stderr}");
+    assert!(!fixture.state.join("server.json").exists());
+    // The only thing that was run is the stub, and only to ask its version.
+    let calls = std::fs::read_to_string(&machine.tmux_log).unwrap();
+    assert!(calls.lines().all(|line| line == "-V"), "{calls}");
+}
+
+#[test]
+fn a_missing_tmux_and_a_gh_that_is_not_logged_in_warn_and_the_server_starts() {
+    // The fixture's default is the iterm2 preset, so tmux is a warning here.
+    let fixture = Fixture::new(QUIET);
+    let machine = Machine::new(&fixture, "exit 127", "[ \"$1\" = auth ] && exit 1\nexit 0");
+    let stderr_file = fixture._dir.path().join("start.stderr");
+    let resident = Resident::start_logging(
+        &fixture,
+        &machine.pairs(),
+        std::process::Stdio::from(std::fs::File::create(&stderr_file).unwrap()),
+    );
+    let stderr = std::fs::read_to_string(&stderr_file).unwrap();
+    assert!(
+        stderr.contains("adj server: warning: tmux was not found"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("adj server: warning: gh is not logged in"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("error:"), "{stderr}");
+
+    let (status, body) = resident.get("/api/server");
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let checks = answer["checks"].as_array().unwrap();
+    let find = |id: &str| checks.iter().find(|c| c["id"] == id).unwrap();
+    for id in ["tmux", "gh-auth", "mcp"] {
+        assert_eq!(find(id)["ok"], false, "{id}: {answer}");
+        assert_eq!(find(id)["fatal"], false, "{id}: {answer}");
+    }
+    assert_eq!(find("config")["ok"], true);
+    assert_eq!(find("gh")["ok"], true);
+}
+
+#[test]
+fn status_without_a_server_prints_the_check_list_and_exits_1() {
+    let fixture = Fixture::new(QUIET);
+    let machine = Machine::healthy(&fixture);
+    let out = fixture
+        .command(["server", "status"])
+        .envs(machine.pairs())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("adj server is not running"), "{stdout}");
+    assert!(stdout.contains("ok    tmux found"), "{stdout}");
+    assert!(stdout.contains("warn  the adjutant MCP server"), "{stdout}");
+
+    let out = fixture
+        .command(["server", "status", "--json"])
+        .envs(machine.pairs())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["running"], false);
+    assert!(!json["checks"]["checks"].as_array().unwrap().is_empty());
+}

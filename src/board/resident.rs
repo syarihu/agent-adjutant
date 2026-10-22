@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
-use super::Server;
+use super::{MachineState, Server};
 use crate::registry::{Address, address_of};
 
 /// The resident server: its token and port, and the boards it has opened. A board is opened
@@ -15,8 +15,9 @@ pub struct Resident {
     /// Each open board with the address it was built from, so that one whose address has
     /// changed since is not served from the old context.
     pub boards: Mutex<std::collections::HashMap<String, (Address, Arc<Server>)>>,
-    /// The tmux version, asked once at start: the board terminal is offered only with one.
-    pub tmux: Option<(u32, u32)>,
+    /// What the last look at the machine found (tmux, `gh`, the MCP registration, the config),
+    /// shared with every board. The board terminal is offered only while it finds a tmux.
+    pub machine: Arc<MachineState>,
     /// Open board terminals, over all boards.
     pub terminals: Arc<AtomicUsize>,
     /// The poll that keeps the cards' pull requests up to date, over all boards.
@@ -64,7 +65,7 @@ impl Resident {
                 last_lines: Arc::default(),
                 prompts: Arc::default(),
                 diffs: Arc::default(),
-                tmux: self.tmux,
+                machine: Arc::clone(&self.machine),
                 terminals: Arc::clone(&self.terminals),
                 pr_poll: Some(Arc::clone(&self.pr_poll)),
                 waits: Arc::clone(&self.waits),

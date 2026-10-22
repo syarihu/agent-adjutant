@@ -1821,7 +1821,7 @@ mod others_drafts {
             token: TOKEN.to_string(),
             port: PORT,
             boards: Default::default(),
-            tmux: None,
+            machine: Default::default(),
             terminals: Default::default(),
             pr_poll: Default::default(),
             waits: Default::default(),
@@ -1889,6 +1889,45 @@ mod others_drafts {
             let (status, _) = call(&r, method, path);
             assert_eq!(status, 404, "{method} {path}");
         }
+    }
+
+    #[test]
+    fn the_server_route_answers_an_empty_list_until_a_check_has_run() {
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        let (status, body) = call(&r, "GET", "/api/server");
+        assert_eq!(status, 200);
+        assert_eq!(body, json!({ "checkedAt": null, "checks": [] }));
+    }
+
+    #[test]
+    fn the_server_route_carries_the_latest_result_and_a_recent_one_is_not_rerun() {
+        use crate::board::{Check, CheckId, MachineChecks};
+        let root = tempfile::tempdir().unwrap();
+        let r = resident(root.path());
+        let now = crate::infra::clock::now_secs();
+        r.machine.set(MachineChecks {
+            checks: vec![Check {
+                id: CheckId::Gh,
+                ok: false,
+                fatal: false,
+                detail: None,
+            }],
+            tmux: None,
+            config_path: String::new(),
+            tmux_backend: false,
+            checked_at: now,
+        });
+        let (status, body) = call(&r, "GET", "/api/server");
+        assert_eq!(status, 200);
+        assert_eq!(body["checkedAt"], now);
+        assert_eq!(body["checks"][0]["id"], "gh");
+        assert_eq!(body["checks"][0]["ok"], false);
+        assert!(body["checks"][0]["fix"].is_string());
+        // Asked again at once, the answer is the one that was kept: no program is run.
+        let (status, again) = call(&r, "POST", "/api/server/check");
+        assert_eq!(status, 200);
+        assert_eq!(again, body);
     }
 
     #[test]
@@ -2194,8 +2233,14 @@ mod others_drafts {
     fn the_reader_terminal_route_says_why_there_is_no_window_as_a_close_code() {
         let root = tempfile::tempdir().unwrap();
         put_record(root.path());
-        let mut r = resident(root.path());
-        r.tmux = Some((3, 4));
+        let r = resident(root.path());
+        r.machine.set(crate::board::MachineChecks {
+            checks: Vec::new(),
+            tmux: Some((3, 4)),
+            config_path: String::new(),
+            tmux_backend: true,
+            checked_at: 0,
+        });
         // A record that nobody asked a read of has no reader: the handshake is accepted, and the
         // socket then closes with 4404 and the reason.
         let got = upgrade(&r, "/api/others/terminal", Some("acme/widget#7"));
@@ -2268,7 +2313,7 @@ fn board_with_report(
         last_lines: Default::default(),
         prompts: Default::default(),
         diffs: Default::default(),
-        tmux: None,
+        machine: Default::default(),
         terminals: Default::default(),
         pr_poll: None,
         waits: Default::default(),

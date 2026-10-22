@@ -8,11 +8,29 @@ use serde_json::json;
 use super::args::{ServerRestartArgs, ServerStartArgs, ServerStatusArgs};
 use crate::board::view::boards;
 use crate::board::{
-    self, RestartFailed, Restarted, Started, Status, bind_resident, board_url, checkout_here,
-    resident_board_url, resident_root, token,
+    self, MachineChecks, RestartFailed, Restarted, Started, Status, ask_resident, bind_resident,
+    board_url, check_machine, checkout_here, resident_board_url, resident_root, token,
 };
 use crate::kernel::identity::RepoInfo;
 use crate::transport::board_http::handle_resident;
+use crate::transport::wording::{machine_check, machine_checks_json};
+
+/// Look at the machine for a start or a restart and say what is wrong, on stderr, one line for
+/// each failed check. A fatal one is an error and a start does not go on; the rest are warnings.
+/// `Err`-free on purpose: a check that cannot run is a failed check, not a failed command.
+fn startup_check(here: Option<&RepoInfo>) -> (MachineChecks, bool) {
+    let checks = check_machine(here.map_or("", |repo| repo.nwo.as_str()));
+    for check in checks.failing() {
+        let (message, fix) = machine_check(check, &checks);
+        let level = if check.fatal { "error" } else { "warning" };
+        eprintln!(
+            "adj server: {level}: {message} — {}",
+            fix.unwrap_or_default()
+        );
+    }
+    let fatal = checks.fatal().next().is_some();
+    (checks, fatal)
+}
 
 /// `adj server start`. Detached unless `foreground`, which is what a service manager and the
 /// tests run.
@@ -20,8 +38,20 @@ pub fn server_start(args: &ServerStartArgs) -> Result<i32, String> {
     let (port, open) = (args.port, !args.no_open);
     let here = checkout_here();
     let root = resident_root(here.as_ref());
+    // Before anything else, the "already running" answer included: what is missing is better
+    // said now than found later as a failed action. A process started by one that has checked
+    // already (`--checked`) does not say it again into its log.
+    let first = if args.checked {
+        None
+    } else {
+        let (checks, fatal) = startup_check(here.as_ref());
+        if fatal {
+            return Ok(1);
+        }
+        Some(checks)
+    };
     if args.foreground {
-        return serve_resident(&root, port, open);
+        return serve_resident(&root, port, open, first);
     }
     match board::start(&root, port, here.as_ref())? {
         Started::Already { pid, port } => {
@@ -79,7 +109,15 @@ fn shown_url(root: &Path, port: u16, here: Option<&RepoInfo>) -> Result<String, 
 
 /// The resident itself: holds `server.lock` for as long as it runs, binds, says where it is,
 /// and answers.
-fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
+///
+/// `first` is the check this process printed, which the resident keeps as its first result; with
+/// none it runs the check itself once it is serving.
+fn serve_resident(
+    root: &Path,
+    port: u16,
+    open: bool,
+    first: Option<MachineChecks>,
+) -> Result<i32, String> {
     let bound = bind_resident(root, port)?;
     let (asked, on) = (bound.asked, bound.bound);
     if asked != 0 && on != asked {
@@ -97,7 +135,7 @@ fn serve_resident(root: &Path, port: u16, open: bool) -> Result<i32, String> {
     if open {
         open_browser(&index);
     }
-    bound.run(handle_resident);
+    bound.run(first, handle_resident);
     Ok(0)
 }
 
@@ -119,6 +157,10 @@ pub fn server_restart(args: &ServerRestartArgs) -> Result<i32, String> {
     let (port, open) = (args.port, args.open);
     let here = checkout_here();
     let root = resident_root(here.as_ref());
+    // A fatal failure leaves the running server alone: nothing is stopped.
+    if startup_check(here.as_ref()).1 {
+        return Ok(1);
+    }
     let restarted = board::restart(&root, port, here.as_ref()).map_err(|failed| {
         if let RestartFailed::Start { stopped, .. } = &failed {
             println!("adj server: stopped pid {stopped}");
@@ -159,18 +201,56 @@ pub fn server_restart(args: &ServerRestartArgs) -> Result<i32, String> {
     }
 }
 
+/// The check list `adj server status` shows. A running resident is asked for its latest result;
+/// without one (or when it cannot be asked, or has not finished its first run) the check runs
+/// here, which is what a person starting it would be told.
+fn status_checks(root: &Path, here: Option<&RepoInfo>, running: bool) -> serde_json::Value {
+    if running
+        && let Ok(answer) = ask_resident(root, "/api/server")
+        && answer["checks"].as_array().is_some_and(|c| !c.is_empty())
+    {
+        return answer;
+    }
+    machine_checks_json(&check_machine(here.map_or("", |repo| repo.nwo.as_str())))
+}
+
+/// The list of checks, one line each: `ok`, `warn` or `error`, then what was found and, for a
+/// failure, what to do.
+fn print_checks(checks: &serde_json::Value) {
+    for check in checks["checks"].as_array().into_iter().flatten() {
+        let message = check["message"].as_str().unwrap_or_default();
+        if check["ok"].as_bool().unwrap_or(false) {
+            println!("ok    {message}");
+            continue;
+        }
+        let level = if check["fatal"].as_bool().unwrap_or(false) {
+            "error"
+        } else {
+            "warn "
+        };
+        println!(
+            "{level} {message} — {}",
+            check["fix"].as_str().unwrap_or_default()
+        );
+    }
+}
+
 /// `adj server status`. Exit 1 when there is no resident, so a script can ask.
 pub fn server_status(args: &ServerStatusArgs) -> Result<i32, String> {
     let as_json = args.json;
-    let root = resident_root(checkout_here().as_ref());
+    let here = checkout_here();
+    let root = resident_root(here.as_ref());
     let Some(Status { pid, port, token }) = board::status(&root) else {
+        let checks = status_checks(&root, here.as_ref(), false);
         if as_json {
-            println!("{}", json!({ "running": false }));
+            println!("{}", json!({ "running": false, "checks": checks }));
         } else {
             println!("adj server is not running");
+            print_checks(&checks);
         }
         return Ok(1);
     };
+    let checks = status_checks(&root, here.as_ref(), true);
     let token = token.ok_or("the dashboard token is missing")?;
     let index = board_url(port, &token);
     let boards = boards(&root, port, &token);
@@ -181,6 +261,7 @@ pub fn server_status(args: &ServerStatusArgs) -> Result<i32, String> {
             "port": port,
             "url": index,
             "boards": boards,
+            "checks": checks,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return Ok(0);
@@ -196,6 +277,7 @@ pub fn server_status(args: &ServerStatusArgs) -> Result<i32, String> {
         };
         println!("{} (hub {hub}, {state}) — {}", row.nwo, row.url);
     }
+    print_checks(&checks);
     Ok(0)
 }
 

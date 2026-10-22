@@ -375,3 +375,29 @@ body.panel-pop #task-panel {
 }
 
 .single-board .rail-boards-label, .single-board #board-rows { display: none; }
+
+/* ── The banner for what the server found wrong on this machine (server-checks.js) ── */
+.server-checks {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--md-sys-color-warning-container);
+  color: var(--md-sys-color-on-warning-container);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  font-size: 12.5px;
+}
+.server-checks[hidden] { display: none; }
+.sc-icon { font-size: 18px; }
+.sc-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sc-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; overflow-wrap: anywhere; }
+.sc-item.sc-error .sc-label { color: var(--md-sys-color-on-error-container); }
+.sc-item.sc-error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); border-radius: var(--md-shape-corner-xs); padding: 2px 6px; }
+.sc-label { font-weight: 600; }
+.sc-msg { font-size: 11.5px; opacity: .85; }
+.sc-fix { font: 11.5px/1.4 var(--font-mono); background: rgba(0, 0, 0, .12); border-radius: var(--md-shape-corner-xs); padding: 1px 5px; }
+.sc-note { font-size: 11.5px; }
+.sc-btn { border: 1px solid currentColor; background: transparent; color: inherit; border-radius: var(--md-shape-corner-xs); padding: 2px 10px; font-size: 12px; }
+.sc-btn:disabled { opacity: .5; cursor: default; }
+.sc-close { padding: 0 2px; border-color: transparent; line-height: 1; }
+.sc-close .material-symbols-outlined { font-size: 18px; }

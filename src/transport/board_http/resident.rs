@@ -17,6 +17,7 @@ use crate::board::view::{boards, others, work};
 use crate::lifecycle::hub::TabOutcome;
 use crate::lifecycle::review::{AskError, CloseError};
 use crate::others::{PushError, ReadMode, Requested, SaveDraftsError, SyncError};
+use crate::transport::wording::machine_checks_json;
 
 /// `/b/<slug>/rest` as its slug and the path the board itself sees. A slug is what
 /// `identity::slug_for` makes — lowercase letters, digits and `-` — and anything else is not a
@@ -33,6 +34,15 @@ pub(super) fn split_board_path(path: &str) -> Option<(&str, &str)> {
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
     .then_some((slug, tail))
+}
+
+/// The machine check as the page and the CLI read it; no result yet is an empty list.
+fn machine_json(checks: Option<crate::board::MachineChecks>) -> String {
+    match checks {
+        Some(checks) => machine_checks_json(&checks),
+        None => json!({ "checkedAt": null, "checks": [] }),
+    }
+    .to_string()
 }
 
 pub fn handle_resident(resident: &Resident, mut stream: TcpStream) -> std::io::Result<()> {
@@ -134,6 +144,13 @@ pub(super) fn route_resident(
                 })
                 .unwrap_or_default(),
             )
+        }
+        // What the resident last found on the machine, for the banner and `adj server status`.
+        ("GET", "/api/server") => http::json(out, 200, &machine_json(resident.machine.latest())),
+        // Runs on this connection's own thread, as a sync does: `gh auth status` can take a
+        // while. A run that finished a moment ago, or one in flight, is not repeated.
+        ("POST", "/api/server/check") => {
+            http::json(out, 200, &machine_json(resident.machine.recheck()))
         }
         ("GET", "/api/work") => match work_json(resident) {
             Some(json) => http::json(out, 200, &json),
