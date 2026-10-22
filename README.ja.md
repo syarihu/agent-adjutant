@@ -25,11 +25,16 @@
 ### Homebrew
 
 ```bash
-brew install syarihu/tap/agent-adjutant # `adjutant` と短縮版 `adj` の両方が入ります
-adjutant install-mcp                   # Claude Code に MCP サーバーを登録（user スコープ）
-adjutant install-mcp --target agy       # Antigravity (agy) に MCP サーバーを登録
-adjutant install-mcp --target json      # 他のクライアント向けに設定用 JSON を出力
+brew install syarihu/tap/agent-adjutant # `adjutant` と短縮版 `adj` が入ります。tmux と gh も一緒に入ります
+gh auth login
+adjutant install-mcp                    # Claude Code に MCP サーバーを登録（user スコープ）
+#   Antigravity (agy) なら: adjutant install-mcp --target agy
+#   他のクライアント向けの JSON を出すなら: adjutant install-mcp --target json
+adj server start                        # ボードを起動（既定は http://127.0.0.1:4577）
+cd <repository> && adj hub              # そのリポジトリがボードに表示されます
 ```
+
+`brew upgrade` のあとは `adj server restart` を実行してください。実行しないと、常駐サーバーは古いバイナリのまま動き続けます。
 
 ### Cargo
 
@@ -38,6 +43,8 @@ cargo install --git https://github.com/syarihu/agent-adjutant # `adjutant` と `
 # またはローカルチェックアウトから:
 #   cargo install --path .（`make install` でも可。`make restart` は `adj server` の再起動、`make reinstall` は両方を行います）
 ```
+
+Cargo でインストールしても tmux（3.1 以上）と `gh` は入りません。パッケージマネージャーなどで自分でインストールし、`gh auth login` を実行してください。
 
 > [!IMPORTANT]
 > **登録前にバイナリへ PATH を通してください。** PATH が通っていない状態で `install-mcp` を実行するとビルドディレクトリの絶対パスで登録されるため、`cargo clean` などでバイナリが消えるとサーバーが動かなくなります。
