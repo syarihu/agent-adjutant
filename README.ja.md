@@ -84,7 +84,7 @@ adjutant setup codex --remove    # 追加したフックのみを削除
    ```bash
    adj work --worktree feature-auth --title "OAuth2 ログインの実装"
    ```
-   新しいターミナルタブ（または tmux のバックグラウンドウィンドウ）が開き、専用の worktree で worker が実装を開始します。
+   tmux のバックグラウンドウィンドウ（`"preset": "iterm2"` なら iTerm2 のタブ）が開き、専用の worktree で worker が実装を開始します。
 
 4. **ボードで確認待ち（gate）に回答する**:
    worker が実装計画、差分レビュー、動作確認などで人間の判断を必要とすると、**gate** が開きます。Web ボード（`http://127.0.0.1:4577`）上で内容を確認し、回答することで worker は次の工程に進みます。

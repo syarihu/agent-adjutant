@@ -84,7 +84,7 @@ adjutant setup codex --remove    # removes only adjutant hooks
    ```bash
    adj work --worktree feature-auth --title "Implement OAuth2 login"
    ```
-   A new tab or detached tmux window opens with an isolated worker operating in its own worktree.
+   A detached tmux window (an iTerm2 tab with `"preset": "iterm2"`) opens with an isolated worker operating in its own worktree.
 
 4. **Review and answer gates on the board**:
    When the worker needs approval for its implementation plan, diff review, or manual testing, it opens a **gate**. Review and answer the gate directly on the board (`http://127.0.0.1:4577`) to let the worker proceed.
