@@ -441,7 +441,7 @@ function listOf(doc, { repo = '', stage = '', marks = {}, hub = '', hideDone } =
   const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const cut = (src, re) => { const m = src.match(re); assert.ok(m); return m[0]; };
   Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage, othersHideDone: hideDone }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
-    othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => hub, othersNotes: () => [], othersRowHtml: () => '<row>' });
+    othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => hub, othersNotes: () => [], othersRowHtml: () => '<row>', othersInOrg: () => doc?.records || [] });
   vm.runInContext(cut(read('my-work.js'), /^function workReadAllButtonHtml[\s\S]*?^}/m), ctx);
   vm.runInContext(cut(read('my-work-others-view.js'), /^function othersListHtml[\s\S]*?^}/m), ctx);
   return ctx.othersListHtml();

@@ -94,11 +94,18 @@ function closeOrgMenu(refocus = false) {
   if (refocus) orgEl('org-btn').focus();
 }
 
-/* Choose an organisation. In 「いまの仕事」 its first session with a task is selected. Elsewhere a selection in another one is cleared, as nothing of it is in the list any more. */
+/* Choose an organisation. In 「いまの仕事」 its first session with a task is selected. Elsewhere a selection in another one is cleared, as nothing of it is in the list any more; so is a PR of 「レビュー」 of another listed organisation. */
 function chooseOrg(login) {
   closeOrgMenu(true);
   if (login === currentOrg()) return;
   setCurrentOrg(login);
+  if (view === 'work' && nav.list === 'review' && isPrRef(nav.task)) {
+    // The choice outranks the PR in the address: its record, if it is not in yet, must not switch back when it comes.
+    workFollowedAddr = `${nav.board}/${nav.task}`;
+    const rec = othersById(prIdOfRef(nav.task));
+    // An organisation the page does not list stays in every list, so its PR is not cleared.
+    if (rec && !todoInScope()(rec.repo)) return go({ board: 'all', view: 'work', list: 'review', task: null, pane: 'detail' });
+  }
   if (view === 'work' && nav.list !== 'review') return workSelectFirst();
   // The board in the address is of another organisation: its row is not in the list any more, so leave it for 「すべて」 of this one.
   const open = view === 'board' && nav.board && nav.board !== 'all' ? boards.find(b => b.slug === nav.board) : null;

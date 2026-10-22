@@ -86,10 +86,10 @@ function toggleTheme() {
   document.documentElement.dataset.theme = cur === 'dark' ? 'light' : 'dark';
 }
 
-/* 「レビュー」 in the rail: the PR shown last opens again while its record is still in the list, else the list with nothing selected. */
+/* 「レビュー」 in the rail: the PR shown last opens again while its record is still in the selected organisation's list (else that organisation would be switched back), else the list with nothing selected. */
 function openReviewList() {
   if (view === 'work' && nav.list === 'review') return;
-  const last = prView.last && othersById(prView.last) ? prView.last : null;
+  const last = prView.last && othersInOrg().some(r => r.id === prView.last) ? prView.last : null;
   go({ board: 'all', view: 'work', list: 'review', task: last ? PR_REF + last : null, pane: 'detail' });
 }
 

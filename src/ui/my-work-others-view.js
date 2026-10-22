@@ -25,6 +25,8 @@ const others = {
 const othersNowEst = () => others.doc ? others.doc.now + (Date.now() - others.fetchedMs) / 1000 : Date.now() / 1000;
 const othersRecords = () => others.doc?.records || [];
 const othersById = id => othersRecords().find(r => r.id === id) || null;
+// The records of the selected organisation: what the list shows and the counts count.
+const othersInOrg = () => { const inScope = todoInScope(); return othersRecords().filter(r => inScope(r.repo)); };
 
 /* The marks of this browser, read from storage every time so that what another tab wrote is what is read. */
 function othersMarks() {
@@ -48,8 +50,7 @@ function othersWriteMarks(patches) {
    レビュー count is. Nothing before the first read; a failed read keeps the last. */
 const othersNewCount = () => {
   if (!others.doc) return 0;
-  const inScope = todoInScope();
-  return othersNewIds(othersRecords().filter(r => inScope(r.repo)), othersMarks()).length;
+  return othersNewIds(othersInOrg(), othersMarks()).length;
 };
 
 /* The dot on the switch's 「AI 下読み」: the last sync is more than 30 minutes old. */
@@ -83,6 +84,8 @@ async function refreshOthers(force = false) {
   }
   renderWorkBadge();
   renderOthersStaleDot();
+  // The records just arrived: a PR named by the address can be resolved, and its organisation followed, before the draws.
+  if (view === 'work') workFollowOrg();
   renderOthersCount();
   if (view === 'work') renderOthersList(force);
   // The review list's empty middle says whether there is anything to choose from: drawn again when the records come or change.
@@ -99,8 +102,12 @@ function renderOthersCount() {
   badge.textContent = n;
   badge.classList.toggle('zero', n === 0);
 }
-// Another organisation was selected: the count is of that one.
-onOrgChange(renderOthersCount);
+// Another organisation was selected: the count, the list and the empty middle are of that one.
+onOrgChange(() => {
+  renderOthersCount();
+  if (view === 'work') renderOthersList();
+  if (view === 'work' && nav.list === 'review' && !nav.task) renderWorkTerm();
+});
 
 /* Open the PR in the panel and the middle, as a task opens (pr-panel.js); selecting a row does not read it. */
 function othersSelect(rec) {
@@ -371,7 +378,9 @@ function othersListHtml() {
   const doc = others.doc;
   if (!doc) return `<div class="wk-empty">${esc(others.error ? `読み込めませんでした: ${others.error}` : '読み込み中…')}</div>`;
   const nowEst = othersNowEst();
-  const records = doc.records || [];
+  // `all` is the whole queue (the hub and the queue place are about it); `records` are the selected organisation's, what the list covers.
+  const all = doc.records || [];
+  const records = othersInOrg();
   const lastSync = doc.lastSync;
   const stale = othersStale(lastSync, nowEst);
   const hideDone = othersHidesDone(prefs.othersHideDone);
@@ -379,7 +388,7 @@ function othersListHtml() {
   const repo = othersEffectiveRepo(shown, prefs.othersRepo);
   const stage = othersEffectiveStage(prefs.othersStage);
   const marks = othersMarks();
-  const hubView = othersHubView(doc.hub, records);
+  const hubView = othersHubView(doc.hub, all);
   const never = !lastSync?.at;
 
   const chips = records.length ? [{ key: '', label: 'すべて' }, ...othersRepoChips(shown)] : [];
@@ -412,7 +421,7 @@ function othersListHtml() {
       body = `<div class="wk-empty">${esc(text)}${hiddenN > 0 ? `。終わった PR ${hiddenN} 件を隠しています<br>${showBtn}` : ''}</div>`;
     } else body = groups.map(g => `<section class="wk-group" aria-label="${esc(g.label)}">
       <div class="wk-head repo"><span class="wk-head-main"><span class="wk-head-name">${esc(g.label)}${g.unregistered ? ' <span class="ov-unreg" title="adj に登録していないリポジトリです（同じオーナーなので依頼だけ出ます）">未登録</span>' : ''}</span></span><span class="wk-count">${g.rows.length}</span></div>
-      <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, records)).join('')}</div>
+      <div class="wk-body">${g.rows.map(r => othersRowHtml(r, othersSeenClass(r, marks[r.id] || {}) === 'new', hubView, nowEst, all)).join('')}</div>
     </section>`).join('');
   }
   // Every new row counts, the ones the repository and AI 下読み chips hide too (as 「タスク」 marks every new entry whatever is folded).
@@ -443,7 +452,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || nav.list !== 'review') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, prefs.othersHideDone, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task]);
+  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, prefs.othersHideDone, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task, currentOrg()]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');
@@ -478,7 +487,7 @@ wk('ov-groups').addEventListener('click', e => {
   }
   if (e.target.closest('[data-ov-read-all]')) {
     if (!others.doc) return;
-    const patches = othersReadAllPatches(othersRecords(), othersMarks(), others.doc.now);
+    const patches = othersReadAllPatches(othersInOrg(), othersMarks(), others.doc.now);
     if (patches.length) othersWriteMarks(patches);
     return;
   }

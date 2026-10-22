@@ -1492,7 +1492,7 @@ function renderWorkTerm() {
   const empty = !nav.task;
   wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
   const review = nav.list === 'review';
-  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : review ? reviewMiddleEmptyHtml(reviewMiddleKind(others.doc, others.error), others.error || '') : WORK_MIDDLE_EMPTY_HTML);
+  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : review ? reviewMiddleEmptyHtml(reviewMiddleKind(others.doc && { ...others.doc, records: othersInOrg() }, others.error), others.error || '') : WORK_MIDDLE_EMPTY_HTML);
   wk('wk-mid-empty').hidden = !empty;
   // No session's terminal stays in the middle under the review list.
   if (empty && review) { disposeTermSlot(workTerm); workTerm.board = null; }
@@ -1589,13 +1589,21 @@ function focusWorkTerm() {
 /* The address `workFollowOrg` last looked at. */
 let workFollowedAddr = null;
 
-/* The address moved to a row of another organisation (a link, a notification, back or forward): the list follows it. Only when the
+/* The address moved to a row of another organisation, or to a PR of 「レビュー」 of one (a link, a notification, back or forward): the list follows it. Only when the
    address moved, so that choosing another organisation in its menu, which leaves the address where it was until it is cleared, is not undone. */
 function workFollowOrg() {
-  // Before the document is here nothing can be resolved, and an address not recorded is looked at again by the next round.
-  if (!work.doc) return;
   const addr = `${nav.board}/${nav.task}`;
   if (addr === workFollowedAddr) return;
+  if (isPrRef(nav.task)) {
+    // A review request's organisation is its repository's; the records may not be in yet, and then the next read looks again.
+    const rec = othersById(prIdOfRef(nav.task));
+    if (!rec) return;
+    workFollowedAddr = addr;
+    if (orgOf(rec.repo) !== currentOrg()) setCurrentOrg(orgOf(rec.repo));
+    return;
+  }
+  // Before the document is here nothing can be resolved, and an address not recorded is looked at again by the next round.
+  if (!work.doc) return;
   // Nothing selected on purpose (the address was cleared, as choosing an organisation does): that is an address too, so going back to the old one follows it.
   if (!nav.task || !nav.board || nav.board === 'all') { workFollowedAddr = addr; return; }
   const sel = workSelected();
