@@ -107,6 +107,9 @@ pub struct Fixture {
     pub repo: PathBuf,
     pub state: PathBuf,
     pub config: PathBuf,
+    /// Whether `new` added the top-level `"preset": "iterm2"` itself, rather than the config
+    /// under test saying so (see `config_warnings`).
+    pub guard_preset: bool,
 }
 
 impl Fixture {
@@ -137,15 +140,34 @@ impl Fixture {
         // These tests run the real binary, so the `cfg(test)` backstop in the notifier does
         // not reach them and this default is their guard: a config that is a JSON object
         // without a top-level `notification` gets one that runs `true` instead of the
-        // built-in banner (`null` counts as unset). Anything else is written as given. The same
-        // rule as `testing::Sandbox::new` in `src/lib.rs`; change both together.
+        // built-in banner (`null` counts as unset). Likewise the terminal backend: the default
+        // is tmux, which would drive the developer's own tmux server, so a top-level
+        // `terminal` object without a `preset` (or none at all, or `null`) gets `"preset": "iterm2"`;
+        // a `preset` that is present, `null` included, is left as written. Anything else is
+        // written as given. The same rule as `testing::Sandbox::new` in `src/lib.rs`; change
+        // both together.
+        let mut guard_preset = false;
         let config_json = match serde_json::from_str::<serde_json::Value>(config_json) {
-            Ok(serde_json::Value::Object(mut map))
+            Ok(serde_json::Value::Object(mut map)) => {
                 if map
                     .get("notification")
-                    .is_none_or(serde_json::Value::is_null) =>
-            {
-                map.insert("notification".into(), "true".into());
+                    .is_none_or(serde_json::Value::is_null)
+                {
+                    map.insert("notification".into(), "true".into());
+                }
+                match map.get_mut("terminal") {
+                    None | Some(serde_json::Value::Null) => {
+                        map.insert("terminal".into(), serde_json::json!({"preset": "iterm2"}));
+                        guard_preset = true;
+                    }
+                    Some(serde_json::Value::Object(terminal))
+                        if !terminal.contains_key("preset") =>
+                    {
+                        terminal.insert("preset".into(), "iterm2".into());
+                        guard_preset = true;
+                    }
+                    _ => {}
+                }
                 serde_json::Value::Object(map).to_string()
             }
             _ => config_json.to_string(),
@@ -158,6 +180,7 @@ impl Fixture {
             repo: std::fs::canonicalize(&repo).unwrap(),
             _dir: dir,
             config,
+            guard_preset,
         }
     }
 
@@ -185,6 +208,19 @@ impl Fixture {
         command
     }
 
+    /// `adj config`'s `warnings`, less the one this fixture's guard brought
+    /// (`GUARD_PRESET_WARNING`). Dropped only when the guard added the preset: one the config
+    /// under test set itself is that config's warning and stays.
+    pub fn config_warnings(&self, out: &serde_json::Value) -> Vec<serde_json::Value> {
+        out["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| !(self.guard_preset && w.as_str() == Some(GUARD_PRESET_WARNING)))
+            .cloned()
+            .collect()
+    }
+
     pub fn cmd(&self, args: &[&str]) -> std::process::Output {
         self.command(args).output().unwrap()
     }
@@ -204,6 +240,12 @@ impl Fixture {
         serde_json::from_str(&self.ok(args)).unwrap()
     }
 }
+
+/// The warning the fixture's own `"preset": "iterm2"` (see `Fixture::new`) brings on a machine
+/// that is not macOS, where the resolver says iTerm2 does not run. The guard puts the preset at
+/// the top level, whose warnings carry no prefix.
+pub const GUARD_PRESET_WARNING: &str =
+    "terminal.preset \"iterm2\" drives iTerm2, which runs only on macOS";
 
 /// A config that notifies by doing nothing. Every test that sends uses it: the built-in
 /// notifier puts a banner on the developer's screen, which is not something a test suite

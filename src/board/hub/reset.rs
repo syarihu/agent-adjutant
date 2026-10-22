@@ -20,6 +20,7 @@ pub fn reset(server: &Server, hub: &RepoHub) -> Result<Reopened, String> {
     if !hub_startable(&settings.terminal) {
         return Err("starting a hub from the board needs terminal.preset \"tmux\"".to_string());
     }
+    crate::infra::terminal::ensure_tmux()?;
     let start_ctx = start_context(server, hub, settings.clone())?;
     let was_running = stop_hub(&stop_context(server, hub, settings))?;
     match start_hub(&start_ctx, HubStart::New) {

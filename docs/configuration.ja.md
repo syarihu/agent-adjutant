@@ -48,11 +48,8 @@ agent-adjutant の高度な設定項目、コマンドテンプレート、環�
 
 ## ターミナルバックエンド
 
-### 1. 既定（macOS 上の iTerm2）
-AppleScript を使ってタブの作成、タイトルの設定、テキスト入力を行います。テンプレートに渡される `{pid}` と `{tty}` は OS の識別子（`ttys004` など）であり、ターミナルのペイン番号ではありません。
-
-### 2. 組み込み tmux バックエンド（`terminal.preset: "tmux"`）
-設定で `"terminal": { "preset": "tmux" }` を指定すると、tmux を標準バックエンドとして利用できます。
+### 1. 既定: 組み込み tmux バックエンド
+`terminal.preset` を指定しない場合（または `"terminal": { "preset": "tmux" }` の場合）、tmux が標準バックエンドになります。tmux のインストールが必要で、入っていないと `adj work`、`adj hub --tab`、ボードからの hub 起動は、tmux が見つからないことを伝える1行のエラーで止まります。未知の `preset` の値は `adj config` の警告になり、tmux にフォールバックします。`terminal.spawn` テンプレートがある場合は、これまでどおり preset より優先されます。
 - **バックグラウンドウィンドウ起動**: worker をデタッチウィンドウ（`tmux new-window -d`）として起動するため、作業中のフォーカスが奪われません。起動後の約3秒間プロセスを監視し、即座に終了した場合はスロットを解放してエラーを出力します。
 - **ペインへの自動解決**: PID、TTY、プロセス階層を自動探索して tmux ペインを特定するため、専用のラッパースクリプトが不要です。
 - **画面確認を伴う wake（入力通知）**: tmux ペインに入力する前に画面（`tmux capture-pane`）を確認します。エージェントが空の入力欄で待機しているときだけキーを送信します。質問、許可確認、メニュー、入力途中の文字がある場合は入力を保留し、デスクトップ通知へ切り替えます。
@@ -60,6 +57,20 @@ AppleScript を使ってタブの作成、タイトルの設定、テキスト�
 - **接続（アタッチ）**: `tmux attach -t adjutant` や iTerm2 経由の `tmux -CC attach -t adjutant` でいつでもセッションに接続できます。
 - **CLI サブコマンド**: `adj tmux`（`pane`, `spawn`, `wake`, `focus`, `close`）から tmux セッションを直接確認・操作できます。
 - **環境変数**: `$ADJUTANT_TMUX_SESSION`（既定の `"adjutant"` を上書き）および `$ADJUTANT_TMUX_SOCKET`（`tmux -L <socket>` に対応）に対応しています。
+
+tmux の外で `adj hub` だけを実行した場合も、hub はそのターミナルで動きます。ただしボードからはそのターミナルを開けないため、tmux セッション内で hub を起動するには `adj hub --tab` を使ってください。
+
+### 2. iTerm2（`terminal.preset: "iterm2"`、macOS）
+AppleScript を使ってタブの作成、タイトルの設定、テキスト入力を行います。テンプレートに渡される `{pid}` と `{tty}` は OS の識別子（`ttys004` など）であり、ターミナルのペイン番号ではありません。macOS 以外でも指定は有効ですが、iTerm2 は macOS でしか動かないため `adj config` が警告を出します。
+
+### iTerm2 既定からの移行
+`terminal.preset` を指定していないとき、以前は iTerm2 が使われていました。アップグレード後は、新しい worker が tmux のウィンドウで開きます。従来どおりにするには次を設定します。
+
+```json
+{ "terminal": { "preset": "iterm2" } }
+```
+
+`terminal.spawn` だけを設定している場合、タブの起動はそのテンプレートのままですが、focus、close、wake は tmux バックエンドに向くようになります。iTerm2 のままにするには `"preset": "iterm2"` を追加してください。すでに動いているセッションは、記録されたバックエンドのまま扱われるため、close、focus、wake はこれまでどおり届きます。常駐サーバーは起動時の設定を保持しているので、アップグレード後に `adj server restart` を実行してください。
 
 ---
 

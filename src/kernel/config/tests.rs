@@ -858,6 +858,80 @@ fn terminal_tmux_preset_resolves() {
 }
 
 #[test]
+fn no_preset_resolves_to_tmux() {
+    let (_, settings, warnings) = resolve(a_repo(json!({})), "acme/app");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(settings.terminal.is_tmux());
+    assert_eq!(settings.terminal.preset.as_deref(), Some("tmux"));
+    assert_eq!(settings.terminal.tmux_session(), "adjutant");
+    for blank in [json!(null), json!("")] {
+        let (_, settings, warnings) =
+            resolve(a_repo(json!({"terminal": {"preset": blank}})), "acme/app");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.terminal.preset.as_deref(), Some("tmux"));
+    }
+}
+
+#[test]
+fn the_iterm2_preset_resolves_to_iterm2() {
+    let (_, settings, warnings) = resolve(
+        a_repo(json!({"terminal": {"preset": "iterm2"}})),
+        "acme/app",
+    );
+    assert!(!settings.terminal.is_tmux());
+    assert_eq!(settings.terminal.preset.as_deref(), Some("iterm2"));
+    assert_eq!(settings.terminal.session, None);
+    #[cfg(target_os = "macos")]
+    assert!(warnings.is_empty(), "{warnings:?}");
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w
+                .contains("terminal.preset \"iterm2\" drives iTerm2, which runs only on macOS")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn an_unknown_preset_warns_and_falls_back_to_tmux() {
+    let (_, settings, warnings) =
+        resolve(a_repo(json!({"terminal": {"preset": "kitty"}})), "acme/app");
+    assert!(settings.terminal.is_tmux());
+    assert_eq!(settings.terminal.preset.as_deref(), Some("tmux"));
+    assert_eq!(settings.terminal.tmux_session(), "adjutant");
+    assert!(
+        warnings.iter().any(|w| w
+            .contains("terminal.preset \"kitty\" is not a preset (tmux or iterm2): using tmux")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_preset_of_the_wrong_shape_warns_and_resolves_to_tmux() {
+    let (_, settings, warnings) = resolve(a_repo(json!({"terminal": {"preset": 3}})), "acme/app");
+    assert_eq!(settings.terminal.preset.as_deref(), Some("tmux"));
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("terminal.preset is a number but has to be a string: ignored")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_spawn_template_still_wins_over_the_default_preset() {
+    let (_, settings, _) = resolve(
+        a_repo(json!({"terminal": {"spawn": "open-tab {command}"}})),
+        "acme/app",
+    );
+    assert_eq!(
+        crate::infra::terminal::backend_name(&settings.terminal),
+        "custom"
+    );
+}
+
+#[test]
 fn the_tmux_session_and_socket_a_hub_exports_win_over_the_file() {
     let raw = a_repo(
         json!({"terminal": {"preset": "tmux", "session": "from-file", "socket": "file-sock"}}),

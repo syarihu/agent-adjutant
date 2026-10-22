@@ -49,6 +49,11 @@ pub(crate) mod testing {
         /// its own, and one that sets it at the top level (to anything but `null`) is written as
         /// given. So is a config that is not a JSON object: some tests feed broken ones on
         /// purpose.
+        ///
+        /// The same goes for the terminal backend: a top-level `terminal` object without a
+        /// `preset` (or no `terminal` at all, or a `null` one) gets `"preset": "iterm2"`, because the default
+        /// is tmux and a test must not reach the developer's tmux server. A fixture asks for
+        /// the built-in default with `"preset": null`.
         pub fn new(config_json: &str) -> Self {
             let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let dir = tempfile::tempdir().unwrap();
@@ -88,23 +93,36 @@ pub(crate) mod testing {
         }
     }
 
-    /// `config_json` with a silent `notification` added when it is a JSON object that says
-    /// nothing about one; anything else comes back as it was given. `Fixture::new` in
+    /// `config_json` with a silent `notification` and the iTerm2 preset added when it is a JSON
+    /// object that says nothing about them; anything else comes back as it was given. `Fixture::new` in
     /// `tests/common/mod.rs` keeps a copy of this rule for the integration tests, which cannot
     /// reach this module, so a change here goes there too.
     fn quiet_config(config_json: &str) -> String {
-        match serde_json::from_str::<serde_json::Value>(config_json) {
-            // `null` counts as unset, as it does when the config is resolved.
-            Ok(serde_json::Value::Object(mut map))
-                if map
-                    .get("notification")
-                    .is_none_or(serde_json::Value::is_null) =>
-            {
-                map.insert("notification".into(), "true".into());
-                serde_json::Value::Object(map).to_string()
-            }
-            _ => config_json.to_string(),
+        let Ok(serde_json::Value::Object(mut map)) =
+            serde_json::from_str::<serde_json::Value>(config_json)
+        else {
+            return config_json.to_string();
+        };
+        // `null` counts as unset, as it does when the config is resolved.
+        if map
+            .get("notification")
+            .is_none_or(serde_json::Value::is_null)
+        {
+            map.insert("notification".into(), "true".into());
         }
+        // The default backend is tmux, which would drive the developer's own tmux server, so a
+        // fixture stays on iTerm2 unless it says otherwise. A `terminal` that is not an object
+        // is left alone, and so is a `preset` that is present (`null` included).
+        match map.get_mut("terminal") {
+            None | Some(serde_json::Value::Null) => {
+                map.insert("terminal".into(), serde_json::json!({"preset": "iterm2"}));
+            }
+            Some(serde_json::Value::Object(terminal)) if !terminal.contains_key("preset") => {
+                terminal.insert("preset".into(), "iterm2".into());
+            }
+            _ => {}
+        }
+        serde_json::Value::Object(map).to_string()
     }
 
     /// A repository at `dir` on `branch`, set up through `crate::infra::git::git` so that a variable a

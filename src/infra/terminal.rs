@@ -1,9 +1,9 @@
 //! Opening a tab somewhere, bringing one to the front, and closing one when its work is
 //! over.
 //!
-//! iTerm2 is the built-in because it needs no setup on the machine this grew up on, but it
-//! is only a default: `terminal.spawn` / `terminal.focus` in the config replace it with any
-//! command line, so tmux, WezTerm, Ghostty or a plain `open -a` all work without this file
+//! The built-in backends are tmux (the default `terminal.preset`) and iTerm2 (`"iterm2"`), but
+//! they are only defaults: `terminal.spawn` / `terminal.focus` in the config replace them with
+//! any command line, so WezTerm, Ghostty or a plain `open -a` all work without this file
 //! learning about them.
 //!
 //! `focus`, `title` and `wake` are optional in a way `spawn` is not. Failing to open a tab

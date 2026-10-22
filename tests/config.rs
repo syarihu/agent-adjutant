@@ -37,7 +37,7 @@ fn config_resolves_the_flat_shorthand_and_the_machine_settings() {
     );
     assert_eq!(out["settings"]["ide"], "code");
     assert_eq!(out["config"]["verify"][0], "cargo test");
-    assert_eq!(out["warnings"].as_array().unwrap().len(), 0, "{out}");
+    assert_eq!(fixture.config_warnings(&out).len(), 0, "{out}");
 }
 
 #[test]
@@ -221,10 +221,10 @@ fn the_shipped_example_config_resolves_without_a_single_warning() {
         let out = fixture.json(&["config", "--repo", repo]);
         assert_eq!(out["registered"], true, "{repo}");
         assert_eq!(
-            out["warnings"].as_array().unwrap().len(),
+            fixture.config_warnings(&out).len(),
             0,
-            "{repo}: {}",
-            out["warnings"]
+            "{repo}: {:?}",
+            fixture.config_warnings(&out)
         );
         assert!(
             !out["config"]["taskSources"].as_array().unwrap().is_empty(),
@@ -279,4 +279,49 @@ fn a_relative_xdg_config_home_is_read_and_reported_as_an_absolute_path() {
         std::fs::canonicalize(reported).unwrap(),
         std::fs::canonicalize(adj.join("config.json")).unwrap()
     );
+}
+
+#[test]
+fn a_null_preset_is_the_built_in_default_which_is_tmux() {
+    // The fixture would add `"preset": "iterm2"` to a `terminal` without the key; a `null` is
+    // a key that is present, so it is left as written and asks for the default.
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "terminal": {"preset": null},
+            "defaults": {"ide": "code"},
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {"acme/widget": "WID"}}}}"#,
+    );
+    let out = fixture.json(&["config"]);
+    assert_eq!(out["settings"]["terminal"]["preset"], "tmux", "{out}");
+    assert_eq!(out["settings"]["terminal"]["session"], "adjutant", "{out}");
+}
+
+#[test]
+fn a_preset_the_config_sets_itself_keeps_its_own_warnings() {
+    // The guard adds nothing here, so `config_warnings` drops nothing: on a machine that is
+    // not macOS each level's warning is the config's own and has to stay visible.
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "terminal": {"preset": "iterm2"},
+            "defaults": {"ide": "code", "terminal": {"preset": "iterm2"}},
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {"acme/widget": "WID"},
+                      "terminal": {"preset": "iterm2"}}}}"#,
+    );
+    assert!(!fixture.guard_preset);
+    let out = fixture.json(&["config"]);
+    let expected: Vec<String> = if cfg!(target_os = "macos") {
+        vec![]
+    } else {
+        ["", "defaults: ", "this repository: "]
+            .iter()
+            .map(|place| format!("{place}{GUARD_PRESET_WARNING}"))
+            .collect()
+    };
+    let warnings: Vec<String> = fixture
+        .config_warnings(&out)
+        .iter()
+        .map(|w| w.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(warnings, expected, "{out}");
+    assert_eq!(out["settings"]["terminal"]["preset"], "iterm2", "{out}");
 }

@@ -48,11 +48,8 @@ When an expanded command line is longer than 900 bytes (common when passing larg
 
 ## Terminal Backends
 
-### 1. Default (iTerm2 on macOS)
-Uses AppleScript to create tabs, adjust titles, and send text inputs. `{pid}` and `{tty}` represent operating system identifiers (`ttys004`), not terminal pane indices.
-
-### 2. Built-in tmux Backend (`terminal.preset: "tmux"`)
-Configuring `"terminal": { "preset": "tmux" }` turns adjutant into a first-class tmux controller:
+### 1. Default: built-in tmux backend
+With no `terminal.preset` (or `"terminal": { "preset": "tmux" }`), adjutant is a first-class tmux controller. It requires tmux: `adj work`, `adj hub --tab` and a hub start from the board stop with a one-line error naming tmux when it is not installed. An unknown `preset` value is a warning in `adj config` and falls back to tmux. A `terminal.spawn` template still overrides the preset.
 - **Detached Window Spawning**: Workers spawn in background windows (`tmux new-window -d`) without stealing user focus. The process hierarchy is monitored for 3 seconds; if the agent exits immediately, the slot is freed and the error is reported.
 - **Process-to-Pane Mapping**: adjutant inspects PIDs, TTYs, and parent-child process relationships to locate tmux panes without wrapper scripts.
 - **Waking with Screen Inspection**: Before typing into a pane, adjutant inspects the screen (`tmux capture-pane`). It only sends keys if the agent prompt is completely empty and idle. If an interactive prompt, menu, question, or in-progress typing is detected, input is withheld and a desktop notification is triggered instead.
@@ -60,6 +57,20 @@ Configuring `"terminal": { "preset": "tmux" }` turns adjutant into a first-class
 - **Attaching**: Connect anytime using `tmux attach -t adjutant` or iTerm2 control mode via `tmux -CC attach -t adjutant`.
 - **CLI Subcommands**: Direct management via `adj tmux` (`pane`, `spawn`, `wake`, `focus`, `close`).
 - **Environment variables**: `$ADJUTANT_TMUX_SESSION` (overrides default `"adjutant"`) and `$ADJUTANT_TMUX_SOCKET` (passes `tmux -L <socket>`).
+
+A plain `adj hub` typed outside tmux still runs the hub in that terminal, but the board cannot open its terminal, so use `adj hub --tab` to start one in the tmux session.
+
+### 2. iTerm2 (`terminal.preset: "iterm2"`, macOS)
+Uses AppleScript to create tabs, adjust titles, and send text inputs. `{pid}` and `{tty}` represent operating system identifiers (`ttys004`), not terminal pane indices. On other platforms the preset still applies, but `adj config` warns that iTerm2 runs only on macOS.
+
+### Migrating from the iTerm2 default
+iTerm2 used to be the backend when `terminal.preset` was not set. After upgrading, such a setup gets tmux windows for new workers. To keep the old behaviour, set:
+
+```json
+{ "terminal": { "preset": "iterm2" } }
+```
+
+A config that sets only `terminal.spawn` keeps its own spawn, but focus, close and wake now go to the tmux backend too; add `"preset": "iterm2"` if they should stay on iTerm2. Sessions that are already running keep the backend they were recorded with, so close, focus and wake still reach them. The resident server keeps the settings it started with, so run `adj server restart` after upgrading.
 
 ---
 

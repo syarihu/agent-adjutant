@@ -106,6 +106,17 @@ pub fn hub(args: &HubArgs) -> Result<(), String> {
         Planned::Running(status) => return go_to_running_hub(&ctx, &status, dry_run),
         Planned::Launch(launch) => launch,
     };
+    // The board opens a worker's terminal through the tmux session, which a hub typed outside
+    // tmux is not part of. It still runs here, as it always did; only the hint is new.
+    if !dry_run
+        && crate::infra::terminal::backend_name(&ctx.settings.terminal) == "tmux"
+        && std::env::var_os("TMUX").is_none_or(|v| v.is_empty())
+    {
+        eprintln!(
+            "adjutant: this hub runs outside tmux, so the board cannot open its terminal; \
+             adj hub --tab starts it in the tmux session instead"
+        );
+    }
     match launch.auto {
         Some(AutoResume::Resuming { ended_secs_ago }) => eprintln!(
             "adjutant: resuming the session that ended {} ago (within hubAutoResumeHours); \

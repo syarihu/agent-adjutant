@@ -19,7 +19,8 @@ pub struct SessionTerminal {
 }
 
 /// The backend `spawn` opens a tab with under `terminal`, in the order `spawn` decides it: a
-/// `terminal.spawn` template first, then the tmux preset, then the built-in iTerm2.
+/// `terminal.spawn` template first, then `terminal.preset` (tmux by default, iTerm2 with
+/// `"iterm2"`).
 pub fn backend_name(terminal: &TerminalSettings) -> &'static str {
     if terminal.spawn.is_some() {
         "custom"

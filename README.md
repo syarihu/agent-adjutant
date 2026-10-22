@@ -84,7 +84,7 @@ adjutant setup codex --remove    # removes only adjutant hooks
    ```bash
    adj work --worktree feature-auth --title "Implement OAuth2 login"
    ```
-   A new tab or detached tmux window opens with an isolated worker operating in its own worktree.
+   A detached tmux window (an iTerm2 tab with `"preset": "iterm2"`) opens with an isolated worker operating in its own worktree.
 
 4. **Review and answer gates on the board**:
    When the worker needs approval for its implementation plan, diff review, or manual testing, it opens a **gate**. Review and answer the gate directly on the board (`http://127.0.0.1:4577`) to let the worker proceed.
@@ -144,7 +144,7 @@ Configuration lives at `~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and 
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `terminal.preset` | none (iTerm2 on macOS) | Set to `"tmux"` to enable the built-in tmux backend |
+| `terminal.preset` | `"tmux"` | The built-in tmux backend is the default and needs tmux installed. `"iterm2"` selects the iTerm2 backend (macOS only) |
 | `agentRunner` | `claude ...` | Command template used to start worker agents |
 | `hubRunner` | `claude ...` | Command template used to start repository hubs |
 | `reviewerRunner` | `claude ...` | Command template used to start sandboxed PR readers (AI 下読み) |
@@ -155,6 +155,8 @@ Configuration lives at `~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and 
 | `language` | none | Output language for gates, notes, and task summaries (e.g. `"ja"`) |
 
 For tmux integration, custom runner templates, and environment resolution, see [Configuration & Runtime Reference](docs/configuration.md).
+
+**Upgrading from the iTerm2 default:** new workers now open as tmux windows. Set `"terminal": {"preset": "iterm2"}` to keep iTerm2, and run `adj server restart` so the resident server picks the setting up. Sessions already running keep the backend they started with. Details: [Migrating from the iTerm2 default](docs/configuration.md#migrating-from-the-iterm2-default).
 
 ---
 

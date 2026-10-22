@@ -1700,8 +1700,9 @@ adjutant work --worktree '{worktree}' --task {task_id}
 - The new tab runs an **interactive shell**, so PATH and hooks are all loaded.
 - A worktree inherits the parent repository's folder trust, so "Is this a project you created…" does
   not appear. If it does, answer "1" in that tab.
-- The default terminal (iTerm2) fails if no window is open. To use another terminal, write a command
-  template in `settings.terminal.spawn` and that is used instead.
+- The default terminal is tmux (`terminal.preset`), and the tab fails with a line naming tmux when it
+  is not installed. `"preset": "iterm2"` uses iTerm2, which fails if no window is open. To use another
+  terminal, write a command template in `settings.terminal.spawn` and that is used instead.
 
 **Step 4** — tell the user the worker is running and which tab it is, then **go back to waiting**.
 The hub's job for this task is over. Do not poll the worker: the tab name and its row in
