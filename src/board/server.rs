@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::{LastLines, Prompts, WorktreeDiffs};
+use super::{LastLines, MachineState, Prompts, WorktreeDiffs};
 use crate::board::jobs::Watch as JulesWatch;
 use crate::board::jobs::{HubTitles, PrPoll, WaitWatch};
 
@@ -30,9 +30,11 @@ pub(crate) struct Server {
     /// The uncommitted files and lines of the worktrees the page lists, read by a thread of its
     /// own at the pace of the list. A cache: the worktree is the answer.
     pub diffs: Arc<WorktreeDiffs>,
-    /// What tmux this machine has, when the board may open terminals on it: only the resident
-    /// server serves one, and only where `tmux -V` answered when it started.
-    pub tmux: Option<(u32, u32)>,
+    /// What the resident last found on this machine. The board terminal is offered only with the
+    /// tmux it names, read from the latest check when a request asks. The resident checks again
+    /// every five minutes and when the page asks, so a tmux installed while the server runs
+    /// counts. A board served by itself has no result.
+    pub machine: Arc<MachineState>,
     /// How many board terminals are open across every board, which is what is capped.
     pub terminals: Arc<AtomicUsize>,
     /// The resident server's PR poll, whose health the page shows. `None` on a board that is

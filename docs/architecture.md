@@ -62,7 +62,7 @@ is one example. The solid chain shows the order, not who calls whom: `lifecycle`
 `board` has five public submodules: `board::hub` and `board::session` (what a person runs from the
 page), `board::review` (asking for a read of a PR, closing its reader, the sync that closes finished readers, and starting the code-review hub), `board::view`
 (the read model) and `board::jobs` (background work). The rest of `board`
-(`daemon`, `resident`, `server`, `dedicated`, `token`, `url`, `last_lines`, `model`) is private and
+(`daemon`, `resident`, `server`, `dedicated`, `check_machine`, `token`, `url`, `last_lines`, `model`) is private and
 re-exported from `src/board.rs`.
 
 Not every directory under `src/` is a module. `src/bin/` is the `adj` binary, `src/ui/` is the
@@ -119,7 +119,9 @@ fixtures.
   `HubStart` and `TabOutcome` and prints nothing, and it changes other modules' records only
   through their operations.
 - `board`: the resident daemon and server, a hub's or `adj serve`'s own board (`dedicated`), the read model, the
-  background jobs, and the page's actions. `board::review::hand_to_worker` reads the drafts of a task's PR (`others`) and hands them to the
+  background jobs, and the page's actions. `check_machine` looks at the machine (tmux, `gh` and its login, the MCP
+  registration, the config) and `MachineState` keeps the resident's latest result; `transport::wording` words it for `adj server`
+  and the board's banner. `board::review::hand_to_worker` reads the drafts of a task's PR (`others`) and hands them to the
   task's worker through `gate::send_back_read`; it writes nothing to `others`. It does not name `transport` or parse HTTP (see
   [How the board gets its handler](#how-the-board-gets-its-handler)).
 - `transport`: `cli` (clap args, dispatch, one file per command or family), `mcp` (the stdio
@@ -203,7 +205,7 @@ answers the same routes except the ones `Route::resident_only` lists (a session'
 open and clean-up; a task's read-through `GET|POST /api/tasks/<id>/ai` and handing its drafts to the worker `POST /api/tasks/<id>/hand`; starting a parent hub; the hub actions; the terminal; assets): `route` answers
 those with 404 unless the server is the resident. The terminal is never a live route in `route`:
 the resident answers its WebSocket handshake first, and `route` always returns 404 for it. The
-resident also serves the page at `/`, `GET /vendor/xterm.js` and `/vendor/xterm.css` at its root (a reader's terminal has no board to load them from), `GET /api/boards`, `GET /api/work`, `GET /api/others`,
+resident also serves the page at `/`, `GET /vendor/xterm.js` and `/vendor/xterm.css` at its root (a reader's terminal has no board to load them from), `GET /api/boards`, `GET /api/server` and `POST /api/server/check` (the machine check), `GET /api/work`, `GET /api/others`,
 `POST /api/others/sync`, `POST /api/others/ai`, `POST /api/others/reader/close`, `POST /api/others/hub/start`,
 `POST /api/others/hub/stop`, `GET /api/others/record`, `GET /api/others/read`, `GET /api/others/diff`, `GET /api/others/drafts`, `POST /api/others/drafts`, and `POST /api/others/pending`. It also answers the WebSocket
 handshake of a reader's terminal at `/api/others/terminal?id=<owner/repo#N>`: the window is resolved from the

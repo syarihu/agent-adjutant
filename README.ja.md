@@ -72,6 +72,8 @@ adjutant setup codex --remove    # 追加したフックのみを削除
    ```
    統合 Web ボードが `http://127.0.0.1:4577` で立ち上がります。
 
+   起動前にマシンの状態を確認します。見るのは tmux、`gh` とそのログイン、MCP サーバーの登録、設定ファイルです。tmux バックエンドを使っているのに tmux がない場合と、設定ファイルを読めない場合は、起動せず終了コード 1 で止まります。それ以外は stderr に警告を出して起動します。確認に失敗しているあいだは、ボードにも同じ内容がバナーで出ます。`adj server status` でも一覧を見られます。
+
 2. **リポジトリの hub を起動する**:
    リポジトリのメインチェックアウトで次のコマンドを実行します。
    ```bash
@@ -116,7 +118,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 | `adj hub [--tab] [--resume\|--new]` | このリポジトリの hub を起動（`--resume` で前回の会話を再開、`--tab` で別タブ起動） |
 | `adj work --worktree … (--title … \| --task <id> \| --resume)` | 新しいタブまたはウィンドウを開き、指定 worktree で worker を起動 |
 | `adj worker --worktree … [--resume]` | worktree 内で自身を worker として実行（`work` の内部で使用） |
-| `adj server start\|stop\|status\|restart` | 全リポジトリを横断する常駐ボードサーバーの管理 |
+| `adj server start\|stop\|status\|restart` | 全リポジトリを横断する常駐ボードサーバーの管理。`start` と `restart` は先に tmux、`gh` とそのログイン、MCP の登録、設定ファイルを確認します（tmux バックエンドで tmux がない場合と、設定ファイルを読めない場合は止まります）。`status` は確認結果の一覧を表示します |
 | `adj focus [--worktree …]` | hub または worker のターミナルタブを前面に表示 |
 | `adj phase [--set …]` | worker の現在の進捗フェーズの確認・更新 |
 | `adj gate open\|list\|show\|answer\|close` | 人間への判断待ち（gate）の作成・一覧・回答・クローズ |

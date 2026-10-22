@@ -1225,6 +1225,9 @@ fn the_board_list_is_pinned_whole() {
 fn server_status_lists_the_boards_as_the_board_list_does() {
     let (fixture, resident) = board();
     let mut status = fixture.json(&["server", "status", "--json"]);
+    // The machine check is the resident's own and not part of what the board list repeats.
+    assert!(status["checks"]["checks"].is_array(), "{status}");
+    status.as_object_mut().unwrap().remove("checks");
     normalize(&mut status, &run(&fixture, &resident), true);
     assert_same(
         &status,

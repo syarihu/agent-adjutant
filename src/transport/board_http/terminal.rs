@@ -123,7 +123,7 @@ mod imp {
     impl<'a> Host<'a> {
         fn of_server(server: &'a Server) -> Host<'a> {
             Host {
-                tmux: server.tmux,
+                tmux: server.machine.tmux(),
                 terminals: &server.terminals,
                 waits: &server.waits,
             }
@@ -131,7 +131,7 @@ mod imp {
 
         fn of_resident(resident: &'a Resident) -> Host<'a> {
             Host {
-                tmux: resident.tmux,
+                tmux: resident.machine.tmux(),
                 terminals: &resident.terminals,
                 waits: &resident.waits,
             }

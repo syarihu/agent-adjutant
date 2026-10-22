@@ -502,7 +502,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
             available: crate::lifecycle::hub::hub_startable(&settings.terminal),
         },
         board_terminal: Available {
-            available: server.resident && server.tmux.is_some(),
+            available: server.resident && server.machine.tmux().is_some(),
         },
         session_open: open_state(server, &settings),
         session_resume: resume_state(&settings),
@@ -721,7 +721,7 @@ pub(super) fn open_state(
     let attach = settings.terminal.attach.is_some();
     let iterm = terminal::iterm_available();
     SessionOpen {
-        available: server.resident && server.tmux.is_some() && (attach || iterm),
+        available: server.resident && server.machine.tmux().is_some() && (attach || iterm),
         terminal: match (attach, iterm) {
             (true, _) => Some("terminal.attach"),
             (false, true) => Some("iTerm2"),

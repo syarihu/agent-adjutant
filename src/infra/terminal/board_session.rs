@@ -80,11 +80,6 @@ pub fn parse_tmux_version(output: &str) -> Option<(u32, u32)> {
     Some((major.parse().ok()?, digits.parse().ok()?))
 }
 
-/// The installed tmux's version, or `None` when there is no tmux to ask.
-pub fn tmux_version() -> Option<(u32, u32)> {
-    parse_tmux_version(&run_shell("tmux -V").ok()?)
-}
-
 /// Where a window lives now: its session and that session's group, asked of tmux by the
 /// window id the record holds. It also says whether the window is still there at all, before
 /// anything is created on its behalf.

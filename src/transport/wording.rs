@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::board::review::HandRefused;
+use crate::board::{Check, CheckId, MachineChecks};
 use crate::gate::Gate;
 use crate::infra::terminal;
 use crate::kernel::prompts;
@@ -201,9 +202,103 @@ pub fn close_warning(failures: &[(String, String)]) -> String {
     )
 }
 
+/// How to install `tool` on this machine: the Homebrew line on macOS, the package manager in
+/// general elsewhere.
+fn install(tool: &str, brew: &str) -> String {
+    if cfg!(target_os = "macos") {
+        brew.to_string()
+    } else {
+        format!("install {tool} with your package manager")
+    }
+}
+
+/// What one startup check says, and what to do about it: `(message, fix)`. The fix is a command
+/// or a short instruction, and `None` when the check passed. The CLI prints these and the board
+/// page shows them, so the words are kept here.
+pub fn machine_check(check: &Check, all: &MachineChecks) -> (String, Option<String>) {
+    let detail = check.detail.as_deref().unwrap_or("");
+    if check.ok {
+        let message = match check.id {
+            CheckId::Config => format!("config {}", all.config_path),
+            CheckId::Tmux => "tmux found".to_string(),
+            CheckId::TmuxVersion => format!("tmux {detail}"),
+            CheckId::Gh => "gh found".to_string(),
+            CheckId::GhAuth => "gh logged in".to_string(),
+            CheckId::Mcp => format!("MCP server registered with {detail}"),
+        };
+        return (message, None);
+    }
+    let (message, fix) = match check.id {
+        CheckId::Config => (
+            detail.to_string(),
+            format!("fix or move aside {}", all.config_path),
+        ),
+        CheckId::Tmux if check.fatal => (
+            "tmux was not found, and workers open in tmux".to_string(),
+            format!(
+                "{}, or set \"terminal\": {{\"preset\": \"iterm2\"}} in {}",
+                install("tmux", "brew install tmux"),
+                all.config_path
+            ),
+        ),
+        CheckId::Tmux => (
+            "tmux was not found; the board cannot open terminals".to_string(),
+            install("tmux", "brew install tmux"),
+        ),
+        CheckId::TmuxVersion => (
+            format!("tmux {detail} is older than 3.1; the board's terminal is off"),
+            install("tmux", "brew upgrade tmux"),
+        ),
+        CheckId::Gh => (
+            "gh was not found; pull requests, issues and reviews are not read".to_string(),
+            install("gh", "brew install gh"),
+        ),
+        CheckId::GhAuth => (
+            match check.detail.as_deref() {
+                Some(why) => format!(
+                    "gh is not logged in; pull requests, issues and reviews are not read ({why})"
+                ),
+                None => "gh is not logged in; pull requests, issues and reviews are not read"
+                    .to_string(),
+            },
+            "gh auth login".to_string(),
+        ),
+        CheckId::Mcp => (
+            match check.detail.as_deref() {
+                Some(why) => format!(
+                    "the adjutant MCP server is not registered with Claude Code, Antigravity or Codex; hubs and workers have no adjutant_* tools ({why})"
+                ),
+                None => "the adjutant MCP server is not registered with Claude Code, Antigravity or Codex; hubs and workers have no adjutant_* tools".to_string(),
+            },
+            "adjutant install-mcp (Claude Code), adjutant install-mcp --target agy (Antigravity), or, for Codex, a [mcp_servers.adjutant] table with command = \"<path to adjutant>\" and args = [\"mcp\"] in Codex's config.toml ($CODEX_HOME, ~/.codex by default)".to_string(),
+        ),
+    };
+    (message, Some(fix))
+}
+
+/// The checks as the board page and `adj server status --json` carry them.
+pub fn machine_checks_json(all: &MachineChecks) -> Value {
+    let checks: Vec<Value> = all
+        .checks
+        .iter()
+        .map(|check| {
+            let (message, fix) = machine_check(check, all);
+            json!({
+                "id": check.id.wire(),
+                "ok": check.ok,
+                "fatal": check.fatal,
+                "message": message,
+                "fix": fix,
+            })
+        })
+        .collect();
+    json!({ "checkedAt": all.checked_at, "checks": checks })
+}
+
 #[cfg(test)]
 mod tests {
     use super::close_warning;
+    use super::*;
 
     #[test]
     fn a_close_warning_names_each_pr_and_leaves_out_an_empty_id() {
@@ -211,5 +306,60 @@ mod tests {
         assert!(close_warning(&some).ends_with("pull requests: acme/widget#7: stuck"));
         let none = [(String::new(), "no config".to_string())];
         assert!(close_warning(&none).ends_with("pull requests: no config"));
+    }
+
+    fn failing(id: CheckId, fatal: bool, detail: Option<&str>) -> MachineChecks {
+        MachineChecks {
+            checks: vec![Check {
+                id,
+                ok: false,
+                fatal,
+                detail: detail.map(str::to_string),
+            }],
+            tmux: None,
+            config_path: "/cfg/config.json".to_string(),
+            tmux_backend: fatal,
+            checked_at: 42,
+        }
+    }
+
+    #[test]
+    fn a_missing_tmux_names_both_ways_out_when_it_stops_the_server() {
+        let all = failing(CheckId::Tmux, true, None);
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("workers open in tmux"), "{message}");
+        let fix = fix.unwrap();
+        assert!(
+            fix.contains("iterm2") && fix.contains("/cfg/config.json"),
+            "{fix}"
+        );
+    }
+
+    #[test]
+    fn the_json_carries_the_id_the_words_and_a_null_fix_for_a_pass() {
+        let mut all = failing(
+            CheckId::GhAuth,
+            false,
+            Some("gh auth status did not answer"),
+        );
+        all.checks.push(Check {
+            id: CheckId::Gh,
+            ok: true,
+            fatal: false,
+            detail: None,
+        });
+        let json = machine_checks_json(&all);
+        assert_eq!(json["checkedAt"], 42);
+        assert_eq!(json["checks"][0]["id"], "gh-auth");
+        assert_eq!(json["checks"][0]["ok"], false);
+        assert!(
+            json["checks"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("did not answer")
+        );
+        assert_eq!(json["checks"][0]["fix"], "gh auth login");
+        assert_eq!(json["checks"][1]["fix"], serde_json::Value::Null);
+        assert_eq!(json["checks"][1]["message"], "gh found");
     }
 }

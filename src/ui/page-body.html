@@ -112,6 +112,14 @@
 <dialog id="question-dialog" class="qd"><div class="qd-layers"></div></dialog>
 
 <div id="app-main">
+  <!-- What the server found wrong on this machine (server-checks.js): shown only while a check fails. -->
+  <div class="server-checks" id="server-checks" role="status" hidden>
+    <span class="material-symbols-outlined sc-icon" aria-hidden="true">warning</span>
+    <div class="sc-list" id="sc-list"></div>
+    <span class="sc-note" id="sc-note"></span>
+    <button type="button" class="sc-btn" id="sc-recheck">再確認</button>
+    <button type="button" class="sc-btn sc-close" id="sc-close" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+  </div>
   <!-- A notice about what was just done (a session started, a hub restarted), in the flow above whichever view is
        on, so it is seen whether or not the panel is open. -->
   <div class="sess-notice" id="sess-notice" hidden></div>

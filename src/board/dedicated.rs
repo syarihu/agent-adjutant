@@ -72,7 +72,7 @@ impl Board {
                 last_lines: Arc::default(),
                 prompts: Arc::default(),
                 diffs: Arc::default(),
-                tmux: None,
+                machine: Arc::default(),
                 terminals: Arc::default(),
                 pr_poll: None,
                 waits: Arc::default(),

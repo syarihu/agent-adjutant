@@ -694,13 +694,13 @@ pub(crate) struct UninstallMcpArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum ServerAction {
-    /// Start the resident server, detached unless --foreground
+    /// Check the machine (tmux, gh and its login, the MCP registration, the config), then start the resident server, detached unless --foreground
     Start(ServerStartArgs),
     /// Stop the resident server. Hubs keep running
     Stop,
-    /// Stop the resident server and start it again on the same port. Hubs and workers keep running
+    /// Check the machine as start does, then stop the resident server and start it again on the same port. Hubs and workers keep running
     Restart(ServerRestartArgs),
-    /// Whether the resident server is running, and which boards it serves (exit 1 when not)
+    /// Whether the resident server is running, which boards it serves and what the machine check found (exit 1 when not running)
     Status(ServerStatusArgs),
 }
 
@@ -715,6 +715,9 @@ pub(crate) struct ServerStartArgs {
     /// Print the URL without opening a browser
     #[arg(long)]
     pub(crate) no_open: bool,
+    /// Set by the process that started this one, which has already run and printed the check
+    #[arg(long, hide = true)]
+    pub(crate) checked: bool,
 }
 
 #[derive(Args)]
