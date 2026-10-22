@@ -179,6 +179,36 @@ pub fn watches_start(terminal: &TerminalSettings) -> bool {
     terminal.spawn.is_none() && matches!(Backend::of(terminal), Backend::Tmux { .. })
 }
 
+/// Said when the built-in tmux backend is the one in use and `tmux` cannot be run. One line,
+/// naming both ways out, because tmux is now what a config with no `terminal.preset` gets.
+const TMUX_REQUIRED: &str = "tmux is required to open a tab and was not found: install it (brew install tmux), or keep iTerm2 with \"terminal\": {\"preset\": \"iterm2\"}";
+
+/// Whether `tmux -V` runs and succeeds.
+fn tmux_runs() -> bool {
+    std::process::Command::new("tmux")
+        .arg("-V")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Refuse when `tmux` cannot be run, for a caller that has to know before it does something
+/// a failed spawn would leave half done (a board reset stops the hub first).
+pub fn ensure_tmux() -> Result<(), String> {
+    require_tmux(tmux_runs)
+}
+
+/// The decision, apart from the probe, so the message can be tested without tmux.
+pub(super) fn require_tmux(probe: impl FnOnce() -> bool) -> Result<(), String> {
+    if probe() {
+        Ok(())
+    } else {
+        Err(TMUX_REQUIRED.to_string())
+    }
+}
+
 fn spawn_on_inner(
     template: Option<&str>,
     backend: &Backend,
@@ -257,6 +287,11 @@ fn spawn_on_inner(
         // The window starts in the server's cwd whatever `-c` says when that directory is gone
         // (a removed worktree, #182), so the command goes there itself. A staged script holds
         // the `cd` too: it is run by absolute path and does not care where it starts.
+        // Asked before anything is written: a long command is staged in a file, and a spawn
+        // refused after that would leave the file behind for nothing.
+        if !dry_run {
+            require_tmux(tmux_runs)?;
+        }
         let line = format!("cd {} && {}", sh_quote(req.cwd), req.command);
         let line = if !dry_run && line.len() > MAX_INLINE_COMMAND {
             stage_command(&line)?

@@ -144,7 +144,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 
 | キー | 既定値 | 説明 |
 | --- | --- | --- |
-| `terminal.preset` | なし（macOS は iTerm2） | `"tmux"` を指定すると組み込み tmux バックエンドが有効化されます |
+| `terminal.preset` | `"tmux"` | 既定は組み込み tmux バックエンドで、tmux のインストールが必要です。`"iterm2"` を指定すると iTerm2 バックエンドになります（macOS のみ） |
 | `agentRunner` | `claude ...` | worker エージェントを起動するコマンドテンプレート |
 | `hubRunner` | `claude ...` | リポジトリ hub を起動するコマンドテンプレート |
 | `reviewerRunner` | `claude ...` | PR の読み手（AI 下読み）を起動するコマンドテンプレート |
@@ -155,6 +155,8 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 | `language` | なし | gate やメモ、要約にエージェントが使用する言語（例: `"ja"`） |
 
 tmux との連携やカスタムランナーテンプレート、環境変数の解決順序については、[設定とランタイム詳細](docs/configuration.ja.md) を参照してください。
+
+**iTerm2 が既定だった環境からの移行:** 新しい worker は tmux のウィンドウで開くようになります。iTerm2 のままにするには `"terminal": {"preset": "iterm2"}` を設定し、常駐サーバーに反映させるため `adj server restart` を実行してください。すでに動いているセッションは、起動時のバックエンドのまま扱われます。詳しくは [iTerm2 既定からの移行](docs/configuration.ja.md#iterm2-既定からの移行) を参照してください。
 
 ---
 

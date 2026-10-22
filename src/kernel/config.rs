@@ -17,7 +17,9 @@ use crate::infra::env::{
     CONFIG_ENV, STARTUP_DASHBOARD_ENV, TMUX_SESSION_ENV, TMUX_SOCKET_ENV, XDG_CONFIG_HOME_ENV,
 };
 use crate::infra::paths::{expand_home, home_dir};
-use crate::infra::terminal::{Hook, TerminalSettings, Wake};
+use crate::infra::terminal::{
+    Hook, PRESET_DEFAULT, PRESET_ITERM2, PRESET_TMUX, TerminalSettings, Wake,
+};
 
 mod defaults;
 mod location;

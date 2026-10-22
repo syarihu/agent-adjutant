@@ -280,3 +280,18 @@ fn a_relative_xdg_config_home_is_read_and_reported_as_an_absolute_path() {
         std::fs::canonicalize(adj.join("config.json")).unwrap()
     );
 }
+
+#[test]
+fn a_null_preset_is_the_built_in_default_which_is_tmux() {
+    // The fixture would add `"preset": "iterm2"` to a `terminal` without the key; a `null` is
+    // a key that is present, so it is left as written and asks for the default.
+    let fixture = Fixture::new(
+        r#"{"notification": "true", "terminal": {"preset": null},
+            "defaults": {"ide": "code"},
+            "repos": {"acme/widget": {"taskSource": "github", "issueRepo": "acme/widget",
+                      "issueKeys": {"acme/widget": "WID"}}}}"#,
+    );
+    let out = fixture.json(&["config"]);
+    assert_eq!(out["settings"]["terminal"]["preset"], "tmux", "{out}");
+    assert_eq!(out["settings"]["terminal"]["session"], "adjutant", "{out}");
+}

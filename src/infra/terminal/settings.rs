@@ -141,6 +141,9 @@ impl serde::Serialize for Wake {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSettings {
+    /// Always filled in by the config resolver (`"tmux"` when nothing valid is configured), so
+    /// `None` only turns up in a hand-built `TerminalSettings` (tests), where it still means
+    /// iTerm2.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,9 +174,16 @@ pub struct TerminalSettings {
     pub title: Hook,
 }
 
+/// The preset names `terminal.preset` knows. Anything else falls back to `PRESET_DEFAULT`.
+pub const PRESET_TMUX: &str = "tmux";
+pub const PRESET_ITERM2: &str = "iterm2";
+pub const PRESET_DEFAULT: &str = PRESET_TMUX;
+
 impl TerminalSettings {
+    /// Whether the built-in tmux backend is selected. The resolver always sets a preset, so a
+    /// `None` preset (a hand-built value) reads as not tmux.
     pub fn is_tmux(&self) -> bool {
-        self.preset.as_deref() == Some("tmux")
+        self.preset.as_deref() == Some(PRESET_TMUX)
     }
 
     pub fn tmux_session(&self) -> &str {

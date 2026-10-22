@@ -111,6 +111,19 @@ fn check_shapes(place: &str, map: &Map<String, Value>, warnings: &mut Vec<String
             ));
         }
     }
+    match terminal.get("preset").and_then(Value::as_str) {
+        Some(PRESET_TMUX) | Some("") | None => {}
+        Some(PRESET_ITERM2) => {
+            if !cfg!(target_os = "macos") {
+                warnings.push(format!(
+                    "{place}terminal.preset \"{PRESET_ITERM2}\" drives iTerm2, which runs only on macOS"
+                ));
+            }
+        }
+        Some(other) => warnings.push(format!(
+            "{place}terminal.preset \"{other}\" is not a preset ({PRESET_TMUX} or {PRESET_ITERM2}): using {PRESET_DEFAULT}"
+        )),
+    }
 }
 
 /// A name `env` will pass on as a variable rather than as something else.
@@ -308,14 +321,20 @@ fn resolve_settings(
     // partly from outside the config file. Each is decided here by a function of its
     // arguments, and the outside half arrives in `env`.
     let configured_dashboard = pick("startupDashboard");
-    let preset = str_field(&terminal, "preset");
+    // Always one of the known presets: tmux is the default, and a value that names no preset
+    // gets the default too (`check_shapes` says so) rather than quietly selecting iTerm2.
+    let preset = match str_field(&terminal, "preset").as_deref() {
+        Some(PRESET_ITERM2) => PRESET_ITERM2,
+        _ => PRESET_DEFAULT,
+    }
+    .to_string();
     let session = env
         .tmux_session
         .clone()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| str_field(&terminal, "session"))
         .or_else(|| {
-            if preset.as_deref() == Some("tmux") {
+            if preset == PRESET_TMUX {
                 Some("adjutant".to_string())
             } else {
                 None
@@ -328,7 +347,7 @@ fn resolve_settings(
         .or_else(|| str_field(&terminal, "socket"));
     Settings {
         terminal: TerminalSettings {
-            preset,
+            preset: Some(preset),
             session,
             socket,
             spawn: str_field(&terminal, "spawn"),

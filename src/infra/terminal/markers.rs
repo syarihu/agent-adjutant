@@ -15,7 +15,7 @@ pub(super) const CLOSED_MARKER: &str = "adjutant:closed";
 
 /// Type a line into the tab a running session is sitting in.
 ///
-/// iTerm2's `write text` is the built-in because it is the one mechanism that actually
+/// Under the iTerm2 preset, `write text` is the built-in because it is the one mechanism that actually
 /// reaches an interactive agent: the message goes to its prompt exactly as if the person
 /// had typed it. Any other terminal with a scripting interface can be dropped in as a
 /// template.

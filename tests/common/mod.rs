@@ -137,15 +137,31 @@ impl Fixture {
         // These tests run the real binary, so the `cfg(test)` backstop in the notifier does
         // not reach them and this default is their guard: a config that is a JSON object
         // without a top-level `notification` gets one that runs `true` instead of the
-        // built-in banner (`null` counts as unset). Anything else is written as given. The same
-        // rule as `testing::Sandbox::new` in `src/lib.rs`; change both together.
+        // built-in banner (`null` counts as unset). Likewise the terminal backend: the default
+        // is tmux, which would drive the developer's own tmux server, so a top-level
+        // `terminal` object without a `preset` (or none at all, or `null`) gets `"preset": "iterm2"`;
+        // a `preset` that is present, `null` included, is left as written. Anything else is
+        // written as given. The same rule as `testing::Sandbox::new` in `src/lib.rs`; change
+        // both together.
         let config_json = match serde_json::from_str::<serde_json::Value>(config_json) {
-            Ok(serde_json::Value::Object(mut map))
+            Ok(serde_json::Value::Object(mut map)) => {
                 if map
                     .get("notification")
-                    .is_none_or(serde_json::Value::is_null) =>
-            {
-                map.insert("notification".into(), "true".into());
+                    .is_none_or(serde_json::Value::is_null)
+                {
+                    map.insert("notification".into(), "true".into());
+                }
+                match map.get_mut("terminal") {
+                    None | Some(serde_json::Value::Null) => {
+                        map.insert("terminal".into(), serde_json::json!({"preset": "iterm2"}));
+                    }
+                    Some(serde_json::Value::Object(terminal))
+                        if !terminal.contains_key("preset") =>
+                    {
+                        terminal.insert("preset".into(), "iterm2".into());
+                    }
+                    _ => {}
+                }
                 serde_json::Value::Object(map).to_string()
             }
             _ => config_json.to_string(),

@@ -2178,3 +2178,15 @@ fn a_close_template_still_wins_over_the_recorded_backend() {
     assert!(performed.ran, "{performed:?}");
     assert_eq!(performed.script, "close-tab --pid 12345");
 }
+
+#[test]
+fn a_missing_tmux_is_one_line_naming_both_ways_out() {
+    let err = require_tmux(|| false).unwrap_err();
+    assert_eq!(
+        err,
+        "tmux is required to open a tab and was not found: install it (brew install tmux), \
+         or keep iTerm2 with \"terminal\": {\"preset\": \"iterm2\"}"
+    );
+    assert!(!err.contains('\n'));
+    assert_eq!(require_tmux(|| true), Ok(()));
+}
