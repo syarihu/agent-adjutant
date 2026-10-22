@@ -286,7 +286,7 @@ function othersStateLine(rec, records, nowSecs) {
 /* Whether the PR is too large to read, and what makes it so: `{ limit, files }`, `files` being each file whose change is over the
    limit, `{ path, additions, deletions }`, the largest first (then by path), or null. Not counted: a file deleted whole, and a lock
    file, a snapshot or any other generated file (`prDiffIsGenerated`). The total of the PR is not counted. It is judged from the
-   files the sync read (`rec.files`): past 1,000 files, from those it has. The row, the middle and the 下読み tab all ask it. */
+   files the sync read (`rec.files`): past 1,000 files, from those it has. The row and the read-through in the middle both ask it. */
 function othersOutOfReview(rec) {
   const files = (rec?.files || [])
     .filter(f => f && f.change !== 'deleted' && !prDiffIsGenerated(f.path))

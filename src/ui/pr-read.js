@@ -292,7 +292,7 @@ function prOorButtonsHtml(actions, hubView, asking) {
   return `${split || full ? `<div class="pr-foot-acts">${split}${full}</div>` : ''}${note}`;
 }
 
-/* 「レビュー対象外」: the files over the limit and the two ways on, in the 下読み tab and in 「拡大」. Null for a PR that is not out
+/* 「レビュー対象外」: the files over the limit and the two ways on, in the read-through in the middle and in 「拡大」. Null for a PR that is not out
    of review, and for one that waits for nothing of the person. `ai` is `othersAiView`'s. */
 function prOutOfReview(rec, read, ai, hubView, asking = false, readError = false) {
   const oor = othersOutOfReview(rec);
@@ -311,7 +311,7 @@ function prSplitProposal(read, to = 'pending') {
     html: `<div class="pr-split">${esc(read.overall?.body || '')}</div><div class="tp-muted">${where}</div>` };
 }
 
-/* The sections of the 下読み tab. `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
+/* The sections of the read-through (the middle, 「拡大」 and a task's own dialog). `opts`: `diff` (the annotated diff is there), `asking`, `readError`, `readerWhere` (prBeforeRead's), `noAsk` (no 「聞く」). */
 function prSections(rec, read, records, hubView, nowSecs, opts = {}) {
   const ai = othersAiView(rec, records, nowSecs);
   const hasRead = !!read;
