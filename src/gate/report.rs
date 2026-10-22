@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use super::store::dir;
 use super::*;
 
+use crate::registry::Context;
+
 /// The largest report taken. A report is one self-contained page, images inlined, and the
 /// board holds it in memory to hand to a frame; this is room for a long analysis with a few
 /// pictures, and not for a file somebody pointed at by mistake.
@@ -58,8 +60,8 @@ pub(super) fn read(worktree: &str, given: &str) -> Result<String, String> {
 }
 
 /// Keep `html` as gate `id`'s report, in one step so the board never reads half of it.
-pub(super) fn write(root: &Path, slug: &str, id: &str, html: &str) -> Result<(), String> {
-    let path = path_of(root, slug, id);
+pub(super) fn write(ctx: &Context, id: &str, html: &str) -> Result<(), String> {
+    let path = path_of(&ctx.state, &ctx.repo.slug, id);
     let parent = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)
         .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
@@ -72,8 +74,8 @@ pub(super) fn write(root: &Path, slug: &str, id: &str, html: &str) -> Result<(),
 
 /// Drop gate `id`'s copy, for a gate that could not be written after it. Nothing to say if it
 /// is already gone.
-pub(super) fn remove(root: &Path, slug: &str, id: &str) {
-    let _ = std::fs::remove_file(path_of(root, slug, id));
+pub(super) fn remove(ctx: &Context, id: &str) {
+    let _ = std::fs::remove_file(path_of(&ctx.state, &ctx.repo.slug, id));
 }
 
 /// The report copy of gate `id`. `Ok(None)` when the gate has none; `Err` when there is a

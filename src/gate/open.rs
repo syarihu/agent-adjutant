@@ -178,7 +178,7 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
     };
 
     if let Some((html, _)) = &report
-        && let Err(e) = report::write(&ctx.state, &ctx.repo.slug, &gate.id, html)
+        && let Err(e) = report::write(ctx, &gate.id, html)
     {
         // The claimed file is empty and nobody has seen it; leaving it would be a gate that
         // cannot be read in the open queue.
@@ -188,7 +188,7 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
     if let Err(e) = save(ctx, shelf, &gate) {
         // A copy with no gate is a report nobody can open.
         if report.is_some() {
-            report::remove(&ctx.state, &ctx.repo.slug, &gate.id);
+            report::remove(ctx, &gate.id);
         }
         return Err(e);
     }

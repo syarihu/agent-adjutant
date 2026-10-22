@@ -378,3 +378,14 @@ test('a long label is named by its id only when the id is marked off; a dashed f
   const body = card(d).body;
   assert.ok(body.includes('<dt>やること</dt>') && !body.includes('- やること'));
 });
+
+test('a gate with an HTML report shows 「レポートを開く」 once; a quick gate does not', () => {
+  const g = { id: 'g1', kind: 'result', title: 'r', focus: '分かった？', sections: [{ heading: '結論', body: 'x' }], report: 'report.html' };
+  assert.equal(count(all(card(g)), 'data-qc-open="html-report"'), 1);
+  const body = { ...g, body: '本文' };
+  assert.ok(all(card(body)).includes('本文を開く'));
+  const plan = { id: 'g2', kind: 'plan', title: 'p', focus: 'よい？', steps: [{ text: 'a' }], report: 'r.html' };
+  assert.equal(count(all(card(plan)), 'data-qc-open="html-report"'), 1);
+  const quick = { id: 'g3', kind: 'question', title: 'q', focus: '片付ける？', quick: true, choices: [{ id: 'a', label: 'A' }], report: 'r.html' };
+  assert.equal(count(all(card(quick)), 'data-qc-open="html-report"'), 0);
+});
