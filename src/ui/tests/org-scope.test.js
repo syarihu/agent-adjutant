@@ -97,9 +97,18 @@ test('boardFollowOrg: nothing for 「すべて」, nothing recorded while the bo
   assert.deepStrictEqual(sets, ['beta', 'beta']);
 });
 
+test('othersInOrg keeps the selected organisation\'s review records and an unlisted organisation\'s, and drops another listed one\'s', () => {
+  const records = [{ id: 'a', repo: 'acme/x' }, { id: 'b', repo: 'beta/y' }, { id: 'g', repo: 'ghost/z' }];
+  const ctx = run(cutFrom('my-work-others-view.js', /^const othersInOrg = [^\n]*;/m), { othersRecords: () => records, orgScope: scopeOf('beta', ['acme', 'beta']) });
+  vm.runInContext(cutFrom('todo-view.js', /^const todoInScope = [^\n]*;/m), ctx);
+  assert.deepStrictEqual(plain(vm.runInContext('othersInOrg()', ctx)).map(r => r.id), ['b', 'g']);
+  ctx.orgScope = scopeOf('acme', ['acme', 'beta']);
+  assert.deepStrictEqual(plain(vm.runInContext('othersInOrg()', ctx)).map(r => r.id), ['a', 'g']);
+});
+
 test('othersNewCount counts only the selected organisation\'s new review records, as the rail\'s レビュー count is scoped', () => {
   const records = [{ id: 'a', repo: 'acme/x' }, { id: 'b', repo: 'beta/y' }, { id: 'b2', repo: 'beta/z' }, { id: 'old', repo: 'beta/y' }];
-  const ctx = run(cutFrom('my-work-others-view.js', /^const othersNewCount = \(\) => \{[\s\S]*?^};/m), {
+  const ctx = run(cutFrom('my-work-others-view.js', /^const othersInOrg = [^\n]*;/m) + cutFrom('my-work-others-view.js', /^const othersNewCount = \(\) => \{[\s\S]*?^};/m), {
     others: { doc: {} }, othersRecords: () => records, othersMarks: () => ({}),
     othersNewIds: (rs, marks) => rs.filter(r => r.id !== 'old').map(r => r.id),
     orgScope: scopeOf('beta', ['acme', 'beta']),
@@ -111,4 +120,30 @@ test('othersNewCount counts only the selected organisation\'s new review records
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 1);
   ctx.others = { doc: null };
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 0);
+});
+
+test('chooseOrg clears a selected review PR of another listed organisation, and keeps one of an unlisted organisation', () => {
+  const gone = [];
+  const recs = { 'acme/x#1': { id: 'acme/x#1', repo: 'acme/x' }, 'ghost/q#2': { id: 'ghost/q#2', repo: 'ghost/q' } };
+  const ctx = run(cutFrom('org-switch.js', /^function chooseOrg[\s\S]*?^}/m) + '\nvar workFollowedAddr = null;\n' + cutFrom('todo-view.js', /^const todoInScope = [^\n]*;/m), {
+    closeOrgMenu: () => {}, cur: 'acme', currentOrg: () => ctx.cur, setCurrentOrg: l => { ctx.cur = l; },
+    go: a => { gone.push(a); }, othersById: id => recs[id] || null, isPrRef: x => String(x).startsWith('pr:'), prIdOfRef: x => x.slice(3),
+    orgScope: () => ({ current: ctx.cur, known: new Set(['acme', 'beta']) }), boards: [], work: { doc: {} }, view: 'work',
+    nav: { board: 'all', list: 'review', task: 'pr:acme/x#1' }, workSelectFirst: () => 'first', workSelected: () => null,
+  });
+  vm.runInContext('chooseOrg("beta")', ctx);
+  assert.deepStrictEqual(plain(gone), [{ board: 'all', view: 'work', list: 'review', task: null, pane: 'detail' }]);
+  // A PR whose record is not in yet stays, and its address counts as followed, so the record coming in does not switch back.
+  gone.length = 0;
+  ctx.cur = 'acme';
+  ctx.nav = { board: 'all', list: 'review', task: 'pr:beta/z#3' };
+  vm.runInContext('chooseOrg("beta")', ctx);
+  assert.deepStrictEqual(gone, []);
+  assert.strictEqual(vm.runInContext('workFollowedAddr', ctx), 'all/pr:beta/z#3');
+  // A PR of an organisation the page does not list stays in every list.
+  gone.length = 0;
+  ctx.cur = 'acme';
+  ctx.nav = { list: 'review', task: 'pr:ghost/q#2' };
+  vm.runInContext('chooseOrg("beta")', ctx);
+  assert.deepStrictEqual(gone, []);
 });

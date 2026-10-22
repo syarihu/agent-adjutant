@@ -919,7 +919,7 @@ test('what the list as shown counts and reads is the selected organisation\'s (a
 test('the organisation follows the address when it moves, and an address cleared on purpose is one too', () => {
   const sets = [];
   const page = { work: { doc: {} }, nav: { board: 'b1', task: 't1' }, currentOrg: () => 'acme', setCurrentOrg: o => sets.push(o), orgOf: nwo => nwo.split('/')[0],
-    workSelected: () => ({ repo: { nwo: 'beta/x' } }) };
+    workSelected: () => ({ repo: { nwo: 'beta/x' } }), isPrRef: x => String(x).startsWith('pr:'), prIdOfRef: x => x.slice(3), othersById: () => null };
   Object.assign(ctx, page);
   ctx.workFollowedAddr = null;
   run('workFollowedAddr = null');
@@ -941,6 +941,25 @@ test('the organisation follows the address when it moves, and an address cleared
   Object.assign(ctx, { nav: { board: 'b9', task: 't9' }, workSelected: () => null });
   run('workFollowOrg()');
   assert.strictEqual(run('workFollowedAddr'), 'b1/t1');
+});
+
+test('a review PR address of another organisation switches the organisation once, and one whose record is not in yet is left unrecorded', () => {
+  const sets = [];
+  const recs = {};
+  Object.assign(ctx, { work: { doc: {} }, nav: { board: 'all', task: 'pr:beta/x#1' }, cur: 'acme', currentOrg: () => ctx.cur, setCurrentOrg: o => { sets.push(o); ctx.cur = o; },
+    orgOf: nwo => nwo.split('/')[0], isPrRef: x => String(x).startsWith('pr:'), prIdOfRef: x => x.slice(3), othersById: id => recs[id] || null });
+  run('workFollowedAddr = null');
+  // The records are not in yet: nothing is recorded, the next read looks again.
+  run('workFollowOrg()');
+  assert.strictEqual(run('workFollowedAddr'), null);
+  assert.deepStrictEqual(sets, []);
+  recs['beta/x#1'] = { id: 'beta/x#1', repo: 'beta/x' };
+  run('workFollowOrg()');
+  assert.deepStrictEqual(sets, ['beta']);
+  // The person chooses another organisation while the address stays: not undone.
+  ctx.cur = 'acme';
+  run('workFollowOrg()');
+  assert.deepStrictEqual(sets, ['beta']);
 });
 
 /* ── a row's order, and the PR number only once merged (#751) ── */
