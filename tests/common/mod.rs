@@ -221,6 +221,25 @@ impl Fixture {
     }
 }
 
+/// The warning the fixture's own `"preset": "iterm2"` (see `Fixture::new`) brings on a machine
+/// that is not macOS, where the resolver says iTerm2 does not run. It is the guard talking, not
+/// the config under test, and only the top-level spelling is the guard's: one a fixture set
+/// itself in `defaults` or a repository carries that level's prefix and is kept.
+pub const GUARD_PRESET_WARNING: &str =
+    "terminal.preset \"iterm2\" drives iTerm2, which runs only on macOS";
+
+/// `adj config`'s `warnings`, less the one the fixture's guard brings (`GUARD_PRESET_WARNING`).
+/// On macOS that warning is never raised, so nothing is dropped there.
+pub fn config_warnings(out: &serde_json::Value) -> Vec<serde_json::Value> {
+    out["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| cfg!(target_os = "macos") || w.as_str() != Some(GUARD_PRESET_WARNING))
+        .cloned()
+        .collect()
+}
+
 /// A config that notifies by doing nothing. Every test that sends uses it: the built-in
 /// notifier puts a banner on the developer's screen, which is not something a test suite
 /// gets to do.

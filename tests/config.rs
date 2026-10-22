@@ -37,7 +37,7 @@ fn config_resolves_the_flat_shorthand_and_the_machine_settings() {
     );
     assert_eq!(out["settings"]["ide"], "code");
     assert_eq!(out["config"]["verify"][0], "cargo test");
-    assert_eq!(out["warnings"].as_array().unwrap().len(), 0, "{out}");
+    assert_eq!(config_warnings(&out).len(), 0, "{out}");
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn the_shipped_example_config_resolves_without_a_single_warning() {
         let out = fixture.json(&["config", "--repo", repo]);
         assert_eq!(out["registered"], true, "{repo}");
         assert_eq!(
-            out["warnings"].as_array().unwrap().len(),
+            config_warnings(&out).len(),
             0,
             "{repo}: {}",
             out["warnings"]
