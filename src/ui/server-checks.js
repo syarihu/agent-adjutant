@@ -39,6 +39,7 @@ function scHtml(failing) {
 }
 
 let scData = null;
+let scShown = null;
 
 function scDismissed() {
   try { return sessionStorage.getItem(SC_DISMISS_KEY); } catch { return null; }
@@ -51,7 +52,13 @@ function scDraw() {
   // Once everything passes, a closed set is forgotten: the same failure coming back later is news again.
   if (!failing.length) { try { sessionStorage.removeItem(SC_DISMISS_KEY); } catch { /* nothing to forget then */ } }
   box.hidden = !scVisible(failing, scDismissed());
-  document.getElementById('sc-list').innerHTML = scHtml(failing);
+  // Written only when it changes: the banner is a live region, and the same list written again on every poll would be
+  // read out again by a screen reader.
+  const html = scHtml(failing);
+  if (html !== scShown) {
+    scShown = html;
+    document.getElementById('sc-list').innerHTML = html;
+  }
 }
 
 async function scLoad() {
