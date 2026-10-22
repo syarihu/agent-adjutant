@@ -176,4 +176,6 @@
 .qc-report-h { display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px; color: var(--md-sys-color-on-surface-variant);
   background: var(--md-sys-color-surface-container-high); }
 .qc-report-frame { display: block; width: 100%; height: 70vh; border: 0; background: #fff; }
+/* `display` above would beat the user agent's rule for `hidden`, which a failed read sets. */
+.qc-report-frame[hidden] { display: none; }
 .qc-report-err { margin: 0; padding: 12px; color: var(--md-sys-color-error); }

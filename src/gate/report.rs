@@ -46,6 +46,20 @@ pub(super) fn read(worktree: &str, given: &str) -> Result<String, String> {
     }
     let file =
         std::fs::File::open(&path).map_err(|e| format!("cannot read report {shown}: {e}"))?;
+    // Checked again on what was opened: the path can be swapped between the check above and
+    // the open. The check above stays, since opening a FIFO would wait for a writer.
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("cannot read report {shown}: {e}"))?;
+    if !opened.is_file() {
+        return Err(format!("report {shown} is not a regular file"));
+    }
+    if opened.len() > MAX_REPORT_BYTES {
+        return Err(format!(
+            "report {shown} is {} bytes, over the {MAX_REPORT_BYTES} byte limit",
+            opened.len()
+        ));
+    }
     // The file can grow between the check and the read, so the read is bounded as well.
     let mut bytes = Vec::new();
     file.take(MAX_REPORT_BYTES + 1)
