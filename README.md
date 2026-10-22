@@ -25,11 +25,16 @@ The mechanical parts (deriving the hub's name, resolving the config, opening a t
 ### Homebrew
 
 ```bash
-brew install syarihu/tap/agent-adjutant # installs both `adjutant` and the short `adj`
-adjutant install-mcp                   # registers MCP server with Claude Code (user scope)
-adjutant install-mcp --target agy       # registers MCP server with Antigravity (agy)
-adjutant install-mcp --target json      # prints JSON configuration for other clients
+brew install syarihu/tap/agent-adjutant # installs `adjutant` and the short `adj`; tmux and gh come with it
+gh auth login
+adjutant install-mcp                    # registers the MCP server with Claude Code (user scope)
+#   or: adjutant install-mcp --target agy   (Antigravity)
+#   or: adjutant install-mcp --target json  (prints JSON for other clients)
+adj server start                        # starts the board (http://127.0.0.1:4577 by default)
+cd <repository> && adj hub              # the repository appears on the board
 ```
+
+After `brew upgrade`, run `adj server restart` so the resident server runs the new binary.
 
 ### Cargo
 
@@ -38,6 +43,8 @@ cargo install --git https://github.com/syarihu/agent-adjutant # installs both `a
 # or from a local checkout:
 #   cargo install --path . (or `make install`; `make restart` restarts `adj server`; `make reinstall` does both)
 ```
+
+A Cargo install does not bring tmux (3.1 or later) or `gh`. Install them yourself, for example with your package manager, and run `gh auth login`.
 
 > [!IMPORTANT]
 > **Install before registering.** `install-mcp` records the command as `adjutant` if it is already found on your `PATH`. Running `install-mcp` from a target build directory pins that build path, which breaks if `cargo clean` is run.
