@@ -2,5 +2,35 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**"
+  ],
+  "semanticCommits": "disabled",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^src\\/ui\\/vendor\\/xterm\\/README\\.md$/"
+      ],
+      "matchStrings": [
+        "\\| `(?<depName>@xterm/[^`]+)` \\| (?<currentValue>[^ ]+) \\|"
+      ],
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "groupName": "xterm vendored packages",
+      "matchPackageNames": [
+        "/^@xterm\\//"
+      ]
+    }
   ]
 }
