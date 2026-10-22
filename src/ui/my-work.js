@@ -251,13 +251,18 @@ function workNewShown() {
   return [...workJudge().values()].filter(j => j.cls === 'new' && workInShown(j.entry.nwo, scope, choice)).length;
 }
 
-/* How many rows are new, in every organisation (the title and the notifications are the page's, not the list's). */
-const workNewCount = () => work.doc ? [...workJudge().values()].filter(j => j.cls === 'new').length : 0;
+/* How many rows are new in the selected organisation, whatever the repository filter narrows the list to (the title is the page's,
+   not the list's). What waits in the other organisations is the organisation switch's badge. */
+function workNewCount() {
+  if (!work.doc) return 0;
+  const scope = orgScope();
+  return [...workJudge().values()].filter(j => j.cls === 'new' && orgInScope(scope, j.entry.nwo)).length;
+}
 
-/* What the page title counts: the new rows of both lists, whichever view is on. */
+/* What the page title counts: the selected organisation's new rows of both lists, whichever view is on. */
 const workBadgeCount = () => workNewCount() + othersNewCount();
 
-/* The rail's count, whatever the repository filter narrows the list to, and the column toggle's, of the list it hides. */
+/* The rail's count (the selected organisation's), whatever the repository filter narrows the list to, and the column toggle's, of the list it hides. */
 function renderWorkBadge() {
   const el = wk('work-new-count');
   if (!el) return;

@@ -100,6 +100,9 @@ function chooseOrg(login) {
   if (login === currentOrg()) return;
   setCurrentOrg(login);
   if (view === 'work' && nav.list !== 'review') return workSelectFirst();
+  // The board in the address is of another organisation: its row is not in the list any more, so leave it for 「すべて」 of this one.
+  const open = view === 'board' && nav.board && nav.board !== 'all' ? boards.find(b => b.slug === nav.board) : null;
+  if (open && orgOf(open.nwo) !== currentOrg()) return go({ board: 'all', task: null });
   const sel = workSelected();
   const nwo = (sel?.repo || sel?.parent?.repo)?.nwo;
   if (nwo && orgOf(nwo) !== currentOrg()) go({ board: 'all', view: 'work', task: null, pane: 'detail' });

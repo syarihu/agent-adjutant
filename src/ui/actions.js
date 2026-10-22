@@ -215,7 +215,28 @@ function repoGroups(list) {
 }
 const orderedBoards = list => repoGroups(list).flatMap(r => [...(r.repo ? [r.repo] : []), ...r.children]);
 
+/* The address `boardFollowOrg` last looked at. */
+let boardFollowedAddr = null;
+
+/* The address moved to a board of another organisation (a link, back or forward): the organisation follows it, as the work view's does
+   for a row. Only when the address moved, so that choosing another organisation in its menu is not undone. */
+function boardFollowOrg() {
+  if (!multiBoard) return;
+  // The work view has its own; forgetting the address here means a later return to a board address is looked at again.
+  if (nav.view === 'work') { boardFollowedAddr = null; return; }
+  const addr = nav.board;
+  if (addr === boardFollowedAddr) return;
+  if (!addr || addr === 'all') { boardFollowedAddr = addr; return; }
+  // The list is not in yet: not recorded, so the next draw looks again.
+  const b = boards.find(x => x.slug === addr);
+  if (!b) return;
+  // Recorded before the switch: it tells the listener, which draws the rows again.
+  boardFollowedAddr = addr;
+  if (b.nwo && orgOf(b.nwo) !== currentOrg()) setCurrentOrg(orgOf(b.nwo));
+}
+
 function renderBoardRows() {
+  boardFollowOrg();
   const box = document.getElementById('board-rows');
   if (!multiBoard) {
     if (box) box.innerHTML = '';
@@ -223,9 +244,11 @@ function renderBoardRows() {
   }
   if (!box) return;
   // A parent-task hub that is finished is out of the list, unless it is the one being read.
-  const shown = boards.filter(b => !b.finished || nav.board === b.slug);
+  // Only the selected organisation's boards are listed.
+  const scope = orgScope();
+  const shown = boards.filter(b => orgInScope(scope, b.nwo) && (!b.finished || nav.board === b.slug));
   const repos = repoGroups(shown);
-  const live = boards.filter(b => !b.finished);
+  const live = boards.filter(b => !b.finished && orgInScope(scope, b.nwo));
   const open = live.reduce((n, b) => n + (b.open || 0), 0);
   const allCurrent = scopeAll() && nav.view !== 'work';
   let html = `<div class="board-row all" role="link" tabindex="0" data-board="all"${allCurrent ? ' aria-current="page"' : ''} title="すべてのボード">
@@ -296,6 +319,18 @@ document.getElementById('board-rows').addEventListener('keydown', e => {
   openBoard(row.dataset.board);
 });
 
+// Another organisation was selected: its boards are listed, and 「すべて」 reads them instead of the old one's.
+onOrgChange(() => {
+  renderBoardRows();
+  if (!scopeAll()) return;
+  // A round in flight for the old organisation is dropped.
+  navEpoch++;
+  allRound = false;
+  state = Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
+  render();
+  refreshAllBoards(true);
+});
+
 /* A row of the sidebar: that board, in the view that is open. 「いまの仕事」 is not a view of
    a board, so it opens the board's cards. */
 function openBoard(slug) {
@@ -315,7 +350,8 @@ function openHubPanelOf(b) {
    change without a poll. */
 function redrawHubPanel() { if (isHubRef(selectedTaskId)) renderTaskPanel(); }
 
-/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, both lists of it, on
+/* The tab's title, with the count of what is new in front of it: on the resident server that is the number of 新着 in 「いまの仕事」, both lists of it,
+   of the selected organisation (the others' wait on the organisation switch's badge); on
    a board served alone what waits on the person on it. */
 function renderDocTitle() {
   const sum = multiBoard ? workBadgeCount() : waitingIn() + (state.waits || []).length;
