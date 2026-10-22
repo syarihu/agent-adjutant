@@ -506,8 +506,8 @@ async function fetchBoards() {
 }
 
 /* The boards 「すべて」 reads, in the order the sidebar lists them. A hub that is finished has
-   nothing left to show. */
-const readBoards = () => boards.filter(b => !b.finished);
+   nothing left to show. Only the selected organisation's. */
+const readBoards = () => { const scope = orgScope(); return boards.filter(b => !b.finished && orgInScope(scope, b.nwo)); };
 
 let allBusy = false;
 let allAgain = false;            // a forced round asked for while one was out
