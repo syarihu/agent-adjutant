@@ -102,11 +102,12 @@ test('othersNewCount counts only the selected organisation\'s new review records
   const ctx = run(cutFrom('my-work-others-view.js', /^const othersNewCount = \(\) => \{[\s\S]*?^};/m), {
     others: { doc: {} }, othersRecords: () => records, othersMarks: () => ({}),
     othersNewIds: (rs, marks) => rs.filter(r => r.id !== 'old').map(r => r.id),
-    scope: scopeOf('beta', ['acme', 'beta'])(),
+    orgScope: scopeOf('beta', ['acme', 'beta']),
   });
-  vm.runInContext('var todoInScope = () => nwo => orgInScope(scope, nwo);', ctx);
+  // The page's own todoInScope (todo-view.js), which the rail's レビュー count reads too.
+  vm.runInContext(cutFrom('todo-view.js', /^const todoInScope = [^\n]*;/m), ctx);
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 2);
-  ctx.scope = scopeOf('acme', ['acme', 'beta'])();
+  ctx.orgScope = scopeOf('acme', ['acme', 'beta']);
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 1);
   ctx.others = { doc: null };
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 0);
