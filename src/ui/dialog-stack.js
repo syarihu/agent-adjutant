@@ -24,6 +24,9 @@ function dialogStackCore() {
 /* The head of a layer: a line over the title, then the title. `sub` is markup the caller has escaped. */
 const dialogHeadHtml = ({ sub = '', title = '' }) => `${sub ? `<div class="qd-sub">${sub}</div>` : ''}<h2 class="qd-title">${esc(title)}</h2>`;
 
+/* The button that widens the dialog (every layer's head has one, and all of them show the same state). */
+const dialogWideButtonHtml = wide => `<button type="button" class="m3-icon-button qd-wide-btn" data-qd-wide aria-label="${wide ? '元の幅に戻す' : '広げて表示'}" title="${wide ? '元の幅に戻す' : '広げて表示'}"><span class="material-symbols-outlined" aria-hidden="true">${wide ? 'close_fullscreen' : 'open_in_full'}</span></button>`;
+
 /* `dialogStack.push({ key, head | { title, sub }, body, foot, gate, cls, opener, onClose })`: `head`, `body` and `foot` are markup the caller
    has escaped (`foot` is optional); `gate` is the key of the gate the layer answers, which its clicks find through `data-qc-gate`;
    `cls` (optional) is a class added to the layer's section, which a stylesheet can use to shape the dialog for that layer;
@@ -75,6 +78,18 @@ const dialogStack = (() => {
     showTop();
   }
 
+  /* The saved width is put on the dialog and on every layer's button, hidden layers included; the buttons keep their place, so focus stays. */
+  function applyWide() {
+    const wide = prefs.questionWide;
+    dlg().classList.toggle('qd-wide', wide);
+    for (const b of dlg().querySelectorAll('[data-qd-wide]')) {
+      const t = wide ? '元の幅に戻す' : '広げて表示';
+      b.setAttribute('aria-label', t);
+      b.title = t;
+      b.querySelector('.material-symbols-outlined').textContent = wide ? 'close_fullscreen' : 'open_in_full';
+    }
+  }
+
   /* Bound on first use: the page's element is not there when this script is read. */
   function bind() {
     if (bound) return;
@@ -83,6 +98,7 @@ const dialogStack = (() => {
     d.addEventListener('click', e => {
       if (e.target.closest('[data-qd-back]')) pop();
       else if (e.target.closest('[data-qd-close]')) closeAll();
+      else if (e.target.closest('[data-qd-wide]')) { prefs.questionWide = !d.classList.contains('qd-wide'); savePrefs(); applyWide(); }
     });
     // An IME takes Escape to cancel the conversion (keyCode 229 where compositionend came first): it closes nothing. The key is left
     // to the IME, and only the `cancel` it may raise is stopped.
@@ -112,6 +128,7 @@ const dialogStack = (() => {
     const head = layer.head ?? dialogHeadHtml(layer);
     holder().insertAdjacentHTML('beforeend', `<section class="qd-layer${layer.cls ? ` ${esc(layer.cls)}` : ''}" data-qd-key="${esc(layer.key)}"${layer.gate ? ` data-qc-gate="${esc(layer.gate)}"` : ''}>`
       + `<header class="qd-head">${back}<div class="qd-head-main">${head}</div>`
+      + dialogWideButtonHtml(prefs.questionWide)
       + '<button type="button" class="m3-icon-button qd-x" data-qd-close aria-label="閉じる" title="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header>'
       + `<div class="qd-body" tabindex="0" role="region" aria-label="内容">${layer.body}</div>`
       + `${layer.foot ? `<footer class="qd-foot">${layer.foot}</footer>` : ''}</section>`);
@@ -119,7 +136,7 @@ const dialogStack = (() => {
     const h = layerEl(layer.key).querySelector('.qd-head h2');
     if (h) h.id ||= `qd-title-${n}`;
     core.push(layer);
-    if (!dlg().open) dlg().showModal();
+    if (!dlg().open) { applyWide(); dlg().showModal(); }
     showTop();
     return true;
   }

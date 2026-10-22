@@ -44,7 +44,7 @@
 #question-dialog .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }
 #question-dialog .body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
 #question-dialog .diff { overflow-x: auto; }
-.qd-back:focus-visible, .qd-x:focus-visible, .qd-body:focus-visible, .qc-link:focus-visible, .qc-strip button:focus-visible, .qc-quick button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.qd-back:focus-visible, .qd-x:focus-visible, .qd-wide-btn:focus-visible, .qd-body:focus-visible, .qc-link:focus-visible, .qc-strip button:focus-visible, .qc-quick button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 
 /* ── The card ── */
 .qc-kind { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--md-sys-color-on-surface); }
@@ -179,3 +179,13 @@
 /* `display` above would beat the user agent's rule for `hidden`, which a failed read sets. */
 .qc-report-frame[hidden] { display: none; }
 .qc-report-err { margin: 0; padding: 12px; color: var(--md-sys-color-error); }
+
+/* The dialog widened to the window by the button in each layer's head. The layers that set a width of their own (the report here, the
+   task detail in task-detail.css) do it with a `:has` that is more specific than `.qd-wide`, so each is named again here. Prose keeps
+   the line length of the normal dialog (880px less its padding) while tables, code and diffs use the room. The button is hidden when
+   the window is too narrow for widening to change anything. */
+#question-dialog.qd-wide, #question-dialog.qd-wide:has(> .qd-layers > .qd-layer:is(.qd-report, .td-layer):not([hidden])) { width: calc(100vw - 32px); }
+#question-dialog.qd-wide .body > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6),
+#question-dialog.qd-wide :is(.qc-goal, .qc-quote, .qc-ask, .qc-steps, .qc-findings, .qc-manual, .qc-unsure, .qc-concl, .qc-kv) { max-width: 832px; }
+@media (max-width: 912px) { .qd-wide-btn { display: none; } }
+@media (max-width: 1032px) { #question-dialog:has(> .qd-layers > .qd-layer:is(.qd-report, .td-layer):not([hidden])) .qd-wide-btn { display: none; } }

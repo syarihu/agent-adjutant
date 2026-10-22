@@ -1493,6 +1493,8 @@ fn the_page_has_the_work_view_and_no_review_queue() {
         "body.view-work.rail-hidden #side-list { display: none; }",
         "body.view-work.rail-hidden { --list-w: 0px; }",
         "prefs.railHidden = prefs.railHidden === true",
+        // The question dialog's 「広げて表示」 is kept the same way.
+        "prefs.questionWide = prefs.questionWide === true",
         // The list is the resident's own document, not a merge made in the page.
         "boardApi('', '/api/work')",
         "view=work",
