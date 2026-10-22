@@ -52,9 +52,9 @@ const PREF_KEY = 'adj-board-split';
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
 // listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle);
-// boardSideWidth is how wide the terminal beside the board is.
+// boardSideWidth is how wide the terminal beside the board is; questionWide is whether the question dialog is widened to the window.
 const prefs = Object.assign({ boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
-  workFolded:[], othersRepo:'', railHidden:false },
+  workFolded:[], othersRepo:'', railHidden:false, questionWide:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
 // The old side key is not carried over: savePrefs() writes the whole object, so anyone who ever changed
 // a pref has 'left' saved there whether they chose it or not. A new key lets everyone get the right default once.
@@ -68,6 +68,7 @@ delete prefs.tab;
 if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
 prefs.railHidden = prefs.railHidden === true;
+prefs.questionWide = prefs.questionWide === true;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // What is in the browser's storage is not trusted: a width outside its range is the default, a fold

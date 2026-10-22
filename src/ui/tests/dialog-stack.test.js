@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const ctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'util.js'), 'utf8'), ctx, { filename: 'util.js' });
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dialog-stack.js'), 'utf8'), ctx, { filename: 'dialog-stack.js' });
-const { dialogStackCore, dialogHeadHtml } = vm.runInContext('({ dialogStackCore, dialogHeadHtml })', ctx);
+const { dialogStackCore, dialogHeadHtml, dialogWideButtonHtml } = vm.runInContext('({ dialogStackCore, dialogHeadHtml, dialogWideButtonHtml })', ctx);
 
 test('push, push, pop leaves the first layer on top', () => {
   const s = dialogStackCore();
@@ -52,4 +52,13 @@ test('a way back is wanted only from the second layer on', () => {
 test('the head of a layer escapes its title and leaves the sub line out when there is none', () => {
   assert.equal(dialogHeadHtml({ title: '<b>x</b>' }), '<h2 class="qd-title">&lt;b&gt;x&lt;/b&gt;</h2>');
   assert.ok(dialogHeadHtml({ title: 't', sub: '<i>s</i>' }).startsWith('<div class="qd-sub"><i>s</i></div>'));
+});
+
+test('dialogWideButtonHtml: the label and icon follow the state', () => {
+  const normal = dialogWideButtonHtml(false);
+  assert.ok(normal.includes('data-qd-wide') && normal.includes('open_in_full'));
+  assert.ok(normal.includes('aria-label="広げて表示"') && normal.includes('title="広げて表示"'));
+  const wide = dialogWideButtonHtml(true);
+  assert.ok(wide.includes('close_fullscreen') && wide.includes('aria-label="元の幅に戻す"') && wide.includes('title="元の幅に戻す"'));
+  assert.ok(!wide.includes('広げて表示'));
 });
