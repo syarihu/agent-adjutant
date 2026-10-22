@@ -44,8 +44,13 @@ function othersWriteMarks(patches) {
   renderWorkBadge();
 }
 
-/* How many records are new, whatever the list is narrowed to. Nothing before the first read; a failed read keeps the last. */
-const othersNewCount = () => others.doc ? othersNewIds(othersRecords(), othersMarks()).length : 0;
+/* How many records of the selected organisation are new, whatever the list is narrowed to: the page title's share, scoped as the rail's
+   レビュー count is. Nothing before the first read; a failed read keeps the last. */
+const othersNewCount = () => {
+  if (!others.doc) return 0;
+  const inScope = todoInScope();
+  return othersNewIds(othersRecords().filter(r => inScope(r.repo)), othersMarks()).length;
+};
 
 /* The dot on the switch's 「AI 下読み」: the last sync is more than 30 minutes old. */
 function renderOthersStaleDot() {

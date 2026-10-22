@@ -96,3 +96,18 @@ test('boardFollowOrg: nothing for 「すべて」, nothing recorded while the bo
   follow();
   assert.deepStrictEqual(sets, ['beta', 'beta']);
 });
+
+test('othersNewCount counts only the selected organisation\'s new review records, as the rail\'s レビュー count is scoped', () => {
+  const records = [{ id: 'a', repo: 'acme/x' }, { id: 'b', repo: 'beta/y' }, { id: 'b2', repo: 'beta/z' }, { id: 'old', repo: 'beta/y' }];
+  const ctx = run(cutFrom('my-work-others-view.js', /^const othersNewCount = \(\) => \{[\s\S]*?^};/m), {
+    others: { doc: {} }, othersRecords: () => records, othersMarks: () => ({}),
+    othersNewIds: (rs, marks) => rs.filter(r => r.id !== 'old').map(r => r.id),
+    scope: scopeOf('beta', ['acme', 'beta'])(),
+  });
+  vm.runInContext('var todoInScope = () => nwo => orgInScope(scope, nwo);', ctx);
+  assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 2);
+  ctx.scope = scopeOf('acme', ['acme', 'beta'])();
+  assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 1);
+  ctx.others = { doc: null };
+  assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 0);
+});
