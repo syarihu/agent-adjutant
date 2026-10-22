@@ -43,6 +43,8 @@
 /* The markdown body of a card is a `.body`, which the generic dialog rule would turn into a padded, scrolling flex column of its own. */
 #question-dialog .body { padding: 0; display: block; gap: 0; overflow: visible; flex: none; min-height: auto; }
 #question-dialog .body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
+/* The generic `.body` rule above would let a long last message overflow its 14em box over what follows; in a dialog it gets a taller box with its own scroll. */
+#question-dialog .tp-lastmsg > .body { overflow: auto; max-height: 20em; overflow-wrap: anywhere; }
 #question-dialog .diff { overflow-x: auto; }
 .qd-back:focus-visible, .qd-x:focus-visible, .qd-wide-btn:focus-visible, .qd-body:focus-visible, .qc-link:focus-visible, .qc-strip button:focus-visible, .qc-quick button:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 

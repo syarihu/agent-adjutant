@@ -478,7 +478,7 @@ const lctx = vm.createContext({
   state: { sessions: [{ id: 'w1', present: true, agentSession: { lastMessage: 'cut text' } }] },
   ensureLastMessage: s => asked.push(s.id),
   lastMessageBodyHtml: (a, s) => `whole of ${s.id}`,
-  cardDialogEl: () => ({ open: lctx.dialogOpen }), dialogOpen: true,
+  cardDialogEl: () => ({ open: lctx.dialogOpen }), dialogOpen: true, workTermDialogsFollow() {},
   cardDialogSync: () => redraws.push(vm.runInContext('JSON.stringify([cardDialog.sig, cardDialog.rebase])', lctx)),
 });
 vm.runInContext([

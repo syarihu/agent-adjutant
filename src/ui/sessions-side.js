@@ -144,13 +144,28 @@ function lastMessageHtml(a, s = null, opts = {}) {
   if (!a.lastMessage) return '';
   const mins = a.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
   const body = opts.expanded ? lastMessageBodyHtml(a, s) : md(a.lastMessage);
-  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}${s ? ` data-lastmsg-session="${esc(s.id)}"` : ''}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div class="body">${body}</div></div>`;
+  return `<div class="tp-lastmsg"${expandAttrs('lastmsg')}${s ? ` data-lastmsg-session="${esc(s.id)}"` : ''}${a.lastMessageAt != null ? ` data-lastmsg-at="${esc(String(a.lastMessageAt))}"` : ''}>${expandBtnHtml('最後のメッセージ')}<span>最後のメッセージ${mins != null ? `（${esc(agoLabel(mins))}）` : ''}</span><div class="body">${body}</div></div>`;
+}
+
+/* Where each last message drawn under `root` is scrolled to, by the session and the message it is of, so a dialog that draws its body
+   again keeps it (in a dialog the message is a box with its own scroll, question-card.css) and a new message starts at its top. */
+const lastMessageScrollKey = (b, i) => {
+  const d = b.parentElement.dataset;
+  return d.lastmsgSession ? `${d.lastmsgSession}@${d.lastmsgAt ?? ''}` : `#${i}`;
+};
+const lastMessageScrolls = root =>
+  new Map([...root.querySelectorAll('.tp-lastmsg > .body')].map((b, i) => [lastMessageScrollKey(b, i), b.scrollTop]));
+function restoreLastMessageScrolls(root, tops) {
+  root.querySelectorAll('.tp-lastmsg > .body').forEach((b, i) => {
+    const top = tops.get(lastMessageScrollKey(b, i));
+    if (top) b.scrollTop = top;
+  });
 }
 
 /* What the agent's hooks say about a running session, as facts for the panel; empty for a
    session that is not running; one with no row gets the note on why its state is not known. The ledger's words are text, escaped where they
-   are drawn, and never a class. */
-function agentFactsHtml(s) {
+   are drawn, and never a class. `opts` goes on to lastMessageHtml (`expanded`: the whole message). */
+function agentFactsHtml(s, opts = {}) {
   const a = s?.present ? s.agentSession : null;
   if (!a) return s?.present ? sideNote(unknownWhy(s)) : '';
   if (a.error) return `<div class="tp-muted">${esc(`エージェントの状態を読めません: ${a.error}`)}</div>`;
@@ -166,7 +181,7 @@ function agentFactsHtml(s) {
     ${doing}
     ${a.pending ? kv('ターン終了（保留）', esc(a.pending)) : ''}
     ${a.subagents?.length > 0 ? kv('サブエージェント', esc(`${a.subagents.length} 件`)) : ''}
-  </div>${lastMessageHtml(a, s)}`;
+  </div>${lastMessageHtml(a, s, opts)}`;
 }
 
 /* ── 詳細 of a session with no task ── */
