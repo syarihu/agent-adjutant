@@ -30,6 +30,7 @@
 const PANES = ['detail', 'term', 'review', 'check', 'history'];
 const nav = { board: null, view: 'agent', list: 'task', task: null, pane: 'detail' };
 let boards = [];                 // /api/boards: the sidebar's rows
+let boardsLoaded = false;        // the list has been read at least once: an empty `boards` before that is not "no boards"
 let multiBoard = /^\/b\//.test(location.pathname);   // the resident server: more than one board
 let pendingOwnRead = null;       // '<board>/<task id>' of an older AI 下読み link: its dialog opens once the task is drawn (task-read-view.js)
 let navEpoch = 0;                // bumped on a board switch, so a late answer for the old one is dropped
@@ -190,6 +191,8 @@ function applyNav(boardChanged, panelOnly = false) {
   if (boardChanged) render();
   if (boardChanged) refresh(true);
   else applyPendingTask();
+  // The first-run guide shows on some screens only, and the banner steps aside while it does (scDraw draws both).
+  scDraw();
 }
 
 function drawScreen(boardChanged) {

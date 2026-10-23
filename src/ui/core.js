@@ -481,6 +481,7 @@ async function fetchBoards() {
   boardsFetchedAt = Date.now();
   try {
     boards = await boardApi('', '/api/boards');
+    boardsLoaded = true;
     // A list that was on its way when a gate was answered still has it: ids are claimed fresh,
     // so a ref answered in this page is never a new gate.
     for (const b of boards) {
@@ -497,6 +498,8 @@ async function fetchBoards() {
     redrawHubPanel();
     // So is the rail's レビュー count, by the organisations the list adds.
     renderOthersCount();
+    // The first-run guide and the banner it stands in for follow the list (scDraw draws both).
+    scDraw();
   } catch {
     // The list is a convenience; the board polls keep reporting a server that is gone.
   } finally {

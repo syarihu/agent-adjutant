@@ -72,7 +72,7 @@ adjutant setup codex --remove    # removes only adjutant hooks
    ```
    Serves the unified web board at `http://127.0.0.1:4577`.
 
-   Before it starts, it checks the machine: tmux, `gh` and its login, whether the MCP server is registered with an agent, and the config file. It stops (exit 1) when tmux is missing and the tmux backend is in use, or when the config does not parse, and warns on stderr about the rest. The board shows the same list as a banner while a check fails, and `adj server status` prints it.
+   Before it starts, it checks the machine: tmux, `gh` and its login, whether the MCP server is registered with an agent, and the config file. It stops (exit 1) when tmux is missing and the tmux backend is in use, or when the config does not parse, and warns on stderr about the rest. The board shows the same list as a banner while a check fails, and `adj server status` prints it. Until a repository is added, the board shows a short guide instead: the checks as a checklist when one fails, then `adj hub` (the next step). It goes away once the first repository appears.
 
 2. **Start the repository hub**:
    In your repository's main checkout:
