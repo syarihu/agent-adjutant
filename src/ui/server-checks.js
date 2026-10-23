@@ -51,7 +51,8 @@ function scDraw() {
   const failing = scFailing(scData);
   // Once everything passes, a closed set is forgotten: the same failure coming back later is news again.
   if (!failing.length) { try { sessionStorage.removeItem(SC_DISMISS_KEY); } catch { /* nothing to forget then */ } }
-  box.hidden = !scVisible(failing, scDismissed());
+  // The first-run guide carries the same failures, so the banner steps aside while it shows.
+  box.hidden = egShown() || !scVisible(failing, scDismissed());
   // Written only when it changes: the banner is a live region, and the same list written again on every poll would be
   // read out again by a screen reader.
   const html = scHtml(failing);
@@ -59,6 +60,7 @@ function scDraw() {
     scShown = html;
     document.getElementById('sc-list').innerHTML = html;
   }
+  egDraw();
 }
 
 async function scLoad() {
@@ -74,21 +76,27 @@ async function scLoad() {
   scDraw();
 }
 
+/* Asks the resident to check again and keeps the answer; both the banner and the first-run guide use it. Returns
+   'ok' when the answer carries a result, 'pending' when the first check has not ended, 'failed' otherwise. */
+async function scRunCheck() {
+  try {
+    const data = await boardApi('', '/api/server/check', { method: 'POST', body: '{}' });
+    if (!scAnswered(data)) return 'pending';
+    scData = data;
+    scDraw();
+    return 'ok';
+  } catch {
+    return 'failed';
+  }
+}
+
 async function scRecheck() {
   const button = document.getElementById('sc-recheck');
   const note = document.getElementById('sc-note');
   button.disabled = true;
   try {
-    const data = await boardApi('', '/api/server/check', { method: 'POST', body: '{}' });
-    if (scAnswered(data)) {
-      scData = data;
-      note.textContent = '';
-      scDraw();
-    } else {
-      note.textContent = 'まだ確認中です';
-    }
-  } catch {
-    note.textContent = '再確認できませんでした';
+    const r = await scRunCheck();
+    note.textContent = r === 'ok' ? '' : r === 'pending' ? 'まだ確認中です' : '再確認できませんでした';
   } finally {
     button.disabled = false;
   }

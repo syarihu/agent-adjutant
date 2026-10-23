@@ -121,6 +121,7 @@ async function probeBoards() {
   if (multiBoard) return fetchBoards();
   try {
     boards = await boardApi('', '/api/boards');
+    boardsLoaded = true;
     multiBoard = true;
   } catch {
     multiBoard = false;
