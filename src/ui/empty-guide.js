@@ -15,11 +15,14 @@ const EG_LABELS = {
   mcp: ['MCP サーバーを登録する', 'MCP サーバーを登録済みです'],
 };
 
-/* Whether the guide shows. `state` is `{multiBoard, boardsLoaded, boardCount, view, list, task}`. No answer yet
-   (or a failed one) is not "no boards", and レビュー and TODO are left as they are: レビュー needs no repository. */
+/* Whether the guide shows. `state` is `{multiBoard, boardsLoaded, boardCount, board, view, list, task}`. No answer yet
+   (or a failed one) is not "no boards", and レビュー, TODO and an open task are left as they are: レビュー needs no
+   repository. The board view shows it on 「すべて」 only: a board's own address (an old link) names a board, and a task in it
+   may be on its way to its panel, which the guide would hide. */
 function egShows(state) {
   if (!state || !state.multiBoard || !state.boardsLoaded || state.boardCount !== 0) return false;
-  return state.view === 'agent' || (state.view === 'work' && state.list === 'task' && !state.task);
+  if (state.task) return false;
+  return (state.view === 'agent' && state.board === 'all') || (state.view === 'work' && state.list === 'task');
 }
 
 /* The steps: every check in the server's order while any of them fails, then the command that is always the last. */
@@ -68,7 +71,7 @@ function egHtml(steps) {
 
 /* Read from the page's globals on each call, which is cheap: scDraw asks it on every poll of the checks. */
 function egShown() {
-  return egShows({ multiBoard, boardsLoaded, boardCount: boards.length, view: nav.view, list: nav.list, task: nav.task });
+  return egShows({ multiBoard, boardsLoaded, boardCount: boards.length, board: nav.board, view: nav.view, list: nav.list, task: nav.task });
 }
 
 let egRendered = null;
@@ -115,10 +118,14 @@ async function egRecheck(button) {
   button.disabled = true;
   let r;
   try { r = await scRunCheck(); } finally { button.disabled = false; }
-  // The guide may have been redrawn by the answer (scDraw), so the note is looked up again, and the focus that was on
-  // the button that went with the old content is put on the new one.
-  const fresh = document.querySelector('#empty-guide [data-eg-recheck]');
-  if (fresh && fresh !== button && !button.isConnected) fresh.focus();
+  // The guide may have been redrawn by the answer (scDraw), and a disabled button may have dropped the focus. Only when
+  // the focus was lost (a person who has moved on meanwhile keeps theirs), it goes to the 再確認 button there now or,
+  // once every check passes and there is none, to the copy button of the adj hub step that is left.
+  const lost = !document.activeElement || document.activeElement === document.body || document.activeElement === button;
+  if (lost) {
+    const fresh = document.querySelector('#empty-guide:not([hidden]) [data-eg-recheck]') || document.querySelector('#empty-guide:not([hidden]) [data-eg-copy]');
+    if (fresh) fresh.focus();
+  }
   const live = document.querySelector('#empty-guide .eg-recheck-note') || note;
   if (live) live.textContent = r === 'ok' ? '' : r === 'pending' ? 'まだ確認中です' : '再確認できませんでした';
 }

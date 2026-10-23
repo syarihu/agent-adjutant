@@ -13,7 +13,7 @@ vm.runInContext(load('server-checks.js') + '\n' + load('empty-guide.js') + '\nth
 const { egShows, egSteps, egHtml } = ctx.api;
 
 const plain = x => JSON.parse(JSON.stringify(x));
-const base = { multiBoard: true, boardsLoaded: true, boardCount: 0, view: 'agent', list: 'task', task: null };
+const base = { multiBoard: true, boardsLoaded: true, boardCount: 0, board: 'all', view: 'agent', list: 'task', task: null };
 const check = (id, ok, extra = {}) => ({ id, ok, fatal: false, message: `${id} says`, fix: ok ? null : `fix ${id}`, ...extra });
 const answer = checks => ({ checkedAt: 1700000000, checks });
 
@@ -33,6 +33,8 @@ test('the guide leaves レビュー, TODO and an open task as they are', () => {
   assert.strictEqual(egShows({ ...base, view: 'work', list: 'review' }), false);
   assert.strictEqual(egShows({ ...base, view: 'todo' }), false);
   assert.strictEqual(egShows({ ...base, view: 'work', task: 't1' }), false);
+  assert.strictEqual(egShows({ ...base, view: 'agent', task: 't1' }), false);
+  assert.strictEqual(egShows({ ...base, view: 'agent', board: 'owner-repo' }), false);
 });
 
 test('with nothing failing, or no answer, only the adj hub step is listed', () => {
