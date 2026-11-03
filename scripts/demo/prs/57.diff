@@ -1,0 +1,58 @@
+diff --git a/src/catalog/stock.ts b/src/catalog/stock.ts
+index 3b18e51..a91c2f0 100644
+--- a/src/catalog/stock.ts
++++ b/src/catalog/stock.ts
+@@ -1,5 +1,15 @@
+ export async function fetchStock(sku: string): Promise<number> {
+   const res = await fetch(`/api/stock/${sku}`);
+   const body = await res.json();
+   return body.available;
+ }
++
++// Ask for every SKU in one request: the stock API answers up to 50 at a time.
++export async function fetchStocks(skus: string[]): Promise<Map<string, number>> {
++  const res = await fetch(`/api/stock?skus=${skus.join(",")}`);
++  const body: { sku: string; available: number }[] = await res.json();
++  return new Map(body.map(s => [s.sku, s.available]));
++}
+diff --git a/src/checkout/checkout.ts b/src/checkout/checkout.ts
+index 7c41d2e..5e0b9aa 100644
+--- a/src/checkout/checkout.ts
++++ b/src/checkout/checkout.ts
+@@ -1,12 +1,13 @@
+ import { total, CartItem } from "../cart/cart";
+-import { fetchStock } from "../catalog/stock";
++import { fetchStocks } from "../catalog/stock";
+ 
+ export async function checkout(items: CartItem[]): Promise<number> {
++  const stock = await fetchStocks(items.map(item => item.sku));
+   for (const item of items) {
+-    const stock = await fetchStock(item.sku);
+-    if (stock < item.quantity) {
++    if ((stock.get(item.sku) ?? 0) < item.quantity) {
+       throw new Error(`out of stock: ${item.sku}`);
+     }
+   }
+   return total(items);
+ }
+diff --git a/src/checkout/checkout.test.ts b/src/checkout/checkout.test.ts
+new file mode 100644
+index 0000000..d2c4e81
+--- /dev/null
++++ b/src/checkout/checkout.test.ts
+@@ -0,0 +1,14 @@
++import { describe, expect, it, vi } from "vitest";
++import { checkout } from "./checkout";
++import * as stock from "../catalog/stock";
++
++describe("checkout", () => {
++  it("asks for the stock of every item in one request", async () => {
++    const spy = vi.spyOn(stock, "fetchStocks").mockResolvedValue(new Map([["A", 3], ["B", 1]]));
++    await checkout([{ sku: "A", price: 100, quantity: 2 }, { sku: "B", price: 50, quantity: 1 }]);
++    expect(spy).toHaveBeenCalledTimes(1);
++  });
++  it("refuses an item that is out of stock", async () => {
++    vi.spyOn(stock, "fetchStocks").mockResolvedValue(new Map([["A", 0]]));
++    await expect(checkout([{ sku: "A", price: 100, quantity: 1 }])).rejects.toThrow("out of stock");
++  });
++});

@@ -1,0 +1,9 @@
+{
+  "name": "adjutant-demo-recorder",
+  "private": true,
+  "type": "module",
+  "description": "Records the board clips in docs/images with the browser installed on the machine",
+  "dependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}

@@ -93,6 +93,38 @@ adjutant setup codex --remove    # removes only adjutant hooks
 
 ---
 
+## The Board
+
+What the work looks like on the board. These clips are recorded from the real board with scripted agents in a fictional repository ([scripts/demo](scripts/demo)). The board itself is in Japanese.
+
+### Ask, then approve the plan
+
+Write what you want in 「依頼する」. The hub reads it, checks its reading with you before starting, and hands it to a worker, whose plan arrives as a question card.
+
+![Asking for a task and approving the plan](docs/images/board-request-plan.gif)
+
+### Investigation results
+
+A question comes back as a report: the conclusion, the cause and a fix, with an HTML report for the tables and charts.
+
+![An investigation report](docs/images/board-investigate-result.gif)
+
+### AI read-through of code your agent wrote
+
+When a worker opens a pull request, a read-only worker reads it first and writes notes on the diff lines. Its concerns go back to the worker with a draft comment each.
+
+![An AI read-through of a worker's pull request](docs/images/board-review-own.gif)
+
+### AI read-through of a PR you were asked to review
+
+Pull requests waiting on your review are read the same way. The comments you choose go into a pending review on GitHub; approving or requesting changes stays with you.
+
+![An AI read-through of a pull request to review](docs/images/board-review-others.gif)
+
+See [Web Board & Resident Server](docs/board.md) for every view.
+
+---
+
 ## Core Concepts
 
 ### Hub & Workers

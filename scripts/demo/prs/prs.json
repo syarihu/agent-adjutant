@@ -1,0 +1,14 @@
+{
+  "acme/shop-app#57": {
+    "title": "在庫の確認を 1 回の問い合わせにまとめる", "author": "demo", "head": "demo/checkout-batch",
+    "sha": "5e0b9aa4c1d27f3b8e6a90d2f4c3b1a7e8d9c057", "requested": false,
+    "body": "チェックアウトが遅い原因の調査結果を受けて、在庫 API を一括の問い合わせに変えます。カート 8 点で 2.5 秒 → 0.35 秒の見込みです。",
+    "commits": ["在庫の確認を 1 回の問い合わせにまとめる", "一括問い合わせのテストを足す"]
+  },
+  "acme/shop-app#42": {
+    "title": "ほしい物リストの API を追加", "author": "mika", "head": "mika/wishlist-api",
+    "sha": "9a7e2b3f10c4d5e6a7b8c9d0e1f2a3b4c5d6e042", "requested": true,
+    "body": "商品ページの「あとで買う」に使う API です。追加・一覧・削除の 3 つを用意しました。",
+    "commits": ["ほしい物リストのテーブルとクエリを追加", "ほしい物リストの API を追加", "テストを追加"]
+  }
+}
