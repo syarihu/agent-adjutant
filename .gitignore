@@ -14,4 +14,6 @@ config.json
 *.env
 
 # Agent worktrees / directories
-.claude/
+# .claude/* rather than .claude/ so that the commands below can be re-included.
+.claude/*
+!.claude/commands/
