@@ -10,6 +10,6 @@
     "startupDashboard": false
   },
   "repos": {
-    "acme/shop-app": { "taskSource": "github", "issueRepo": "acme/shop-app", "issueKeys": { "acme/shop-app": "SHOP" } }
+    "acme/shop-app": { "taskSource": "github", "issueRepo": "acme/shop-app", "issueKeys": { "acme/shop-app": "WEB" } }
   }
 }
