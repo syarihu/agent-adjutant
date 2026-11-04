@@ -93,7 +93,9 @@ fixtures.
   reads behind them. It does not wake or type into a terminal itself; it hands a message to `mail`.
   A record's `after` lists the sibling tasks (same parent) it comes after without being stacked on
   them; the parents view in `board::view` resolves each entry against that parent's children and
-  drops the ones that name nothing there or would close a loop.
+  drops the ones that name nothing there or would close a loop. The same view takes a child's base
+  from the record when it names a sibling's branch, else from its pull request's base
+  (`PrStatus.base`), so a stack built on GitHub after dispatch is seen too.
 - `gate`: gate records and `open`, `answer`, `send_back_read`, `close`, `close_resumed`, `get`, `list`. An answer
   goes back through `mail`, to the worker's outbox or, for a gate the hub opened, to the hub's
   inbox; a gate has no channel of its own and delivers nothing itself. `send_back_read` is `answer` for the

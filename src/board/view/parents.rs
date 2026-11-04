@@ -119,11 +119,13 @@ pub struct ParentChild {
     /// The branch its work is on, which the page names a stack's steps by.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
-    /// What it is cut from, without a leading `origin/`: the root of a stack names the branch
-    /// the series starts from.
+    /// What it is cut from, without a leading `origin/`. The base that names the sibling it is
+    /// `on`; otherwise its pull request's base, else the record's, so the root of a stack names
+    /// the branch the series starts from as GitHub has it now.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
-    /// The sibling whose branch this one is cut from: its id, and `on_hub` the hub that owns it.
+    /// The sibling whose branch this one is cut from, by the record's base else its pull
+    /// request's: its id, and `on_hub` the hub that owns it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,8 +237,16 @@ struct Kid {
     created_at: String,
     /// The branch its worktree is on, else the one its pull request is from.
     branch: Option<String>,
-    /// What it is cut from, without a leading `origin/`.
-    base: Option<String>,
+    /// What the record says it is cut from, without a leading `origin/`. A record may hold
+    /// `origin/main` here while its pull request is on a sibling's branch, so it does not win
+    /// unless it names a sibling.
+    record_base: Option<String>,
+    /// The branch its pull request is based on, as GitHub names it: how a stack built on GitHub
+    /// after dispatch shows.
+    pr_base: Option<String>,
+    /// The branch its pull request is from, which a sibling's `pr_base` names it by even when
+    /// its worktree's local branch is called something else.
+    pr_head: Option<String>,
     merged: bool,
     progress: Progress,
     /// The issue the task works on, which a sibling's `after` names it by.
@@ -279,13 +289,15 @@ pub(super) fn attach(
             order: t.order,
             created_at: t.created_at.clone(),
             branch: branch_of(t, inputs.linked),
-            base: t
-                .base
-                .as_deref()
+            record_base: branch_name(t.base.as_deref()),
+            pr_base: t
+                .pr_status
+                .as_ref()
+                .and_then(|p| p.base.as_deref())
                 .map(str::trim)
-                .map(|b| b.strip_prefix("origin/").unwrap_or(b))
                 .filter(|b| !b.is_empty())
                 .map(str::to_string),
+            pr_head: t.pr_status.as_ref().and_then(|p| p.head.clone()),
             merged: t.pr_status.as_ref().is_some_and(|p| p.state == "merged"),
             progress: progress_of(t),
             issue_url: t
@@ -352,6 +364,15 @@ fn branch_of(task: &task::Task, linked: &[Worktree]) -> Option<String> {
     from_worktree.or_else(|| task.pr_status.as_ref().and_then(|p| p.head.clone()))
 }
 
+/// A record's base as a branch name: trimmed, without a leading `origin/`, and nothing when
+/// empty.
+fn branch_name(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .map(|b| b.strip_prefix("origin/").unwrap_or(b))
+        .filter(|b| !b.is_empty())
+        .map(str::to_string)
+}
+
 /// Whether `entry` (an `after` value: an issue URL, or a key) names the issue at `url`. A key
 /// `issueKeys` resolves is turned into a URL the way a parent's is and compared as that URL
 /// alone. Only a key it does not resolve is compared with the key the sibling's URL carries
@@ -413,11 +434,39 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     acc.kids
         .sort_by(|a, b| (a.order, &a.created_at).cmp(&(b.order, &b.created_at)));
     // Whose branch each child is cut from, among the others; the first when two share a branch.
-    // A base no sibling is on (a branch of the repository, a sibling that is gone) is no step.
-    let on: Vec<Option<usize>> = (0..acc.kids.len())
+    // The record's base is taken when it names a sibling, else the pull request's. A base no
+    // sibling is on (a branch of the repository, a sibling that is gone) is no step.
+    // A record's base is a local branch, so it is matched against the sibling's branch; a pull
+    // request's base is GitHub's name, so against the sibling's pull request head first.
+    let kids = &acc.kids;
+    let by_record = |i: usize, base: &str| {
+        (0..kids.len()).find(|&j| j != i && kids[j].branch.as_deref() == Some(base))
+    };
+    let by_pr = |i: usize, base: &str| {
+        (0..kids.len())
+            .find(|&j| j != i && kids[j].pr_head.as_deref() == Some(base))
+            .or_else(|| by_record(i, base))
+    };
+    // Each child's sibling it is on, and the base that named it.
+    let found: Vec<Option<(usize, &str)>> = (0..kids.len())
         .map(|i| {
-            let base = acc.kids[i].base.as_deref()?;
-            (0..acc.kids.len()).find(|&j| j != i && acc.kids[j].branch.as_deref() == Some(base))
+            let record = kids[i].record_base.as_deref();
+            let pr = kids[i].pr_base.as_deref();
+            record
+                .and_then(|b| by_record(i, b).map(|j| (j, b)))
+                .or_else(|| pr.and_then(|b| by_pr(i, b).map(|j| (j, b))))
+        })
+        .collect();
+    let on: Vec<Option<usize>> = found.iter().map(|f| f.map(|(j, _)| j)).collect();
+    // What each is shown cut from: the base that named the sibling it is on, else what its pull
+    // request is based on now, else the record's.
+    let bases: Vec<Option<String>> = (0..kids.len())
+        .map(|i| match found[i] {
+            Some((_, base)) => Some(base.to_string()),
+            None => kids[i]
+                .pr_base
+                .clone()
+                .or_else(|| kids[i].record_base.clone()),
         })
         .collect();
     let before = siblings_before(&acc.kids, inputs);
@@ -476,7 +525,7 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
                 progress: acc.kids[i].progress,
                 pr_turn_at: acc.kids[i].pr_turn_at.clone(),
                 branch: acc.kids[i].branch.clone(),
-                base: acc.kids[i].base.clone(),
+                base: bases[i].clone(),
                 on: on[i].map(|j| acc.kids[j].id.clone()),
                 on_hub: on[i].map(|j| acc.kids[j].hub.clone()),
                 after: before[i].iter().map(|&j| acc.kids[j].id.clone()).collect(),

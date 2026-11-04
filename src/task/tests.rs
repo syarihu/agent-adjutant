@@ -737,6 +737,7 @@ fn pr(state: &str, review: &str, fail: u32, pending: u32) -> PrStatus {
             pending,
         },
         head: None,
+        base: None,
     }
 }
 
