@@ -1931,8 +1931,11 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at, dir = 
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
     document.body.classList.add('wk-dragging');
+    // The handle held, for a page with more than one (the columns' and the list's): only it is lit.
+    handle.classList.add('dragging');
     const move = ev => apply(clamp(at(ev.clientX)));
     const end = () => {
+      handle.classList.remove('dragging');
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);

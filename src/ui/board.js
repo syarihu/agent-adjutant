@@ -383,8 +383,8 @@ function renderColumns(stages) {
       cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
     }
 
-    // Right after the head in the document, so the keyboard reaches it before the cards; it is placed by CSS. One tab stop for the
-    // handles, the first: each sets the same width.
+    // In the head, so it spans the head's height and the keyboard reaches it before the cards; it is placed by CSS. One tab stop
+    // for the handles, the first: each sets the same width.
     const handle = document.createElement('div');
     handle.className = 'col-resize';
     handle.setAttribute('role', 'separator');
@@ -392,7 +392,7 @@ function renderColumns(stages) {
     handle.setAttribute('aria-label', '列の幅');
     handle.tabIndex = def.id === stages[0].def.id ? 0 : -1;
     handle.title = 'ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）';
-    col.appendChild(handle);
+    (col.querySelector('.col-header') || col).appendChild(handle);
     bindColResize(handle, col);
     col.appendChild(cards);
     ab.appendChild(col);
