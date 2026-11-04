@@ -851,3 +851,27 @@ fn an_after_is_sent_only_when_it_is_not_empty() {
     assert_eq!(json["children"][1]["after"], serde_json::json!(["api"]));
     assert_eq!(json["children"][1]["afterHub"], serde_json::json!([SLUG]));
 }
+
+#[test]
+fn a_key_the_config_resolves_names_only_that_github_issue_and_not_a_trackers_url_with_the_same_key()
+{
+    // Queued first, so a looser match would pick it.
+    let mut jira = with_parent("jira", 1, PARENT);
+    jira.issue_url = Some("https://example.test/browse/ALPHA-21".to_string());
+    let github = sibling("github", 2, 21, &[]);
+    let screen = sibling("screen", 3, 22, &["ALPHA-21"]);
+    let mut tasks = cards(vec![jira, github, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["github"]);
+}
+
+#[test]
+fn a_key_the_config_does_not_resolve_matches_a_linear_url_with_a_title() {
+    let mut api = with_parent("api", 1, "XYZ-1");
+    api.issue_url = Some("https://linear.app/acme/issue/XYZ-9/fix-the-thing".to_string());
+    let mut screen = with_parent("screen", 2, "XYZ-1");
+    screen.after = vec!["xyz-9".to_string()];
+    let mut tasks = cards(vec![api, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
+}

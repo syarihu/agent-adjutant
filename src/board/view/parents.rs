@@ -353,27 +353,22 @@ fn branch_of(task: &task::Task, linked: &[Worktree]) -> Option<String> {
 }
 
 /// Whether `entry` (an `after` value: an issue URL, or a key) names the issue at `url`. A key
-/// is turned into a URL the way a parent's is, and a key `issueKeys` does not resolve is matched
-/// to the last path segment of the URL, which is where a tracker such as Jira puts it.
+/// `issueKeys` resolves is turned into a URL the way a parent's is and compared as that URL
+/// alone. Only a key it does not resolve is compared with the key the sibling's URL carries
+/// (a Jira `/browse/KEY` or a Linear `/issue/KEY/...`, read as `adj task brief` reads it), so a
+/// tracker's URL cannot stand in for the GitHub issue a configured key names.
 fn names_issue(entry: &str, url: &str, inputs: &Inputs) -> bool {
     let entry = entry.trim();
-    let resolved = match crate::kernel::brief::is_key(entry) {
-        true => task::parent_issue_url(entry, inputs.issue_keys),
-        false => Some(entry.to_string()),
-    };
-    if resolved.is_some_and(|r| task::parent_key(&r) == task::parent_key(url)) {
-        return true;
+    if !crate::kernel::brief::is_key(entry) {
+        return task::parent_key(entry) == task::parent_key(url);
     }
-    crate::kernel::brief::is_key(entry)
-        && url
-            .trim()
-            .split(['?', '#'])
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .is_some_and(|last| last.eq_ignore_ascii_case(entry))
+    if let Some(resolved) = task::parent_issue_url(entry, inputs.issue_keys) {
+        return task::parent_key(&resolved) == task::parent_key(url);
+    }
+    // The key is all the sibling's URL is read for: which tracker it is does not matter, so no
+    // task sources are needed.
+    crate::kernel::brief::tracker_and_key(url.trim(), &[], inputs.issue_keys)
+        .is_some_and(|(_, key)| key.eq_ignore_ascii_case(entry))
 }
 
 /// For each child, the siblings (indexes) its `after` names: the ones that are in this group,
