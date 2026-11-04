@@ -1635,8 +1635,20 @@ fn a_split_is_planned_in_one_approval_without_a_shape_the_hub_invented() {
         "the hub brings a number of subtasks of its own: {split}"
     );
     assert!(
-        flowed.contains("The order they are filed in is the order, and no dependencies or priorities are written"),
+        flowed.contains("The order they are filed in is not the order to do them in, and no priorities are written"),
         "the filed order is presented as an order to work in: {split}"
+    );
+    // The exception is narrow: a dependency somebody stated, never one the hub guessed.
+    assert!(
+        flowed.contains(
+            "when the parent's body or the person says one subtask has to be reviewed after another"
+        ) && flowed.contains("`--after '{the other subtask's issue url}'`")
+            && flowed.contains("Never infer one from overlapping files or a guess"),
+        "the hub may write an `--after` it was not told about: {split}"
+    );
+    assert!(
+        flow(raw).contains("**Only a stated dependency is written**"),
+        "\"Keeping the structure\" lets the hub write an `--after` it was not told about"
     );
     // One approval, and it is a question rather than a line the person may not answer.
     assert!(

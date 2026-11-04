@@ -62,6 +62,7 @@ vm.runInContext([
   cut(/^function workSegments[\s\S]*?^}/m),
   cut(/^const workParentName = [^\n]*;/m),
   cut(/^function workParentMeta[\s\S]*?^}/m),
+  ...['afterTitlesOf', 'afterText'].map(n => fs.readFileSync(path.join(__dirname, '..', 'util.js'), 'utf8').match(new RegExp(`^function ${n}\\([\\s\\S]*?^}`, 'm'))[0]),
   cut(/^function parentDetailGroups[\s\S]*?^}/m),
   cut(/^function workSelectedParent[\s\S]*?^}/m),
   cut(/^function workRequestsHtml[\s\S]*?^}/m),

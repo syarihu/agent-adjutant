@@ -227,6 +227,8 @@ fn group(key: &str, children: usize) -> ParentGroup {
                 base: None,
                 on: None,
                 on_hub: None,
+                after: Vec::new(),
+                after_hub: Vec::new(),
             })
             .collect(),
         merged: 0,

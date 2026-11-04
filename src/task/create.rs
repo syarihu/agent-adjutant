@@ -79,6 +79,7 @@ pub(super) fn check_typed(new: &NewTask) -> Result<(), String> {
     if let Some(parent) = typed(&new.parent) {
         check_parent(parent)?;
     }
+    check_after(&new.after)?;
     Ok(())
 }
 
@@ -119,6 +120,14 @@ pub(super) fn check_parent(parent: &str) -> Result<(), String> {
         return Ok(());
     }
     check_url(parent, "a task")
+}
+
+/// The sibling tasks a task comes after, named as a parent is: they are quoted on a command line
+/// the same way.
+pub(super) fn check_after(after: &[String]) -> Result<(), String> {
+    after
+        .iter()
+        .try_for_each(|entry| check_parent(entry).map_err(|e| format!("bad entry in after: {e}")))
 }
 
 /// What a request to the hub must hold before it is written: the person's words, and a parent the
@@ -192,6 +201,7 @@ pub fn create(
         executor: new.executor,
         base: new.base,
         parent: new.parent,
+        after: normalize_after(new.after),
         worktree_name: new.worktree_name,
         // A request not yet read is held whatever the caller said: the gate the hub opens
         // after reading it is the person's chance to correct it.

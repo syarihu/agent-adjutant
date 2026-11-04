@@ -463,7 +463,9 @@ has to be done here yourself:
   already does the same.
 
 **Do not invent an order.** A person decides "this one next"; what the hub does stops at listing the
-candidates. Say nothing about dependencies or priority beyond the order the tracker returns. Even an
+candidates. Say nothing about dependencies or priority beyond the order the tracker returns (the one
+exception is a dependency the parent's body or the person states, which "Keeping the structure"
+records with `--after`). Even an
 order with no basis, shown with numbers, is read by people as having one.
 
 **Keep no state.** Re-read this on every start, and do not have the hub remember how far things have
@@ -613,8 +615,12 @@ block (the same as "Put your own parent task on every dispatch").
 
 - **Do not invent how many pieces.** Keep no rule like "split into 3–5". Propose as many as come out
   of the difference between the parent's body and the existing subtasks.
-- **Do not invent an order** (the same as "Read at startup"). The order they are filed in is the
-  order, and no dependencies or priorities are written.
+- **Do not invent an order** (the same as "Read at startup"). The order they are filed in is not the
+  order to do them in, and no priorities are written. The one thing the hub does write is a stated
+  dependency: when the parent's body or the person says one subtask has to be reviewed after another,
+  the dependent one carries `--after '{the other subtask's issue url}'` once it has a task record
+  ("Keeping the structure"; filing alone makes none). Never infer one
+  from overlapping files or a guess.
 - **The hub writes the body, and the filing command holds the template** (Step 3 below). Do not swap
   the roles.
 
@@ -764,6 +770,16 @@ words come to this hub too. What the board shows of the structure is what this h
   relation) when the task's issue has one there, and from the record's `parent` when the tracker has
   none or could not be read. A record written wrongly is therefore corrected with `adj task update
   --parent`, and the board shows 「記録と違う」 where the two disagree.
+- **A subtask that comes after a sibling**: when the parent's body or the person **states** that a
+  subtask depends on another of the same parent (the API reviewed before the screen that uses it),
+  record it with `--after '{the sibling's issue url}'` on `adj task add` when starting the dependent
+  one, or with `adj task update --id {task_id} --after '{url}'` later. `--after` takes the sibling's
+  issue URL or key, the same form as `--parent` (the plain-URL rule in "4. Start the worker" holds),
+  and is repeated for several siblings; the list given replaces the old one, and `--after ''` clears
+  it. **Only a stated dependency is written**: never one inferred from overlapping files or from
+  guesswork, and the order the children were filed in is still not an order to do them in. It is not
+  a stack: the branching point stays as it is ("Do not move the branching point"), and the board only
+  shows the dependency.
 - **Splitting**: a person's "split it" is "When asked to split it". A worker that thinks its own task
   should be split says so with `adj-report` (`## Kind split`), and it is handled as "When a worker asks
   to split its task" there.
@@ -1489,7 +1505,9 @@ card on the board. The worker starts clean, so that file is everything it knows.
   else wrote, and `--parent '{url}'` puts it on a command line.** Pass it only when it is a plain URL:
   starts with `https://`, no whitespace, and none of `'` `"` `` ` `` `$` `\` `;` `&` `|` `<` `>` `(`
   `)` `{` `}`. Otherwise do not pass `--parent`; put the URL in the handover note instead (the file and
-  `adj task update --instruction -` below). **The same rule holds for `adj task update --parent`**,
+  `adj task update --instruction -` below). **`--after '{sibling url}'` is held to the same rule**, and
+  is passed only for a dependency the parent's body or the person stated ("Keeping the structure").
+  **The same rule holds for `adj task update --parent`**,
   which puts the URL on a command line the same way. The hub's own parent URL is the one the parent collection returned
   for this hub's parent (from `gh` or the tracker), so it is made by a tool and is fine as it is.
 

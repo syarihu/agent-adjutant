@@ -93,6 +93,9 @@ pub fn update_checked(
             field.clone_from(value);
         }
     }
+    if let Some(after) = &patch.after {
+        task.after = normalize_after(after.clone());
+    }
     // What the board has brought to the hub belongs to the PR it read. Another PR starts over:
     // kept, the count would leave a new PR at the limit before its first review.
     if task.pr != pr_before {
