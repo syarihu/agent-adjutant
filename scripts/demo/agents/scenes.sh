@@ -33,7 +33,7 @@ hub_read_coupon() {
   tool Grep "expiresAt" "src/cart/coupon.ts:4, src/cart/coupon.ts:8"
   adj task update --id "$task" --title "有効期限の当日にクーポンが使えない" --worktree-name coupon-expiry > /dev/null
   tool Bash "adj task update --id $task --title …" "有効期限の当日にクーポンが使えない"
-  gate_open dispatch <<JSON
+  if ! gate_open dispatch <<JSON
 {
   "kind": "dispatch",
   "task": "$task",
@@ -43,6 +43,10 @@ hub_read_coupon() {
   "decided": "- やること: 有効期限の当日にもクーポンを適用する\n- 完了条件: PR を出すまで\n- 止める所: 計画の承認\n- 実装: worker\n- worktree 名: coupon-expiry"
 }
 JSON
+  then
+    stop "着手前の確認を出せませんでした。"
+    return 1
+  fi
   tool Bash "adj gate open (着手確認)" "server: up · ボードで確認を待っています"
   say "着手前の確認をボードに出しました。答えが来たら worker を起動します。"
   stop "着手前の確認をボードに出しました。答えが来たら worker を起動します。"

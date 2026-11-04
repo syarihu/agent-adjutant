@@ -25,7 +25,8 @@ for m in json.load(open(sys.argv[1]))["messages"]: print(m["name"]+"\t"+m["kind"
   while IFS=$'\t' read -r name kind subject; do
     body=$(adj pending --read "$name")
     printf '%s\n' "$body" > "$DEMO_ROOT/last-$kind.md"
-    hub_message "$name" "$kind" "$subject" "$body" < /dev/null
-    adj pending --ack "$name" > /dev/null
+    if hub_message "$name" "$kind" "$subject" "$body" < /dev/null; then
+      adj pending --ack "$name" > /dev/null
+    fi
   done
 done

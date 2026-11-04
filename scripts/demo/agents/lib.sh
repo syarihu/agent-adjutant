@@ -37,7 +37,7 @@ tool() { # tool NAME ARG [RESULT]
 # the line it typed, so the box is redrawn as keys arrive rather than left to the tty's echo.
 draw_box() { # draw_box TEXT
   local cols; cols=$(tput cols 2>/dev/null || echo 80)
-  local rule; rule=$(printf '%*s' "$cols" '' | tr ' ' '─')
+  local rule="" i; for ((i = 0; i < cols; i++)); do rule+="─"; done
   local width=$((cols - 4)) text="$1" first=1
   printf '\e8\e[J%s%s%s\n' "$C_DIM" "$rule" "$C_OFF"
   while :; do

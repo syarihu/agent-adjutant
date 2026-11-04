@@ -4,9 +4,15 @@
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 
+# Remove only a directory this script made, so a DEMO_ROOT pointed elsewhere is never wiped.
+if [ -e "$DEMO_ROOT" ] && [ ! -f "$DEMO_ROOT/.adj-demo" ]; then
+  echo "refusing to remove $DEMO_ROOT: it has no .adj-demo marker (remove it by hand if it is a demo root)" >&2
+  exit 1
+fi
 dtmux kill-server 2>/dev/null || true
 rm -rf "$DEMO_ROOT"
 mkdir -p "$DEMO_ROOT"/{bin,state,gh-config,home/.claude,src}
+touch "$DEMO_ROOT/.adj-demo"
 
 cat > "$GIT_CONFIG_GLOBAL" <<'G'
 [user]
