@@ -58,6 +58,7 @@ pub fn add(args: &TaskAddArgs) -> Result<(), String> {
         issue_url: args.issue_url.clone(),
         base: args.base.clone(),
         parent: args.parent.clone(),
+        after: task::normalize_after(args.after.clone()),
         worktree_name: args.worktree_name.clone(),
         auto_start: !args.ask_first,
         needs_reading: args.needs_reading,
@@ -155,6 +156,9 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
         pr: text(args.pr.as_deref()),
         base: text(args.base.as_deref()),
         parent: text(args.parent.as_deref()),
+        // Absent leaves the list alone; `--after ''` is one blank entry, which normalizes to
+        // none and so clears it.
+        after: (!args.after.is_empty()).then(|| task::normalize_after(args.after.clone())),
         jules_session: text(args.jules_session.as_deref()),
         jules_by: None,
         note: text(note.as_deref()),

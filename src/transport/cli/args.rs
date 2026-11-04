@@ -1070,6 +1070,10 @@ pub(crate) struct TaskAddArgs {
     /// The parent task's URL
     #[arg(long)]
     pub(crate) parent: Option<String>,
+    /// A sibling task (same parent) this one comes after without being stacked on it: its issue
+    /// URL, or a key the board matches to one. Repeat it for several
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub(crate) after: Vec<String>,
     /// Needed only when there is no issue to take a name from
     #[arg(long)]
     pub(crate) worktree_name: Option<String>,
@@ -1176,6 +1180,10 @@ pub(crate) struct TaskUpdateArgs {
     /// The parent task's URL, or a key the hub turns into one ('' clears it)
     #[arg(long)]
     pub(crate) parent: Option<String>,
+    /// The sibling tasks it comes after, as issue URLs or keys; repeat it for several, and the
+    /// ones given replace the old list ('' clears it)
+    #[arg(long, action = clap::ArgAction::Append)]
+    pub(crate) after: Vec<String>,
     /// The Jules session implementing it ('' clears it)
     #[arg(long)]
     pub(crate) jules_session: Option<String>,

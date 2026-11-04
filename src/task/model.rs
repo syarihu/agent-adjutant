@@ -411,6 +411,11 @@ pub struct Task {
     /// which tracker it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// Issue URLs (or tracker keys) of sibling tasks under the same parent that this one comes
+    /// after without being stacked on them, such as a screen that needs the API reviewed first.
+    /// Only the hub writes it, from what the parent's body or the person says.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
     /// Needed only when there is no issue to take a name from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_name: Option<String>,
@@ -577,6 +582,8 @@ pub struct NewTask {
     pub issue_url: Option<String>,
     pub base: Option<String>,
     pub parent: Option<String>,
+    /// Sibling tasks this one comes after; see `Task::after`.
+    pub after: Vec<String>,
     pub worktree_name: Option<String>,
     pub worktree: Option<String>,
     pub auto_start: bool,
@@ -599,6 +606,7 @@ impl Default for NewTask {
             issue_url: None,
             base: None,
             parent: None,
+            after: Vec::new(),
             worktree_name: None,
             worktree: None,
             auto_start: true,
@@ -655,6 +663,11 @@ impl NewTask {
             issue_url: read::<Option<String>>(fields, "issueUrl")?.flatten(),
             base: read::<Option<String>>(fields, "base")?.flatten(),
             parent: read::<Option<String>>(fields, "parent")?.flatten(),
+            after: fields
+                .get("after")
+                .map(after_field)
+                .transpose()?
+                .unwrap_or_default(),
             worktree_name: read::<Option<String>>(fields, "worktreeName")?.flatten(),
             worktree: read::<Option<String>>(fields, "worktree")?.flatten(),
             auto_start: read(fields, "autoStart")?.unwrap_or(defaults.auto_start),
@@ -695,6 +708,9 @@ pub struct TaskPatch {
     /// The parent task: a URL, or a key the hub turns into one. Checked like the one a new task
     /// is given (`check`).
     pub parent: Option<Option<String>>,
+    /// The sibling tasks this one comes after, replacing the whole list: `Some(vec![])` clears
+    /// it. Each entry is checked like the parent (`check`).
+    pub after: Option<Vec<String>>,
     pub jules_session: Option<Option<String>>,
     pub jules_by: Option<Option<String>>,
     pub note: Option<Option<String>>,
@@ -761,6 +777,7 @@ impl TaskPatch {
             pr: text_field(input, "pr")?,
             base: text_field(input, "base")?,
             parent: text_field(input, "parent")?,
+            after: input.get("after").map(after_field).transpose()?,
             jules_session: text_field(input, "julesSession")?,
             jules_by: text_field(input, "julesBy")?,
             note: text_field(input, "note")?,
@@ -796,6 +813,9 @@ impl TaskPatch {
         if let Some(Some(parent)) = &self.parent {
             super::create::check_parent(parent)?;
         }
+        if let Some(after) = &self.after {
+            super::create::check_after(after)?;
+        }
         // The three below are written as the hub read them out of free text, and are quoted on
         // a command line or made into a path and a branch afterwards.
         if let Some(Some(name)) = &self.worktree_name {
@@ -818,6 +838,38 @@ impl TaskPatch {
         }
         Ok(())
     }
+}
+
+/// The sibling list as a request words it: an array of strings, one string, or `null`. A string
+/// that is empty and `null` both mean "none", since a command line has no way to say `null`.
+/// Anything else is refused rather than read as "none": `{"after": 42}` would otherwise wipe
+/// the list it meant to set.
+fn after_field(value: &serde_json::Value) -> Result<Vec<String>, String> {
+    use serde_json::Value;
+    let bad =
+        |other: &Value| format!("after has to be a string, a list of strings or null, not {other}");
+    Ok(normalize_after(match value {
+        Value::Null => Vec::new(),
+        Value::String(v) => vec![v.clone()],
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_string).ok_or_else(|| bad(item)))
+            .collect::<Result<_, _>>()?,
+        other => return Err(bad(other)),
+    }))
+}
+
+/// A sibling list as it is stored: trimmed, blanks dropped, a task named twice kept once and in
+/// the order it was first given.
+pub fn normalize_after(entries: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for entry in entries {
+        let entry = entry.trim();
+        if !entry.is_empty() && !out.iter().any(|seen| seen == entry) {
+            out.push(entry.to_string());
+        }
+    }
+    out
 }
 
 /// A title as `adj task update --title` keeps it: the first non-blank line, trimmed, cut to the

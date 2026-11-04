@@ -1894,7 +1894,8 @@ function parentDetailGroups(p, { rowOf = () => null, stateOf = () => null, away 
   const step = c => {
     const st = stateOf(c);
     const [cls, label] = WORK_PROGRESS[c.progress] || WORK_PROGRESS['not-started'];
-    return `<li><span class="seg ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>${st ? workGlyphHtml(st) : ''}<span>${esc(rowOf(c)?.task?.title || c.title || `#${c.id}`)}</span>${c.branch ? `<span class="base">${esc(c.branch)}</span>` : ''}</li>`;
+    const after = afterText(afterTitlesOf(children, c, x => rowOf(x)?.task?.title || x.title));
+    return `<li><span class="seg ${cls}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>${st ? workGlyphHtml(st) : ''}<span>${esc(rowOf(c)?.task?.title || c.title || `#${c.id}`)}</span>${c.branch ? `<span class="base">${esc(c.branch)}</span>` : ''}${after ? `<span class="base">${esc(after)}</span>` : ''}</li>`;
   };
   const list = children.length
     ? `<ul class="wk-stack-list">${root?.base ? `<li><span class="base">${esc(root.base)} ←</span></li>` : ''}${children.map(step).join('')}</ul>`

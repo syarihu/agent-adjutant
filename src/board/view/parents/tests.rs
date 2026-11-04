@@ -681,3 +681,197 @@ fn a_group_names_a_title_hub_only_when_the_issue_keys_match() {
     assert_eq!(groups[0].title, None);
     assert_eq!(groups[0].total, 1);
 }
+
+const PARENT: &str = "https://github.com/acme/widget/issues/9";
+
+/// A child of `PARENT` that works on the issue numbered `issue`, coming after `after`.
+fn sibling(id: &str, order: u32, issue: u32, after: &[&str]) -> task::Task {
+    let mut t = with_parent(id, order, PARENT);
+    t.issue_url = Some(format!("https://github.com/acme/widget/issues/{issue}"));
+    t.after = after.iter().map(|a| a.to_string()).collect();
+    t
+}
+
+fn after_of(group: &ParentGroup, id: &str) -> Vec<String> {
+    group
+        .children
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap()
+        .after
+        .clone()
+}
+
+#[test]
+fn a_child_comes_after_the_sibling_whose_issue_url_it_names() {
+    let api = sibling("api", 1, 21, &[]);
+    let screen = sibling(
+        "screen",
+        2,
+        22,
+        &["https://github.com/acme/widget/issues/21"],
+    );
+    let mut tasks = cards(vec![api, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
+    assert_eq!(after_of(&groups[0], "api"), Vec::<String>::new());
+    let screen = groups[0]
+        .children
+        .iter()
+        .find(|c| c.id == "screen")
+        .unwrap();
+    assert_eq!(screen.after_hub, vec![SLUG]);
+    assert!(!groups[0].stacked, "an `after` is not a stack");
+}
+
+#[test]
+fn a_key_names_the_sibling_it_resolves_to_and_a_url_in_another_case_matches() {
+    let api = sibling("api", 1, 21, &[]);
+    let screen = sibling("screen", 2, 22, &["ALPHA-21"]);
+    let other = sibling(
+        "other",
+        3,
+        23,
+        &["https://GitHub.com/Acme/Widget/issues/21/"],
+    );
+    let mut tasks = cards(vec![api, screen, other]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
+    assert_eq!(after_of(&groups[0], "other"), vec!["api"]);
+}
+
+#[test]
+fn a_key_the_config_does_not_resolve_matches_the_last_segment_of_a_trackers_url() {
+    let mut api = with_parent("api", 1, "WEB-1");
+    api.issue_url = Some("https://example.test/browse/WEB-7".to_string());
+    let mut screen = with_parent("screen", 2, "WEB-1");
+    screen.after = vec!["web-7".to_string()];
+    let mut tasks = cards(vec![api, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
+
+    // A query or a fragment on the sibling's URL is not part of the key.
+    for tail in ["?view=all", "#comments", "/?a=b#c"] {
+        let mut api = with_parent("api", 1, "WEB-1");
+        api.issue_url = Some(format!("https://example.test/browse/WEB-7{tail}"));
+        let mut screen = with_parent("screen", 2, "WEB-1");
+        screen.after = vec!["WEB-7".to_string()];
+        let mut tasks = cards(vec![api, screen]);
+        let groups = run(&mut tasks, &mut [], &[], &never);
+        assert_eq!(after_of(&groups[0], "screen"), vec!["api"], "{tail}");
+    }
+}
+
+#[test]
+fn an_entry_no_sibling_answers_to_is_dropped() {
+    let api = sibling("api", 1, 21, &[]);
+    let screen = sibling(
+        "screen",
+        2,
+        22,
+        &[
+            "https://github.com/acme/widget/issues/404",
+            "ALPHA-405",
+            "not a task",
+        ],
+    );
+    let mut tasks = cards(vec![api, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert!(after_of(&groups[0], "screen").is_empty());
+    assert_eq!(groups[0].children.len(), 2);
+}
+
+#[test]
+fn a_task_of_another_parent_is_not_a_sibling() {
+    let mut elsewhere = sibling("api", 1, 21, &[]);
+    elsewhere.parent = Some("https://github.com/acme/widget/issues/10".to_string());
+    let screen = sibling(
+        "screen",
+        2,
+        22,
+        &["https://github.com/acme/widget/issues/21"],
+    );
+    let mut tasks = cards(vec![elsewhere, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    let nine = groups.iter().find(|g| g.url == PARENT).unwrap();
+    assert!(after_of(nine, "screen").is_empty());
+}
+
+#[test]
+fn a_child_does_not_come_after_itself() {
+    let screen = sibling(
+        "screen",
+        1,
+        22,
+        &["https://github.com/acme/widget/issues/22"],
+    );
+    let mut tasks = cards(vec![screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert!(after_of(&groups[0], "screen").is_empty());
+}
+
+#[test]
+fn a_cycle_of_afters_loses_one_edge_and_no_child() {
+    let a = sibling("a", 1, 21, &["ALPHA-22"]);
+    let b = sibling("b", 2, 22, &["ALPHA-23"]);
+    let c = sibling("c", 3, 23, &["ALPHA-21"]);
+    let mut tasks = cards(vec![a, b, c]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(ids(&groups[0]), vec!["a", "b", "c"]);
+    assert_eq!(after_of(&groups[0], "a"), vec!["b"]);
+    assert_eq!(after_of(&groups[0], "b"), vec!["c"]);
+    assert!(after_of(&groups[0], "c").is_empty());
+}
+
+#[test]
+fn an_after_leaves_the_order_and_the_stack_as_they_were() {
+    let (mut a, wa) = stacked("a", 1, "main", "feat-a");
+    let (mut b, wb) = stacked("b", 2, "feat-a", "feat-b");
+    a.issue_url = Some("https://github.com/acme/widget/issues/20".to_string());
+    // Stacked on `a` and also after `api`, which comes last in the queue.
+    b.after = vec!["ALPHA-21".to_string()];
+    let api = sibling("api", 3, 21, &[]);
+    let mut tasks = cards(vec![a, b, api]);
+    let groups = run(&mut tasks, &mut [], &[wa, wb], &never);
+    assert_eq!(ids(&groups[0]), vec!["a", "b", "api"]);
+    assert!(groups[0].stacked);
+    assert_eq!(groups[0].children[1].on.as_deref(), Some("a"));
+    assert_eq!(groups[0].children[1].after, vec!["api"]);
+}
+
+#[test]
+fn an_after_is_sent_only_when_it_is_not_empty() {
+    let api = sibling("api", 1, 21, &[]);
+    let screen = sibling("screen", 2, 22, &["ALPHA-21"]);
+    let mut tasks = cards(vec![api, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    let json = serde_json::to_value(&groups[0]).unwrap();
+    assert!(json["children"][0].get("after").is_none());
+    assert!(json["children"][0].get("afterHub").is_none());
+    assert_eq!(json["children"][1]["after"], serde_json::json!(["api"]));
+    assert_eq!(json["children"][1]["afterHub"], serde_json::json!([SLUG]));
+}
+
+#[test]
+fn a_key_the_config_resolves_names_only_that_github_issue_and_not_a_trackers_url_with_the_same_key()
+{
+    // Queued first, so a looser match would pick it.
+    let mut jira = with_parent("jira", 1, PARENT);
+    jira.issue_url = Some("https://example.test/browse/ALPHA-21".to_string());
+    let github = sibling("github", 2, 21, &[]);
+    let screen = sibling("screen", 3, 22, &["ALPHA-21"]);
+    let mut tasks = cards(vec![jira, github, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["github"]);
+}
+
+#[test]
+fn a_key_the_config_does_not_resolve_matches_a_linear_url_with_a_title() {
+    let mut api = with_parent("api", 1, "XYZ-1");
+    api.issue_url = Some("https://linear.app/acme/issue/XYZ-9/fix-the-thing".to_string());
+    let mut screen = with_parent("screen", 2, "XYZ-1");
+    screen.after = vec!["xyz-9".to_string()];
+    let mut tasks = cards(vec![api, screen]);
+    let groups = run(&mut tasks, &mut [], &[], &never);
+    assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
+}

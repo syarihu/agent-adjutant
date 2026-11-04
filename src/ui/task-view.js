@@ -416,6 +416,9 @@ function parentRowHtml(task) {
     const chain = mine ? kids.filter(c => inStack(c) && rootOf(c) === rootOf(mine)) : [];
     const at = chain.indexOf(mine);
     if (group.stacked && at >= 0) h += dim(`stack ${at + 1}/${chain.length}`);
+    // Not stacked, but the hub recorded that it waits on these siblings being reviewed first.
+    const after = afterText(afterTitlesOf(kids, mine));
+    if (after) h += dim(after);
   }
   if (p.source === 'tracker' && p.recordKey && p.recordKey !== p.key) h += dim('記録と違う');
   if (httpUrl(p.url)) {
