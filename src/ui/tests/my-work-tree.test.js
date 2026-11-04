@@ -856,6 +856,21 @@ test('the overview links the issue, says how many are merged, and lists every ch
   assert.ok(over.html.indexOf('main ←') < over.html.indexOf('First'));
 });
 
+test('a child that comes after siblings says so in the overview, and one that does not says nothing', () => {
+  const children = [
+    { id: 'api', hub: 'b-x', progress: 'working', title: 'API <v2>' },
+    { id: 'screen', hub: 'b-x', progress: 'not-started', title: 'Screen', after: ['api'], afterHub: ['b-x'] },
+  ];
+  const [over] = groupsOf({ ...baseParent, stacked: false, children });
+  assert.strictEqual(over.html.split('「API &lt;v2&gt;」の後').length - 1, 1);
+  const [screenLi] = over.html.split('<li>').filter(li => li.includes('Screen'));
+  assert.ok(screenLi.includes('の後'));
+  const [apiLi] = over.html.split('<li>').filter(li => li.includes('API &lt;v2&gt;'));
+  assert.ok(!apiLi.includes('の後'));
+  const [plain1] = groupsOf({ ...baseParent, stacked: false, children: [children[0]] });
+  assert.ok(!plain1.html.includes('の後'));
+});
+
 test('a parent with no children says so, and a parent that is not a stack has no base line', () => {
   const [over] = groupsOf({ ...baseParent, children: [], merged: 0, total: 0, stacked: false });
   assert.ok(over.html.includes('子タスクはまだありません') && !over.html.includes('<li>'));

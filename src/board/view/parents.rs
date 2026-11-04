@@ -367,6 +367,9 @@ fn names_issue(entry: &str, url: &str, inputs: &Inputs) -> bool {
     crate::kernel::brief::is_key(entry)
         && url
             .trim()
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
             .trim_end_matches('/')
             .rsplit('/')
             .next()

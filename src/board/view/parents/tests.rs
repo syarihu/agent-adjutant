@@ -749,6 +749,17 @@ fn a_key_the_config_does_not_resolve_matches_the_last_segment_of_a_trackers_url(
     let mut tasks = cards(vec![api, screen]);
     let groups = run(&mut tasks, &mut [], &[], &never);
     assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
+
+    // A query or a fragment on the sibling's URL is not part of the key.
+    for tail in ["?view=all", "#comments", "/?a=b#c"] {
+        let mut api = with_parent("api", 1, "WEB-1");
+        api.issue_url = Some(format!("https://example.test/browse/WEB-7{tail}"));
+        let mut screen = with_parent("screen", 2, "WEB-1");
+        screen.after = vec!["WEB-7".to_string()];
+        let mut tasks = cards(vec![api, screen]);
+        let groups = run(&mut tasks, &mut [], &[], &never);
+        assert_eq!(after_of(&groups[0], "screen"), vec!["api"], "{tail}");
+    }
 }
 
 #[test]

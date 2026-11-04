@@ -1,6 +1,6 @@
 /* How the board says a child comes after siblings it is not stacked on (`after` and `afterHub` of a child of a
-   parent, from src/board/view/parents.rs): afterTitlesOf and afterText in src/ui/util.js, and where
-   the parent's detail dialog uses them. Run with `node --test`. */
+   parent, from src/board/view/parents.rs): the pure helpers afterTitlesOf and afterText in src/ui/util.js only.
+   The parent's detail dialog using them is tested in my-work-tree.test.js; the task panel's row is not tested. Run with `node --test`. */
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
