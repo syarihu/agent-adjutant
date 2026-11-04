@@ -1,6 +1,33 @@
+use std::time::Duration;
+
 /// Where the inbox, the records and the boards live. A constant for the same reason
 /// `config::CONFIG_ENV` is one: it has to be forwarded by name into the tabs this opens.
 pub const STATE_DIR_ENV: &str = "ADJUTANT_STATE_DIR";
+
+/// Raises (never lowers) the short deadlines given to the outside programs a server start's
+/// machine check runs and the one PR read a move to `done` makes. It exists for the
+/// integration tests, whose stub programs can take seconds to start on a loaded machine.
+/// A whole number of seconds; anything else (unset, empty, not a number, 0) leaves the
+/// deadlines as they are.
+pub const DEADLINE_FLOOR_ENV: &str = "ADJUTANT_DEADLINE_FLOOR_SECS";
+
+/// What `deadline` becomes when raised by `floor`: `max(deadline, floor seconds)` when `floor`
+/// parses as a `u64` greater than 0 (trimming whitespace), else `deadline` unchanged.
+pub fn deadline_with_floor(deadline: Duration, floor: Option<&str>) -> Duration {
+    let floor_secs = floor
+        .map(str::trim)
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&s| s > 0);
+    match floor_secs {
+        Some(secs) => deadline.max(Duration::from_secs(secs)),
+        None => deadline,
+    }
+}
+
+/// `deadline` raised by `DEADLINE_FLOOR_ENV` when that variable is set.
+pub fn deadline(deadline: Duration) -> Duration {
+    deadline_with_floor(deadline, std::env::var(DEADLINE_FLOOR_ENV).ok().as_deref())
+}
 
 /// Overrides `startupDashboard` for one hub, set by `adj hub --no-dashboard` / `--dashboard`.
 ///
@@ -67,3 +94,46 @@ pub const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 /// Where Codex keeps its files (its `hooks.json` among them). Unset on the default install,
 /// whose directory is `~/.codex`.
 pub const CODEX_HOME_ENV: &str = "CODEX_HOME";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_deadline_floor_only_ever_raises_a_deadline() {
+        let default = Duration::from_secs(5);
+
+        // unset
+        assert_eq!(deadline_with_floor(default, None), default);
+
+        // empty
+        assert_eq!(deadline_with_floor(default, Some("")), default);
+        assert_eq!(deadline_with_floor(default, Some("   ")), default);
+
+        // garbage
+        assert_eq!(deadline_with_floor(default, Some("abc")), default);
+        assert_eq!(deadline_with_floor(default, Some("12abc")), default);
+
+        // 0
+        assert_eq!(deadline_with_floor(default, Some("0")), default);
+        assert_eq!(deadline_with_floor(default, Some("  0  ")), default);
+
+        // a smaller value (deadline kept)
+        assert_eq!(
+            deadline_with_floor(Duration::from_secs(10), Some("5")),
+            Duration::from_secs(10)
+        );
+
+        // a larger value (floor used)
+        assert_eq!(
+            deadline_with_floor(default, Some("60")),
+            Duration::from_secs(60)
+        );
+
+        // whitespace
+        assert_eq!(
+            deadline_with_floor(default, Some(" \t 60 \n")),
+            Duration::from_secs(60)
+        );
+    }
+}

@@ -25,6 +25,7 @@ pub struct Checked {
 
 /// How long moving a task to `done` may wait on `gh` to read its PR once. Short: a person is
 /// waiting on the move, and a PR that cannot be read in time is simply left as recorded.
+/// Raised by `ADJUTANT_DEADLINE_FLOOR_SECS` when set.
 const FINISH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The records a refresh acts on: every one with a `pr` that is not finished. Finished ones
@@ -159,7 +160,7 @@ pub(super) fn read_on_finish(ctx: &Context, task: Task) -> Task {
     else {
         return task;
     };
-    let deadline = std::time::Instant::now() + FINISH_TIMEOUT;
+    let deadline = std::time::Instant::now() + crate::infra::env::deadline(FINISH_TIMEOUT);
     match read_prs(&[pr], deadline).answers.into_iter().next() {
         Some((_, Some(summary))) if task.pr_status.as_ref() != Some(&summary) => {
             store_pr_status(ctx, task, summary, Seen::Finished)
