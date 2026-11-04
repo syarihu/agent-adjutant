@@ -303,18 +303,24 @@ fn an_issue_that_looks_like_a_flag_is_not_handed_to_gh() {
 }
 
 #[test]
-fn the_query_asks_for_the_branch_a_pull_request_is_from_and_it_is_kept() {
+fn the_query_asks_for_the_branches_a_pull_request_is_from_and_on_and_they_are_kept() {
     assert!(graphql_query(1).contains("headRefName"));
-    let with_head = pr_json("OPEN", false, None, 0, "null").replacen(
+    assert!(graphql_query(1).contains("baseRefName"));
+    let with_branches = pr_json("OPEN", false, None, 0, "null").replacen(
         r#""title":"#,
-        r#""headRefName":"feature/a","title":"#,
+        r#""headRefName":"feature/a","baseRefName":"feature/z","title":"#,
         1,
     );
-    assert_eq!(one(with_head).1.head.as_deref(), Some("feature/a"));
-    // A record or an answer without it has none, and it is not written out.
+    let status = one(with_branches).1;
+    assert_eq!(status.head.as_deref(), Some("feature/a"));
+    assert_eq!(status.base.as_deref(), Some("feature/z"));
+    // A record or an answer without them has none, and they are not written out.
     let status = one(pr_json("OPEN", false, None, 0, "null")).1;
     assert_eq!(status.head, None);
-    assert!(!serde_json::to_string(&status).unwrap().contains("head"));
+    assert_eq!(status.base, None);
+    let written = serde_json::to_string(&status).unwrap();
+    assert!(!written.contains("head"));
+    assert!(!written.contains("base"));
 }
 
 #[test]

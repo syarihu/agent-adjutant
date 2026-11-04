@@ -251,7 +251,7 @@ pub(super) fn graphql_query(n: usize) -> String {
         })
         .collect();
     format!(
-        "query({}){{{}}} fragment F on PullRequest {{ state isDraft title headRefName reviewDecision \
+        "query({}){{{}}} fragment F on PullRequest {{ state isDraft title headRefName baseRefName reviewDecision \
          reviewRequests{{totalCount}} latestOpinionatedReviews(first:20){{nodes{{state}}}} \
          commits(last:1){{nodes{{commit{{statusCheckRollup{{state \
          contexts(first:1){{checkRunCountsByState{{state count}} \
@@ -490,6 +490,7 @@ fn parse_pr(pr: &Value) -> Answer {
             review: review.to_string(),
             ci,
             head: word(pr, "headRefName").filter(|h| !h.is_empty()),
+            base: word(pr, "baseRefName").filter(|b| !b.is_empty()),
         }),
     )
 }

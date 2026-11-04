@@ -32,12 +32,17 @@ fn on_branch(mut t: task::Task, worktree: &str, base: Option<&str>) -> task::Tas
 }
 
 fn pr(state: &str, head: Option<&str>) -> task::PrStatus {
+    pr_on(state, head, None)
+}
+
+fn pr_on(state: &str, head: Option<&str>, base: Option<&str>) -> task::PrStatus {
     task::PrStatus {
         state: state.to_string(),
         title: String::new(),
         review: "none".to_string(),
         ci: task::CheckCounts::default(),
         head: head.map(str::to_string),
+        base: base.map(str::to_string),
     }
 }
 
@@ -289,6 +294,109 @@ fn a_finished_child_keeps_its_place_in_the_stack_by_its_pull_requests_head() {
     assert_eq!(ids(g), ["a", "b"]);
     assert_eq!(g.children[1].on.as_deref(), Some("a"));
     assert_eq!(g.merged, 1);
+}
+
+/// A child on `/w/<id>`, on branch `feature/<id>`, whose pull request is based on `pr_base`.
+fn with_pr_base(id: &str, order: u32, record_base: Option<&str>, pr_base: &str) -> task::Task {
+    let p = "https://github.com/acme/widget/issues/9";
+    let mut t = on_branch(with_parent(id, order, p), &format!("/w/{id}"), record_base);
+    t.pr_status = Some(pr_on("open", None, Some(pr_base)));
+    t
+}
+
+fn feature_worktrees(ids: &[&str]) -> Vec<Worktree> {
+    ids.iter()
+        .map(|id| worktree(&format!("/w/{id}"), &format!("feature/{id}")))
+        .collect()
+}
+
+#[test]
+fn a_stack_built_on_github_is_seen_by_the_pull_requests_base() {
+    let a = with_pr_base("a", 1, None, "main");
+    let b = with_pr_base("b", 2, None, "feature/a");
+    let mut tasks = cards(vec![b, a]);
+    let g = &run(&mut tasks, &mut [], &feature_worktrees(&["a", "b"]), &never)[0];
+    assert!(g.stacked);
+    assert_eq!(ids(g), ["a", "b"]);
+    assert_eq!(g.children[1].on.as_deref(), Some("a"));
+    assert_eq!(g.children[1].base.as_deref(), Some("feature/a"));
+    assert_eq!(g.children[0].on, None);
+}
+
+#[test]
+fn a_record_base_naming_a_sibling_beats_the_pull_requests_base() {
+    let a = with_pr_base("a", 1, None, "main");
+    let b = with_pr_base("b", 2, None, "main");
+    let c = with_pr_base("c", 3, Some("feature/a"), "feature/b");
+    let mut tasks = cards(vec![a, b, c]);
+    let g = &run(
+        &mut tasks,
+        &mut [],
+        &feature_worktrees(&["a", "b", "c"]),
+        &never,
+    )[0];
+    let c = g.children.iter().find(|c| c.id == "c").unwrap();
+    assert_eq!(c.on.as_deref(), Some("a"));
+    assert_eq!(c.base.as_deref(), Some("feature/a"));
+}
+
+#[test]
+fn a_record_base_that_is_no_sibling_falls_through_to_the_pull_requests_base() {
+    let a = with_pr_base("a", 1, Some("origin/main"), "main");
+    let b = with_pr_base("b", 2, Some("origin/main"), "feature/a");
+    let mut tasks = cards(vec![a, b]);
+    let g = &run(&mut tasks, &mut [], &feature_worktrees(&["a", "b"]), &never)[0];
+    assert!(g.stacked);
+    assert_eq!(g.children[1].on.as_deref(), Some("a"));
+    assert_eq!(g.children[1].base.as_deref(), Some("feature/a"));
+}
+
+#[test]
+fn the_stack_shrinks_when_the_bottom_pull_request_merges_and_the_next_moves_to_main() {
+    let mut a = with_pr_base("a", 1, None, "main");
+    a.pr_status = Some(pr_on("merged", Some("feature/a"), Some("main")));
+    let b = with_pr_base("b", 2, None, "main");
+    let c = with_pr_base("c", 3, None, "feature/b");
+    let linked = feature_worktrees(&["b", "c"]);
+    let mut tasks = cards(vec![a.clone(), b, c]);
+    let g = &run(&mut tasks, &mut [], &linked, &never)[0];
+    // b is no longer on the merged a; c is still on b.
+    assert!(g.stacked);
+    let b = g.children.iter().find(|c| c.id == "b").unwrap();
+    assert_eq!(b.on, None);
+    assert_eq!(b.base.as_deref(), Some("main"));
+    let c = g.children.iter().find(|c| c.id == "c").unwrap();
+    assert_eq!(c.on.as_deref(), Some("b"));
+    // With only a and b left, nothing is stacked.
+    let mut tasks = cards(vec![a, with_pr_base("b", 2, None, "main")]);
+    let g = &run(&mut tasks, &mut [], &linked, &never)[0];
+    assert!(!g.stacked);
+    assert!(g.children.iter().all(|c| c.on.is_none()));
+}
+
+#[test]
+fn a_pull_request_based_on_a_branch_no_sibling_is_on_is_no_step_but_is_shown() {
+    let a = with_pr_base("a", 1, None, "release/1.0");
+    let b = with_pr_base("b", 2, None, "main");
+    let mut tasks = cards(vec![a, b]);
+    let g = &run(&mut tasks, &mut [], &feature_worktrees(&["a", "b"]), &never)[0];
+    assert!(!g.stacked);
+    assert_eq!(g.children[0].on, None);
+    assert_eq!(g.children[0].base.as_deref(), Some("release/1.0"));
+}
+
+#[test]
+fn a_base_no_sibling_is_on_is_shown_as_the_pull_request_has_it_now() {
+    // The record was cut from main, and the pull request was moved onto a release branch since.
+    let a = with_pr_base("a", 1, Some("origin/main"), "release/1.0");
+    let b = with_pr_base("b", 2, Some("origin/main"), "feature/a");
+    let mut tasks = cards(vec![a, b]);
+    let g = &run(&mut tasks, &mut [], &feature_worktrees(&["a", "b"]), &never)[0];
+    assert_eq!(ids(g), ["a", "b"]);
+    assert_eq!(g.children[0].on, None);
+    assert_eq!(g.children[0].base.as_deref(), Some("release/1.0"));
+    assert_eq!(g.children[1].on.as_deref(), Some("a"));
+    assert_eq!(g.children[1].base.as_deref(), Some("feature/a"));
 }
 
 #[test]

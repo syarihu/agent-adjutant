@@ -278,6 +278,10 @@ pub struct PrStatus {
     /// gone; a record written before it was read has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
+    /// The branch the pull request is based on, which it merges into. Read to see a stack built on
+    /// GitHub after dispatch; a record written before it was read has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
 }
 
 /// Whose turn a pull request is, read from what GitHub said about it. Derived on every read
