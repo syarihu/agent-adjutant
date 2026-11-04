@@ -20,6 +20,7 @@ impl Task {
             executor: Executor::default(),
             base: None,
             parent: None,
+            after: Vec::new(),
             worktree_name: None,
             auto_start: true,
             order: 0,
@@ -2253,4 +2254,79 @@ fn a_request_with_no_words_or_a_parent_the_hub_cannot_use_is_refused_before_an_i
     // `check_request` writes nothing: no task directory, no reservation.
     assert!(list(&ctx.state, &ctx.repo.slug).is_empty());
     assert!(!dir(&ctx.state, &ctx.repo.slug).exists());
+}
+
+#[test]
+fn after_reads_a_list_a_single_string_or_null_and_refuses_anything_else() {
+    let read = |v: serde_json::Value| TaskPatch::from_json(&json!({ "after": v }));
+    let url = "https://github.com/acme/widget/issues/21";
+    assert_eq!(
+        read(json!([url, " ALPHA-22 ", "", url])).unwrap().after,
+        Some(vec![url.to_string(), "ALPHA-22".to_string()])
+    );
+    assert_eq!(read(json!(url)).unwrap().after, Some(vec![url.to_string()]));
+    assert_eq!(read(json!("")).unwrap().after, Some(vec![]));
+    assert_eq!(read(json!(null)).unwrap().after, Some(vec![]));
+    assert_eq!(TaskPatch::from_json(&json!({})).unwrap().after, None);
+    for bad in [
+        json!(42),
+        json!({"a": 1}),
+        json!([url, 7]),
+        json!(["a; b"]),
+        json!("two words"),
+    ] {
+        assert!(read(bad.clone()).is_err(), "{bad} was taken");
+    }
+}
+
+#[test]
+fn a_new_task_takes_and_checks_its_after() {
+    let (_sandbox, ctx) = hub();
+    let with =
+        |after: serde_json::Value| NewTask::from_json(&json!({ "body": "b", "after": after }));
+    assert!(with(json!(42)).is_err());
+    let bad = with(json!(["a; b"])).unwrap();
+    assert!(
+        create(&ctx, bad, false).is_err(),
+        "an entry that cannot be quoted was written"
+    );
+    let new = with(json!(["ALPHA-21", "ALPHA-21"])).unwrap();
+    let (task, _) = create(&ctx, new, false).unwrap();
+    assert_eq!(task.after, vec!["ALPHA-21"]);
+}
+
+#[test]
+fn an_update_sets_replaces_and_clears_after_and_a_refused_one_writes_nothing() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let set = |after: Vec<&str>| TaskPatch {
+        after: Some(after.into_iter().map(str::to_string).collect()),
+        ..TaskPatch::default()
+    };
+    let (updated, _) = update(&ctx, &task.id, &set(vec!["ALPHA-1", "ALPHA-2"]), false).unwrap();
+    assert_eq!(updated.after, vec!["ALPHA-1", "ALPHA-2"]);
+    // A patch that does not name it leaves it.
+    let other = TaskPatch {
+        note: Some(Some("n".to_string())),
+        ..TaskPatch::default()
+    };
+    assert_eq!(
+        update(&ctx, &task.id, &other, false).unwrap().0.after.len(),
+        2
+    );
+    assert!(update(&ctx, &task.id, &set(vec!["a; b"]), false).is_err());
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &task.id)
+            .unwrap()
+            .after
+            .len(),
+        2
+    );
+    let (replaced, _) = update(&ctx, &task.id, &set(vec!["ALPHA-3"]), false).unwrap();
+    assert_eq!(replaced.after, vec!["ALPHA-3"]);
+    let (cleared, _) = update(&ctx, &task.id, &set(vec![]), false).unwrap();
+    assert!(cleared.after.is_empty());
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("\"after\""), "{text}");
 }

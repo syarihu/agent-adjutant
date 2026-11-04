@@ -234,10 +234,11 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 /* The progress bar of a parent: a segment per child. */
 .wk-bar { display: flex; gap: 2px; height: 6px; min-width: 60px; flex: 1; max-width: 220px; }
 .wk-bar i { flex: 1; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); }
-.wk-bar i.merged { background: var(--md-sys-color-success); }
-.wk-bar i.done { background: color-mix(in srgb, var(--md-sys-color-success) 45%, var(--md-sys-color-outline-variant)); }
-.wk-bar i.pr { background: var(--md-sys-color-tertiary); }
-.wk-bar i.working { background: var(--md-sys-color-primary); }
+.wk-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+.wk-bar i.merged, .wk-dot.merged { background: var(--md-sys-color-success); }
+.wk-bar i.done, .wk-dot.done { background: color-mix(in srgb, var(--md-sys-color-success) 45%, var(--md-sys-color-outline-variant)); }
+.wk-bar i.pr, .wk-dot.pr { background: var(--md-sys-color-tertiary); }
+.wk-bar i.working, .wk-dot.working { background: var(--md-sys-color-primary); }
 .wk-bar i.not-started { background: var(--md-sys-color-outline-variant); }
 .wk-stack { font-size: 10.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 
@@ -446,8 +447,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 
 /* The parent's detail dialog: how far it is, and its children. */
 .wk-overview { display: flex; flex-direction: column; gap: 12px; }
-.wk-ov-bar { display: flex; align-items: center; gap: 10px; }
-.wk-ov-bar .wk-bar { max-width: none; height: 8px; }
+/* The breakdown sits under the bar, so the bar keeps the dialog's full width. */
+.wk-ov-bar { display: flex; flex-direction: column; gap: 6px; }
+.wk-ov-bar .wk-bar { flex: none; max-width: none; height: 8px; }
 .wk-ov-n { flex: none; font-size: 12.5px; font-weight: 800; }
 .wk-stack-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .wk-stack-list li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }

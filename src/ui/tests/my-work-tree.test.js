@@ -60,8 +60,13 @@ vm.runInContext([
   cut(/^function workNewOrder[\s\S]*?^}/m),
   cut(/^const WORK_PROGRESS = \{[\s\S]*?^\};/m),
   cut(/^function workSegments[\s\S]*?^}/m),
+  cut(/^const WORK_COUNTED = [^\n]*;/m),
+  cut(/^function workProgressCounts[\s\S]*?^}/m),
+  cut(/^function workProgressText[\s\S]*?^}/m),
+  cut(/^function workProgressHtml[\s\S]*?^}/m),
   cut(/^const workParentName = [^\n]*;/m),
   cut(/^function workParentMeta[\s\S]*?^}/m),
+  ...['afterTitlesOf', 'afterText'].map(n => fs.readFileSync(path.join(__dirname, '..', 'util.js'), 'utf8').match(new RegExp(`^function ${n}\\([\\s\\S]*?^}`, 'm'))[0]),
   cut(/^function parentDetailGroups[\s\S]*?^}/m),
   cut(/^function workSelectedParent[\s\S]*?^}/m),
   cut(/^function workRequestsHtml[\s\S]*?^}/m),
@@ -747,7 +752,7 @@ test('a parent group headed by its hub row says the parent, and how far it has g
   const p1 = chip('p1', true, '#2', 'b-p1');
   const parent = { key: '#2', number: 2, title: 'Ship it', merged: 1, total: 3, children: [{ id: 'a', progress: 'merged' }], stacked: true };
   const html = run('workItemHtml(r, "tree", false, p)', { r: { ...hubItem({ id: 'p1', parent: true, key: '#2', slug: 'b-p1', unseen: 0 }), hub: p1.hub }, p: parent });
-  assert.ok(html.includes('#2 Ship it') && html.includes('1 / 3 マージ') && html.includes('wk-stack') && html.includes('class="wk-bar"'));
+  assert.ok(html.includes('#2 Ship it') && html.includes('1 マージ / 3') && html.includes('wk-dot merged') && html.includes('wk-stack') && html.includes('class="wk-bar"'));
   // Without a hub the group keeps the parent heading, with its button to the parent.
   const [repoNode] = treeOf([trow('t1', '#2')], new Map());
   const [group] = repoNode.items;
@@ -846,13 +851,28 @@ test('a parent\'s detail has the overview, 離れていた間に and the actions
 test('the overview links the issue, says how many are merged, and lists every child with its progress, state and branch', () => {
   const [over] = groupsOf(baseParent, { rowOf: c => (c.id === 'b' ? { task: { title: 'Row title' } } : null), stateOf: c => (c.id === 'b' ? 'working' : null) });
   assert.ok(over.html.includes('href="https://github.com/acme/a/issues/2"') && over.html.includes('target="_blank"') && over.html.includes('rel="noopener noreferrer"') && over.html.includes('GitHub で開く'));
-  assert.ok(over.html.includes('wk-ov-bar') && over.html.includes('1 / 3 マージ'));
+  assert.ok(over.html.includes('wk-ov-bar') && over.html.includes('1 マージ · 1 作業中 / 3'));
   assert.strictEqual(over.html.split('<li>').length - 1, 3);
   assert.ok(over.html.includes('First &lt;1&gt;') && !over.html.includes('First <1>'));
   assert.ok(over.html.includes('Row title') && !over.html.includes('>Second<'));
   assert.ok(over.html.includes('<g working>') && over.html.includes('adj/a'));
   assert.ok(over.html.includes('main ←'));
   assert.ok(over.html.indexOf('main ←') < over.html.indexOf('First'));
+});
+
+test('a child that comes after siblings says so in the overview, and one that does not says nothing', () => {
+  const children = [
+    { id: 'api', hub: 'b-x', progress: 'working', title: 'API <v2>' },
+    { id: 'screen', hub: 'b-x', progress: 'not-started', title: 'Screen', after: ['api'], afterHub: ['b-x'] },
+  ];
+  const [over] = groupsOf({ ...baseParent, stacked: false, children });
+  assert.strictEqual(over.html.split('「API &lt;v2&gt;」の後').length - 1, 1);
+  const [screenLi] = over.html.split('<li>').filter(li => li.includes('Screen'));
+  assert.ok(screenLi.includes('の後'));
+  const [apiLi] = over.html.split('<li>').filter(li => li.includes('API &lt;v2&gt;'));
+  assert.ok(!apiLi.includes('の後'));
+  const [plain1] = groupsOf({ ...baseParent, stacked: false, children: [children[0]] });
+  assert.ok(!plain1.html.includes('の後'));
 });
 
 test('a parent with no children says so, and a parent that is not a stack has no base line', () => {
@@ -1320,4 +1340,39 @@ test('the parent a selection opens: its own, or the one a parent-task hub runs, 
   // A worker's row has no parent to open here.
   assert.strictEqual(pick({ repo, row: { board: 'b-1', session: { id: 'w', kind: 'worker' } } }), null);
   assert.strictEqual(pick(null), null);
+});
+
+/* ── the count beside a parent's bar tells what the bar draws ── */
+
+const kids = (...ps) => ps.map((progress, i) => ({ id: String(i), progress }));
+
+test('the progress text counts the children by what the bar colours, leaves out the states with none, and ends with the total', () => {
+  const p = { children: kids(...Array(5).fill('merged'), ...Array(3).fill('done'), ...Array(8).fill('pr'), ...Array(6).fill('working')), total: 42 };
+  assert.strictEqual(run('workProgressText(p)', { p }), '5 マージ · 3 完了 · 8 PR · 6 作業中 / 42');
+  assert.strictEqual(run('workProgressText(p)', { p: { children: kids('pr', 'pr', 'merged'), total: 3 } }), '1 マージ · 2 PR / 3');
+});
+
+test('what the tracker counts and the board does not list is the remainder: it is in the total and is not shown', () => {
+  const p = { children: kids('working'), total: 10 };
+  assert.strictEqual(run('workProgressText(p)', { p }), '1 作業中 / 10');
+  assert.strictEqual(run('workProgressText(p)', { p: { children: kids('working', 'pr', 'pr'), total: 1 } }), '2 PR · 1 作業中 / 3');
+});
+
+test('a parent with nothing under way reads 0 of the total, and a child of no or an unknown progress is not started', () => {
+  assert.strictEqual(run('workProgressText(p)', { p: { children: kids('not-started', 'weird', undefined), total: 7 } }), '0 / 7');
+  assert.strictEqual(run('workProgressText(p)', { p: { total: 4 } }), '0 / 4');
+});
+
+test('the server\'s merged count is not what is shown: a child the bar draws as not started is not counted even if it is merged', () => {
+  const p = { merged: 5, total: 2, children: [{ id: 'a', progress: 'not-started', merged: true }, { id: 'b', progress: 'working' }] };
+  assert.strictEqual(run('workProgressText(p)', { p }), '1 作業中 / 2');
+});
+
+test('the progress html has a dot of the bar\'s colour before each state, and the bar\'s label is the text', () => {
+  const p = { children: kids('merged', 'working', 'working'), total: 4, stacked: false };
+  assert.strictEqual(run('workProgressHtml(p)', { p }), '<i class="wk-dot merged" aria-hidden="true"></i>1 マージ · <i class="wk-dot working" aria-hidden="true"></i>2 作業中 / 4');
+  assert.strictEqual(run('workProgressHtml(p)', { p: { children: [], total: 3 } }), '0 / 3');
+  const [bar, count] = run('workParentMeta(p)', { p });
+  assert.ok(bar.includes(`aria-label="${run('workProgressText(p)', { p })}"`));
+  assert.strictEqual(count, run('workProgressHtml(p)', { p }));
 });

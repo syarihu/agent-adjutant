@@ -228,6 +228,15 @@ You can start a freeform worker session without pre-creating an issue or task:
 - API: `POST /api/sessions` with `{"instruction": "...", "worktreeName": "..."}`.
 - Later link to a task via `POST /api/sessions/<id>/link`.
 
+### Finding a Session (Search Palette)
+Press **Cmd+K** (macOS) or **Ctrl+K** (elsewhere), or click 検索 in the left rail, to search the sessions and open one:
+- Candidates are the sessions the list shows. On the resident server that is 「いまの仕事」 for the selected organisation, across all its repositories; a board served alone searches its own sessions.
+- Type words separated by spaces; every word must match (case-insensitive) somewhere in the task title, issue key or number, branch, repository, parent issue (key or title) or worktree name. Sessions waiting on you come first; the rest by repository, then by task.
+- `↑` / `↓` move the highlight, `Enter` or a click opens the session as clicking its row does, and `Esc` closes the palette and returns focus to where it was. An `Enter` that confirms an IME conversion does nothing.
+- A session that is not running is only selected; its panel offers 再開, and nothing is resumed or opened from the palette.
+- While the work document is loading or failed to load, or a repository in the selected organisation could not be read, the palette says so instead of showing "no results".
+- On macOS Cmd+K also works while a session terminal has the keyboard; Ctrl+K there (and every other key) goes to the terminal, where it is readline's kill-line. Elsewhere the shortcut does nothing inside a terminal. It does nothing while another dialog is open.
+
 ### Session Lifecycle Actions
 From the terminal action bar or API:
 - **Resume (`POST /api/sessions/<id>/resume`)**: Reopen a stopped worker in its existing worktree.

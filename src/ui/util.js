@@ -276,6 +276,21 @@ function when(stamp) {
    `javascript:` link. */
 const httpUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
 
+/* The siblings `child` comes after without being stacked on them (the board's `after` and `afterHub`, side by side), as
+   their titles in the order the hub wrote them. `titleOf` lets a caller give a title it knows better than the group's. */
+function afterTitlesOf(children, child, titleOf = c => c.title) {
+  return (child?.after || [])
+    .map((id, i) => {
+      const sib = (children || []).find(c => c.id === id && c.hub === child.afterHub?.[i]);
+      return sib ? (titleOf(sib) || `#${sib.id}`) : null;
+    })
+    .filter(Boolean);
+}
+/* Those titles as one phrase, 「API」の後; empty when there are none. */
+function afterText(titles) {
+  return titles.length ? `${titles.map(t => `「${t}」`).join('')}の後` : '';
+}
+
 /* What `adj phase --set` writes, in the words a card shows. */
 const PHASE_LABEL = { plan:'計画', implement:'実装', 'self-review':'セルフレビュー', verify:'動作確認',
                       pr:'PR', 'pr-bots':'bot待ち', review:'レビュー対応', report:'報告' };

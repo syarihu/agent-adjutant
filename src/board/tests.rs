@@ -310,6 +310,7 @@ fn a_task(id: &str, status: task::Status) -> task::Task {
         executor: task::Executor::Worker,
         base: None,
         parent: None,
+        after: Vec::new(),
         worktree_name: None,
         auto_start: true,
         order: 0,

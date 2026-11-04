@@ -395,7 +395,7 @@ function parentGroupOf(task) {
 }
 
 /* The 親タスク row: the parent the board joined to the task, where that came from, how many of its
-   children are merged, and the place in a stack. A task whose parent is only in its record shows the
+   children have got, and the place in a stack. A task whose parent is only in its record shows the
    record's own text. */
 function parentRowHtml(task) {
   const p = task.parentIssue;
@@ -408,10 +408,15 @@ function parentRowHtml(task) {
   let h = link + dim(p.source === 'tracker' ? '(GitHub)' : '(記録)');
   const group = parentGroupOf(task);
   if (group) {
-    h += dim(`${group.merged} / ${group.total} マージ`);
+    h += dim(workProgressText(group));
     // The place in a stack, from the chain the board lists for the parent (`stackOf`).
     const st = group.stacked ? stackOf(task, stateNow()) : null;
     if (st) h += dim(`stack ${st.at + 1}/${st.chain.length}`);
+    // Not stacked, but the hub recorded that it waits on these siblings being reviewed first.
+    const kids = group.children || [];
+    const mine = kids.find(c => c.id === task.id && c.hub === p.hub);
+    const after = afterText(afterTitlesOf(kids, mine));
+    if (after) h += dim(after);
   }
   if (p.source === 'tracker' && p.recordKey && p.recordKey !== p.key) h += dim('記録と違う');
   if (httpUrl(p.url)) {

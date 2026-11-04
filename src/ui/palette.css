@@ -1,0 +1,57 @@
+/* ── The session search (palette.js) ── */
+#palette {
+  width: min(640px, 94vw);
+  margin: 12vh auto auto;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+#palette:not([open]) { display: none; }
+.pal-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+}
+#palette-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  font-size: 15px;
+}
+#palette-input::placeholder { color: var(--md-sys-color-on-surface-variant); }
+#palette-input:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 4px; border-radius: var(--md-shape-corner-xs); }
+.pal-status { margin: 0; padding: 10px 18px; font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); }
+.pal-status:empty { display: none; }
+.pal-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.pal-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--md-shape-corner-md);
+  cursor: pointer;
+}
+.pal-opt[aria-selected="true"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: -2px;
+}
+.pal-glyph { flex: none; font-size: 20px; color: var(--md-sys-color-on-surface-variant); }
+.pal-glyph.waiting, .pal-glyph.permission { color: var(--md-sys-color-warning); }
+.pal-glyph.failed { color: var(--md-sys-color-error); }
+.pal-glyph.working, .pal-glyph.restarting { color: var(--md-sys-color-primary); }
+.pal-opt[aria-selected="true"] .pal-glyph { color: inherit; }
+.pal-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pal-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-sub { font-size: 12px; color: var(--md-sys-color-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-opt[aria-selected="true"] .pal-sub { color: inherit; opacity: .8; }
+.pal-state { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
+.pal-opt[aria-selected="true"] .pal-state { color: inherit; }
+.pal-hint { padding: 8px 18px; border-top: 1px solid var(--md-sys-color-outline-variant); font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }

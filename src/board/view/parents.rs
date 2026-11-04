@@ -128,6 +128,13 @@ pub struct ParentChild {
     pub on: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_hub: Option<String>,
+    /// The siblings it comes after without being stacked on them (the record's `after`, kept to
+    /// those that name a sibling of the same parent): their ids, and `after_hub` the hub that
+    /// owns each, in the same order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub after_hub: Vec<String>,
 }
 
 /// What `attach` reads besides the cards.
@@ -232,6 +239,10 @@ struct Kid {
     base: Option<String>,
     merged: bool,
     progress: Progress,
+    /// The issue the task works on, which a sibling's `after` names it by.
+    issue_url: Option<String>,
+    /// The record's `after`, as written.
+    after: Vec<String>,
 }
 
 struct Acc {
@@ -277,6 +288,14 @@ pub(super) fn attach(
                 .map(str::to_string),
             merged: t.pr_status.as_ref().is_some_and(|p| p.state == "merged"),
             progress: progress_of(t),
+            issue_url: t
+                .issue_url
+                .as_deref()
+                .or(t.issue.as_deref())
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .map(str::to_string),
+            after: t.after.clone(),
         };
         let acc = groups
             .entry(resolved.parent.key.clone())
@@ -333,6 +352,63 @@ fn branch_of(task: &task::Task, linked: &[Worktree]) -> Option<String> {
     from_worktree.or_else(|| task.pr_status.as_ref().and_then(|p| p.head.clone()))
 }
 
+/// Whether `entry` (an `after` value: an issue URL, or a key) names the issue at `url`. A key
+/// `issueKeys` resolves is turned into a URL the way a parent's is and compared as that URL
+/// alone. Only a key it does not resolve is compared with the key the sibling's URL carries
+/// (a Jira `/browse/KEY` or a Linear `/issue/KEY/...`, read as `adj task brief` reads it), so a
+/// tracker's URL cannot stand in for the GitHub issue a configured key names.
+fn names_issue(entry: &str, url: &str, inputs: &Inputs) -> bool {
+    let entry = entry.trim();
+    if !crate::kernel::brief::is_key(entry) {
+        return task::parent_key(entry) == task::parent_key(url);
+    }
+    if let Some(resolved) = task::parent_issue_url(entry, inputs.issue_keys) {
+        return task::parent_key(&resolved) == task::parent_key(url);
+    }
+    // The key is all the sibling's URL is read for: which tracker it is does not matter, so no
+    // task sources are needed.
+    crate::kernel::brief::tracker_and_key(url.trim(), &[], inputs.issue_keys)
+        .is_some_and(|(_, key)| key.eq_ignore_ascii_case(entry))
+}
+
+/// For each child, the siblings (indexes) its `after` names: the ones that are in this group,
+/// not itself, and not an edge that would close a loop. Children are taken in queue order and
+/// an edge is kept only when its target does not already come after the child, so a cycle
+/// loses its last-written edge and no child is lost.
+fn siblings_before(kids: &[Kid], inputs: &Inputs) -> Vec<Vec<usize>> {
+    fn reaches(from: usize, to: usize, edges: &[Vec<usize>], seen: &mut Vec<usize>) -> bool {
+        if from == to {
+            return true;
+        }
+        if seen.contains(&from) {
+            return false;
+        }
+        seen.push(from);
+        edges[from]
+            .iter()
+            .any(|&next| reaches(next, to, edges, seen))
+    }
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); kids.len()];
+    for i in 0..kids.len() {
+        for entry in &kids[i].after {
+            let Some(j) = (0..kids.len()).find(|&j| {
+                j != i
+                    && kids[j]
+                        .issue_url
+                        .as_deref()
+                        .is_some_and(|url| names_issue(entry, url, inputs))
+            }) else {
+                continue;
+            };
+            if edges[i].contains(&j) || reaches(j, i, &edges, &mut Vec::new()) {
+                continue;
+            }
+            edges[i].push(j);
+        }
+    }
+    edges
+}
+
 fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     acc.kids
         .sort_by(|a, b| (a.order, &a.created_at).cmp(&(b.order, &b.created_at)));
@@ -344,6 +420,7 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
             (0..acc.kids.len()).find(|&j| j != i && acc.kids[j].branch.as_deref() == Some(base))
         })
         .collect();
+    let before = siblings_before(&acc.kids, inputs);
     let in_stack = |i: usize| on[i].is_some() || on.contains(&Some(i));
     // Each chain root first, then everything cut from it, depth first; children that share a base
     // come in queue order. A cycle has no root, so what the walk did not reach follows in queue
@@ -402,6 +479,8 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
                 base: acc.kids[i].base.clone(),
                 on: on[i].map(|j| acc.kids[j].id.clone()),
                 on_hub: on[i].map(|j| acc.kids[j].hub.clone()),
+                after: before[i].iter().map(|&j| acc.kids[j].id.clone()).collect(),
+                after_hub: before[i].iter().map(|&j| acc.kids[j].hub.clone()).collect(),
             })
             .collect(),
         merged,

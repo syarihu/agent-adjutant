@@ -23,6 +23,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/pr-panel.css"),
     include_str!("../../ui/pr-diff.css"),
     include_str!("../../ui/task-read.css"),
+    include_str!("../../ui/palette.css"),
     include_str!("../../ui/page-body.html"),
     include_str!("../../ui/util.js"),
     include_str!("../../ui/toast.js"),
@@ -77,6 +78,7 @@ pub(super) const UI_HTML: &str = concat!(
     include_str!("../../ui/todo-view.js"),
     include_str!("../../ui/server-checks.js"),
     include_str!("../../ui/empty-guide.js"),
+    include_str!("../../ui/palette.js"),
     include_str!("../../ui/main.js"),
     include_str!("../../ui/page-end.html"),
 );

@@ -524,6 +524,7 @@ differ from one repository to the next, and a layout must not change what "it is
 |---|---|---|
 | `work` | On the task record (`tasks/<slug>/<id>.json`), optional | `task` |
 | `parked` (reason, text, since) | On the task record, optional ([#555](https://github.com/syarihu/agent-adjutant/issues/555)) | `task` |
+| `after` (sibling tasks this one comes after, without being stacked on them) | On the task record, optional; the hub writes it with `adj task add/update --after` ([#815](https://github.com/syarihu/agent-adjutant/issues/815)) | `task` (the field), `board::view` (resolves it against the siblings of the same parent) |
 | `board` setting | The config, repository > `defaults` > top level | `kernel` (shape), `board::view` (vocabulary) |
 | Facts, the presets, the evaluator | Computed per poll, never stored | `board::view` (next to `columns.rs`) |
 
