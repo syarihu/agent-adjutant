@@ -408,3 +408,26 @@ test('going to a task from the popover puts the focus on the row title, or on th
   goToBoardItem('a', '');
   assert.deepEqual(focused, []);
 });
+
+test('siblings that come after one another are a block, the earlier first, placed by the longest wait', () => {
+  const data = { gates: [], workers: [], parents: [group([kid('a'), kid('b', { after: ['a'], afterHub: ['h'] })], { stacked: false })] };
+  const list = [waiting('x', 20), child('b', waiting('b', 10)), child('a', agent('a'))];
+  // Not a stack, so no chip; the block {a, b} is placed by b's wait (since 10), before x (since 20), a ahead of b.
+  assert.deepEqual(ids(orderStage(list, data)), ['a', 'b', 'x']);
+  assert.deepEqual(ids(orderStage([waiting('x', 5), ...list.slice(1)], data)), ['x', 'a', 'b']);
+  // An after that names another hub's task of the same id is not this sibling.
+  const other = { ...data, parents: [group([kid('a'), kid('b', { after: ['a'], afterHub: ['elsewhere'] })], { stacked: false })] };
+  assert.deepEqual(ids(orderStage([waiting('x', 20), child('b', waiting('b', 10)), child('a', waiting('a', 30))], other)), ['b', 'x', 'a']);
+});
+
+test('a stack keeps its order whatever after says, and a loop of after still shows every card once', () => {
+  const stacked = { gates: [], workers: [], parents: [group([kid('a', { after: ['c'], afterHub: ['h'] }), kid('b', { on: 'a', onHub: 'h' }), kid('c', { on: 'b', onHub: 'h' })])] };
+  const list = [child('c', waiting('c', 10)), child('a', agent('a')), child('b', waiting('b', 50))];
+  assert.deepEqual(ids(orderStage(list, stacked)), ['a', 'b', 'c']);
+  const loop = { gates: [], workers: [], parents: [group([kid('a', { after: ['b'], afterHub: ['h'] }), kid('b', { after: ['a'], afterHub: ['h'] }), kid('c', { after: ['b'], afterHub: ['h'] })], { stacked: false })] };
+  const out = ids(orderStage([child('a', waiting('a', 3)), child('b', waiting('b', 2)), child('c', waiting('c', 1)), waiting('x', 9)], loop));
+  assert.deepEqual([...out].sort(), ['a', 'b', 'c', 'x']);
+  assert.equal(new Set(out).size, 4);
+  // The block of the loop is placed by its longest wait (c, since 1): ahead of x.
+  assert.equal(out[out.length - 1], 'x');
+});

@@ -6,10 +6,15 @@
    hub and id, since an id is only unique within one hub, and the group by its key and board, as `parentGroupOf` does, so that
    「すべて」 does not mix boards. Returns `{ group, chain, at, root }`: `chain` is the children of the stack root first and `at`
    the task's place in it. */
+/* The parent group the board lists for a task's parent (by key, and by board in 「すべて」), or undefined. */
+const parentGroupFor = (task, data = state) => {
+  const p = task?.parentIssue;
+  return p && (data.parents || []).find(g => g.key === p.key && (!task._slug || g._slug === task._slug));
+};
+
 function stackOf(task, data = state) {
   const p = task?.parentIssue;
-  if (!p) return null;
-  const group = (data.parents || []).find(g => g.key === p.key && (!task._slug || g._slug === task._slug));
+  const group = p && parentGroupFor(task, data);
   if (!group || !group.stacked) return null;
   const kids = group.children || [];
   const same = (c, id, hub) => c.id === id && c.hub === hub;
@@ -37,18 +42,50 @@ function phaseSinceMs(t, data = state) {
   return w && w.phaseAt ? w.phaseAt * 1000 : updatedMs(t);
 }
 
+/* The tasks among `tasks` that `task` comes after without being stacked on them: the siblings its child entry names in `after` (the
+   server keeps them to siblings of the same parent and breaks loops), each by its hub (`afterHub`) and id. */
+function afterOf(task, tasks, data = state) {
+  const group = parentGroupFor(task, data);
+  const mine = group && (group.children || []).find(c => c.id === task.id && c.hub === task.parentIssue.hub);
+  return (mine?.after || [])
+    .map((id, i) => tasks.find(x => x !== task && x.id === id && childHubOf(x) === mine.afterHub?.[i] && x.parentIssue?.key === group.key && x._slug === task._slug))
+    .filter(Boolean);
+}
+
 /* `tasks` (all in one stage, not 着手前, which keeps the queue's order) in the order they are drawn:
    - what waits on the person first, the oldest wait at the top (`waitingSinceMs`);
    - then the agent side, the newest phase first;
    - tasks of one stacked parent that are in this stage stay together, root first (the order of `parents[].children`), and
-     the block is placed by its longest wait. */
+     the block is placed by its longest wait;
+   - tasks that are not stacked but come after one another (`after`) are a block too, the earlier one first. A task in a stack
+     keeps the stack's order, whatever `after` says. Page-side the loops are safe too: each task is placed once. */
 function orderStage(tasks, data = state) {
   const placed = new Set();
   const units = [];
+  const stacked = new Map(tasks.map(t => [t, stackOf(t, data)]));
+  // The `after` edges between tasks that are in no stack, both ways, to find the block a task is in.
+  const before = new Map(tasks.map(t => [t, stacked.get(t) ? [] : afterOf(t, tasks, data).filter(x => !stacked.get(x))]));
+  const next = new Map(tasks.map(t => [t, []]));
+  for (const [t, ps] of before) for (const p of ps) next.get(p).push(t);
+  const blockOf = t => {
+    const seen = new Set([t]);
+    for (const x of seen) for (const y of [...before.get(x), ...next.get(x)]) seen.add(y);
+    const out = [];
+    // The earlier first: a task goes after its earlier ones, each placed once, so a loop is cut where it closes.
+    const visiting = new Set();
+    const walk = x => {
+      if (out.includes(x) || visiting.has(x)) return;
+      visiting.add(x);
+      for (const p of before.get(x)) walk(p);
+      out.push(x);
+    };
+    for (const x of tasks) if (seen.has(x)) walk(x);
+    return out;
+  };
   tasks.forEach((t, i) => {
     if (placed.has(t)) return;
-    const st = stackOf(t, data);
-    let members = st ? st.chain.map(c => taskOfChild(c, st.group, tasks)).filter(Boolean) : [t];
+    const st = stacked.get(t);
+    let members = st ? st.chain.map(c => taskOfChild(c, st.group, tasks)).filter(Boolean) : blockOf(t);
     if (!members.includes(t)) members = [t];
     members.forEach(x => placed.add(x));
     const waiting = members.filter(x => humanColOf(x, data));
