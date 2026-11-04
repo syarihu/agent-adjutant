@@ -1,6 +1,17 @@
 /* The session search (Cmd/Ctrl+K): a palette over the sessions the list shows, that opens the one chosen. The first half
    is pure (what can be found, and what a query matches); the second half draws the dialog and takes the keys. */
 
+/* Whether this is macOS: the shortcut's modifier is Cmd there (Ctrl+K is kill-to-end-of-line in a text field and in the terminal), Ctrl elsewhere. */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+
+/* Whether a keydown is the palette's shortcut: Cmd+K on macOS, Ctrl+K elsewhere, the other modifier not held, no Alt or Shift, no IME conversion open. One rule for the page and for the session terminal. */
+function isPaletteShortcut(e, mac = IS_MAC) {
+  if (e.type && e.type !== 'keydown') return false;
+  if (e.isComposing || e.keyCode === 229) return false;
+  const mod = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  return !!mod && !e.altKey && !e.shiftKey && String(e.key ?? '').toLowerCase() === 'k';
+}
+
 /* The most rows drawn at once: a query narrows the rest. */
 const PALETTE_SHOWN = 100;
 
@@ -139,6 +150,14 @@ function openPalette() {
   syncPalette();
   palEl('palette-input').focus();
   pal.timer = setInterval(syncPalette, 1000);
+}
+
+/* Open the palette for the shortcut `e` unless another dialog is open (then the key is left alone). Whether `e` is the shortcut is isPaletteShortcut's to say. */
+function openPaletteFromKey(e) {
+  if (document.querySelector('dialog[open]:not(#palette)')) return false;
+  e.preventDefault();
+  openPalette();
+  return true;
 }
 
 function closePalette() {

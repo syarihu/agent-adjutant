@@ -26,7 +26,7 @@ const run = ({ target = outside, active = outside, view = 'work', selected = 't1
       querySelector: s => (s === 'dialog[open]' ? dialog : null),
       activeElement: active,
     },
-    navigator: { platform: '' }, view, selectedTaskId: selected,
+    isPaletteShortcut: () => false, view, selectedTaskId: selected,
     closeTaskPanel: () => { calls.panel++; },
     closeHandoverDialog: () => { calls.handover++; },
   });

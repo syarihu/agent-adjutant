@@ -223,7 +223,7 @@ Press **Cmd+K** (macOS) or **Ctrl+K** (elsewhere), or click 検索 in the left r
 - `↑` / `↓` move the highlight, `Enter` or a click opens the session as clicking its row does, and `Esc` closes the palette and returns focus to where it was. An `Enter` that confirms an IME conversion does nothing.
 - A session that is not running is only selected; its panel offers 再開, and nothing is resumed or opened from the palette.
 - While the work document is loading or failed to load, the palette says so instead of showing "no results".
-- The shortcut does nothing while a session terminal has the keyboard, or while another dialog is open.
+- On macOS Cmd+K also works while a session terminal has the keyboard; Ctrl+K there (and every other key) goes to the terminal, where it is readline's kill-line. Elsewhere the shortcut does nothing inside a terminal. It does nothing while another dialog is open.
 
 ### Session Lifecycle Actions
 From the terminal action bar or API:

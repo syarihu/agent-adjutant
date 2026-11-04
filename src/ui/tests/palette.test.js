@@ -12,7 +12,7 @@ assert.ok(pure.includes('function paletteFilter'), 'the marker moved');
 
 const state0 = { now: 1000, hubs: [], sessions: [], tasks: [], parents: [], repo: 'acme/app' };
 const ctx = vm.createContext({
-  state: state0, BASE: '', scopeAll: () => false,
+  navigator: { platform: '' }, state: state0, BASE: '', scopeAll: () => false,
   WORK_LISTED: ['waiting', 'permission', 'working', 'idle', 'unknown', 'done', 'failed', 'stopped', 'restarting'],
   // The work document's rows: each repo's rows as they come, in order (the page's own flattening is tested with my-work.js).
   workRows: doc => (doc?.repos || []).flatMap(repo => (repo.rows || []).map(r => ({
@@ -23,7 +23,7 @@ const ctx = vm.createContext({
 });
 for (const f of ['util.js', 'sessions.js']) vm.runInContext(read(f), ctx, { filename: f });
 vm.runInContext(pure, ctx, { filename: 'palette.js' });
-const { paletteEntries, paletteFilter } = ctx;
+const { paletteEntries, paletteFilter, isPaletteShortcut } = ctx;
 const plain = v => JSON.parse(JSON.stringify(v));
 const keys = es => plain([...es].map(e => e.key));
 
@@ -108,4 +108,22 @@ test('entries carry what the row draws', () => {
   assert.strictEqual(e.title, 'Fix Login Bug');
   assert.ok(e.sub.includes('feature/login-form') && e.sub.includes('acme/app'));
   assert.strictEqual(e.st, 'working');
+});
+
+test('the shortcut: Cmd+K on macOS, Ctrl+K elsewhere, never the other, never with Alt or Shift or mid-conversion', () => {
+  const k = (extra = {}) => ({ type: 'keydown', key: 'k', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...extra });
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true }), true), true);
+  assert.strictEqual(isPaletteShortcut(k({ key: 'K', metaKey: true }), true), true);
+  assert.strictEqual(isPaletteShortcut(k({ ctrlKey: true }), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, ctrlKey: true }), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ ctrlKey: true }), false), true);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true }), false), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, ctrlKey: true }), false), false);
+  assert.strictEqual(isPaletteShortcut(k(), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, altKey: true }), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ ctrlKey: true, shiftKey: true }), false), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, isComposing: true }), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, keyCode: 229 }), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, key: 'j' }), true), false);
+  assert.strictEqual(isPaletteShortcut(k({ metaKey: true, type: 'keyup' }), true), false);
 });

@@ -107,6 +107,8 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
     term.loadAddon(new Unicode11Addon.Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.open(container);
+    // On macOS Cmd+K opens the session search even here; every other key, Ctrl+K (readline's kill-line) included, is the agent's.
+    term.attachCustomKeyEventHandler(e => !(IS_MAC && isPaletteShortcut(e, true) && openPaletteFromKey(e)));
     fit.fit();
 
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
