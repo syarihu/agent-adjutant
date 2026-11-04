@@ -1714,11 +1714,13 @@ fn the_wake_button_is_in_the_hub_panel_and_beside_the_chip_in_the_work_view() {
 fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_six_equal_ones() {
     assert!(UI_HTML.contains("<span class=\"card-gh-chips\">${issue}${pr}</span>"));
     assert!(UI_HTML.contains("PR #${esc(prNumber)}"));
-    assert!(UI_HTML.contains("grid-template-columns: repeat(6, minmax(0, 1fr));"));
-    // With the terminal beside the board the columns keep a width they can be read at, and the board scrolls.
-    assert!(UI_HTML.contains(
-        "body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1fr)); }"
-    ));
+    // Six equal columns, none narrower than the width the person set: a narrow window or the sidebar scrolls the board sideways.
+    assert!(
+        UI_HTML
+            .contains("grid-template-columns: repeat(6, minmax(var(--board-col-w, 280px), 1fr));")
+    );
+    assert!(!UI_HTML.contains("body.board-side #board-agent"));
+    assert!(UI_HTML.contains("function bindColResize"));
 }
 
 #[test]

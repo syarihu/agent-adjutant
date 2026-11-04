@@ -53,7 +53,7 @@ const PREF_KEY = 'adj-board-split';
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
 // listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle);
 // boardSideWidth is how wide the terminal beside the board is; questionWide is whether the question dialog is widened to the window;
-// boardView is 'list' or 'cols' and boardGroup whether the list groups セルフレビュー by parent Issue.
+// boardView is 'list' or 'cols' and boardGroup whether the list groups セルフレビュー by parent Issue; boardColWidth is the least width of a column.
 const prefs = Object.assign({ boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
   workFolded:[], othersRepo:'', railHidden:false, questionWide:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
@@ -94,6 +94,10 @@ prefs.notify = notifyPrefs(prefs.notify);
 // The board's view: the list (the default) or the columns, and whether the list groups 「セルフレビュー」 by parent Issue.
 prefs.boardView = prefs.boardView === 'cols' ? 'cols' : 'list';
 prefs.boardGroup = prefs.boardGroup === true;
+// How wide each column of the columns view is at least (one value for all six), within its range; a value that is not a number is the default.
+const BOARD_COL_W = { min: 200, max: 520, def: 280 };
+const clampBoardColWidth = v => Math.min(BOARD_COL_W.max, Math.max(BOARD_COL_W.min, Math.round(Number(v)) || BOARD_COL_W.def));
+prefs.boardColWidth = clampBoardColWidth(prefs.boardColWidth);
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 /* The list column's toggle: its icon, and its name, which carries the 新着 count its badge shows while the column is hidden (the label
@@ -132,6 +136,7 @@ function applyLayout() {
   document.body.classList.toggle('rail-hidden', prefs.railHidden);
   renderRailToggle();
   document.body.style.setProperty('--board-side-w', `${prefs.boardSideWidth}px`);
+  document.body.style.setProperty('--board-col-w', `${prefs.boardColWidth}px`);
   savePrefs();
 }
 /* Brings the card `id` of the board into view, on the board view. */

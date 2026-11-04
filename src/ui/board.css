@@ -57,14 +57,18 @@
   background: var(--md-sys-color-outline);
 }
 
-/* The six columns of the agent board are equal; with the sidebar open they keep a width they can be read at and the board scrolls sideways. */
+/* The six columns of the agent board are equal and fill the width; none is narrower than --board-col-w (the person's to set, by the
+   handle in a column's head), so a narrow window or the sidebar beside the board scrolls the board sideways instead of squeezing them. */
 #board-agent {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(var(--board-col-w, 280px), 1fr));
   grid-template-rows: minmax(0, 1fr);
 }
-body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1fr)); }
+/* The handle at a column's right edge, in the gap; any of them sets the width of all (bindColResize in board.js). */
+.col-resize { position: absolute; top: 8px; right: -9px; width: 6px; height: 34px; border-radius: 3px; cursor: col-resize; z-index: 2; touch-action: none; }
+.col-resize:hover, .col-resize:focus-visible, body.wk-dragging .col-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
 .col {
+  position: relative;
   min-width: 0;
   display: flex;
   flex-direction: column;

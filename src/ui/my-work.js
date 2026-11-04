@@ -1935,12 +1935,16 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at, dir = 
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);
+      handle.removeEventListener('lostpointercapture', end);
+      // A capture lost with no pointerup must not leave the page marked as dragging.
+      if (!document.body.classList.contains('wk-dragging')) return;
       document.body.classList.remove('wk-dragging');
       savePrefs();
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
     handle.addEventListener('pointercancel', end);
+    handle.addEventListener('lostpointercapture', end);
   });
   handle.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;

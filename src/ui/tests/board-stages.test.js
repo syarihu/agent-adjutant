@@ -24,6 +24,7 @@ const ctx = vm.createContext({
 const run = (code, name) => vm.runInContext(code, ctx, { filename: name });
 run(read('util.js'), 'util.js');
 const core = read('core.js');
+run(cut(core, /^const BOARD_COL_W = [^\n]*\nconst clampBoardColWidth = [^\n]*\n/m), 'core.js');
 run(cut(core, /^\/\* The stages of the board, in the order[\s\S]*?(?=^function columnOf)/m), 'core.js');
 const task = read('task-view.js');
 run([
@@ -46,8 +47,8 @@ run(cut(read('task-panel.js'), /^function markSelectedCards\(\) \{[\s\S]*?\n\}\n
 // board-list.js is loaded whole: its helpers are called with what each needs in the page, stood in for here.
 run('const stuckOf = () => null; const sessionOfTask = () => null; const sessionState = () => null; const savePrefs = () => {}; const renderBoard = () => {}; const render = () => {}; let showOlderDone = false;', 'stubs.js');
 run(read('board-list.js'), 'board-list.js');
-const { onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead } = vm.runInContext(
-  '({ onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead })', ctx);
+const { clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead } = vm.runInContext(
+  '({ clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -307,4 +308,30 @@ test('the popover closes when focus goes elsewhere or the chip is scrolled away,
   assert.equal(closed(), true, 'the chip moved');
   delete els['stack-pop'];
   ctx.document.querySelectorAll = () => [];
+});
+
+test('the column width pref is a number in its range, else the default', () => {
+  assert.equal(clampBoardColWidth(300), 300);
+  assert.equal(clampBoardColWidth(10), 200);
+  assert.equal(clampBoardColWidth(99999), 520);
+  assert.equal(clampBoardColWidth(260.6), 261);
+  for (const bad of [undefined, null, 'wide', NaN, {}, '', 0]) assert.equal(clampBoardColWidth(bad), 280, String(bad));
+  assert.equal(clampBoardColWidth('350'), 350);
+});
+
+test('a drawing asked for during a column drag is held, and made once when the drag ends', () => {
+  const board = read('board.js');
+  const pieces = [cut(board, /^function renderBoard\(\) \{[\s\S]*?\n\}\n/m), cut(board, /^let colDrag = false[^\n]*\n/m), cut(board, /^function flushBoardRender\(\) \{[\s\S]*?\n\}\n/m)];
+  const local = vm.createContext({ document: { addEventListener() {} }, drawn: 0 });
+  vm.runInContext(`function drawBoard() { drawn++; }\n${pieces.join('\n')}`, local);
+  const run2 = code => vm.runInContext(code, local);
+  run2('renderBoard()');
+  assert.equal(run2('drawn'), 1);
+  run2('colDrag = true; renderBoard(); renderBoard()');
+  assert.equal(run2('drawn'), 1, 'held while dragging');
+  run2('flushBoardRender()');
+  assert.equal(run2('drawn'), 2, 'one drawing when the drag ends');
+  run2('flushBoardRender()');
+  assert.equal(run2('drawn'), 2, 'none when nothing was held');
+  assert.equal(run2('colDrag'), false);
 });

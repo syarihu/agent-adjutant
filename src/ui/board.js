@@ -308,7 +308,7 @@ const nextBtnHtml = id => id === 'before' && !scopeAll()
 
 /* The scroll position each drawing had when it was last on screen: the list's, and each column's. The drawing that is not shown
    is emptied, so the position is kept here and put back when it returns. */
-const boardScroll = { list: 0, cols: {} };
+const boardScroll = { list: 0, colsX: 0, cols: {} };
 function rememberBoardScroll() {
   // Not on screen (another view is open): every scrollTop reads 0, which is not where the person left it.
   if (document.getElementById('board-view')?.offsetParent === null) return;
@@ -316,11 +316,35 @@ function rememberBoardScroll() {
   if (rows?.childElementCount) boardScroll.list = rows.scrollTop;
   const ab = document.getElementById('board-agent');
   if (ab?.childElementCount) {
+    boardScroll.colsX = ab.scrollLeft;
     for (const cards of ab.querySelectorAll('.col-cards')) {
       const colId = cards.parentElement.dataset.col;
       if (colId) boardScroll.cols[colId] = cards.scrollTop;
     }
   }
+}
+
+/* The handle in a column's head: dragged (or moved with the arrow keys) it sets the least width of every column, as the sidebar's
+   handle does for the sidebar (`bindWidthHandle`, my-work.js). A drag starts from the column's width as it is drawn (columns that
+   fill a wide window are wider than the setting) and moves it by how far the pointer went, shared out over the columns up to
+   this one: every one of them widens, so the k-th column's edge moves k times as far as the width does. */
+function bindColResize(handle, col) {
+  let drag = null;
+  handle.addEventListener('pointerdown', e => {
+    const k = [...col.parentElement.children].filter(c => c.classList.contains('col')).indexOf(col) + 1 || 1;
+    drag = { x: e.clientX, w: Math.min(col.getBoundingClientRect().width, BOARD_COL_W.max), k };
+    // `bindWidthHandle` does not drag below 720px, and nothing would end this one.
+    colDrag = !matchMedia('(max-width: 720px)').matches;
+  });
+  bindWidthHandle(handle, {
+    read: () => prefs.boardColWidth, min: BOARD_COL_W.min, max: () => BOARD_COL_W.max, reset: BOARD_COL_W.def,
+    at: x => drag ? drag.w + (x - drag.x) / drag.k : prefs.boardColWidth,
+    apply: w => {
+      prefs.boardColWidth = w;
+      document.body.style.setProperty('--board-col-w', `${w}px`);
+      for (const h of document.querySelectorAll('#board-agent .col-resize')) h.setAttribute('aria-valuenow', String(w));
+    },
+  });
 }
 
 /* Draws the six columns afresh. */
@@ -359,9 +383,21 @@ function renderColumns(stages) {
       cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
     }
 
+    // Right after the head in the document, so the keyboard reaches it before the cards; it is placed by CSS. One tab stop for the
+    // handles, the first: each sets the same width.
+    const handle = document.createElement('div');
+    handle.className = 'col-resize';
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-label', '列の幅');
+    handle.tabIndex = def.id === stages[0].def.id ? 0 : -1;
+    handle.title = 'ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）';
+    col.appendChild(handle);
+    bindColResize(handle, col);
     col.appendChild(cards);
     ab.appendChild(col);
   }
+  ab.scrollLeft = boardScroll.colsX;
 
   // Restore scroll positions
   for (const cards of ab.querySelectorAll('.col-cards')) {
@@ -379,6 +415,23 @@ const boardItemOf = (id, slug) => [...document.querySelectorAll('#boards .card[d
    title, a stack chip or the 「以前の完了」 button. Only the drawing that is shown is drawn: the other is emptied, so no card
    is in the page twice. */
 function renderBoard() {
+  // The handle in hand would be replaced under the pointer, ending the drag: the drawing waits, and is made when the drag is over.
+  if (colDrag) { boardRenderPending = true; return; }
+  drawBoard();
+}
+
+/* Whether a column handle is being dragged, and whether a drawing was held back meanwhile. */
+let colDrag = false, boardRenderPending = false;
+function flushBoardRender() {
+  colDrag = false;
+  if (!boardRenderPending) return;
+  boardRenderPending = false;
+  drawBoard();
+}
+// However the drag ends, even with no pointerup (a lost capture), the held drawing is made.
+for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) document.addEventListener(t, flushBoardRender);
+
+function drawBoard() {
   const list = prefs.boardView !== 'cols';
   // Before the head hides the drawing being left: a hidden one reads a scroll of 0.
   rememberBoardScroll();
@@ -389,6 +442,7 @@ function renderBoard() {
   const held = inBoard ? active.closest('[data-id], [data-worktree]') : null;
   const inner = !held ? null : active.matches('.stack-chip') ? '.stack-chip' : held.classList.contains('list-row') ? '.title' : null;
   const focus = held ? { id: held.dataset.id, worktree: held.dataset.worktree, slug: held.dataset.slug || '', inner } : null;
+  const resizing = inBoard && active.matches('.col-resize') ? active.closest('[data-col]')?.dataset.col : null;
   const more = inBoard && !held && active.matches('.more, [data-more-done]');
   const stages = boardStages();
   if (list) {
@@ -403,6 +457,7 @@ function renderBoard() {
       : [...document.querySelectorAll('#boards [data-worktree]')].find(x => x.dataset.worktree === focus.worktree && (x.dataset.slug || '') === focus.slug);
     (focus.inner ? el?.querySelector(focus.inner) : el)?.focus({ preventScroll: true });
   }
+  if (resizing) document.querySelector(`#board-agent [data-col="${resizing}"] .col-resize`)?.focus({ preventScroll: true });
   if (more) document.querySelector('#boards .more, #boards [data-more-done]')?.focus({ preventScroll: true });
   syncStackPop();
 }
