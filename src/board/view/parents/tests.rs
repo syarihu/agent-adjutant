@@ -983,3 +983,19 @@ fn a_key_the_config_does_not_resolve_matches_a_linear_url_with_a_title() {
     let groups = run(&mut tasks, &mut [], &[], &never);
     assert_eq!(after_of(&groups[0], "screen"), vec!["api"]);
 }
+
+#[test]
+fn a_pull_request_base_names_a_sibling_by_its_pull_requests_head() {
+    // a's worktree is on a local branch pushed under another name; b's PR is based on that name.
+    let p = "https://github.com/acme/widget/issues/9";
+    let mut a = on_branch(with_parent("a", 1, p), "/w/a", None);
+    a.pr_status = Some(pr_on("open", Some("stack/a"), Some("main")));
+    let b = with_pr_base("b", 2, None, "stack/a");
+    let linked = [worktree("/w/a", "local-a"), worktree("/w/b", "feature/b")];
+    let mut tasks = cards(vec![b, a]);
+    let g = &run(&mut tasks, &mut [], &linked, &never)[0];
+    assert!(g.stacked);
+    assert_eq!(ids(g), ["a", "b"]);
+    assert_eq!(g.children[1].on.as_deref(), Some("a"));
+    assert_eq!(g.children[1].base.as_deref(), Some("stack/a"));
+}

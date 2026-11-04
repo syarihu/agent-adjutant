@@ -241,9 +241,12 @@ struct Kid {
     /// `origin/main` here while its pull request is on a sibling's branch, so it does not win
     /// unless it names a sibling.
     record_base: Option<String>,
-    /// The branch its pull request is based on, normalised the same way: how a stack built on
-    /// GitHub after dispatch shows.
+    /// The branch its pull request is based on, as GitHub names it: how a stack built on GitHub
+    /// after dispatch shows.
     pr_base: Option<String>,
+    /// The branch its pull request is from, which a sibling's `pr_base` names it by even when
+    /// its worktree's local branch is called something else.
+    pr_head: Option<String>,
     merged: bool,
     progress: Progress,
     /// The issue the task works on, which a sibling's `after` names it by.
@@ -287,7 +290,14 @@ pub(super) fn attach(
             created_at: t.created_at.clone(),
             branch: branch_of(t, inputs.linked),
             record_base: branch_name(t.base.as_deref()),
-            pr_base: branch_name(t.pr_status.as_ref().and_then(|p| p.base.as_deref())),
+            pr_base: t
+                .pr_status
+                .as_ref()
+                .and_then(|p| p.base.as_deref())
+                .map(str::trim)
+                .filter(|b| !b.is_empty())
+                .map(str::to_string),
+            pr_head: t.pr_status.as_ref().and_then(|p| p.head.clone()),
             merged: t.pr_status.as_ref().is_some_and(|p| p.state == "merged"),
             progress: progress_of(t),
             issue_url: t
@@ -354,7 +364,8 @@ fn branch_of(task: &task::Task, linked: &[Worktree]) -> Option<String> {
     from_worktree.or_else(|| task.pr_status.as_ref().and_then(|p| p.head.clone()))
 }
 
-/// A base as a branch name: trimmed, without a leading `origin/`, and nothing when empty.
+/// A record's base as a branch name: trimmed, without a leading `origin/`, and nothing when
+/// empty.
 fn branch_name(raw: Option<&str>) -> Option<String> {
     raw.map(str::trim)
         .map(|b| b.strip_prefix("origin/").unwrap_or(b))
@@ -425,27 +436,37 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     // Whose branch each child is cut from, among the others; the first when two share a branch.
     // The record's base is taken when it names a sibling, else the pull request's. A base no
     // sibling is on (a branch of the repository, a sibling that is gone) is no step.
-    let sibling_on = |i: usize, base: &str| {
-        (0..acc.kids.len()).find(|&j| j != i && acc.kids[j].branch.as_deref() == Some(base))
+    // A record's base is a local branch, so it is matched against the sibling's branch; a pull
+    // request's base is GitHub's name, so against the sibling's pull request head first.
+    let kids = &acc.kids;
+    let by_record = |i: usize, base: &str| {
+        (0..kids.len()).find(|&j| j != i && kids[j].branch.as_deref() == Some(base))
     };
-    let on: Vec<Option<usize>> = (0..acc.kids.len())
+    let by_pr = |i: usize, base: &str| {
+        (0..kids.len())
+            .find(|&j| j != i && kids[j].pr_head.as_deref() == Some(base))
+            .or_else(|| by_record(i, base))
+    };
+    // Each child's sibling it is on, and the base that named it.
+    let found: Vec<Option<(usize, &str)>> = (0..kids.len())
         .map(|i| {
-            let kid = &acc.kids[i];
-            [&kid.record_base, &kid.pr_base]
-                .into_iter()
-                .flatten()
-                .find_map(|b| sibling_on(i, b))
+            let record = kids[i].record_base.as_deref();
+            let pr = kids[i].pr_base.as_deref();
+            record
+                .and_then(|b| by_record(i, b).map(|j| (j, b)))
+                .or_else(|| pr.and_then(|b| by_pr(i, b).map(|j| (j, b))))
         })
         .collect();
-    // What each is shown cut from: the branch of the sibling it is on, else what its pull
+    let on: Vec<Option<usize>> = found.iter().map(|f| f.map(|(j, _)| j)).collect();
+    // What each is shown cut from: the base that named the sibling it is on, else what its pull
     // request is based on now, else the record's.
-    let bases: Vec<Option<String>> = (0..acc.kids.len())
-        .map(|i| match on[i] {
-            Some(j) => acc.kids[j].branch.clone(),
-            None => acc.kids[i]
+    let bases: Vec<Option<String>> = (0..kids.len())
+        .map(|i| match found[i] {
+            Some((_, base)) => Some(base.to_string()),
+            None => kids[i]
                 .pr_base
                 .clone()
-                .or_else(|| acc.kids[i].record_base.clone()),
+                .or_else(|| kids[i].record_base.clone()),
         })
         .collect();
     let before = siblings_before(&acc.kids, inputs);

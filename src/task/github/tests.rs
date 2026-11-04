@@ -314,6 +314,7 @@ fn the_query_asks_for_the_branches_a_pull_request_is_from_and_on_and_they_are_ke
     let status = one(with_branches).1;
     assert_eq!(status.head.as_deref(), Some("feature/a"));
     assert_eq!(status.base.as_deref(), Some("feature/z"));
+    assert_eq!(serde_json::to_value(&status).unwrap()["base"], "feature/z");
     // A record or an answer without them has none, and they are not written out.
     let status = one(pr_json("OPEN", false, None, 0, "null")).1;
     assert_eq!(status.head, None);
