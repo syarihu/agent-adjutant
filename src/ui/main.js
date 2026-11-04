@@ -3,6 +3,11 @@ const inSessionTerminal = el => !!el?.closest?.('.adj-terminal');
 
 document.addEventListener('keydown', e => {
   if (inSessionTerminal(e.target) || inSessionTerminal(document.activeElement)) return;
+  // The session search (isPaletteShortcut). A focused session terminal takes this key through its own handler (terminal.js), which is why this one returns above for it.
+  if (isPaletteShortcut(e)) {
+    openPaletteFromKey(e);
+    return;
+  }
   if (e.key === 'Escape') {
     // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
     // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.
@@ -105,6 +110,7 @@ const ACTIONS = {
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
+  palette: () => openPalette(),
   // A board served alone: its hub's panel, where its detail (再同期 among it) and its terminal are.
   'own-hub': () => openTaskPanel(HUB_REF + (pageHub()?.id || 'hub'), 'term'),
   'handover-close': () => closeHandoverDialog(),

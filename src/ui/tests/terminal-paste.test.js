@@ -22,6 +22,7 @@ const setup = () => {
     onData() {}
     onBinary() {}
     onResize() {}
+    attachCustomKeyEventHandler() {}
     focus() {}
     write() {}
     paste(t) { pasted.push(t); }
@@ -37,6 +38,7 @@ const setup = () => {
   const ctx = vm.createContext({
     loadXterm: () => Promise.resolve(),
     Terminal: FakeTerminal,
+    IS_MAC: false,
     FitAddon: { FitAddon: class { fit() {} } },
     Unicode11Addon: { Unicode11Addon: class {} },
     WebSocket: FakeSocket,

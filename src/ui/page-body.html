@@ -29,6 +29,10 @@
 
   <span class="rail-grow"></span>
 
+  <button type="button" class="rail-btn" id="btn-palette" data-action="palette" title="セッションを検索" aria-label="セッションを検索">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">search</span><span class="rail-lbl">検索</span>
+  </button>
+
   <button type="button" class="rail-btn" id="btn-notify" data-action="notify" title="デスクトップ通知を設定">
     <span class="material-symbols-outlined rail-pill" aria-hidden="true">notifications</span><span class="rail-lbl">通知</span>
   </button>
@@ -91,6 +95,17 @@
   </div>
 </section>
 <div id="tp-scrim" hidden></div>
+
+<!-- The session search (palette.js): Cmd/Ctrl+K, or 検索 in the rail. -->
+<dialog id="palette" aria-label="セッションを検索">
+  <div class="pal-search">
+    <span class="material-symbols-outlined" aria-hidden="true">search</span>
+    <input type="text" id="palette-input" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" aria-label="セッションを検索" placeholder="セッションを検索 — タイトル・キー・ブランチ・リポジトリ" autocomplete="off" spellcheck="false">
+  </div>
+  <p class="pal-status" id="palette-status" role="status"></p>
+  <ul class="pal-list" id="palette-list" role="listbox" aria-label="セッション"></ul>
+  <div class="pal-hint" aria-hidden="true">↑↓ で選ぶ · Enter で開く · Esc で閉じる</div>
+</dialog>
 
 <!-- 「拡大」: the whole task under an index, or one card alone (card-dialog.js). -->
 <dialog id="card-dialog" class="card-dialog" aria-labelledby="card-dialog-title">
