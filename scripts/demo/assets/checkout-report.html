@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>チェックアウトの所要時間</title>
+<style>
+body{font:15px/1.6 -apple-system,"Hiragino Sans",sans-serif;margin:28px;color:#1f2933}
+h1{font-size:20px;margin:0 0 4px} p.sub{color:#61707d;margin:0 0 20px}
+.bar{display:flex;align-items:center;gap:10px;margin:6px 0} .bar span{width:150px;font-size:13px;color:#3e4c59}
+.bar i{display:block;height:20px;border-radius:4px;background:#5b8def} .bar i.hot{background:#e8684a}
+.bar b{font-weight:600;font-size:13px} table{border-collapse:collapse;margin-top:22px;font-size:13px}
+td,th{border-bottom:1px solid #e4e7eb;padding:6px 14px;text-align:left} th{color:#61707d;font-weight:600}
+</style></head><body>
+<h1>チェックアウト 1 回の内訳（カート 8 点）</h1>
+<p class="sub">ステージングで 20 回計測した中央値</p>
+<div class="bar"><span>在庫 API × 8（直列）</span><i class="hot" style="width:420px"></i><b>2,480 ms</b></div>
+<div class="bar"><span>合計の計算</span><i style="width:6px"></i><b>4 ms</b></div>
+<div class="bar"><span>注文の保存</span><i style="width:40px"></i><b>210 ms</b></div>
+<div class="bar"><span>決済の確認</span><i style="width:66px"></i><b>380 ms</b></div>
+<table><tr><th>カートの点数</th><th>在庫 API の合計</th><th>まとめて問い合わせた場合（試算）</th></tr>
+<tr><td>1</td><td>310 ms</td><td>310 ms</td></tr><tr><td>4</td><td>1,240 ms</td><td>330 ms</td></tr>
+<tr><td>8</td><td>2,480 ms</td><td>350 ms</td></tr></table>
+</body></html>

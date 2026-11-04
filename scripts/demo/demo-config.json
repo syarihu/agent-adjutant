@@ -1,0 +1,15 @@
+{
+  "notification": "true",
+  "language": "ja",
+  "terminal": { "preset": "tmux", "session": "adjutant-demo", "socket": "adj-demo" },
+  "defaults": {
+    "ide": "true {worktree}",
+    "hubRunner": "@AGENTS@/claude hub {name} {sessionId} {settings}",
+    "agentRunner": "@AGENTS@/claude worker {sessionId} {worktree} {title} {settings}",
+    "reviewerRunner": "@AGENTS@/claude reader {name} {sessionId} {settings}",
+    "startupDashboard": false
+  },
+  "repos": {
+    "acme/shop-app": { "taskSource": "github", "issueRepo": "acme/shop-app", "issueKeys": { "acme/shop-app": "WEB" } }
+  }
+}

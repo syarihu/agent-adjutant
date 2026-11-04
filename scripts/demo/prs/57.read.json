@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "sha": "@SHA@",
+  "three": {
+    "purpose": "チェックアウトの在庫確認を速くする",
+    "approach": "商品ごとの在庫 API 呼び出しを、一括問い合わせ 1 回にまとめる",
+    "impact": "カート 8 点で 2.5 秒ほど縮む。在庫 API への呼び出し回数が減る",
+    "essence": "一括 API の上限（50 件）を超えるカートをどう扱うか"
+  },
+  "order": [
+    { "path": "src/catalog/stock.ts", "category": "logic", "note": "一括問い合わせの関数を足している", "skippable": false },
+    { "path": "src/checkout/checkout.ts", "category": "logic", "note": "呼び出しを一括に置き換えている", "skippable": false },
+    { "path": "src/checkout/checkout.test.ts", "category": "test", "note": "呼び出し回数と在庫切れを確かめている", "skippable": true }
+  ],
+  "deleted": [],
+  "decisions": [
+    { "decision": "古い fetchStock は残す", "gains": "ほかの呼び出し元を今回触らずに済む", "costs": "在庫の取り方が 2 つ並ぶ" }
+  ],
+  "tests": { "covered": ["1 回の問い合わせで済むこと", "在庫切れを断ること"], "notCovered": ["51 点以上のカート"] },
+  "unwritten": [],
+  "annotations": [
+    { "path": "src/catalog/stock.ts", "anchor": "// Ask for every SKU in one request: the stock API answers up to 50 at a time.", "kind": "tr", "text": "すべての SKU を 1 回の問い合わせで聞く。在庫 API は一度に 50 件まで答える" },
+    { "path": "src/catalog/stock.ts", "anchor": "const res = await fetch(`/api/stock?skus=${skus.join(\",\")}`);", "kind": "concern", "text": "50 件を超える SKU を一度に送っている。上限を超えると在庫 API はエラーを返す", "draft": "在庫 API は一度に 50 件までなので、51 点以上のカートだと失敗しそうです。50 件ずつに分けて問い合わせてください。" },
+    { "path": "src/checkout/checkout.ts", "anchor": "const stock = await fetchStocks(items.map(item => item.sku));", "kind": "ex", "text": "ループの前に 1 回だけ問い合わせる。ここが速くなった理由" },
+    { "path": "src/checkout/checkout.ts", "anchor": "if ((stock.get(item.sku) ?? 0) < item.quantity) {", "kind": "ex", "text": "答えに無い SKU は在庫 0 として扱う" }
+  ],
+  "overall": { "body": "在庫の一括問い合わせ、狙いどおり速くなっています。上限の 50 件を超えるカートの扱いだけ直してください。", "suggestion": "51 点以上のカートの扱いを直せばよさそう" },
+  "sinceReview": null
+}

@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "sha": "@SHA@",
+  "three": {
+    "purpose": "商品ページの「あとで買う」に使う、ほしい物リストの API を足す",
+    "approach": "wishlist テーブルへの追加・一覧・削除を関数にし、3 つのルートから呼ぶ",
+    "impact": "新しいエンドポイントが 3 つ増える。既存の画面には影響しない",
+    "essence": "誰のリストを操作するかを、リクエストのどこから決めているか"
+  },
+  "order": [
+    { "path": "src/wishlist/routes.ts", "category": "logic", "note": "利用者の決め方はここ。いちばん大事", "skippable": false },
+    { "path": "src/wishlist/wishlist.ts", "category": "logic", "note": "SQL はプレースホルダで組まれている", "skippable": false },
+    { "path": "src/wishlist/wishlist.test.ts", "category": "test", "note": "並び順だけを見ている", "skippable": true }
+  ],
+  "deleted": [],
+  "decisions": [
+    { "decision": "重複の追加は ON CONFLICT DO NOTHING で無視する", "gains": "二度押しでもエラーにならない", "costs": "追加し直しても日時が更新されず、並び順が変わらない" }
+  ],
+  "tests": { "covered": ["新しく追加したものが先頭に来る"], "notCovered": ["削除", "重複の追加", "ほかの人のリストを操作できないこと"] },
+  "unwritten": ["リストの件数に上限を設けるか"],
+  "annotations": [
+    { "path": "src/wishlist/routes.ts", "anchor": "wishlist.get(\"/wishlist\"", "kind": "ex", "text": "一覧を返す。並びは wishlist.ts の ORDER BY added_at DESC で新しい順" },
+    { "path": "src/wishlist/routes.ts", "anchor": "const userId = String(req.query.userId);", "nth": 1, "kind": "concern", "text": "利用者をクエリ文字列から取っているので、userId を変えれば他人のリストを読める", "draft": "userId をクエリ文字列から受け取っていますが、これだと他の人の userId を指定してリストを読めてしまいそうです。ログイン中のセッションから取る形にできますか？" },
+    { "path": "src/wishlist/routes.ts", "anchor": "const userId = String(req.query.userId);", "nth": 2, "kind": "ex", "text": "追加も同じくクエリ文字列の userId で書き込む" },
+    { "path": "src/wishlist/wishlist.ts", "anchor": "ON CONFLICT DO NOTHING", "kind": "ex", "text": "同じ商品を二度足しても 1 件のまま。added_at は最初の追加日時が残る" },
+    { "path": "src/wishlist/wishlist.ts", "anchor": "// Keeps the SKUs a customer wants to buy later, newest first.", "kind": "tr", "text": "顧客があとで買いたい SKU を、新しい順に保持する" }
+  ],
+  "overall": { "body": "ほしい物リストの API、ありがとうございます。一点だけ、利用者をクエリ文字列から取っている箇所が気になったのでコメントしました。", "suggestion": "変更を依頼するのが妥当そう: 他人のリストを操作できる" },
+  "sinceReview": null
+}

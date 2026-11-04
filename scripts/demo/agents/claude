@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Named claude so the board shows the agent the way it shows a real Claude Code session.
+# The first argument says which scripted role to play.
+role="$1"; shift
+exec bash "$(dirname "$0")/$role.sh" "$@"

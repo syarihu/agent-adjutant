@@ -93,6 +93,38 @@ adjutant setup codex --remove    # 追加したフックのみを削除
 
 ---
 
+## ボードでの作業
+
+ボード上での作業の流れを、機能ごとの動画で紹介します。どれも架空のリポジトリと台本どおりに動くエージェントを使い、実際のボードを録画したものです（[scripts/demo](scripts/demo)）。
+
+### 依頼して、計画を確認する
+
+「依頼する」にやってほしいことを書くと、hub が読んで、着手前に読み取った内容を確認してきます。着手すると worker が調べて、計画を質問カードで出します。
+
+![依頼から計画の承認まで](docs/images/board-request-plan.ja.gif)
+
+### 調査結果を読む
+
+調べるだけの依頼は、結論・原因・対応策をまとめた報告で返ってきます。表やグラフは HTML レポートとして付きます。
+
+![調査報告](docs/images/board-investigate-result.ja.gif)
+
+### AI 下読み（エージェントが書いたコード）
+
+worker が PR を出したら、読むだけの別の worker が先に読んで、差分の行に解説を書きます。気になるところは下書きのコメントごと worker に渡せます。
+
+![worker の PR の AI 下読み](docs/images/board-review-own.ja.gif)
+
+### AI 下読み（レビューを頼まれた PR）
+
+レビューを頼まれた PR も同じように下読みできます。選んだコメントは GitHub の pending review にまとめて積みます。承認や変更依頼を決めて送るのは自分です。
+
+![レビューを頼まれた PR の AI 下読み](docs/images/board-review-others.ja.gif)
+
+画面ごとの説明は [Web ボードと常駐サーバー](docs/board.ja.md) にあります。
+
+---
+
 ## 基本概念
 
 ### Hub と Worker
