@@ -1,8 +1,20 @@
 /* A session terminal has the keyboard: its keys, Escape included, are the agent's. */
 const inSessionTerminal = el => !!el?.closest?.('.adj-terminal');
 
+/* The platform's own modifier for the session search: Cmd on macOS, where Ctrl+K is kill-to-end-of-line in a text field and is left alone; Ctrl elsewhere. */
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+
 document.addEventListener('keydown', e => {
   if (inSessionTerminal(e.target) || inSessionTerminal(document.activeElement)) return;
+  // The session search: Cmd+K (Ctrl+K elsewhere). Not over another dialog, and never while a conversion is open.
+  if ((IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey && e.key?.toLowerCase() === 'k') {
+    if (e.isComposing || e.keyCode === 229) return;
+    const other = document.querySelector('dialog[open]:not(#palette)');
+    if (other) return;
+    e.preventDefault();
+    openPalette();
+    return;
+  }
   if (e.key === 'Escape') {
     // An IME composition takes Escape to cancel the conversion. keyCode 229 too, as in the
     // Cmd+Enter handlers: where compositionend comes first, isComposing is already false.
@@ -105,6 +117,7 @@ const ACTIONS = {
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
+  palette: () => openPalette(),
   // A board served alone: its hub's panel, where its detail (再同期 among it) and its terminal are.
   'own-hub': () => openTaskPanel(HUB_REF + (pageHub()?.id || 'hub'), 'term'),
   'handover-close': () => closeHandoverDialog(),
