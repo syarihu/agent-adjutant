@@ -106,20 +106,10 @@ function gateForTab(task, tab, all, pick, data = stateNow()) {
   return ofKind.find(g => isWaiting(g, data)) || ofKind[ofKind.length - 1] || null;
 }
 
-/* The files a unified diff touches, with the lines each gained and lost. */
+/* The files a unified diff touches, with the lines each gained and lost. Uses prParseDiff (from
+   pr-diff.js, called at render time) so quoted paths are read too. */
 function filesOf(diff) {
-  const files = [];
-  let cur = null, inHeader = false;
-  for (const l of (diff || '').split('\n')) {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(l);
-    if (m) { cur = { path: m[2], add: 0, del: 0 }; files.push(cur); inHeader = true; continue; }
-    if (l.startsWith('@@')) { inHeader = false; continue; }
-    // A removed line that begins `--` is content, not a header: headers end at the first hunk.
-    if (!cur || inHeader) continue;
-    if (l.startsWith('+')) cur.add++;
-    else if (l.startsWith('-')) cur.del++;
-  }
-  return files;
+  return prParseDiff(diff).map(f => ({ path: f.path, add: f.add, del: f.del }));
 }
 
 /* One line saying where a gate stands: waiting, recorded, or answered and how. */
