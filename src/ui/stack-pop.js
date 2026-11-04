@@ -126,6 +126,8 @@ function goToBoardItem(id, slug) {
   void el.offsetWidth;
   el.classList.add('flash');
   setTimeout(() => el.classList.remove('flash'), 1700);
+  // The focus goes with the jump (the popover that held it is closed): a row's title is its button, a card is its own.
+  (el.classList.contains('list-row') ? el.querySelector('.title') : el)?.focus({ preventScroll: true });
 }
 
 document.addEventListener('click', e => {

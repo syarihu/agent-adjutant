@@ -158,15 +158,17 @@ not in progress (status `backlog`, `queued`, `done` or `cancelled`), so a column
 never catches a finished task. A bare session (a worker with no card) has no `status` and gets
 `step` from its phase, or `implement` with no phase, as `bareCol` does today.
 
-The task panel's stepper reads `status` and `step`, not a column, so it stays the same whatever the
+The task panel's stepper is to read `status` and `step`, not a column, so it stays the same whatever the
 layout: nothing lit before the task starts, every step lit once it is `done` or `cancelled`, and
-`step` in between (the stepper's own steps are the board's columns in flow order: `work`, `ai`, `me`, `rev`).
+`step` in between. Today it reads the stage `agentColOf` gives (its steps are the board's stages in
+flow order: `work`, `ai`, `me`, `rev`), so an open diff gate lights セルフレビュー while the worker's
+phase has not moved.
 
 A parent's hub card's gates live in the parent hub's directory, never among the repository
-board's gates. Today `ownerHub.humanCol` reads the hub's open gate, while `agentColOf` looks for the
-card's id among the board's gates, where it finds nothing or another task's gate with the same id
-(ids are unique only per hub). The facts under `ownerHub` take the hub's open gate for both halves;
-that changes the agent column of a hub card only where today's lookup was wrong.
+board's gates. Today `ownerHub.humanCol` reads the hub's open gate, and `agentColOf` and `waitingSinceMs` look at no
+gate of the board for such a card (looking up its id there would find another task's gate with the
+same id: ids are unique only per hub). The facts under `ownerHub` take the hub's open gate for both halves,
+which the agent column of a hub card does not read today.
 
 Two things are deliberately not facts:
 

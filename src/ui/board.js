@@ -431,6 +431,25 @@ function flushBoardRender() {
 // However the drag ends, even with no pointerup (a lost capture), the held drawing is made.
 for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) document.addEventListener(t, flushBoardRender);
 
+/* Which control of a card or row has the focus, so the same one can be found in the drawing that replaces it: its place among the
+   item's focusable elements, and what it is (tag, href and data-*). The item itself is `self`. */
+const FOCUSABLE = 'a[href], button, [tabindex]';
+function focusClueOf(item, active) {
+  if (active === item) return { self: true };
+  const index = [...item.querySelectorAll(FOCUSABLE)].indexOf(active);
+  if (index < 0) return null;
+  return { index, tag: active.tagName, href: active.getAttribute('href'), data: JSON.stringify(Object.entries(active.dataset || {})) };
+}
+/* The control of `item` the clue describes: of those that are the same kind, the one at the same place, else the first; null when
+   there is none (the caller falls back). */
+function focusByClue(item, clue) {
+  if (!clue) return null;
+  if (clue.self) return item;
+  const all = [...item.querySelectorAll(FOCUSABLE)];
+  const same = all.filter(x => x.tagName === clue.tag && x.getAttribute('href') === clue.href && JSON.stringify(Object.entries(x.dataset || {})) === clue.data);
+  return same.find(x => all.indexOf(x) === clue.index) || same[0] || null;
+}
+
 function drawBoard() {
   const list = prefs.boardView !== 'cols';
   // Before the head hides the drawing being left: a hidden one reads a scroll of 0.
@@ -438,10 +457,10 @@ function drawBoard() {
   syncBoardHead(list);
   const active = document.activeElement;
   const inBoard = !!active && !!active.closest?.('#boards');
-  // A task's card or row has a `data-id`; a session's has a `data-worktree`. Inside a row, what is not the chip is put back on the title.
+  // A task's card or row has a `data-id`; a session's has a `data-worktree`. The control that had the focus in it is put back; a row
+  // whose control is gone gets the focus on its title, a card on itself.
   const held = inBoard ? active.closest('[data-id], [data-worktree]') : null;
-  const inner = !held ? null : active.matches('.stack-chip') ? '.stack-chip' : held.classList.contains('list-row') ? '.title' : null;
-  const focus = held ? { id: held.dataset.id, worktree: held.dataset.worktree, slug: held.dataset.slug || '', inner } : null;
+  const focus = held ? { id: held.dataset.id, worktree: held.dataset.worktree, slug: held.dataset.slug || '', clue: focusClueOf(held, active) } : null;
   const resizing = inBoard && active.matches('.col-resize') ? active.closest('[data-col]')?.dataset.col : null;
   const listResizing = inBoard && active.matches('.list-col-resize') ? active.dataset.lcH : null;
   const more = inBoard && !held && active.matches('.more, [data-more-done]');
@@ -456,7 +475,8 @@ function drawBoard() {
   if (focus) {
     const el = focus.id != null ? boardItemOf(focus.id, focus.slug)
       : [...document.querySelectorAll('#boards [data-worktree]')].find(x => x.dataset.worktree === focus.worktree && (x.dataset.slug || '') === focus.slug);
-    (focus.inner ? el?.querySelector(focus.inner) : el)?.focus({ preventScroll: true });
+    const target = el && (focusByClue(el, focus.clue) || (el.classList.contains('list-row') ? el.querySelector('.title') : el));
+    target?.focus({ preventScroll: true });
   }
   if (resizing) document.querySelector(`#board-agent [data-col="${resizing}"] .col-resize`)?.focus({ preventScroll: true });
   if (listResizing) document.querySelector(`#board-list .list-col-resize[data-lc-h="${listResizing}"]`)?.focus({ preventScroll: true });

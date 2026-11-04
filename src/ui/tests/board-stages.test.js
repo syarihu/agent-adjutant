@@ -18,7 +18,7 @@ const cut = (src, re) => {
 const listeners = [];
 const els = {};
 const ctx = vm.createContext({
-  TextEncoder, TextDecoder, URL, window: { addEventListener() {} }, state: {}, prefs: { boardView: 'list', boardGroup: false },
+  TextEncoder, TextDecoder, URL, setTimeout() {}, window: { addEventListener() {} }, state: {}, prefs: { boardView: 'list', boardGroup: false },
   document: { addEventListener: (t, fn) => listeners.push([t, fn]), getElementById: id => els[id] || null, querySelectorAll: () => [] },
 });
 const run = (code, name) => vm.runInContext(code, ctx, { filename: name });
@@ -48,8 +48,8 @@ run(cut(read('task-panel.js'), /^function markSelectedCards\(\) \{[\s\S]*?\n\}\n
 // board-list.js is loaded whole: its helpers are called with what each needs in the page, stood in for here.
 run('const stuckOf = () => null; const sessionOfTask = () => null; const sessionState = () => null; const savePrefs = () => {}; const renderBoard = () => {}; const render = () => {}; let showOlderDone = false;', 'stubs.js');
 run(read('board-list.js'), 'board-list.js');
-const { cleanListCols, listColVars, clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead } = vm.runInContext(
-  '({ cleanListCols, listColVars, clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead })', ctx);
+const { goToBoardItem, cleanListCols, listColVars, clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead } = vm.runInContext(
+  '({ goToBoardItem, cleanListCols, listColVars, clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -140,6 +140,15 @@ test('a session with no task is never in セルフレビュー', () => {
   assert.equal(bareCol({ phase: 'verify' }), 'ai');
   assert.equal(bareCol({ phase: 'review' }), 'rev');
   assert.equal(bareCol({ phase: undefined }), 'work');
+});
+
+test('a parent-task hub\'s card does not take this board\'s gate of a task with the same id', () => {
+  const hubCard = t('1', { ownerHub: { slug: 'parent', humanCol: 'question' } });
+  const data = { gates: [gate('1', 'plan', 'plan', { openedAt: stamp(T0 + 100) })], workers: [worker('1', 'verify', { phaseAt: T0 + 50 })] };
+  assert.equal(at(hubCard, data), 'ai');
+  assert.equal(waitingSinceMs(hubCard, data), (T0 + 50) * 1000);
+  // This board's own task of that id still has its gate.
+  assert.equal(at(t('1'), data), 'work');
 });
 
 test('the wait starts at the gate, else the PR turn, else the phase, else the last write', () => {
@@ -353,4 +362,49 @@ test('the grid takes a width per column that has one, and the stylesheet gives t
   const css = read('board.css');
   assert.match(css, /grid-template-columns: var\(--lc-wait, max-content\) var\(--lc-stack, max-content\) var\(--lc-key, max-content\) var\(--lc-title, fit-content\(36rem\)\)\s+var\(--lc-parent, max-content\) var\(--lc-for, max-content\) var\(--lc-state, max-content\) minmax\(0, 1fr\);/);
   assert.match(css, /var\(--lc-title, fit-content\(36rem\)\) 0 0 var\(--lc-state, max-content\) minmax\(0, 1fr\)/);
+});
+
+const ctl = (tag, attrs = {}, dataset = {}) => ({ tagName: tag, dataset, getAttribute: k => attrs[k] ?? null });
+const itemOf = controls => ({ querySelectorAll: () => controls });
+
+test('the control that had the focus in a card or row is found again in the new one, else nothing', () => {
+  const board = read('board.js');
+  const local = vm.createContext({});
+  vm.runInContext([cut(board, /^const FOCUSABLE = [^\n]*\n/m), cut(board, /^function focusClueOf[\s\S]*?\n\}\n/m), cut(board, /^function focusByClue[\s\S]*?\n\}\n/m)].join('\n'), local);
+  const { focusClueOf, focusByClue } = vm.runInContext('({ focusClueOf, focusByClue })', local);
+  const title = ctl('SPAN', {}, { lc: 'title' }), issue = ctl('A', { href: 'https://x/issues/1' }), pr = ctl('A', { href: 'https://x/pull/2' }), chip = ctl('BUTTON', {}, { stack: 'a' });
+  const before = itemOf([chip, title, issue, pr]);
+  // A PR link had the focus; the redrawn row has the same controls (new elements): the PR link, not the title, gets it.
+  const clue = focusClueOf(before, pr);
+  const after = [ctl('BUTTON', {}, { stack: 'a' }), ctl('SPAN', {}, { lc: 'title' }), ctl('A', { href: 'https://x/issues/1' }), ctl('A', { href: 'https://x/pull/2' })];
+  assert.equal(focusByClue(itemOf(after), clue), after[3]);
+  assert.equal(focusByClue(itemOf(after), focusClueOf(before, chip)), after[0]);
+  assert.equal(focusByClue(itemOf(after), focusClueOf(before, issue)), after[2]);
+  // The PR link is gone (the PR changed): nothing matches, and the caller falls back.
+  assert.equal(focusByClue(itemOf(after.slice(0, 3)), clue), null);
+  // The same kind of control at another place is still found.
+  assert.equal(focusByClue(itemOf([after[3], after[1]]), clue), after[3]);
+  // The item itself (a card) is itself; a control that is not in the item has no clue.
+  assert.deepEqual({ ...focusClueOf(before, before) }, { self: true });
+  assert.equal(focusByClue(before, focusClueOf(before, before)), before);
+  assert.equal(focusClueOf(before, ctl('A', { href: 'z' })), null);
+});
+
+test('going to a task from the popover puts the focus on the row title, or on the card', () => {
+  const focused = [];
+  const mk = (isRow, title) => ({ classList: { contains: c => isRow && c === 'list-row', remove() {}, add() {} }, offsetWidth: 0, scrollIntoView() {}, focus: o => focused.push(['self', o]), querySelector: () => title });
+  const title = { focus: o => focused.push(['title', o]) };
+  let item = mk(true, title);
+  vm.runInContext('var boardItemOf = (id, slug) => globalThis.__item', ctx);
+  ctx.__item = item;
+  goToBoardItem('a', '');
+  assert.deepEqual(focused, [['title', { preventScroll: true }]]);
+  focused.length = 0;
+  ctx.__item = mk(false);
+  goToBoardItem('a', '');
+  assert.deepEqual(focused, [['self', { preventScroll: true }]]);
+  ctx.__item = null;
+  focused.length = 0;
+  goToBoardItem('a', '');
+  assert.deepEqual(focused, []);
 });

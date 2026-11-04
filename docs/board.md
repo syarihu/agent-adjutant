@@ -159,7 +159,7 @@ The rail's 工程 shows the list of boards in the list column and the work of th
   3. 計画・実装 for an open plan gate or the phase `plan` or `implement`.
   4. AIレビュー for the phase `self-review` or `verify`.
   5. With a PR: 完了 once it is merged; コードレビュー待ち when a review is asked for or given (the review state is `required` or `approved`, or the phase is `review`); otherwise AIレビュー (the bots and CI are still reading, or it is a draft that does not wait on you). The stage follows the review, not CI, so a card does not move with every push.
-  6. AIレビュー for the phase `pr` or `report` with no PR yet; anything else is 計画・実装.
+  6. With no PR yet: the phase `pr`, `pr-bots` or `report` is AIレビュー, the phase `review` is コードレビュー待ち, and anything else is 計画・実装.
 
   A Jules task with a PR is placed the same way; before that by its session. A session with no task goes by its phase and never into セルフレビュー.
 - **Column width** (columns view): the six columns are equal and fill the width, none narrower than a width you set by dragging the handle at the right edge of any column's head (200px to 520px, 280px by default; arrow keys and a double click work too; the width is remembered and is the same for all six). When the window is narrow, or a task's detail is open beside the board, the columns keep that width and the board scrolls sideways.

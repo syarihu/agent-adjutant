@@ -244,7 +244,7 @@ function prColOf(t, phase) {
    3. An open plan gate, or the phase plan / implement, is 計画・実装.
    4. The phase self-review / verify is AIレビュー.
    5. With a PR: merged is 完了, a review asked for or given is コードレビュー待ち, else AIレビュー.
-   6. The phase pr / report with no PR yet is AIレビュー; anything else is 計画・実装. */
+   6. With no PR yet: the phase pr / pr-bots / report is AIレビュー, review is コードレビュー待ち; anything else is 計画・実装. */
 function agentColOf(t, data = state) {
   if (!t) return 'before';
   if (t.status === 'backlog' || t.status === 'queued') return 'before';
@@ -254,7 +254,9 @@ function agentColOf(t, data = state) {
   const hc = humanColOf(t, data);
   if (hc === 'diff' || hc === 'verify' || hc === 'prreview' || t.waitsOnPerson) return 'me';
 
-  const g = openGate(t, data);
+  // A parent-task hub's task has no gate among this board's: an id is unique only within one hub, so a gate of this board's own
+  // task of the same id is not its.
+  const g = t.ownerHub ? null : openGate(t, data);
   const hasPr = !!t.pr || t.status === 'pr';
 
   // Jules task: once it has a PR it is read like any other; before that, by the session's state.
@@ -278,7 +280,7 @@ function agentColOf(t, data = state) {
 /* When the task started waiting on the person (ms): its open gate's `openedAt`; else, for a PR on the person's turn, when
    the turn last changed (`prTurnAt`); else when the worker entered its phase; else when the task was last written. */
 function waitingSinceMs(t, data = state) {
-  const g = openGate(t, data);
+  const g = t.ownerHub ? null : openGate(t, data);
   if (g && g.openedAt) {
     const s = stampSecs(g.openedAt);
     if (s) return s * 1000;
