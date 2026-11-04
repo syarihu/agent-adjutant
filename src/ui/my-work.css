@@ -447,8 +447,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 
 /* The parent's detail dialog: how far it is, and its children. */
 .wk-overview { display: flex; flex-direction: column; gap: 12px; }
-.wk-ov-bar { display: flex; align-items: center; gap: 10px; }
-.wk-ov-bar .wk-bar { max-width: none; height: 8px; }
+/* The breakdown sits under the bar, so the bar keeps the dialog's full width. */
+.wk-ov-bar { display: flex; flex-direction: column; gap: 6px; }
+.wk-ov-bar .wk-bar { flex: none; max-width: none; height: 8px; }
 .wk-ov-n { flex: none; font-size: 12.5px; font-weight: 800; }
 .wk-stack-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .wk-stack-list li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
