@@ -406,12 +406,12 @@ function workTreeByParent(rows, chipsByRepo = new Map(), repos = workRepos(), { 
   return headings ? repoNodes : repoNodes.flatMap(n => n.items);
 }
 
-/* The children of a parent as the bar draws them: a segment each, then the ones the tracker counts and the board does not
-   list as not started. At most so many, so a parent with a long tail is still a bar. */
+/* The children of a parent as the bar draws them: a segment each for listed children, then at most one segment
+   for the unlisted remainder as wide as that many children, so the bar stands for the whole total however large it is. */
 function workSegments(p) {
   const segs = (p.children || []).map(c => ({ cls: WORK_PROGRESS[c.progress]?.[0] || 'not-started', title: `${c.id} ${WORK_PROGRESS[c.progress]?.[1] || ''}` }));
-  const rest = Math.max(0, Math.min((p.total || 0) - segs.length, 60));
-  for (let i = 0; i < rest; i++) segs.push({ cls: 'not-started', title: '未着手' });
+  const rest = (p.total || 0) - segs.length;
+  if (rest > 0) segs.push({ cls: 'not-started', title: `未着手 ${rest} 件`, grow: rest });
   return segs;
 }
 
@@ -438,6 +438,12 @@ function workProgressHtml(p) {
   const { n, total } = workProgressCounts(p);
   const parts = WORK_COUNTED.filter(([k]) => n[k]).map(([k, word]) => `<i class="wk-dot ${k}" aria-hidden="true"></i>${esc(`${n[k]} ${word}`)}`);
   return `${parts.length ? `${parts.join(' · ')} ` : '0 '}/ ${esc(String(total))}`;
+}
+
+/* The progress bar of a parent: one segment per listed child, and a wider segment for any unlisted remainder. */
+function workBarHtml(p) {
+  const segs = workSegments(p);
+  return `<span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"${x.grow > 1 ? ` style="flex-grow:${x.grow}"` : ''}></i>`).join('')}</span>`;
 }
 
 /* The board a selection of `p` opens on: the hub that runs it when this server has its board, else the
@@ -739,7 +745,7 @@ const workParentName = p => `${p.number ? `#${p.number}` : p.key}${p.title ? ` $
 
 /* How far a parent's children have got, as the spans of the meta of the row that heads its group: the bar, the count and whether it is a stack. */
 function workParentMeta(p) {
-  const bar = `<span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>`;
+  const bar = workBarHtml(p);
   return [bar, workProgressHtml(p), p.stacked ? '<span class="wk-stack">stack</span>' : ''].filter(Boolean);
 }
 
@@ -929,14 +935,13 @@ function workHeadHtml(node, folded) {
   if (node.head) return `${fold(node.key, node.kind === 'parent' ? workParentName(node.parent) : 'hub')}${folded ? workSummaryHtml(node.rows, workHiddenHubWaits(node)) : ''}${count}`;
   if (node.kind === 'parent') {
     const p = node.parent;
-    const segs = workSegments(p);
     const name = `${p.number ? `#${p.number}` : p.key}${p.title ? ` ${p.title}` : ''}`;
     const current = nav.task === PARENT_REF + p.key;
     // A parent the document does not list has nothing to open: its header is plain text.
     const [open, close, attrs] = p.missing ? ['span', 'span', ''] : ['button', 'button', ` type="button" data-wk-parent="${esc(p.key)}"${current ? ' aria-current="true"' : ''}`];
     return `${fold(node.key, name)}<${open} class="wk-head-main"${attrs} title="${esc(`${name}\nこの親 Issue を動かしている hub のターミナルを開く`)}">
       <span class="wk-head-name">${p.number ? `<span class="key">#${p.number}</span>` : `<span class="key">${esc(p.key)}</span>`}${esc(p.title || '')}</span>
-      <span class="wk-head-sub"><span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>
+      <span class="wk-head-sub">${workBarHtml(p)}
       <span>${workProgressHtml(p)}</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}>${chips(name)}${workTitleToolsHtml(p)}${count}`;
   }
   const hubName = node.kind === 'hub' ? workHubGroupName(node) : null;
@@ -1901,7 +1906,7 @@ function parentDetailGroups(p, { rowOf = () => null, stateOf = () => null, away 
     ? `<ul class="wk-stack-list">${root?.base ? `<li><span class="base">${esc(root.base)} ←</span></li>` : ''}${children.map(step).join('')}</ul>`
     : '<p class="tp-muted">子タスクはまだありません</p>';
   const overview = `<div class="wk-overview">${link ? `<p><a href="${esc(link)}" target="_blank" rel="noopener noreferrer">GitHub で開く</a></p>` : ''}`
-    + `<div class="wk-ov-bar"><span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span><span class="wk-ov-n">${workProgressHtml(p)}</span></div>`
+    + `<div class="wk-ov-bar">${workBarHtml(p)}<span class="wk-ov-n">${workProgressHtml(p)}</span></div>`
     + `${list}</div>`;
   const nextWhy = served ? '' : 'この hub のボードはこのサーバーにありません';
   const actions = `<div class="tp-gate-actions"><button type="button" class="btn-m3-tonal" data-pd-act="next"${nextWhy ? ' disabled' : ''} title="${esc(nextWhy || 'adj send --kind next (着手を促す)')}">`
