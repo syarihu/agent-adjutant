@@ -1,7 +1,12 @@
 /* The board as a list (the default view): one table-like grid, a section per stage in the order of the columns, and the switch
    between the list and the columns in the board's head. `renderBoard` (board.js) decides which of the two is drawn. */
 
-const LIST_HEAD = '<div class="list-head" aria-hidden="true"><span>待ち時間</span><span>スタック</span><span>キー</span><span>タイトル</span><span class="c-parent">親</span><span class="c-for">待っているもの</span><span>PR・状態</span></div>';
+/* The head of the grid: a cell per column, each with the handle at its right edge that sets that column's width. The cells are
+   `data-lc` the column's id, as are the cells of every row. */
+const LIST_HEAD_CLASS = { parent: 'c-parent', for: 'c-for' };
+const listHeadHtml = () => '<div class="list-head">' + LIST_COLS.map(c =>
+  `<span data-lc="${c.id}"${LIST_HEAD_CLASS[c.id] ? ` class="${LIST_HEAD_CLASS[c.id]}"` : ''}><span class="lc-label">${esc(c.label)}</span>`
+  + `<div class="list-col-resize" data-lc-h="${c.id}" role="separator" aria-orientation="vertical" tabindex="0" aria-label="${esc(c.label)} の幅" title="ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで自動の幅に戻します）"></div></span>`).join('') + '</div>';
 
 /* The list or the columns is shown, with what goes with it in the head: the switch, and 「親Issueでまとめる」, which only the list has. */
 function syncBoardHead(list) {
@@ -28,7 +33,7 @@ function parentChipHtml(task) {
   return `<span class="origin-chip parent-chip" title="${esc(p ? p.title || p.key : task.parent)}"><span class="material-symbols-outlined" aria-hidden="true">account_tree</span><span>親: ${esc(name)}</span></span>`;
 }
 
-/* The cells of a task's row, in the order of LIST_HEAD, and whether the row waits on the person. What a row says is what the
+/* The cells of a task's row, in the order of LIST_COLS, and whether the row waits on the person. What a row says is what the
    card says: the wait (`waitWordOf`), a permission prompt, what is stuck, the worker's phase, the queue. */
 function taskRowParts(task) {
   const owner = task.ownerHub;
@@ -58,10 +63,10 @@ function taskRowParts(task) {
   return {
     label,
     waiting: !!hcol || asks,
-    cells: `<span>${dur}</span><span>${stackChipHtml(task)}</span><span class="list-key">${key}${originChip(task)}</span>`
-      + `<span class="title" title="${esc(task.title)}">${esc(task.title)}${titlePendingPill(task)}</span>`
-      + `<span class="c-parent">${parentChipHtml(task)}</span><span class="${tone} c-for">${esc(text)}</span>`
-      + `<span class="list-state">${prTurnPill(task)}${pr}</span>`,
+    cells: `<span data-lc="wait">${dur}</span><span data-lc="stack">${stackChipHtml(task)}</span><span data-lc="key" class="list-key">${key}${originChip(task)}</span>`
+      + `<span data-lc="title" class="title" title="${esc(task.title)}">${esc(task.title)}${titlePendingPill(task)}</span>`
+      + `<span data-lc="parent" class="c-parent">${parentChipHtml(task)}</span><span data-lc="for" class="${tone} c-for">${esc(text)}</span>`
+      + `<span data-lc="state" class="list-state">${prTurnPill(task)}${pr}</span>`,
   };
 }
 
@@ -118,11 +123,11 @@ function sessionRow(w) {
   el.dataset.worktree = w.worktree;
   if (w._slug) el.dataset.slug = w._slug;
   const why = missing ? 'タスク ID はこのボードに見つかりません' : 'タスクのレコードがないセッション';
-  el.innerHTML = '<span></span><span></span>'
-    + `<span class="list-key"><span class="m3-pill pill-neutral" title="${esc(why)}">${missing ? 'タスクが見つからない' : 'タスクなし'}</span></span>`
-    + `<span class="title" title="${esc(w.branch || w.worktree || '')}">${esc(name)}</span><span class="c-parent"></span>`
-    + `<span class="list-st c-for">${last ? `最後の出力 ${esc(last)}` : ''}</span>`
-    + `<span class="list-state">${st ? `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>`
+  el.innerHTML = '<span data-lc="wait"></span><span data-lc="stack"></span>'
+    + `<span data-lc="key" class="list-key"><span class="m3-pill pill-neutral" title="${esc(why)}">${missing ? 'タスクが見つからない' : 'タスクなし'}</span></span>`
+    + `<span data-lc="title" class="title" title="${esc(w.branch || w.worktree || '')}">${esc(name)}</span><span data-lc="parent" class="c-parent"></span>`
+    + `<span data-lc="for" class="list-st c-for">${last ? `最後の出力 ${esc(last)}` : ''}</span>`
+    + `<span data-lc="state" class="list-state">${st ? `<span class="m3-pill ${STATE_PILL[st] || 'pill-neutral'}">${esc(ROW_LABEL[st] || STATE_LABEL[st] || st)}</span>`
       : `<span class="m3-pill ${w.present ? 'pill-good' : 'pill-neutral'}">${w.present ? '稼働' : '停止'}</span>`}${sessionLinkButtons(w)}</span>`;
   if (!pressableSession(w)) {
     el.style.cursor = 'default';
@@ -175,13 +180,58 @@ function listStage({ def, tasks, bare, older, count }) {
   return sec;
 }
 
+/* A column with a width the person set cuts what does not fit with an ellipsis (`lc-fixed`); one that sizes to its content never has to. */
+function markListCol(el, id) {
+  const fixed = prefs.boardListCols[id] != null;
+  for (const c of el.querySelectorAll(`[data-lc="${id}"]`)) if (!c.closest('.list-head')) c.classList.toggle('lc-fixed', fixed);
+}
+
+/* The grid's widths: a custom property per column that has one (`listColVars`); the others are put back to the stylesheet's. */
+function applyListCols(el) {
+  const vars = listColVars(prefs.boardListCols);
+  for (const c of LIST_COLS) {
+    if (vars[`--lc-${c.id}`]) el.style.setProperty(`--lc-${c.id}`, vars[`--lc-${c.id}`]);
+    else el.style.removeProperty(`--lc-${c.id}`);
+  }
+}
+
+/* The handle in a list column's head: dragged (or moved with the arrow keys) it sets that column's width, which is kept in
+   `prefs.boardListCols`; a double click gives the column back to its content (`bindWidthHandle` applies `reset`, null here). A drag
+   starts from the cell's width as drawn and moves it by how far the pointer went, and holds the redraws as the columns view's does. */
+function bindListColResize(handle, def) {
+  const list = () => document.getElementById('board-list');
+  const cell = () => handle.parentElement;
+  let drag = null;
+  handle.addEventListener('pointerdown', e => {
+    drag = { x: e.clientX, w: cell().getBoundingClientRect().width };
+    colDrag = !matchMedia('(max-width: 720px)').matches;
+  });
+  // A board that is not on screen measures 0: the column's least width is then what is said.
+  const now = () => prefs.boardListCols[def.id] ?? Math.max(def.min, Math.round(cell().getBoundingClientRect().width));
+  bindWidthHandle(handle, {
+    read: now, min: def.min, max: () => def.max, reset: null,
+    at: x => drag ? drag.w + (x - drag.x) : now(),
+    apply: w => {
+      if (w == null) delete prefs.boardListCols[def.id];
+      else prefs.boardListCols[def.id] = w;
+      const el = list();
+      applyListCols(el);
+      markListCol(el, def.id);
+    },
+  });
+}
+
 /* Draws the list afresh, at the scroll position it last had (`boardScroll`, board.js). */
 function renderBoardList(stages) {
   const el = document.getElementById('board-list');
   if (!el) return;
-  el.innerHTML = LIST_HEAD;
+  el.innerHTML = listHeadHtml();
+  applyListCols(el);
   for (const st of stages) el.appendChild(listStage(st));
+  for (const c of LIST_COLS) markListCol(el, c.id);
+  for (const h of el.querySelectorAll('.list-col-resize')) bindListColResize(h, LIST_COLS.find(c => c.id === h.dataset.lcH));
   el.scrollTop = boardScroll.list;
+  el.scrollLeft = boardScroll.listX;
 }
 
 // The switch and the grouping box are in the board's head, outside #boards (whose clicks board.js reads).

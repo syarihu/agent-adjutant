@@ -53,7 +53,7 @@ const PREF_KEY = 'adj-board-split';
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
 // listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle);
 // boardSideWidth is how wide the terminal beside the board is; questionWide is whether the question dialog is widened to the window;
-// boardView is 'list' or 'cols' and boardGroup whether the list groups セルフレビュー by parent Issue; boardColWidth is the least width of a column.
+// boardView is 'list' or 'cols' and boardGroup whether the list groups セルフレビュー by parent Issue; boardColWidth is the least width of a column in the columns view, boardListCols the widths (px, by id) of the list's columns that were set.
 const prefs = Object.assign({ boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
   workFolded:[], othersRepo:'', railHidden:false, questionWide:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
@@ -98,6 +98,30 @@ prefs.boardGroup = prefs.boardGroup === true;
 const BOARD_COL_W = { min: 200, max: 520, def: 280 };
 const clampBoardColWidth = v => Math.min(BOARD_COL_W.max, Math.max(BOARD_COL_W.min, Math.round(Number(v)) || BOARD_COL_W.def));
 prefs.boardColWidth = clampBoardColWidth(prefs.boardColWidth);
+// The columns of the list, in order, and how wide each may be made (px). A column never touched has no width and sizes to its content.
+const LIST_COLS = [
+  { id:'wait',   label:'待ち時間',       min:48,  max:800 },
+  { id:'stack',  label:'スタック',       min:48,  max:800 },
+  { id:'key',    label:'キー',           min:48,  max:800 },
+  { id:'title',  label:'タイトル',       min:120, max:800 },
+  { id:'parent', label:'親',             min:48,  max:800 },
+  { id:'for',    label:'待っているもの', min:48,  max:800 },
+  { id:'state',  label:'PR・状態',       min:48,  max:800 },
+];
+/* What is kept in the browser is not trusted: only the list's columns, each a number within its range; anything else is left out
+   (the column sizes to its content). */
+function cleanListCols(v) {
+  const out = {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out;
+  for (const c of LIST_COLS) {
+    if (typeof v[c.id] === 'number' && Number.isFinite(v[c.id])) out[c.id] = Math.min(c.max, Math.max(c.min, Math.round(v[c.id])));
+  }
+  return out;
+}
+/* The custom properties that give the list's grid its widths: one per column that has one (`--lc-<id>`; the stylesheet has the
+   content-sized default for the rest, and 0 for 親 and 待っているもの when the window is narrow). */
+const listColVars = widths => Object.fromEntries(LIST_COLS.filter(c => widths[c.id] != null).map(c => [`--lc-${c.id}`, `${widths[c.id]}px`]));
+prefs.boardListCols = cleanListCols(prefs.boardListCols);
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 /* The list column's toggle: its icon, and its name, which carries the 新着 count its badge shows while the column is hidden (the label

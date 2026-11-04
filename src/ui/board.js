@@ -308,12 +308,12 @@ const nextBtnHtml = id => id === 'before' && !scopeAll()
 
 /* The scroll position each drawing had when it was last on screen: the list's, and each column's. The drawing that is not shown
    is emptied, so the position is kept here and put back when it returns. */
-const boardScroll = { list: 0, colsX: 0, cols: {} };
+const boardScroll = { list: 0, listX: 0, colsX: 0, cols: {} };
 function rememberBoardScroll() {
   // Not on screen (another view is open): every scrollTop reads 0, which is not where the person left it.
   if (document.getElementById('board-view')?.offsetParent === null) return;
   const rows = document.getElementById('board-list');
-  if (rows?.childElementCount) boardScroll.list = rows.scrollTop;
+  if (rows?.childElementCount) { boardScroll.list = rows.scrollTop; boardScroll.listX = rows.scrollLeft; }
   const ab = document.getElementById('board-agent');
   if (ab?.childElementCount) {
     boardScroll.colsX = ab.scrollLeft;
@@ -443,6 +443,7 @@ function drawBoard() {
   const inner = !held ? null : active.matches('.stack-chip') ? '.stack-chip' : held.classList.contains('list-row') ? '.title' : null;
   const focus = held ? { id: held.dataset.id, worktree: held.dataset.worktree, slug: held.dataset.slug || '', inner } : null;
   const resizing = inBoard && active.matches('.col-resize') ? active.closest('[data-col]')?.dataset.col : null;
+  const listResizing = inBoard && active.matches('.list-col-resize') ? active.dataset.lcH : null;
   const more = inBoard && !held && active.matches('.more, [data-more-done]');
   const stages = boardStages();
   if (list) {
@@ -458,6 +459,7 @@ function drawBoard() {
     (focus.inner ? el?.querySelector(focus.inner) : el)?.focus({ preventScroll: true });
   }
   if (resizing) document.querySelector(`#board-agent [data-col="${resizing}"] .col-resize`)?.focus({ preventScroll: true });
+  if (listResizing) document.querySelector(`#board-list .list-col-resize[data-lc-h="${listResizing}"]`)?.focus({ preventScroll: true });
   if (more) document.querySelector('#boards .more, #boards [data-more-done]')?.focus({ preventScroll: true });
   syncStackPop();
 }

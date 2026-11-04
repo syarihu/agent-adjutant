@@ -522,8 +522,24 @@
   --head-h: 28px; --stage-h: 40px; --parent-h: 28px;
   flex: 1; min-height: 0; overflow: auto; padding: 0 16px 16px; scrollbar-width: thin;
   display: grid; align-content: start; column-gap: 10px;
-  grid-template-columns: max-content max-content max-content fit-content(36rem) max-content max-content max-content minmax(0, 1fr);
+  /* A column's width is --lc-<id> once the person set it (board-list.js); until then it sizes to its content. */
+  grid-template-columns: var(--lc-wait, max-content) var(--lc-stack, max-content) var(--lc-key, max-content) var(--lc-title, fit-content(36rem))
+    var(--lc-parent, max-content) var(--lc-for, max-content) var(--lc-state, max-content) minmax(0, 1fr);
 }
+/* The handle at the right edge of a column's head cell; the cell is its anchor, and the handle sits in the gap to the next. */
+.list-head > span { position: relative; }
+.list-col-resize { position: absolute; top: 3px; right: -8px; width: 6px; height: 22px; border-radius: 3px; cursor: col-resize; z-index: 1; touch-action: none; }
+.list-col-resize:hover, .list-col-resize:focus-visible, body.wk-dragging .list-col-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+/* A cell of a column whose width was set: what does not fit is cut with an ellipsis. An ellipsis is for inline content, so the cells
+   that are flex rows (the key's and the state's chips and pills) become blocks of inline items, spaced by margin instead of gap. */
+.list-row > .lc-fixed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-row > .lc-fixed.list-key, .list-row > .lc-fixed.list-state { display: block; }
+.list-row > .lc-fixed.list-key > *, .list-row > .lc-fixed.list-state > * { vertical-align: middle; }
+.list-row > .lc-fixed.list-key > * + *, .list-row > .lc-fixed.list-state > * + * { margin-left: 6px; }
+/* The cell clips, so a focus ring is drawn inside it. */
+.list-row > .lc-fixed .stack-chip:focus-visible { outline-offset: -2px; }
+/* A head cell's label is cut with an ellipsis; the handle, which sits in the gap, is not. */
+.list-head .lc-label { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .board-list[hidden] { display: none; }
 .list-head, .stage, .parent-group, .list-rows, .list-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
 .list-head, .list-row { border: 1px solid transparent; border-left-width: 3px; padding: 0 12px; align-items: center; }
@@ -559,7 +575,7 @@
 .list-row:hover { border-color: var(--md-sys-color-outline-variant); }
 .list-row.waiting { border-left-color: var(--md-sys-color-warning); }
 .list-row.selected { outline: 2px solid var(--md-sys-color-primary); }
-.list-row .title:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.list-row .title:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
 .list-row .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
 .list-row .list-key { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .list-row .list-wait { font-size: 11.5px; font-weight: 700; color: var(--md-sys-color-warning); white-space: nowrap; }
@@ -576,6 +592,8 @@
 .list-more:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 /* Narrow: the same two columns go from the head and from every row. The cells stay in the grid (empty, no width) so the others keep their places. */
 @media (max-width: 900px) {
+  /* The two tracks are 0 whatever width they were given; their cells (and the handles in the head's) are hidden. */
+  .board-list { grid-template-columns: var(--lc-wait, max-content) var(--lc-stack, max-content) var(--lc-key, max-content) var(--lc-title, fit-content(36rem)) 0 0 var(--lc-state, max-content) minmax(0, 1fr); }
   .list-head .c-parent, .list-head .c-for, .list-row .c-parent, .list-row .c-for { max-width: 0; overflow: hidden; visibility: hidden; }
 }
 

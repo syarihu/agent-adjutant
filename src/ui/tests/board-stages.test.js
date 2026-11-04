@@ -24,6 +24,7 @@ const ctx = vm.createContext({
 const run = (code, name) => vm.runInContext(code, ctx, { filename: name });
 run(read('util.js'), 'util.js');
 const core = read('core.js');
+run(cut(core, /^const LIST_COLS = \[[\s\S]*?\n\];\n/m) + cut(core, /^function cleanListCols[\s\S]*?\n\}\n/m) + cut(core, /^const listColVars = [^\n]*\n/m), 'core.js');
 run(cut(core, /^const BOARD_COL_W = [^\n]*\nconst clampBoardColWidth = [^\n]*\n/m), 'core.js');
 run(cut(core, /^\/\* The stages of the board, in the order[\s\S]*?(?=^function columnOf)/m), 'core.js');
 const task = read('task-view.js');
@@ -47,8 +48,8 @@ run(cut(read('task-panel.js'), /^function markSelectedCards\(\) \{[\s\S]*?\n\}\n
 // board-list.js is loaded whole: its helpers are called with what each needs in the page, stood in for here.
 run('const stuckOf = () => null; const sessionOfTask = () => null; const sessionState = () => null; const savePrefs = () => {}; const renderBoard = () => {}; const render = () => {}; let showOlderDone = false;', 'stubs.js');
 run(read('board-list.js'), 'board-list.js');
-const { clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead } = vm.runInContext(
-  '({ clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead })', ctx);
+const { cleanListCols, listColVars, clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead } = vm.runInContext(
+  '({ cleanListCols, listColVars, clampBoardColWidth, onStackFocusOut, onStackScroll, markSelectedCards, agentColOf, waitingSinceMs, orderStage, stackOf, parentGroupsOf, stackChipHtml, waitBadgeHtml, stackPopParts, AGENT_COLUMNS, AGENT_COL_OF_PHASE, syncBoardHead })', ctx);
 
 const stamp = secs => new Date(secs * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const T0 = Date.UTC(2026, 9, 1) / 1000;
@@ -263,8 +264,10 @@ test('the switch marks the one drawing that is shown, and the grouping box is on
 });
 
 test('the list head names the seven columns, and the narrow ones are the two marked for hiding', () => {
-  const head = vm.runInContext('LIST_HEAD', ctx);
-  assert.deepEqual([...head.matchAll(/<span[^>]*>([^<]+)<\/span>/g)].map(m => m[1]), ['待ち時間', 'スタック', 'キー', 'タイトル', '親', '待っているもの', 'PR・状態']);
+  const head = vm.runInContext('listHeadHtml()', ctx);
+  assert.deepEqual([...head.matchAll(/class="lc-label">([^<]+)<\/span>/g)].map(m => m[1]), ['待ち時間', 'スタック', 'キー', 'タイトル', '親', '待っているもの', 'PR・状態']);
+  // Each cell has a handle named for its column.
+  assert.deepEqual([...head.matchAll(/aria-label="([^"]+)"/g)].map(m => m[1]), ['待ち時間 の幅', 'スタック の幅', 'キー の幅', 'タイトル の幅', '親 の幅', '待っているもの の幅', 'PR・状態 の幅']);
   assert.equal([...head.matchAll(/class="c-(parent|for)"/g)].length, 2);
 });
 
@@ -334,4 +337,20 @@ test('a drawing asked for during a column drag is held, and made once when the d
   run2('flushBoardRender()');
   assert.equal(run2('drawn'), 2, 'none when nothing was held');
   assert.equal(run2('colDrag'), false);
+});
+
+test('the list column widths are kept per column within their range, and the rest size to their content', () => {
+  assert.deepEqual(cleanListCols({ key: 100, title: 50, wait: 5, state: 5000, parent: 99.6 }), { key: 100, title: 120, wait: 48, state: 800, parent: 100 });
+  // Only a finite number is kept: a string (even a numeric one), blank, null, NaN, Infinity or an unknown id is left out.
+  assert.deepEqual(cleanListCols({ key: 'wide', stack: null, for: NaN, wait: '', nope: 300, title: {}, parent: ' ', state: Infinity }), {});
+  assert.deepEqual(cleanListCols({ key: '200' }), {});
+  for (const bad of [null, undefined, 5, 'x', [], [100]]) assert.deepEqual(cleanListCols(bad), {}, String(bad));
+});
+
+test('the grid takes a width per column that has one, and the stylesheet gives the others their content size and 0 when narrow', () => {
+  assert.deepEqual({ ...listColVars({}) }, {});
+  assert.deepEqual({ ...listColVars({ title: 300, wait: 60 }) }, { '--lc-wait': '60px', '--lc-title': '300px' });
+  const css = read('board.css');
+  assert.match(css, /grid-template-columns: var\(--lc-wait, max-content\) var\(--lc-stack, max-content\) var\(--lc-key, max-content\) var\(--lc-title, fit-content\(36rem\)\)\s+var\(--lc-parent, max-content\) var\(--lc-for, max-content\) var\(--lc-state, max-content\) minmax\(0, 1fr\);/);
+  assert.match(css, /var\(--lc-title, fit-content\(36rem\)\) 0 0 var\(--lc-state, max-content\) minmax\(0, 1fr\)/);
 });

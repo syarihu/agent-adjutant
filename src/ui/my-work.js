@@ -1920,7 +1920,8 @@ function parentDetailParts(p) {
    Saved when the pointer is let go. */
 function bindWidthHandle(handle, { read, apply: set, min, max, reset, at, dir = 1 }) {
   // A separator that can be focused says where it stands.
-  const apply = w => { set(w); handle.setAttribute('aria-valuenow', String(w)); };
+  // `reset` may be null (the size the page picks itself): the handle then says the width it has now.
+  const apply = w => { set(w); handle.setAttribute('aria-valuenow', String(w ?? read())); };
   handle.setAttribute('aria-valuemin', String(min));
   handle.setAttribute('aria-valuemax', String(max()));
   handle.setAttribute('aria-valuenow', String(read()));
