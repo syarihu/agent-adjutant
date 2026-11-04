@@ -14,7 +14,7 @@
 body.view-work.rail-hidden #side-list { display: none; }
 body.view-work.rail-hidden { --list-w: 0px; }
 .list-resize { position: absolute; top: 0; bottom: 0; right: 0; width: 6px; cursor: col-resize; z-index: 3; touch-action: none; }
-.list-resize:hover, .list-resize:focus-visible, body.wk-dragging .list-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+.list-resize:hover, .list-resize:focus-visible, .list-resize.dragging { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
 /* The column shows the board list, 「いまの仕事」's list or the TODO's, by the rail's entry. */
 body.view-work #side-boards, body:not(.view-work) #wk-list { display: none; }
 body.wk-dragging { user-select: none; cursor: col-resize; }
@@ -45,7 +45,7 @@ body.board-side #work-view {
   border-left: 1px solid var(--md-sys-color-outline-variant);
 }
 body.board-side .board-side-resize { display: block; position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; z-index: 3; touch-action: none; }
-body.board-side .board-side-resize:hover, body.board-side .board-side-resize:focus-visible, body.wk-dragging .board-side-resize { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
+body.board-side .board-side-resize:hover, body.board-side .board-side-resize:focus-visible, body.board-side .board-side-resize.dragging { background: color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent); }
 body.board-side .board-side-close { display: inline-flex; position: absolute; top: 6px; right: 8px; z-index: 4; }
 /* The list's toggle and the work tabs belong to 「いまの仕事」; the heading starts at the top, clear of the close button. */
 body.board-side #wk-mid-row { display: none; }

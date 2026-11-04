@@ -16,26 +16,46 @@ task update`), never columns.
 The board has two halves, and a task can be on both at once.
 
 **The agent board** has six columns, defined only in the page (`AGENT_COLUMNS` in
-`src/ui/core.js`): `before` 着手前, `plan` 計画, `implement` 実装, `selfreview` セルフレビュー,
-`pr` PR・レビュー対応, `done` 完了. The page decides the column itself, in `agentColOf`:
+`src/ui/core.js`), in the order of who has the ball: `me` セルフレビュー, `rev` コードレビュー待ち,
+`ai` AIレビュー, `work` 計画・実装, `before` 着手前, `done` 完了. The page decides the column itself,
+in `agentColOf` ([#809](https://github.com/syarihu/agent-adjutant/issues/809) split the old
+計画 / 実装 / セルフレビュー / PR・レビュー対応 by whose turn it is). The first match wins:
 
 1. No task, or status `backlog` / `queued` → `before`. Status `done` / `cancelled` → `done`.
-2. A Jules task (`executor` is `jules`, or it has a `julesSession`): a PR or Jules state
-   `COMPLETED` → `pr`; `QUEUED` / `PLANNING` / `AWAITING_PLAN_APPROVAL` → `plan`; `IN_PROGRESS` /
-   `AWAITING_USER_FEEDBACK` / `PAUSED` / `FAILED` → `implement`; otherwise an open `plan` gate →
-   `plan`, an open `diff` or `verify` gate → `selfreview`, else `plan`.
-3. A worker row with a known phase → `AGENT_COL_OF_PHASE`: `plan` → `plan`, `implement` →
-   `implement`, `self-review` and `verify` → `selfreview`, `pr`, `pr-bots`, `review` and `report` →
-   `pr`.
-4. No phase: an open `plan` gate → `plan`; an open `diff` or `verify` gate → `selfreview`.
-5. Status `pr` or a PR → `pr`; otherwise `plan`.
+2. The ball is the person's: the open gate's `humanCol` is `diff`, `verify` or `prreview`, or the
+   card's `waitsOnPerson` → `me`. This comes before the phase, so a worker in `pr-bots` whose PR is
+   ready to merge is the person's. (`humanCol` `verify` also covers a `result` gate and `prreview` a
+   `relay` gate, so those are `me` too.)
+3. An open `plan` gate, or the worker's phase `plan` / `implement` → `work`.
+4. The phase `self-review` / `verify` → `ai`.
+5. With a PR (or status `pr`): `prStatus.state` `merged` → `done`; `prStatus.review` `required` or
+   `approved`, or the phase `review` → `rev`; otherwise → `ai` (the bots and CI are still reading, or
+   a draft that does not wait on the person). It is the review that decides, not `prTurn === 'checks'`:
+   CI pending outranks the review in `prTurn`, which would move a card between columns on every push.
+6. The phase `pr` / `report` with no PR yet → `ai`; the phase `review` with no PR → `rev`; anything
+   else → `work`.
 
-A worker with no card (a bare session) goes by `AGENT_COL_OF_PHASE`, or `implement` when it has no
-phase (`src/ui/board.js`). Only its coverage of the phases is tested (every phase has an entry in
-`AGENT_COL_OF_PHASE`), not its precedence. [#465](https://github.com/syarihu/agent-adjutant/issues/465)
+A Jules task (`executor` is `jules`, or it has a `julesSession`) follows rule 2, then, once it has a
+PR, rule 5; before that, `COMPLETED` → `ai`, a Jules state of `QUEUED` / `PLANNING` /
+`AWAITING_PLAN_APPROVAL` / `IN_PROGRESS` / `AWAITING_USER_FEEDBACK` / `PAUSED` / `FAILED` → `work`,
+else an open `diff` or `verify` gate → `ai`, else `work`.
+
+A worker with no card (a bare session) goes by `AGENT_COL_OF_PHASE` (`plan` and `implement` →
+`work`; `self-review`, `verify`, `pr`, `pr-bots` and `report` → `ai`; `review` → `rev`), or `work`
+when it has no phase (`bareCol` in `src/ui/board.js`); never `me`, which is for cards. Only the
+coverage of the phases is tested on the Rust side (every phase has an entry in
+`AGENT_COL_OF_PHASE`); the precedence above is covered by `src/ui/tests/board-stages.test.js`.
+[#465](https://github.com/syarihu/agent-adjutant/issues/465)
 put the human-side rules on the server and [#466](https://github.com/syarihu/agent-adjutant/issues/466)
 removed the page's copies of them; this one stayed in the page because the server had no copy of
 it to share.
+
+The page draws the columns, or the list of the same stages, from one function (`boardStages` in
+`src/ui/board.js`) and orders the cards of a stage with one pure function (`orderStage` in
+`src/ui/board-order.js`): what waits on the person first, the oldest wait at the top (`waitingSinceMs`:
+the gate's `openedAt`, else for a PR wait `prTurnAt`, else the worker's `phaseAt`, else `updatedAt`),
+then the agent's cards, the newest phase first; tasks of one stacked parent in the same stage stay
+together, root first, placed by the block's longest wait.
 
 The human board has been removed from the page (#734): what waits on the person is in the TODO view, and an agent card that waits is marked on the board itself. The ids below are still the server's `humanCol` and the page's `humanColOf`; the parts of this note that speak of the human board's cards describe the page before the removal.
 
@@ -66,7 +86,7 @@ Other things read the same inputs:
 - Through `humanColOf` or `columnOf`: the shelve and requeue actions (`ALLOWED` and `canDrop` in
   `src/ui/core.js`, used by `move` in `src/ui/actions.js`; the board has no drag and drop), the page's waiting counts
   (`waitingIn`), the panel's 「…を待っています」 pill, the card's waiting mark,
-  and the agent board's sort (cards waiting on the person go last).
+  and the agent board's order (cards waiting on the person go first).
 - Gates with no card on the board are placed by `g.humanCol`.
 - The server's sidebar counts (`board_counts`) read an open gate or `waitsOnPerson`.
 - `FINISHED_PHASES` in the sessions view reads the phase; the stuck badge (`stuckOf`) reads how
@@ -76,7 +96,7 @@ The session ledger's `waiting` changes no column; it marks the card and fills �
 
 No placement rule reads the task's `kind` or `doneWhen` (`doneWhen` shows only as a pill on the
 card, 調査のみ and the like). A report-only task's worker sets phase
-`report` as soon as it starts investigating, so an investigation sits in PR・レビュー対応 for its
+`report` as soon as it starts investigating, so an investigation sits in AIレビュー for its
 whole run and then in 動作確認 with its `result` gate. This is the clearest case of a card in a
 column that does not describe it.
 
@@ -123,8 +143,11 @@ not the same as absent: a condition naming any other value does not match it, an
 from Jules or could not ask, as `t.jules?.state` is today; a Jules task with no state still gets
 `step` from its PR or its gate, so nothing hangs on telling the two apart there.
 
-`step` is the one derived fact: where work in progress stands, whoever does it. It is `plan`,
-`implement`, `self-review` or `pr`, computed as steps 2 to 5 of `agentColOf` above, in that order,
+`step` is the one derived fact: where work in progress stands, whoever does it. It stays a fact of
+the phase alone: the board's split of that work into 計画・実装, AIレビュー, コードレビュー待ち and
+セルフレビュー is not a second `step`, it is a column condition over `step`, `prTurn` and `yourTurn`
+(see the columns above). It is `plan`, `implement`, `self-review` or `pr`, computed as `agentColOf`
+did before that split (the old steps 2 to 5: Jules, worker phase, open gate, status `pr` or a PR), in that order,
 with the worker row joined the way the server already joins it (`worker_of` over the hub's own
 rows, not the page's `workerOf`, which takes any row in the worktree, so a worker that reports to
 another hub but sits in the task's worktree no longer moves this hub's card; see
@@ -135,15 +158,17 @@ not in progress (status `backlog`, `queued`, `done` or `cancelled`), so a column
 never catches a finished task. A bare session (a worker with no card) has no `status` and gets
 `step` from its phase, or `implement` with no phase, as `bareCol` does today.
 
-The task panel's stepper reads `status` and `step`, not a column, so it stays the same whatever the
+The task panel's stepper is to read `status` and `step`, not a column, so it stays the same whatever the
 layout: nothing lit before the task starts, every step lit once it is `done` or `cancelled`, and
-`step` in between (the step `self-review` lights the stepper's `selfreview`).
+`step` in between. Today it reads the stage `agentColOf` gives (its steps are the board's stages in
+flow order: `work`, `ai`, `me`, `rev`), so an open diff gate lights セルフレビュー while the worker's
+phase has not moved.
 
 A parent's hub card's gates live in the parent hub's directory, never among the repository
-board's gates. Today `ownerHub.humanCol` reads the hub's open gate, while `agentColOf` looks for the
-card's id among the board's gates, where it finds nothing or another task's gate with the same id
-(ids are unique only per hub). The facts under `ownerHub` take the hub's open gate for both halves;
-that changes the agent column of a hub card only where today's lookup was wrong.
+board's gates. Today `ownerHub.humanCol` reads the hub's open gate, and `agentColOf` and `waitingSinceMs` look at no
+gate of the board for such a card (looking up its id there would find another task's gate with the
+same id: ids are unique only per hub). The facts under `ownerHub` take the hub's open gate for both halves,
+which the agent column of a hub card does not read today.
 
 Two things are deliberately not facts:
 

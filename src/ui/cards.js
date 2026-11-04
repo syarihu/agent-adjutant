@@ -44,6 +44,39 @@ function waitWordOf(task, hcol) {
   return humanLabel(hcol);
 }
 
+/* How long the card has waited on the person, from the same moment the stage sorts by (`waitingSinceMs`): 「N分待ち」, 「N時間待ち」,
+   「N日待ち」. An hour or more is warned, a day or more is alarmed. */
+function waitBadgeHtml(task) {
+  const mins = waitingMinutes(task);
+  const tone = mins >= 1440 ? ' long' : mins >= 60 ? ' mid' : '';
+  return `<span class="wait-badge${tone}" title="あなたの番になってから"><span class="material-symbols-outlined" aria-hidden="true">schedule</span>${esc(minutesLabel(mins))}待ち</span>`;
+}
+
+/* The board a task's card is on, as `data-slug` names it: a parent-task hub's card is that hub's. */
+const slugKeyOf = task => task.ownerHub ? task.ownerHub.slug : task._slug || '';
+
+/* A chip for a task in a stack, 「N/M」: pressed, it opens the stack's popover (stack-pop.js). Empty for a task in no stack. */
+function stackChipHtml(task) {
+  const st = stackOf(task);
+  if (!st) return '';
+  const n = `${st.at + 1}/${st.chain.length}`;
+  return `<button type="button" class="stack-chip" data-stack="${esc(task.id)}" data-stack-slug="${esc(slugKeyOf(task))}" aria-haspopup="dialog" aria-expanded="false" aria-label="スタック ${n} の依存を見る" title="スタック ${n}"><span class="material-symbols-outlined" aria-hidden="true">stacks</span>${n}</button>`;
+}
+
+/* What pressing a card, or a row of the list, does: the task's terminal beside the board, or its panel or detail. `el` is what
+   was pressed, which the detail dialog returns focus to. */
+function openCardTask(task, el) {
+  const owner = task.ownerHub;
+  const slug = owner ? owner.slug : task._slug;
+  const live = ['dispatched', 'pr'].includes(task.status);
+  const hcol = owner ? owner.humanCol : humanColOf(task);
+  // A board served alone has no terminal beside it: its card opens the task panel.
+  if (!multiBoard) return onBoard(slug, () => openTaskPanel(task.id));
+  // A card with a worker, or with a question waiting, opens its terminal beside the board; the others have none, so their detail opens.
+  if (live || hcol) return onBoard(slug, () => openTaskPanel(task.id, 'term'));
+  onBoard(slug, () => openTaskDetail((state.tasks || []).find(t => t.id === task.id) || task, el));
+}
+
 function agentCard(task) {
   const el = document.createElement('div');
   // A card of a parent-task hub on the repository's board: read from that hub's records, so
@@ -88,9 +121,11 @@ function agentCard(task) {
     <div class="card-header-row">
       ${issueNumber ? '' : `<span class="card-task-id" title="${esc(task.id)}">${esc(task.id)}</span>`}
       ${ghChipsHtml(task)}
+      ${stackChipHtml(task)}
       ${doneLabel ? `<span class="m3-pill ${donePillClass}">${esc(doneLabel)}</span>` : ''}
       ${task.status === 'queued' && task.order != null && !owner ? `<span class="m3-pill pill-neutral" title="キューの優先順"><span class="material-symbols-outlined" style="font-size:12px;">swap_vert</span>キュー ${task.order}</span>` : ''}
       ${task.status === 'backlog' ? '<span class="m3-pill pill-neutral" title="まだキューに渡していません">Backlog</span>' : ''}
+      ${hcol && !owner ? waitBadgeHtml(task) : ''}
     </div>
   `;
 
@@ -224,12 +259,7 @@ function agentCard(task) {
   }
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('.card-issue-link') || e.target.closest('a')) return;
-    const slug = owner ? owner.slug : task._slug;
-    // A board served alone has no terminal beside it: its card opens the task panel.
-    if (!multiBoard) return onBoard(slug, () => openTaskPanel(task.id));
-    // A card with a worker, or with a question waiting, opens its terminal beside the board; the others have none, so their detail opens.
-    if (live || hcol) return onBoard(slug, () => openTaskPanel(task.id, 'term'));
-    onBoard(slug, () => openTaskDetail((state.tasks || []).find(t => t.id === task.id) || task, el));
+    openCardTask(task, el);
   };
   pressableCard(el, task.title || task.id);
   return el;
@@ -251,14 +281,42 @@ function pressableCard(el, label) {
   });
 }
 
+/* The session of a worker with no task, which the 「すべて」 view does not always carry. */
+const sessionOfWorker = w => (state.sessions || []).find(x => x.kind === 'worker' && x.worktree === w.worktree && (!w._slug || x._slug === w._slug)) || null;
+
+/* Whether pressing the card (or row) of such a worker does anything, and what it does. Without a terminal there is no session
+   to open; 「すべて」 carries no sessions, so it lands on the worker's board. */
+function pressableSession(w) {
+  const s = sessionOfWorker(w);
+  return (!!s && boardTerminalReady(s)) || (!s && !!w._slug);
+}
+function pressSession(w) {
+  const s = sessionOfWorker(w);
+  if (s && boardTerminalReady(s)) onBoard(w._slug, () => openSessionRef(sessionRef(s)));
+  else if (!s && w._slug) onBoard(w._slug, () => {});
+}
+
+/* Whether the task a worker names is not on this board, which says the card (or row) why it has none. */
+const sessionMissingTask = w => !!w.task && !(state.tasks || []).some(t => t.id === w.task && (!w._slug || t._slug === w._slug));
+
+/* The buttons that make a session with no task one, or link it to one. Linking writes the task and tells the worker, which a
+   session that is not running cannot read. */
+function sessionLinkButtons(w) {
+  const s = sessionOfWorker(w);
+  if (!s || sessionMissingTask(w)) return '';
+  const off = !s.present ? ' disabled title="セッションが動いていないため、タスクにも既存のタスクへの紐づけもできません"' : '';
+  const link = (mode, label) => `<button type="button" class="m3-icon-button" data-sess-link="${mode}" data-sref="${esc(sessionRef(s))}"${off}><span>${label}</span></button>`;
+  return link('new', 'タスクにする…') + link('existing', '紐づける…');
+}
+
 function sessionCard(w) {
-  const s = (state.sessions || []).find(x => x.kind === 'worker' && x.worktree === w.worktree && (!w._slug || x._slug === w._slug)) || null;
+  const s = sessionOfWorker(w);
   const el = document.createElement('div');
   el.className = 'card session-card';
   el.dataset.worktree = w.worktree;
   if (w._slug) el.dataset.slug = w._slug;
 
-  const missing = !!w.task && !(state.tasks || []).some(t => t.id === w.task && (!w._slug || t._slug === w._slug));
+  const missing = sessionMissingTask(w);
   const what = missing ? 'タスク ID はこのボードに見つかりません' : 'タスクのレコードがないセッション';
   const folder = baseName(w.worktree) || w.name || '';
   const name = s ? sessionKey(s) : folder;
@@ -276,28 +334,21 @@ function sessionCard(w) {
     ${s && agentText(s) ? `<span class="card-worker-cmd">${esc(agentText(s))}</span>` : ''}
   </div>`;
 
-  // Linking writes the task and tells the worker, which a session that is not running cannot read.
-  const off = s && !s.present ? ' disabled title="セッションが動いていないため、タスクにも既存のタスクへの紐づけもできません"' : '';
-  const link = (mode, label) => `<button type="button" class="m3-icon-button" data-sess-link="${mode}" data-sref="${esc(sessionRef(s))}"${off}><span>${label}</span></button>`;
   h += `<div class="card-footer-row">
     <div class="card-meta-slug" title="${esc(w.worktree || '')}"><span class="material-symbols-outlined" style="font-size:13px;">folder_open</span><span>${esc(folder)}</span></div>
     <div class="card-button-row">
-      ${s && !missing ? link('new', 'タスクにする…') + link('existing', '紐づける…') : ''}
+      ${sessionLinkButtons(w)}
       ${w.worktree ? `<button type="button" class="m3-icon-button" title="${ideTitle()}" data-ide="${esc(w.worktree)}">${icon('code')}<span>IDE</span></button>` : ''}
     </div>
   </div>`;
 
   el.innerHTML = h;
-  // Without a terminal there is no session to open.
-  const opens = !!s && boardTerminalReady(s);
-  // 「すべて」 carries no sessions: the board's own page does, with the buttons.
-  const lands = !s && !!w._slug;
-  if (!opens && !lands) el.style.cursor = 'default';
+  const pressable = pressableSession(w);
+  if (!pressable) el.style.cursor = 'default';
   el.onclick = (e) => {
     if (e.target.closest('button') || e.target.closest('.m3-pill') || e.target.closest('a')) return;
-    if (opens) onBoard(w._slug, () => openSessionRef(sessionRef(s)));
-    else if (lands) onBoard(w._slug, () => {});
+    pressSession(w);
   };
-  if (opens || lands) pressableCard(el, name);
+  if (pressable) pressableCard(el, name);
   return el;
 }

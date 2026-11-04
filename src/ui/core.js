@@ -52,7 +52,8 @@ const PREF_KEY = 'adj-board-split';
 // dialog instead, and panelWidth is how wide the docked panel is; all three are remembered per browser;
 // reviewNext is whether answering a gate in 「いまの仕事」 opens the next new row;
 // listWidth is how wide the list column is; railHidden is whether it is hidden in 「いまの仕事」 (the toggle at the head of the middle);
-// boardSideWidth is how wide the terminal beside the board is; questionWide is whether the question dialog is widened to the window.
+// boardSideWidth is how wide the terminal beside the board is; questionWide is whether the question dialog is widened to the window;
+// boardView is 'list' or 'cols' and boardGroup whether the list groups セルフレビュー by parent Issue; boardColWidth is the least width of a column in the columns view, boardListCols the widths (px, by id) of the list's columns that were set.
 const prefs = Object.assign({ boardsFolded:[], panelDock:'right', panelDialog:false, panelWidth:520, reviewNext:true,
   workFolded:[], othersRepo:'', railHidden:false, questionWide:false },
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; } })());
@@ -90,6 +91,37 @@ prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k =
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
 // rings waits and gates itself and the server's `notification` stays silent for them; see pageRings.
 prefs.notify = notifyPrefs(prefs.notify);
+// The board's view: the list (the default) or the columns, and whether the list groups 「セルフレビュー」 by parent Issue.
+prefs.boardView = prefs.boardView === 'cols' ? 'cols' : 'list';
+prefs.boardGroup = prefs.boardGroup === true;
+// How wide each column of the columns view is at least (one value for all six), within its range; a value that is not a number is the default.
+const BOARD_COL_W = { min: 200, max: 520, def: 280 };
+const clampBoardColWidth = v => Math.min(BOARD_COL_W.max, Math.max(BOARD_COL_W.min, Math.round(Number(v)) || BOARD_COL_W.def));
+prefs.boardColWidth = clampBoardColWidth(prefs.boardColWidth);
+// The columns of the list, in order, and how wide each may be made (px). A column never touched has no width and sizes to its content.
+const LIST_COLS = [
+  { id:'wait',   label:'待ち時間',       min:48,  max:800 },
+  { id:'stack',  label:'スタック',       min:48,  max:800 },
+  { id:'key',    label:'キー',           min:48,  max:800 },
+  { id:'title',  label:'タイトル',       min:120, max:800 },
+  { id:'parent', label:'親',             min:48,  max:800 },
+  { id:'for',    label:'待っているもの', min:48,  max:800 },
+  { id:'state',  label:'PR・状態',       min:48,  max:800 },
+];
+/* What is kept in the browser is not trusted: only the list's columns, each a number within its range; anything else is left out
+   (the column sizes to its content). */
+function cleanListCols(v) {
+  const out = {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out;
+  for (const c of LIST_COLS) {
+    if (typeof v[c.id] === 'number' && Number.isFinite(v[c.id])) out[c.id] = Math.min(c.max, Math.max(c.min, Math.round(v[c.id])));
+  }
+  return out;
+}
+/* The custom properties that give the list's grid its widths: one per column that has one (`--lc-<id>`; the stylesheet has the
+   content-sized default for the rest, and 0 for 親 and 待っているもの when the window is narrow). */
+const listColVars = widths => Object.fromEntries(LIST_COLS.filter(c => widths[c.id] != null).map(c => [`--lc-${c.id}`, `${widths[c.id]}px`]));
+prefs.boardListCols = cleanListCols(prefs.boardListCols);
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 
 /* The list column's toggle: its icon, and its name, which carries the 新着 count its badge shows while the column is hidden (the label
@@ -106,7 +138,7 @@ function renderRailToggle() {
 }
 
 /* The rail's entry for the place on screen is the one `aria-current="page"`: the work view's two lists are 「いまの仕事」 and
-   「レビュー」, the TODO is its own, and every board is under 「ボード」. */
+   「レビュー」, the TODO is its own, and every board is under 「工程」. */
 function markRail() {
   const on = view === 'work' ? (nav.list === 'review' ? 'nav-review' : 'nav-work') : view === 'todo' ? 'nav-todo' : 'nav-boards';
   for (const id of ['nav-work', 'nav-review', 'nav-todo', 'nav-boards']) {
@@ -128,6 +160,7 @@ function applyLayout() {
   document.body.classList.toggle('rail-hidden', prefs.railHidden);
   renderRailToggle();
   document.body.style.setProperty('--board-side-w', `${prefs.boardSideWidth}px`);
+  document.body.style.setProperty('--board-col-w', `${prefs.boardColWidth}px`);
   savePrefs();
 }
 /* Brings the card `id` of the board into view, on the board view. */
@@ -139,23 +172,26 @@ function jump(id) {
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
 
+/* The stages of the board, in the order they are drawn: what waits on the person first. The `step` of a task stays the
+   worker's phase alone; the stage is a condition over the phase, the PR's turn and whose ball it is (`agentColOf`). */
 const AGENT_COLUMNS = [
-  { id:'before',     label:'着手前',          icon:'inbox' },
-  { id:'plan',       label:'計画',            icon:'edit_note' },
-  { id:'implement',  label:'実装',            icon:'code' },
-  { id:'selfreview', label:'セルフレビュー',  icon:'rule' },
-  { id:'pr',         label:'PR・レビュー対応', icon:'merge' },
-  { id:'done',       label:'完了',            icon:'check_circle' },
+  { id:'me',     label:'セルフレビュー',      icon:'person' },
+  { id:'rev',    label:'コードレビュー待ち',  icon:'rate_review' },
+  { id:'ai',     label:'AIレビュー',          icon:'rule' },
+  { id:'work',   label:'計画・実装',          icon:'code' },
+  { id:'before', label:'着手前',              icon:'inbox' },
+  { id:'done',   label:'完了',                icon:'check_circle' },
 ];
+/* The stage of a worker's phase on its own, for a session with no task and for a phase `agentColOf` has nothing more to read. */
 const AGENT_COL_OF_PHASE = {
-  plan:'plan',
-  implement:'implement',
-  'self-review':'selfreview',
-  verify:'selfreview',
-  pr:'pr',
-  'pr-bots':'pr',
-  review:'pr',
-  report:'pr',
+  plan:'work',
+  implement:'work',
+  'self-review':'ai',
+  verify:'ai',
+  pr:'ai',
+  'pr-bots':'ai',
+  review:'rev',
+  report:'ai',
 };
 
 /* What a card says it waits for, by the person's column (`humanColOf`): the columns of the board that was removed are only these words now. */
@@ -190,48 +226,76 @@ function humanColOf(t, data = state) {
   return openGate(t, data)?.humanCol || (t.waitsOnPerson ? 'prreview' : null);
 }
 
+/* The stage of a task that has a PR: merged is done; a review asked for or given is the reviewers'; the rest (bots and CI
+   still reading, a draft that does not wait on the person) is the AI's. Decided by the review, not by `prTurn`: CI pending
+   outranks the review in `prTurn`, which would move a card between stages on every push. */
+function prColOf(t, phase) {
+  const st = t.prStatus?.state;
+  const review = t.prStatus?.review;
+  if (st === 'merged') return 'done';
+  if (review === 'required' || review === 'approved' || phase === 'review') return 'rev';
+  return 'ai';
+}
+
+/* The stage a task is in, first match wins:
+   1. backlog / queued is 着手前; done / cancelled is 完了.
+   2. The person's ball — a diff or verify gate open, or the PR on the person's turn — is セルフレビュー, whatever the phase
+      says (a worker in pr-bots with the PR ready to merge is the person's).
+   3. An open plan gate, or the phase plan / implement, is 計画・実装.
+   4. The phase self-review / verify is AIレビュー.
+   5. With a PR: merged is 完了, a review asked for or given is コードレビュー待ち, else AIレビュー.
+   6. With no PR yet: the phase pr / pr-bots / report is AIレビュー, review is コードレビュー待ち; anything else is 計画・実装. */
 function agentColOf(t, data = state) {
   if (!t) return 'before';
   if (t.status === 'backlog' || t.status === 'queued') return 'before';
   if (t.status === 'done' || t.status === 'cancelled') return 'done';
 
-  // Jules task mapping
+  // The same reading as the card's waiting mark (`humanColOf`), so a gate just answered leaves the stage at once.
+  const hc = humanColOf(t, data);
+  if (hc === 'diff' || hc === 'verify' || hc === 'prreview' || t.waitsOnPerson) return 'me';
+
+  // A parent-task hub's task has no gate among this board's: an id is unique only within one hub, so a gate of this board's own
+  // task of the same id is not its.
+  const g = t.ownerHub ? null : openGate(t, data);
+  const hasPr = !!t.pr || t.status === 'pr';
+
+  // Jules task: once it has a PR it is read like any other; before that, by the session's state.
   if (t.executor === 'jules' || t.julesSession) {
+    if (hasPr) return prColOf(t, null);
     const js = t.jules?.state;
-    if (t.pr || js === 'COMPLETED') return 'pr';
-    if (['QUEUED', 'PLANNING', 'AWAITING_PLAN_APPROVAL'].includes(js)) return 'plan';
-    if (['IN_PROGRESS', 'AWAITING_USER_FEEDBACK', 'PAUSED', 'FAILED'].includes(js)) return 'implement';
-    const g = openGate(t, data);
-    if (g?.kind === 'plan') return 'plan';
-    if (g?.kind === 'diff' || g?.kind === 'verify') return 'selfreview';
-    return 'plan';
+    if (js === 'COMPLETED') return 'ai';
+    if (['QUEUED', 'PLANNING', 'AWAITING_PLAN_APPROVAL', 'IN_PROGRESS', 'AWAITING_USER_FEEDBACK', 'PAUSED', 'FAILED'].includes(js)) return 'work';
+    return g?.kind === 'diff' || g?.kind === 'verify' ? 'ai' : 'work';
   }
 
-  // Local worker mapping
-  const w = workerOf(t, data);
-  if (w && w.phase && AGENT_COL_OF_PHASE[w.phase]) {
-    return AGENT_COL_OF_PHASE[w.phase];
-  }
-  const g = openGate(t, data);
-  if (g?.kind === 'plan') return 'plan';
-  if (g?.kind === 'diff' || g?.kind === 'verify') return 'selfreview';
-  if (t.status === 'pr' || t.pr) return 'pr';
-  return 'plan';
+  if (g?.kind === 'plan') return 'work';
+  const phase = workerOf(t, data)?.phase;
+  const byPhase = phase && AGENT_COL_OF_PHASE[phase];
+  if (byPhase === 'work') return 'work';
+  if (phase === 'self-review' || phase === 'verify') return 'ai';
+  if (hasPr) return prColOf(t, phase);
+  return byPhase || 'work';
 }
 
-function waitingSinceMs(t) {
-  const g = openGate(t);
+/* When the task started waiting on the person (ms): its open gate's `openedAt`; else, for a PR on the person's turn, when
+   the turn last changed (`prTurnAt`); else when the worker entered its phase; else when the task was last written. */
+function waitingSinceMs(t, data = state) {
+  const g = t.ownerHub ? null : openGate(t, data);
   if (g && g.openedAt) {
     const s = stampSecs(g.openedAt);
     if (s) return s * 1000;
   }
-  const w = workerOf(t);
+  if (t.waitsOnPerson) {
+    const s = stampSecs(t.prTurnAt);
+    if (s) return s * 1000;
+  }
+  const w = workerOf(t, data);
   if (w && w.phaseAt) return w.phaseAt * 1000;
   return updatedMs(t);
 }
 
-function waitingMinutes(t) {
-  const since = waitingSinceMs(t);
+function waitingMinutes(t, data = state) {
+  const since = waitingSinceMs(t, data);
   return minutesSince(since / 1000, Date.now() / 1000);
 }
 

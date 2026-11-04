@@ -1396,8 +1396,8 @@ function syncBoardSide() {
   boardSideShown = on;
   // The heading and the questions are the document's: a fresh one when the sidebar opens.
   if (on) {
-    // The board narrows under the sidebar: the card that was pressed is brought back into view once it has.
-    requestAnimationFrame(() => document.querySelector('#board-agent .card.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    // The board narrows under the sidebar: the card or row that was pressed is brought back into view once it has.
+    requestAnimationFrame(() => document.querySelector('#board-agent .card.selected, #board-list .list-row.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
     return void refreshWork(true);
   }
   if (view !== 'work') {
@@ -1938,7 +1938,8 @@ function parentDetailParts(p) {
    Saved when the pointer is let go. */
 function bindWidthHandle(handle, { read, apply: set, min, max, reset, at, dir = 1 }) {
   // A separator that can be focused says where it stands.
-  const apply = w => { set(w); handle.setAttribute('aria-valuenow', String(w)); };
+  // `reset` may be null (the size the page picks itself): the handle then says the width it has now.
+  const apply = w => { set(w); handle.setAttribute('aria-valuenow', String(w ?? read())); };
   handle.setAttribute('aria-valuemin', String(min));
   handle.setAttribute('aria-valuemax', String(max()));
   handle.setAttribute('aria-valuenow', String(read()));
@@ -1948,17 +1949,24 @@ function bindWidthHandle(handle, { read, apply: set, min, max, reset, at, dir = 
     e.preventDefault();
     handle.setPointerCapture(e.pointerId);
     document.body.classList.add('wk-dragging');
+    // The handle held, for a page with more than one (the columns' and the list's): only it is lit.
+    handle.classList.add('dragging');
     const move = ev => apply(clamp(at(ev.clientX)));
     const end = () => {
+      handle.classList.remove('dragging');
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);
+      handle.removeEventListener('lostpointercapture', end);
+      // A capture lost with no pointerup must not leave the page marked as dragging.
+      if (!document.body.classList.contains('wk-dragging')) return;
       document.body.classList.remove('wk-dragging');
       savePrefs();
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
     handle.addEventListener('pointercancel', end);
+    handle.addEventListener('lostpointercapture', end);
   });
   handle.addEventListener('keydown', e => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;

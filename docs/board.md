@@ -25,7 +25,7 @@ adj server restart [--port <port>] [--open]
 ```
 
 - **Port allocation**: Defaults to `127.0.0.1:4577`, or any free port if 4577 is occupied.
-- **Switching repositories**: On the resident server, `/` opens 「いまの仕事」; the rail's ボード entry lists the current organisation's repositories and parent-task hubs in the column beside it, and selecting "すべて" (`/?view=agent`) displays tasks across that organisation's boards.
+- **Switching repositories**: On the resident server, `/` opens 「いまの仕事」; the rail's 工程 entry lists the current organisation's repositories and parent-task hubs in the column beside it, and selecting "すべて" (`/?view=agent`) displays tasks across that organisation's boards.
 - **Automatic reconnection**: Existing browser tabs automatically reconnect if the port remains unchanged after `adj server restart`.
 - **Security & Tokens**: Bound strictly to `127.0.0.1`. Every request needs the token stored in `~/.local/state/adjutant/dashboard-token`. The page reads it from the `token` URL query it was opened with and sends it in the `X-Adjutant-Token` header; state-changing requests are refused unless the token comes in that header. Separately, state-changing requests and terminal WebSocket connections must carry a browser `Origin` header that matches the board's own origin.
 
@@ -64,7 +64,7 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 ## Views
 
-The page is a rail of icons with the list of the place chosen in a column beside it. The rail has **いまの仕事 (Work under way)**, **TODO**, **レビュー (Review)** and **ボード (Board)**, with the organisation switch and a ＋ button (「依頼する」) above them and the notification settings and the theme below. The list column of いまの仕事, TODO and ボード starts with a 「依頼する」 button too (レビュー's list does not), and the usage (rate limits) is pinned to the bottom of the list column in every place but TODO. A row shows `#N マージ` at the right end of its meta only once its PR is merged; before that it carries no Issue or PR number. `/` opens いまの仕事 on the resident server; `/?view=review` is レビュー; `/?view=agent` is 「すべて」, and a board's own address (`/b/<slug>/`) opens that board. The list column's width is dragged between 240px and 560px and remembered. A board served alone has the rail and the board only.
+The page is a rail of icons with the list of the place chosen in a column beside it. The rail has **いまの仕事 (Work under way)**, **TODO**, **レビュー (Review)** and **工程 (Stages)**, with the organisation switch and a ＋ button (「依頼する」) above them and the notification settings and the theme below. The list column of いまの仕事, TODO and 工程 starts with a 「依頼する」 button too (レビュー's list does not), and the usage (rate limits) is pinned to the bottom of the list column in every place but TODO. A row shows `#N マージ` at the right end of its meta only once its PR is merged; before that it carries no Issue or PR number. `/` opens いまの仕事 on the resident server; `/?view=review` is レビュー; `/?view=agent` is 「すべて」, and a board's own address (`/b/<slug>/`) opens that board. The list column's width is dragged between 240px and 560px and remembered. A board served alone has the rail and the board only.
 
 ### 1. いまの仕事 (Work Under Way: `?view=work`)
 
@@ -89,7 +89,7 @@ A unified 3-column operational view across all repositories:
 
 #### Organisation, repository and hierarchy
 The left list shows one organisation (a GitHub owner) at a time:
-- **Organisation switch**: the avatar at the top of the rail, with the organisation's name and ⇕ under it. Its menu opens on hover or keyboard focus (or a tap), marks the current organisation with ✓ and lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Choosing an organisation selects its first session with a task. Following a link to a row of another organisation switches to it. The badge of いまの仕事 on the rail and the count in the tab's title are the current organisation's, and so are the list of boards and 「すべて」 under ボード: opening a board of another organisation switches to it, and choosing another organisation while a board of the old one is open moves to 「すべて」.
+- **Organisation switch**: the avatar at the top of the rail, with the organisation's name and ⇕ under it. Its menu opens on hover or keyboard focus (or a tap), marks the current organisation with ✓ and lists every owner of a registered repository, with how many things wait in each; the badge on the avatar adds up the other organisations'. Choosing an organisation selects its first session with a task. Following a link to a row of another organisation switches to it. The badge of いまの仕事 on the rail and the count in the tab's title are the current organisation's, and so are the list of boards and 「すべて」 under 工程: opening a board of another organisation switches to it, and choosing another organisation while a board of the old one is open moves to 「すべて」.
 - **Repository filter**: 「すべて」 or one repository of the organisation. With one chosen, the repository headings are left out.
 - **Hierarchy**: Repository → hub → sessions. A hub is a row heading its group; the tasks it runs are indented below it. A parent issue's hub shows the parent's number, title and `n / m マージ` progress.
 - **依頼する**: opens one dialog to ask a hub for a task: pick the repository (of the organisation) and the hub (the repository's own, or a parent task's), write what you want, and send it with 「渡す」 (Ctrl/⌘+Enter) or keep it with 「あとで（Backlog）」. An unsent text is kept for the next time. The new-task button and 「子タスクを足す」 open the same dialog; a board served alone keeps its own form.
@@ -147,15 +147,27 @@ An answered item leaves the list at once. The selected item is page state; only 
 
 ---
 
-### 4. ボード (Board: `?view=agent`)
+### 4. 工程 (Stages: `?view=agent`)
 
-The rail's ボード shows the list of boards in the list column and the cards of the selected board in the middle.
+The rail's 工程 shows the list of boards in the list column and the work of the selected board in the middle, as a list (the default) or as columns. What waits on you comes first.
 
 - **The list of boards**: 「すべて」 (with the number of repositories) first, then each repository with its parent-task hubs under it. A row says what its hub is (リポジトリ hub or 親タスク hub, with 「 · 止まっています」 added when the hub is stopped), shows a dot for its state (green running, grey stopped, red stale) and, at the right, how many tasks of that board are still open (`open` of `/api/boards`: every task that is neither done nor cancelled; nothing is shown at zero). 「すべて」 shows the sum. Only the current organisation's boards are listed, and 「すべて」 counts and shows only those. Every row has a terminal button that opens its hub beside the board (a stopped hub shows 「hub を起動」 there); a stopped hub's row also has 起動.
-- **The head** is one line: the board's name in bold (「すべて」, the repository, or `<repository> · <hub key and title>` for a parent-task hub's board) and 「エージェントの作業」.
-- **Six columns** of equal width, each with its name and count: 着手前, 計画, 実装, セルフレビュー, PR・レビュー対応 and 完了. 着手前 lists the queue first (each card with 「キュー N」, N being its order) and then the backlog (「Backlog」), and has 「次を流す」. 完了 folds the cards older than a day behind 「以前の完了」. The PR・レビュー対応 column has 「PR確認」 and says when the automatic reading of PRs has stopped.
-- **A card that waits on you** has a warning-coloured edge on its left and a line 「…を待っています」. The words come from the gate that is open (着手確認, 起票の確認, 計画, 差分, 動作確認, 報告, 回答, 指摘の転送) or, with no gate and a PR on your turn, from the PR (修正の依頼への対応, マージ, CI の失敗への対応, 閉じた PR の判断; otherwise PR のレビュー). A worker on a permission prompt shows 許可待ち in the error colour. A card with a PR also carries the pill of whose turn the PR is on.
-- **The terminal beside the board** (resident server): pressing a card whose task is at work (`dispatched` or `pr`) or is your turn (a gate open, or its PR waiting on you), a card of a session with no task, or the terminal button of a hub's row opens that terminal in a sidebar at the right of the board, with the heading, the questions that slide down over it and the two floating buttons of いまの仕事. The board stays on the left and keeps scrolling; the columns keep at least 140px and scroll sideways. The sidebar is closed with its × button, and its width is dragged by its left edge (360px to 1400px, arrow keys and a double click work too) and remembered. The address keeps it: `?task=<id>&pane=term` (or `hub:<id>`, `session:<id>`), so back and forward work. A backlog, queued, done or cancelled card opens its detail dialog instead. A board served alone has no sidebar: a card opens the task panel.
+- **The head** is one line: the board's name in bold (「すべて」, the repository, or `<repository> · <hub key and title>` for a parent-task hub's board), 「エージェントの作業」, and the switch 「リスト / 列」. The list is the default; the choice is remembered in the browser.
+- **Six stages**, in the order of who has the ball: セルフレビュー (you), コードレビュー待ち (the reviewers), AIレビュー (bots, CI and the AI's own review), 計画・実装, 着手前 and 完了. A card is placed by its worker's phase, whose turn its PR is on and its open gate (`agentColOf`):
+  1. 着手前 for a backlog or queued task; 完了 for a done or cancelled one.
+  2. セルフレビュー when the ball is yours: a diff or verify gate is open, or its PR waits on you (changes requested, ready to merge, CI failed, closed). This comes before the phase: a worker in `pr-bots` whose PR is ready to merge is yours.
+  3. 計画・実装 for an open plan gate or the phase `plan` or `implement`.
+  4. AIレビュー for the phase `self-review` or `verify`.
+  5. With a PR: 完了 once it is merged; コードレビュー待ち when a review is asked for or given (the review state is `required` or `approved`, or the phase is `review`); otherwise AIレビュー (the bots and CI are still reading, or it is a draft that does not wait on you). The stage follows the review, not CI, so a card does not move with every push.
+  6. With no PR yet: the phase `pr`, `pr-bots` or `report` is AIレビュー, the phase `review` is コードレビュー待ち, and anything else is 計画・実装.
+
+  A Jules task with a PR is placed the same way; before that by its session. A session with no task goes by its phase and never into セルフレビュー.
+- **Column width** (columns view): the six columns are equal and fill the width, none narrower than a width you set by dragging the handle at the right edge of any column's head (200px to 520px, 280px by default; arrow keys and a double click work too; the width is remembered and is the same for all six). When the window is narrow, or a task's detail is open beside the board, the columns keep that width and the board scrolls sideways.
+- **Order in a stage**: what waits on you first, the oldest wait at the top, then the agent's cards, the newest phase first. A wait starts when the gate was opened, or, for a PR on your turn, when the PR's turn last changed. Cards of one stacked parent that are in the same stage stay together, root first, and sit where the longest wait of the block puts them. Siblings that come after one another (`after`, without being stacked) also line up, the earlier task first, as one block placed the same way; a stack keeps its own order. 着手前 lists the queue first (each card with 「キュー N」, N being its order) and then the backlog (「Backlog」), and has 「次を流す」. 完了 folds the cards older than a day behind 「以前の完了」. セルフレビュー has 「PR確認」 and says when the automatic reading of PRs has stopped.
+- **The list** is one grid with a header row (待ち時間, スタック, キー, タイトル, 親, 待っているもの, PR・状態), one section per stage with its name and count, and the columns aligned across all of them; a column sizes to its content until you set its width by dragging the handle at the right edge of its header cell (48px to 800px, the title at least 120px; arrow keys work too, and a double click gives the column back to its content); a column with a width you set cuts what does not fit with an ellipsis. The widths are remembered per column. When the columns together are wider than the window, or a task's detail is open beside the board, the list scrolls sideways and the columns keep their width. The header and each stage's head stay at the top while the list scrolls. A row opens what a card opens, and is pressed from the keyboard too. 「親Issueでまとめる」 (shown only in the list) groups the rows of セルフレビュー under their parent Issue, each parent with its own sticky head (marked `stack` when its children are stacked); the choice is remembered. At 900px or narrower the 親 and 待っているもの columns go.
+- **A card that waits on you** has a warning-coloured edge on its left, a line 「…を待っています」 and a badge 「N分待ち」, 「N時間待ち」 or 「N日待ち」 (warned after an hour, alarmed after a day). The words come from the gate that is open (着手確認, 起票の確認, 計画, 差分, 動作確認, 報告, 回答, 指摘の転送) or, with no gate and a PR on your turn, from the PR (修正の依頼への対応, マージ, CI の失敗への対応, 閉じた PR の判断; otherwise PR のレビュー). A worker on a permission prompt shows 許可待ち in the error colour. A card with a PR also carries the pill of whose turn the PR is on.
+- **Stacks**: a card or row whose task is in a stack (children of one parent, each cut from the one before; the server lists them) has a chip with `stacks` and 「N/M」. Pressing it opens a popover headed 「Stack · 親 …」: the top of the stack first, down to the branch the stack starts from. Each step has the state of its PR, its key and title, and a second line with the PR number, the branch and the stage it is in; the pressed task is highlighted. Pressing a step closes the popover and scrolls to that card or row. Esc, the close button or a press outside closes it, and so do a scroll that moves the chip, a window resize and the focus moving outside the popover; Esc and the button return the focus to the chip. A step whose card is a done one folded behind 「以前の完了」 opens that fold first.
+- **The terminal beside the board** (resident server): pressing a card or row whose task is at work (`dispatched` or `pr`) or is your turn (a gate open, or its PR waiting on you), a card of a session with no task, or the terminal button of a hub's row opens that terminal in a sidebar at the right of the board, with the heading, the questions that slide down over it and the two floating buttons of いまの仕事. The board stays on the left and keeps scrolling; the columns do not shrink for it and the board scrolls sideways. The sidebar is closed with its × button, and its width is dragged by its left edge (360px to 1400px, arrow keys and a double click work too) and remembered. The address keeps it: `?task=<id>&pane=term` (or `hub:<id>`, `session:<id>`), so back and forward work. A backlog, queued, done or cancelled card opens its detail dialog instead. A board served alone has no sidebar: a card opens the task panel.
 
 The old `?view=human` address (the human board has been removed; what waits on you is in the TODO view) opens this view.
 
@@ -191,18 +203,18 @@ Gates represent explicit decision points where an agent stops and waits for huma
 
 ## Card Placement & GitHub Sync
 
-Cards automatically advance across board columns based on worker phases and GitHub PR states:
+Cards automatically advance across the stages based on worker phases and GitHub PR states:
 
-| PR State | Whose Turn | Board Column |
+| PR State | Whose Turn | Stage |
 | --- | --- | --- |
-| Draft | Worker | In Progress (Agents) |
-| Ready, assigned to other reviewers | Other reviewer | Agents column (レビュー待ち（他の人）) |
-| Waiting on review bots or CI | Bots / CI | Agents column (bot・CI 待ち) |
-| Changes requested | You | PR・レビュー対応 column, with the 修正の依頼あり pill |
-| Approved | You (to merge) | PR・レビュー対応 column, with the マージ待ち pill |
-| Failing CI | You | PR・レビュー対応 column, with the CI 失敗 pill |
-| Merged | Nobody | Done |
-| Closed without merge | You (decision) | PR・レビュー対応 column, with the 閉じられた pill |
+| Draft | Worker | AIレビュー |
+| Ready, assigned to other reviewers | Other reviewer | コードレビュー待ち (レビュー待ち（他の人）) |
+| Waiting on review bots or CI | Bots / CI | AIレビュー (bot・CI 待ち), or コードレビュー待ち while a review is asked for or given |
+| Changes requested | You | セルフレビュー, with the 修正の依頼あり pill |
+| Approved | You (to merge) | セルフレビュー, with the マージ待ち pill |
+| Failing CI | You | セルフレビュー, with the CI 失敗 pill |
+| Merged | Nobody | 完了 |
+| Closed without merge | You (decision) | セルフレビュー, with the 閉じられた pill |
 
 The resident server polls GitHub notification events (`GET /notifications`) with `If-Modified-Since` and queries updated PRs in single GraphQL batches. Cards refresh every 5 minutes as a fallback. Manual refresh is available via `adjutant task refresh` or clicking "PR確認". A refresh also corrects the PR state kept on done tasks, and moving a card to done reads its PR once.
 

@@ -215,7 +215,7 @@ function openRecord(id) {
 
 const acting = new Set(); // guard against duplicate in-flight requests
 
-/* A button of the task panel's gate (`data-tp-act`) and the 「PR確認」 button of the PR column (`data-act`). */
+/* A button of the task panel's gate (`data-tp-act`) and the 「PR確認」 button of the セルフレビュー stage (`data-act`). */
 async function act(action, id) {
   // 「PR確認」 names no task: it is kept from running twice at once under its own name.
   const key = action === 'refresh-prs' ? action : id;
@@ -253,23 +253,16 @@ async function act(action, id) {
   }
 }
 
-/* Draws the six columns afresh. */
-function renderColumns() {
-  const ab = document.getElementById('board-agent');
-  if (!ab) return;
+/* The stage a session with no task is in: by its phase, and never セルフレビュー, which is the person's. A phase with no
+   stage of its own (or none) sits with the work under way, so no card vanishes. */
+const bareCol = w => {
+  const c = AGENT_COL_OF_PHASE[w.phase];
+  return c && c !== 'before' && c !== 'done' ? c : 'work';
+};
 
-  // Preserve scroll positions
-  const scrolled = {};
-  for (const cards of ab.querySelectorAll('.col-cards')) {
-    const colId = cards.parentElement.dataset.col;
-    if (colId) scrolled[colId] = cards.scrollTop;
-  }
-
-  ab.innerHTML = '';
-  // A session with no task has no phase to place it by, so it sits with the work that is
-  // under way; a column that does not draw these cards sends them to 実装 so none vanishes.
-  // The repository's board also lists the parent-task hubs' tasks (`hubTasks`), so their workers have cards.
-  const all = [...(state.tasks || []), ...(state.hubTasks || [])];
+/* The workers that have no card: a session with no task has no phase to place it by, so it is placed by `bareCol`.
+   The repository's board also lists the parent-task hubs' tasks (`hubTasks`), so their workers have cards. */
+function bareSessions(all) {
   const known = new Set(all.map(t => t.worktree).filter(Boolean));
   // The hub this worker's board is: its own tag in 「すべて」, else this page's. Unknown means nothing is told apart.
   const ownSlugOf = w => w._slug || pageHub()?.slug || null;
@@ -279,88 +272,216 @@ function renderColumns() {
   const ofBoard = w => w.task && all.some(t => t.id === w.task && (!w._slug || t._slug === w._slug) && ofHub(t, w));
   // A worker that reports to another hub is that hub's, and its board has the card.
   const elsewhere = w => !!w.task && !!ownSlugOf(w) && !!w.hubSlug && w.hubSlug !== ownSlugOf(w);
-  const bare = (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w) && !elsewhere(w));
-  const bareCol = w => {
-    const c = AGENT_COL_OF_PHASE[w.phase];
-    return c && c !== 'before' && c !== 'done' ? c : 'implement';
-  };
-  for (const def of AGENT_COLUMNS) {
-    const bareIn = def.id === 'before' || def.id === 'done' ? [] : bare.filter(w => bareCol(w) === def.id);
+  return (state.workers || []).filter(w => w.present && !known.has(w.worktree) && !ofBoard(w) && !elsewhere(w));
+}
+
+/* What each stage holds, in the order it is drawn, for the columns and the list alike: `tasks` as shown (完了 folds what is
+   older than a day away unless asked for), `bare` the sessions with no task, `older` how many 完了 cards are folded, and
+   `count` what the stage's name says. */
+function boardStages() {
+  const all = [...(state.tasks || []), ...(state.hubTasks || [])];
+  const bare = bareSessions(all);
+  return AGENT_COLUMNS.map(def => {
     const items = all.filter(t => agentColOf(t) === def.id);
-    let older = [];
-    let displayItems = items;
+    const bareIn = def.id === 'before' || def.id === 'done' ? [] : bare.filter(w => bareCol(w) === def.id);
+    if (def.id === 'before') return { def, tasks: orderBefore(items), bare: bareIn, older: 0, count: items.length };
+    let shown = items;
+    let older = 0;
     if (def.id === 'done') {
       const cutoff = Date.now() - DONE_SHOWN_HOURS * 3600 * 1000;
-      older = items.filter(t => updatedMs(t) < cutoff);
-      if (!showOlderDone) displayItems = items.filter(t => updatedMs(t) >= cutoff);
+      older = items.filter(t => updatedMs(t) < cutoff).length;
+      if (!showOlderDone) shown = items.filter(t => updatedMs(t) >= cutoff);
     }
+    // Done cards folded away still count: the stage holds them behind the 以前の完了 button.
+    return { def, tasks: orderStage(shown, state), bare: bareIn, older, count: shown.length + bareIn.length };
+  });
+}
 
-    // Done cards folded away still count: the column holds them behind the 以前の完了 button.
-    const totalCount = (def.id === 'done' ? (showOlderDone ? items.length : displayItems.length) : items.length) + bareIn.length;
+/* 「PR確認」 is where a PR's state is read again, and the warning says that the automatic reading has stopped: both are
+   セルフレビュー's, where the PRs that wait on the person are. */
+const prBtnHtml = id => id === 'me' && !scopeAll()
+  ? '<button type="button" class="col-btn-nudge" title="PR の状態を読み直す" data-act="refresh-prs"><span class="material-symbols-outlined" aria-hidden="true" style="font-size:13px;">sync</span><span>PR確認</span></button>' : '';
+const prWarnHtml = id => id === 'me' && state.prPoll?.error
+  ? `<div class="col-warn" title="${esc(state.prPoll.error)}">PR の自動確認が止まっています: ${esc(state.prPoll.error)}</div>` : '';
+const nextBtnHtml = id => id === 'before' && !scopeAll()
+  ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" data-action="nudge-hub"><span class="material-symbols-outlined" aria-hidden="true" style="font-size:13px;">bolt</span><span>次を流す</span></button>' : '';
+
+/* The scroll position each drawing had when it was last on screen: the list's, and each column's. The drawing that is not shown
+   is emptied, so the position is kept here and put back when it returns. */
+const boardScroll = { list: 0, listX: 0, colsX: 0, cols: {} };
+function rememberBoardScroll() {
+  // Not on screen (another view is open): every scrollTop reads 0, which is not where the person left it.
+  if (document.getElementById('board-view')?.offsetParent === null) return;
+  const rows = document.getElementById('board-list');
+  if (rows?.childElementCount) { boardScroll.list = rows.scrollTop; boardScroll.listX = rows.scrollLeft; }
+  const ab = document.getElementById('board-agent');
+  if (ab?.childElementCount) {
+    boardScroll.colsX = ab.scrollLeft;
+    for (const cards of ab.querySelectorAll('.col-cards')) {
+      const colId = cards.parentElement.dataset.col;
+      if (colId) boardScroll.cols[colId] = cards.scrollTop;
+    }
+  }
+}
+
+/* The handle in a column's head: dragged (or moved with the arrow keys) it sets the least width of every column, as the sidebar's
+   handle does for the sidebar (`bindWidthHandle`, my-work.js). A drag starts from the column's width as it is drawn (columns that
+   fill a wide window are wider than the setting) and moves it by how far the pointer went, shared out over the columns up to
+   this one: every one of them widens, so the k-th column's edge moves k times as far as the width does. */
+function bindColResize(handle, col) {
+  let drag = null;
+  handle.addEventListener('pointerdown', e => {
+    const k = [...col.parentElement.children].filter(c => c.classList.contains('col')).indexOf(col) + 1 || 1;
+    drag = { x: e.clientX, w: Math.min(col.getBoundingClientRect().width, BOARD_COL_W.max), k };
+    // `bindWidthHandle` does not drag below 720px, and nothing would end this one.
+    colDrag = !matchMedia('(max-width: 720px)').matches;
+  });
+  bindWidthHandle(handle, {
+    read: () => prefs.boardColWidth, min: BOARD_COL_W.min, max: () => BOARD_COL_W.max, reset: BOARD_COL_W.def,
+    at: x => drag ? drag.w + (x - drag.x) / drag.k : prefs.boardColWidth,
+    apply: w => {
+      prefs.boardColWidth = w;
+      document.body.style.setProperty('--board-col-w', `${w}px`);
+      for (const h of document.querySelectorAll('#board-agent .col-resize')) h.setAttribute('aria-valuenow', String(w));
+    },
+  });
+}
+
+/* Draws the six columns afresh. */
+function renderColumns(stages) {
+  const ab = document.getElementById('board-agent');
+  if (!ab) return;
+
+  ab.innerHTML = '';
+  for (const { def, tasks, bare, older, count } of stages) {
     const col = document.createElement('section');
-    col.className = 'col';
+    col.className = 'col' + (def.id === 'me' && count ? ' attention' : '');
     col.dataset.col = def.id;
 
-    const nextBtn = def.id === 'before' && !scopeAll()
-      ? '<button type="button" class="col-btn-nudge" title="workerの枠が空いていれば次を着手" data-action="nudge-hub"><span class="material-symbols-outlined" style="font-size:13px;">bolt</span><span>次を流す</span></button>'
-      : '';
-    // The PR column is where a PR's state is read again, and where it says that the automatic reading has stopped.
-    const prBtn = def.id === 'pr' && !scopeAll()
-      ? '<button type="button" class="col-btn-nudge" title="PR の状態を読み直す" data-act="refresh-prs"><span class="material-symbols-outlined" style="font-size:13px;">sync</span><span>PR確認</span></button>'
-      : '';
-    const prWarn = def.id === 'pr' && state.prPoll?.error
-      ? `<div class="col-warn" title="${esc(state.prPoll.error)}">PR の自動確認が止まっています: ${esc(state.prPoll.error)}</div>` : '';
-
-    const headerHtml = `
+    col.insertAdjacentHTML('afterbegin', `
       <div class="col-header">
         <div class="col-header-top">
           <div class="col-title-badge">
             <span class="material-symbols-outlined">${def.icon}</span>
             <span class="col-title-text" title="${esc(def.label)}">${esc(def.label)}</span>
-            <span class="col-count-pill">${totalCount}</span>
+            <span class="col-count-pill">${count}</span>
           </div>
-          ${nextBtn}${prBtn}
+          ${nextBtnHtml(def.id)}${prBtnHtml(def.id)}
         </div>
-        ${prWarn}
+        ${prWarnHtml(def.id)}
       </div>
-    `;
-    col.insertAdjacentHTML('afterbegin', headerHtml);
+    `);
 
     const cards = document.createElement('div');
     cards.className = 'col-cards';
-
-    if (def.id === 'before') {
-      // The queue first, in the order the hub takes it, then what is still in the backlog.
-      const queued = items.filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
-      const backlog = items.filter(t => t.status === 'backlog');
-      if (!queued.length && !backlog.length) cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
-      for (const t of [...queued, ...backlog]) cards.appendChild(agentCard(t));
-    } else {
-      // What waits on the person comes last, the newest phase first.
-      displayItems.sort((a, b) => (!!humanColOf(a) - !!humanColOf(b)) || (b.phaseAt || updatedMs(b) || 0) - (a.phaseAt || updatedMs(a) || 0));
-      if (!displayItems.length && !bareIn.length) {
-        cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
-      } else {
-        for (const t of displayItems) cards.appendChild(agentCard(t));
-      }
-      for (const w of bareIn) cards.appendChild(sessionCard(w));
-
-      if (older.length && def.id === 'done') {
-        cards.insertAdjacentHTML('beforeend',
-          `<button type="button" class="more" style="width:100%;margin-top:6px;padding:6px;font-size:11.5px;border:1px dashed var(--md-sys-color-outline-variant);border-radius:var(--md-shape-corner-sm);background:transparent;color:var(--md-sys-color-primary);">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older.length} 件`}</button>`);
-        cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
-      }
+    if (!tasks.length && !bare.length) cards.insertAdjacentHTML('beforeend', '<div class="col-empty-placeholder">なし</div>');
+    for (const t of tasks) cards.appendChild(agentCard(t));
+    for (const w of bare) cards.appendChild(sessionCard(w));
+    if (older && def.id === 'done') {
+      cards.insertAdjacentHTML('beforeend',
+        `<button type="button" class="more" style="width:100%;margin-top:6px;padding:6px;font-size:11.5px;border:1px dashed var(--md-sys-color-outline-variant);border-radius:var(--md-shape-corner-sm);background:transparent;color:var(--md-sys-color-primary);">${showOlderDone ? '以前の完了を畳む' : `以前の完了 ${older} 件`}</button>`);
+      cards.querySelector('.more').addEventListener('click', () => { showOlderDone = !showOlderDone; render(); });
     }
 
+    // In the head, so it spans the head's height and the keyboard reaches it before the cards; it is placed by CSS. One tab stop
+    // for the handles, the first: each sets the same width.
+    const handle = document.createElement('div');
+    handle.className = 'col-resize';
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-label', '列の幅');
+    handle.tabIndex = def.id === stages[0].def.id ? 0 : -1;
+    handle.title = 'ドラッグで幅を変える（矢印キーでも変えられます。ダブルクリックで元に戻します）';
+    (col.querySelector('.col-header') || col).appendChild(handle);
+    bindColResize(handle, col);
     col.appendChild(cards);
     ab.appendChild(col);
   }
+  ab.scrollLeft = boardScroll.colsX;
 
   // Restore scroll positions
   for (const cards of ab.querySelectorAll('.col-cards')) {
-    const top = scrolled[cards.parentElement.dataset.col];
+    const top = boardScroll.cols[cards.parentElement.dataset.col];
     if (top) cards.scrollTop = top;
   }
+}
+
+/* The card or row of a task as the list or the columns draw it: its `data-id` and the board it is on. */
+const boardItemOf = (id, slug) => [...document.querySelectorAll('#boards .card[data-id], #boards .list-row[data-id]')]
+  .find(el => el.dataset.id === id && (el.dataset.slug || '') === slug) || null;
+
+/* Draws the board, as the list or as the columns, and keeps what the person was in the middle of across the redraw:
+   the scroll position (each drawing's own is remembered, so it comes back after a switch) and the focus on a card, a row's
+   title, a stack chip or the 「以前の完了」 button. Only the drawing that is shown is drawn: the other is emptied, so no card
+   is in the page twice. */
+function renderBoard() {
+  // The handle in hand would be replaced under the pointer, ending the drag: the drawing waits, and is made when the drag is over.
+  if (colDrag) { boardRenderPending = true; return; }
+  drawBoard();
+}
+
+/* Whether a column handle is being dragged, and whether a drawing was held back meanwhile. */
+let colDrag = false, boardRenderPending = false;
+function flushBoardRender() {
+  colDrag = false;
+  if (!boardRenderPending) return;
+  boardRenderPending = false;
+  drawBoard();
+}
+// However the drag ends, even with no pointerup (a lost capture), the held drawing is made.
+for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) document.addEventListener(t, flushBoardRender);
+
+/* Which control of a card or row has the focus, so the same one can be found in the drawing that replaces it: its place among the
+   item's focusable elements, and what it is (tag, href and data-*). The item itself is `self`. */
+const FOCUSABLE = 'a[href], button, [tabindex]';
+function focusClueOf(item, active) {
+  if (active === item) return { self: true };
+  const index = [...item.querySelectorAll(FOCUSABLE)].indexOf(active);
+  if (index < 0) return null;
+  return { index, tag: active.tagName, href: active.getAttribute('href'), data: JSON.stringify(Object.entries(active.dataset || {})) };
+}
+/* The control of `item` the clue describes: of those that are the same kind, the one at the same place, else the first; null when
+   there is none (the caller falls back). */
+function focusByClue(item, clue) {
+  if (!clue) return null;
+  if (clue.self) return item;
+  const all = [...item.querySelectorAll(FOCUSABLE)];
+  const same = all.filter(x => x.tagName === clue.tag && x.getAttribute('href') === clue.href && JSON.stringify(Object.entries(x.dataset || {})) === clue.data);
+  return same.find(x => all.indexOf(x) === clue.index) || same[0] || null;
+}
+
+function drawBoard() {
+  const list = prefs.boardView !== 'cols';
+  // Before the head hides the drawing being left: a hidden one reads a scroll of 0.
+  rememberBoardScroll();
+  syncBoardHead(list);
+  const active = document.activeElement;
+  const inBoard = !!active && !!active.closest?.('#boards');
+  // A task's card or row has a `data-id`; a session's has a `data-worktree`. The control that had the focus in it is put back; a row
+  // whose control is gone gets the focus on its title, a card on itself.
+  const held = inBoard ? active.closest('[data-id], [data-worktree]') : null;
+  const focus = held ? { id: held.dataset.id, worktree: held.dataset.worktree, slug: held.dataset.slug || '', clue: focusClueOf(held, active) } : null;
+  const resizing = inBoard && active.matches('.col-resize') ? active.closest('[data-col]')?.dataset.col : null;
+  const listResizing = inBoard && active.matches('.list-col-resize') ? active.dataset.lcH : null;
+  const more = inBoard && !held && active.matches('.more, [data-more-done]');
+  const stages = boardStages();
+  if (list) {
+    document.getElementById('board-agent')?.replaceChildren();
+    renderBoardList(stages);
+  } else {
+    document.getElementById('board-list')?.replaceChildren();
+    renderColumns(stages);
+  }
+  if (focus) {
+    const el = focus.id != null ? boardItemOf(focus.id, focus.slug)
+      : [...document.querySelectorAll('#boards [data-worktree]')].find(x => x.dataset.worktree === focus.worktree && (x.dataset.slug || '') === focus.slug);
+    const target = el && (focusByClue(el, focus.clue) || (el.classList.contains('list-row') ? el.querySelector('.title') : el));
+    target?.focus({ preventScroll: true });
+  }
+  if (resizing) document.querySelector(`#board-agent [data-col="${resizing}"] .col-resize`)?.focus({ preventScroll: true });
+  if (listResizing) document.querySelector(`#board-list .list-col-resize[data-lc-h="${listResizing}"]`)?.focus({ preventScroll: true });
+  if (more) document.querySelector('#boards .more, #boards [data-more-done]')?.focus({ preventScroll: true });
+  syncStackPop();
 }
 
 /* Open the panel of a gate, where the person is: a gate is named by its board and id, since two boards
@@ -503,4 +624,4 @@ document.addEventListener('click', e => {
   }
 });
 
-registerView('columns', { render: () => renderColumns() });
+registerView('columns', { render: () => renderBoard(), reset: () => closeStackPop() });
