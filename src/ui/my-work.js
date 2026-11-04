@@ -415,6 +415,31 @@ function workSegments(p) {
   return segs;
 }
 
+/* How many children are in each state the bar colours, counted as the bar draws them (a child's own `progress`, never the
+   server's merged count, which also counts a cancelled child whose PR is merged), with the total the bar stands for. What is
+   not listed is not started, so that state is the remainder and is not counted here. */
+const WORK_COUNTED = [['merged', 'マージ'], ['done', '完了'], ['pr', 'PR'], ['working', '作業中']];
+function workProgressCounts(p) {
+  const children = p.children || [];
+  const n = { merged: 0, done: 0, pr: 0, working: 0 };
+  for (const c of children) if (c.progress in n) n[c.progress]++;
+  return { n, total: Math.max(p.total || 0, children.length) };
+}
+
+/* How far a parent's children have got, in words: `5 マージ · 3 完了 · 8 PR · 6 作業中 / 42`, the states with none left out. */
+function workProgressText(p) {
+  const { n, total } = workProgressCounts(p);
+  const parts = WORK_COUNTED.filter(([k]) => n[k]).map(([k, word]) => `${n[k]} ${word}`);
+  return `${parts.length ? `${parts.join(' · ')} ` : '0 '}/ ${total}`;
+}
+
+/* The same, with a dot of the bar's colour before each state. */
+function workProgressHtml(p) {
+  const { n, total } = workProgressCounts(p);
+  const parts = WORK_COUNTED.filter(([k]) => n[k]).map(([k, word]) => `<i class="wk-dot ${k}" aria-hidden="true"></i>${esc(`${n[k]} ${word}`)}`);
+  return `${parts.length ? `${parts.join(' · ')} ` : '0 '}/ ${esc(String(total))}`;
+}
+
 /* The board a selection of `p` opens on: the hub that runs it when this server has its board, else the
    repository's board, which lists that hub's session too. */
 const workParentBoard = p => p.repo ? workBoardOf(p.repo, p.hub) : p.hub;
@@ -714,10 +739,8 @@ const workParentName = p => `${p.number ? `#${p.number}` : p.key}${p.title ? ` $
 
 /* How far a parent's children have got, as the spans of the meta of the row that heads its group: the bar, the count and whether it is a stack. */
 function workParentMeta(p) {
-  const merged = p.merged || 0;
-  const total = Math.max(p.total || 0, (p.children || []).length);
-  const bar = `<span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>`;
-  return [bar, `${merged} / ${total} マージ`, p.stacked ? '<span class="wk-stack">stack</span>' : ''].filter(Boolean);
+  const bar = `<span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>`;
+  return [bar, workProgressHtml(p), p.stacked ? '<span class="wk-stack">stack</span>' : ''].filter(Boolean);
 }
 
 /* The box under a hub's row that says requests are waiting unread, with the newest one's subject when the listed part of the
@@ -907,16 +930,14 @@ function workHeadHtml(node, folded) {
   if (node.kind === 'parent') {
     const p = node.parent;
     const segs = workSegments(p);
-    const merged = p.merged || 0;
-    const total = Math.max(p.total || 0, (p.children || []).length);
     const name = `${p.number ? `#${p.number}` : p.key}${p.title ? ` ${p.title}` : ''}`;
     const current = nav.task === PARENT_REF + p.key;
     // A parent the document does not list has nothing to open: its header is plain text.
     const [open, close, attrs] = p.missing ? ['span', 'span', ''] : ['button', 'button', ` type="button" data-wk-parent="${esc(p.key)}"${current ? ' aria-current="true"' : ''}`];
     return `${fold(node.key, name)}<${open} class="wk-head-main"${attrs} title="${esc(`${name}\nこの親 Issue を動かしている hub のターミナルを開く`)}">
       <span class="wk-head-name">${p.number ? `<span class="key">#${p.number}</span>` : `<span class="key">${esc(p.key)}</span>`}${esc(p.title || '')}</span>
-      <span class="wk-head-sub"><span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>
-      <span>${merged} / ${total} マージ</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}>${chips(name)}${workTitleToolsHtml(p)}${count}`;
+      <span class="wk-head-sub"><span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span>
+      <span>${workProgressHtml(p)}</span>${p.stacked ? '<span class="wk-stack">stack</span>' : ''}${sum}</span></${close}>${chips(name)}${workTitleToolsHtml(p)}${count}`;
   }
   const hubName = node.kind === 'hub' ? workHubGroupName(node) : null;
   const name = node.kind === 'repo' ? node.nwo : hubName ? hubName.text : node.label;
@@ -1867,8 +1888,6 @@ const workRepoName = nwo => (nwo || '').split('/').pop() || nwo;
    markup of 離れていた間に ('' for none), `served` whether this server has the parent's hub's board. */
 function parentDetailGroups(p, { rowOf = () => null, stateOf = () => null, away = '', served = true } = {}) {
   const children = p.children || [];
-  const merged = p.merged || 0;
-  const total = Math.max(p.total || 0, children.length);
   const link = httpUrl(p.url);
   const inStack = c => !!c.on || children.some(x => x.on === c.id && x.onHub === c.hub);
   const root = p.stacked ? children.find(inStack) : null;
@@ -1881,7 +1900,7 @@ function parentDetailGroups(p, { rowOf = () => null, stateOf = () => null, away 
     ? `<ul class="wk-stack-list">${root?.base ? `<li><span class="base">${esc(root.base)} ←</span></li>` : ''}${children.map(step).join('')}</ul>`
     : '<p class="tp-muted">子タスクはまだありません</p>';
   const overview = `<div class="wk-overview">${link ? `<p><a href="${esc(link)}" target="_blank" rel="noopener noreferrer">GitHub で開く</a></p>` : ''}`
-    + `<div class="wk-ov-bar"><span class="wk-bar" role="img" aria-label="${esc(`${merged} / ${total} マージ`)}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span><span class="wk-ov-n">${merged} / ${total} マージ</span></div>`
+    + `<div class="wk-ov-bar"><span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${workSegments(p).map(x => `<i class="${x.cls}" title="${esc(x.title)}"></i>`).join('')}</span><span class="wk-ov-n">${workProgressHtml(p)}</span></div>`
     + `${list}</div>`;
   const nextWhy = served ? '' : 'この hub のボードはこのサーバーにありません';
   const actions = `<div class="tp-gate-actions"><button type="button" class="btn-m3-tonal" data-pd-act="next"${nextWhy ? ' disabled' : ''} title="${esc(nextWhy || 'adj send --kind next (着手を促す)')}">`
@@ -1902,12 +1921,10 @@ function parentDetailParts(p) {
     const r = rowOf(c);
     return r?.session ? sessionState(r.session, { now: work.doc?.now, repo: p.repo.nwo, hubs: p.repo.hubs || [], sessions: [] }) : null;
   };
-  const merged = p.merged || 0;
-  const total = Math.max(p.total || 0, (p.children || []).length);
   return tocDialogHtml({
     sub: [workRepoName(p.repo?.nwo), p.number ? `親 Issue #${p.number}` : '', p.stacked ? 'stack' : ''],
     title: `${p.number ? `#${p.number} ` : ''}${p.title || p.key}`,
-    now: `${merged} / ${total} マージ`,
+    now: workProgressText(p),
     groups: parentDetailGroups(p, { rowOf, stateOf, away: workParentAwayHtml(p), served: boards.some(b => b.slug === p.hub) }),
     idPrefix: 'pd',
   });
