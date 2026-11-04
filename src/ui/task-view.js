@@ -304,7 +304,7 @@ function prNoteOf(task) {
 const prRefNumber = pr => (httpUrl(pr) ? prNumberOf(pr) : /^#?(\d+)$/.exec(pr || '')?.[1] || '');
 /* Issue and PR chips for a card's header; each opens on GitHub. Grouped in one element so they
    sit together on the left instead of being spread apart by the header's space-between. */
-function ghChipsHtml(task) {
+function ghChipPartsOf(task) {
   const issueUrl = httpUrl(task.issueUrl);
   const prUrl = httpUrl(task.pr);
   const issueNumber = issueUrl ? issueNumberOf(issueUrl) : '';
@@ -323,6 +323,10 @@ function ghChipsHtml(task) {
   const pr = prUrl
     ? `<a href="${esc(prUrl)}" target="_blank" rel="noopener noreferrer" class="${prClass}" title="${prTitle}">${prLabel}</a>`
     : task.pr ? `<span class="${prClass}" title="${prTitle}">${prLabel}</span>` : '';
+  return { issue, pr };
+}
+function ghChipsHtml(task) {
+  const { issue, pr } = ghChipPartsOf(task);
   return issue || pr ? `<span class="card-gh-chips">${issue}${pr}</span>` : '';
 }
 /* The label of an issue link: GitHub's number, a tracker key (Jira `/browse/ABC-12`, Linear
@@ -405,17 +409,9 @@ function parentRowHtml(task) {
   const group = parentGroupOf(task);
   if (group) {
     h += dim(`${group.merged} / ${group.total} マージ`);
-    const kids = group.children || [];
-    const me = p.hub;
-    // The chain a child is in: what is cut from the same root, in the order the server listed them.
-    const same = (c, id, hub) => c.id === id && c.hub === hub;
-    const upOf = c => c.on && kids.find(d => same(d, c.on, c.onHub));
-    const rootOf = c => { let at = c; for (let i = 0; i <= kids.length && upOf(at); i++) at = upOf(at); return at; };
-    const mine = kids.find(c => same(c, task.id, me));
-    const inStack = c => c.on || kids.some(d => same(c, d.on, d.onHub));
-    const chain = mine ? kids.filter(c => inStack(c) && rootOf(c) === rootOf(mine)) : [];
-    const at = chain.indexOf(mine);
-    if (group.stacked && at >= 0) h += dim(`stack ${at + 1}/${chain.length}`);
+    // The place in a stack, from the chain the board lists for the parent (`stackOf`).
+    const st = group.stacked ? stackOf(task, stateNow()) : null;
+    if (st) h += dim(`stack ${st.at + 1}/${st.chain.length}`);
   }
   if (p.source === 'tracker' && p.recordKey && p.recordKey !== p.key) h += dim('記録と違う');
   if (httpUrl(p.url)) {

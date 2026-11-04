@@ -490,8 +490,10 @@ fn a_session_with_no_task_is_a_card_on_the_agent_board() {
         "data-sess-link=",
         "タスクなし",
         "lastOutputText(s)",
-        "+ bareIn.length;",
-        "!displayItems.length && !bareIn.length",
+        "count: shown.length + bareIn.length",
+        "!tasks.length && !bare.length",
+        // The list draws such a session as a row too, so the default view does not hide it.
+        "function sessionRow",
         "<span class=\"card-worker-cmd\">${esc(agentText(s))}</span>",
         ".session-card .card-worker-status { flex-wrap: wrap; }",
     ] {
@@ -1717,6 +1719,35 @@ fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_six_equal_ones() {
     assert!(UI_HTML.contains(
         "body.board-side #board-agent { grid-template-columns: repeat(6, minmax(140px, 1fr)); }"
     ));
+}
+
+#[test]
+fn the_board_has_six_stages_with_the_person_first_and_opens_as_a_list() {
+    let stages = page_table("const AGENT_COLUMNS = [", "];");
+    let ids: Vec<&str> = stages
+        .lines()
+        .filter_map(|l| l.split("id:'").nth(1)?.split('\'').next())
+        .collect();
+    assert_eq!(ids, ["me", "rev", "ai", "work", "before", "done"]);
+    for piece in [
+        // The list is the default, the columns the other drawing; both are in the head, beside the title.
+        "prefs.boardView = prefs.boardView === 'cols' ? 'cols' : 'list';",
+        "data-board-view=\"list\"",
+        "data-board-view=\"cols\"",
+        "id=\"board-list\"",
+        "id=\"board-group\"",
+        // The rail names the view 工程.
+        "stacked_bar_chart",
+        // The stack's popover and the chip that opens it.
+        "id=\"stack-pop\"",
+        "class=\"stack-chip\"",
+        "function orderStage",
+    ] {
+        assert!(UI_HTML.contains(piece), "{piece}");
+    }
+    assert!(!UI_HTML.contains("view_kanban"));
+    // 「PR確認」 is セルフレビュー's, in the columns and in the list alike.
+    assert!(UI_HTML.contains("const prBtnHtml = id => id === 'me' && !scopeAll()"));
 }
 
 #[test]

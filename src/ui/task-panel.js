@@ -55,8 +55,9 @@ function landGateRef(ref) {
   return { id: task.id, pane: paneOfGate(g) };
 }
 
+/* The card (columns) or row (list) of the selected task is marked, by id as `agentCard` and `taskRow` mark theirs when drawn. */
 function markSelectedCards() {
-  for (const card of document.querySelectorAll('#boards .card')) {
+  for (const card of document.querySelectorAll('#boards .card, #boards .list-row[data-id]')) {
     card.classList.toggle('selected', card.dataset.id === selectedTaskId);
   }
 }
@@ -519,7 +520,7 @@ function panelHeadHtml(task) {
       <h2 class="tp-title">${esc(task.title)}${titlePendingPill(task)}</h2>
     </div>
     ${panelBtnsHtml('<button type="button" class="tool-btn" data-expand-task aria-haspopup="dialog" title="タスク全体を拡大して読む" aria-label="タスク全体を拡大して読む"><span class="material-symbols-outlined" aria-hidden="true">open_in_full</span></button>' +
-      '<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="エージェントのボードでこのカードを見る">カードへ</button>')}`;
+      '<button type="button" class="btn-m3-text tp-jump" data-tp-jump title="工程でこのカードを見る">カードへ</button>')}`;
 }
 
 /* The head's buttons, which are the same for a task and a hub: `jump` is the one of its own. */
@@ -603,7 +604,8 @@ function panelGateHtml(task, gate, here = false) {
     </div>`;
 }
 
-const STEPS = [['plan', '計画'], ['implement', '実装'], ['selfreview', 'セルフレビュー'], ['pr', 'PR']];
+/* The flow, not the order the board draws its stages in: the work, the AI's reviews, yours, the reviewers'. The ids are the board's (`agentColOf`). */
+const STEPS = [['work', '計画・実装'], ['ai', 'AIレビュー'], ['me', 'セルフレビュー'], ['rev', 'コードレビュー待ち']];
 
 /* The body of a task's tab: 経過, コードレビュー and 動作確認 are the tab renderers'; タスクサマリ
    is the rest of the card with the 概要 in the middle. */

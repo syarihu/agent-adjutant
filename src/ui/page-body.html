@@ -23,8 +23,8 @@
   <button type="button" class="rail-btn" id="nav-review" data-action="review" title="レビュー">
     <span class="material-symbols-outlined rail-pill" aria-hidden="true">rate_review</span><span class="rail-lbl">レビュー</span><span class="rail-badge zero" id="review-count" title="あなたのレビューを待っている PR の数">0</span><span class="ov-stale-dot" id="ov-stale-dot" role="img" aria-label="同期が古くなっています" hidden></span>
   </button>
-  <button type="button" class="rail-btn" id="nav-boards" data-action="boards" title="ボード">
-    <span class="material-symbols-outlined rail-pill" aria-hidden="true">view_kanban</span><span class="rail-lbl">ボード</span>
+  <button type="button" class="rail-btn" id="nav-boards" data-action="boards" title="工程">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">stacked_bar_chart</span><span class="rail-lbl">工程</span>
   </button>
 
   <span class="rail-grow"></span>
@@ -124,17 +124,29 @@
        on, so it is seen whether or not the panel is open. -->
   <div class="sess-notice" id="sess-notice" hidden></div>
 
+  <!-- The popover of a stack (stack-pop.js), placed beside the chip that opened it. -->
+  <div class="todo-pop stack-pop" id="stack-pop" role="dialog" hidden></div>
+
   <main>
     <section class="empty-guide" id="empty-guide" aria-labelledby="eg-title" hidden></section>
     <div id="board-view" role="tabpanel">
       <div class="board-head" id="board-head">
         <h1 class="board-head-title" id="board-title"></h1>
+        <!-- The list (the default) or the columns, and the grouping the list has; board-list.js. Beside the title, which renderBoardHead rewrites. -->
+        <div class="board-head-tools">
+          <div class="m3-segmented-tabs board-view-switch" role="group" aria-label="表示の切り替え">
+            <button type="button" class="m3-seg-tab active" data-board-view="list" aria-pressed="true"><span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">view_list</span>リスト</button>
+            <button type="button" class="m3-seg-tab" data-board-view="cols" aria-pressed="false"><span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">view_column</span>列</button>
+          </div>
+          <label class="wk-next" id="board-group-opt" title="リスト表示のとき、セルフレビューを親Issueごとにまとめる" hidden><input type="checkbox" id="board-group"><span>親Issueでまとめる</span></label>
+        </div>
         <!-- A board served alone has no list of boards to open its hub from (renderBoardHead). -->
         <button type="button" class="btn-m3-tonal board-head-hub" id="board-hub" data-action="own-hub" title="このボードの hub を開く" hidden><span class="material-symbols-outlined" aria-hidden="true">terminal</span><span>hub</span></button>
       </div>
       <div id="boards">
         <section class="pane" id="pane-agent">
           <div class="board" id="board-agent"></div>
+          <div class="board-list" id="board-list" hidden></div>
         </section>
       </div>
     </div>

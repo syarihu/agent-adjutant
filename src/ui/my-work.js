@@ -1375,8 +1375,8 @@ function syncBoardSide() {
   boardSideShown = on;
   // The heading and the questions are the document's: a fresh one when the sidebar opens.
   if (on) {
-    // The board narrows under the sidebar: the card that was pressed is brought back into view once it has.
-    requestAnimationFrame(() => document.querySelector('#board-agent .card.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    // The board narrows under the sidebar: the card or row that was pressed is brought back into view once it has.
+    requestAnimationFrame(() => document.querySelector('#board-agent .card.selected, #board-list .list-row.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
     return void refreshWork(true);
   }
   if (view !== 'work') {
