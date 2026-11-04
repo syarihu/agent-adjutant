@@ -127,3 +127,25 @@ test('the shortcut: Cmd+K on macOS, Ctrl+K elsewhere, never the other, never wit
   assert.strictEqual(isPaletteShortcut(k({ metaKey: true, key: 'j' }), true), false);
   assert.strictEqual(isPaletteShortcut(k({ metaKey: true, type: 'keyup' }), true), false);
 });
+
+test('sessions waiting on the person come first, 確認待ち before 入力待ち; the rest keep the list\'s order', () => {
+  const mk = (id, state) => ({ board: 'a', session: w(id, { state }) });
+  const d = { repos: [{ nwo: 'acme/app', rows: [mk('w1', 'working'), mk('p1', 'permission'), mk('d1', 'done'), mk('q1', 'waiting'), mk('w2', 'working'), mk('p2', 'permission'), mk('s1', 'stopped')] }] };
+  assert.deepStrictEqual(keys(rowsOf(d)), ['a/sess:q1', 'a/sess:p1', 'a/sess:p2', 'a/sess:w1', 'a/sess:d1', 'a/sess:w2', 'a/sess:s1']);
+  // Without any waiting row nothing moves.
+  assert.deepStrictEqual(keys(rowsOf(doc)), ['a/t1', 'a/sess:s2', 'b/t9']);
+});
+
+test('the waiting-first order holds when the query filters', () => {
+  const mk = (id, state, branch) => ({ board: 'a', session: w(id, { state, branch }) });
+  const d = { repos: [{ nwo: 'acme/app', rows: [mk('w1', 'working', 'fix/a'), mk('p1', 'permission', 'fix/b'), mk('x1', 'working', 'other'), mk('q1', 'waiting', 'fix/c')] }] };
+  const es = rowsOf(d);
+  assert.deepStrictEqual(keys(paletteFilter(es, '')), ['a/sess:q1', 'a/sess:p1', 'a/sess:w1', 'a/sess:x1']);
+  assert.deepStrictEqual(keys(paletteFilter(es, 'FIX/')), ['a/sess:q1', 'a/sess:p1', 'a/sess:w1']);
+});
+
+test('a board served alone puts waiting sessions first as well', () => {
+  const st = { ...state0, sessions: [w('s1'), w('s2')], tasks: [] };
+  // Neither has a ledger row, so both read unknown: nothing to move, and the order is kept.
+  assert.deepStrictEqual(keys(paletteEntries({ multi: false, doc: null, scope: scope(null), state: st })), ['self/s1', 'self/s2']);
+});

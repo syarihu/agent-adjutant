@@ -41,7 +41,12 @@ function paletteEntry({ key, board = null, ref = null, sid = null, row = null, s
   };
 }
 
-/* The candidates: what the list shows. On the resident server that is the work document's rows of the organisation selected
+/* Sessions that wait on the person (the pair my-work.js's WORKS_ON_PERSON names) come first, 確認待ち before 入力待ち (STATE_ORDER); every other
+   entry keeps its place in the list's order. The sort is stable and keyed on that rank alone, so ties are never reshuffled. */
+const paletteRank = e => e.st === 'waiting' || e.st === 'permission' ? STATE_ORDER[e.st] : 2;
+const paletteOrder = entries => [...entries].sort((a, b) => paletteRank(a) - paletteRank(b));
+
+/* The candidates, waiting ones first (paletteOrder): what the list shows. On the resident server that is the work document's rows of the organisation selected
    (a failed or missing document has none: the caller says so), on a board served alone the sessions the list would hold.
    `src` is { multi, doc, scope, state }. A key (board and ref, never a session id: two boards can share one) is listed once. */
 function paletteEntries({ multi, doc, scope, state: st0 }) {
@@ -56,7 +61,7 @@ function paletteEntries({ multi, doc, scope, state: st0 }) {
       const parent = pkey ? (r.repo.parents || []).find(p => p.key === pkey) || { key: pkey } : null;
       add(paletteEntry({ key: r.key, board: r.board, ref: r.ref, row: r, s: r.s, st: r.st, data: r.data, task: r.task, nwo: r.nwo, parent, hub }));
     }
-    return out;
+    return paletteOrder(out);
   }
   for (const s of st0.sessions || []) {
     const st = sessionState(s, st0);
@@ -67,10 +72,10 @@ function paletteEntries({ multi, doc, scope, state: st0 }) {
     const ref = sessionRef(s);
     add(paletteEntry({ key: `self/${ref}`, sid: ref, s, st, data: st0, task, nwo: st0.repo || '', parent }));
   }
-  return out;
+  return paletteOrder(out);
 }
 
-/* The entries whose haystack holds every word of `query` (any case, any order). An empty query keeps them all; the order is the list's. */
+/* The entries whose haystack holds every word of `query` (any case, any order). An empty query keeps them all; the order is the candidates' (waiting ones first, the rest in the list's order). */
 function paletteFilter(entries, query) {
   const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   return words.length ? entries.filter(e => words.every(w => e.hay.includes(w))) : entries;
