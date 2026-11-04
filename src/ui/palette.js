@@ -25,14 +25,14 @@ function paletteHaystack(parts) {
 
 /* One candidate. `row` is what the list opens (resident server), `sid` the session's ref (a board served alone).
    `parent` is { key, number, title } of the parent issue the session works under, if any; `hub` the hub that runs it. */
-function paletteEntry({ key, board = null, ref = null, sid = null, row = null, s, st, data, task = null, nwo = '', parent = null, hub = null }) {
+function paletteEntry({ key, board = null, ref = null, sid = null, row = null, repoIdx = 0, s, st, data, task = null, nwo = '', parent = null, hub = null }) {
   const label = sessionLabel(s, false, data);
   const title = task?.title || label.text;
   const num = paletteNumber(task?.issue) || paletteNumber(task?.issueUrl);
   const worktree = baseName(s.worktree);
   const sub = [label.tag || (task?.id && task.id !== title ? task.id : ''), s.kind !== 'hub' ? s.branch : '', nwo].filter(Boolean);
   return {
-    key, board, ref, sid, row, title, sub: sub.join(' · '), st, isHub: s.kind === 'hub',
+    key, board, ref, sid, row, repoIdx, title, sub: sub.join(' · '), st, isHub: s.kind === 'hub',
     hay: paletteHaystack([
       title, label.text, label.tag, task?.id, task?.issue, task?.issueUrl, num, num && `#${num}`,
       s.branch, nwo, parent?.key, parent?.number && `#${parent.number}`, parent?.title,
@@ -41,12 +41,41 @@ function paletteEntry({ key, board = null, ref = null, sid = null, row = null, s
   };
 }
 
-/* Sessions that wait on the person (the pair my-work.js's WORKS_ON_PERSON names) come first, 確認待ち before 入力待ち (STATE_ORDER); every other
-   entry keeps its place in the list's order. The sort is stable and keyed on that rank alone, so ties are never reshuffled. */
+/* The order of the candidates. Sessions that wait on the person (the pair my-work.js's WORKS_ON_PERSON names) come first, 確認待ち before
+   入力待ち (STATE_ORDER), each in the order the work document gives them. The rest follow, repository by repository in the document's order and
+   within one by `workRowOrder` (the task's id), which is the order 「いまの仕事」 sorts a group with; its grouping by parent is not copied.
+   On a board served alone (no `row`) the rest keep the order of the sessions. The sort is stable, so ties are never reshuffled. */
 const paletteRank = e => e.st === 'waiting' || e.st === 'permission' ? STATE_ORDER[e.st] : 2;
-const paletteOrder = entries => [...entries].sort((a, b) => paletteRank(a) - paletteRank(b));
+function paletteCompare(a, b) {
+  const d = paletteRank(a) - paletteRank(b);
+  if (d || paletteRank(a) < 2 || !a.row || !b.row) return d;
+  return a.repoIdx - b.repoIdx || workRowOrder(a.row, b.row);
+}
+const paletteOrder = entries => [...entries].sort(paletteCompare);
 
-/* The candidates, waiting ones first (paletteOrder): what the list shows. On the resident server that is the work document's rows of the organisation selected
+/* The repositories of the selected organisation (or in none the page lists) that the work document could not read, by name. Their rows are
+   empty, so without this an unreadable repository looks like one with no sessions. Only the resident server has a work document. */
+function paletteUnreadRepos(doc, scope) {
+  return (doc?.repos || []).filter(r => r.error && orgInScope(scope, r.nwo)).map(r => r.nwo);
+}
+
+/* The words under the results: what the query found (or why nothing is shown), and, apart from it, that the work document could not be
+   refreshed and the list is the last one read. `notice` (loading, or failed with nothing read) stands alone. */
+function paletteStatusText({ notice, total, found, drawn, stale, unread = [] }) {
+  if (notice) return notice;
+  const rest = found - drawn;
+  const result = !total ? 'セッションがありません' : !found ? '該当するセッションがありません' : rest > 0 ? `ほか ${rest} 件があります。言葉を足して絞り込んでください` : '';
+  // A repository that could not be read has no rows: that is not "no sessions" in it.
+  const names = unread.length > 3 ? `${unread.slice(0, 3).join(', ')} ほか ${unread.length - 3} 件` : unread.join(', ');
+  return [result, stale ? '最新の状態を読めませんでした（前回の一覧です）' : '', unread.length ? `読めなかったリポジトリがあります: ${names}` : ''].filter(Boolean).join(' ');
+}
+
+/* The key to highlight: `active` while it is one of the rows drawn, else the first drawn row (never one that is listed but not drawn). */
+function paletteActiveKey(drawn, active) {
+  return drawn.some(e => e.key === active) ? active : drawn[0]?.key ?? null;
+}
+
+/* The candidates, in paletteOrder: the sessions the list shows. On the resident server that is the work document's rows of the organisation selected
    (a failed or missing document has none: the caller says so), on a board served alone the sessions the list would hold.
    `src` is { multi, doc, scope, state }. A key (board and ref, never a session id: two boards can share one) is listed once. */
 function paletteEntries({ multi, doc, scope, state: st0 }) {
@@ -59,7 +88,7 @@ function paletteEntries({ multi, doc, scope, state: st0 }) {
       const hub = r.hubSlug && (r.repo.hubs || []).find(h => h.slug === r.hubSlug && h.parent) || null;
       const pkey = r.task?.parent || hub?.key || '';
       const parent = pkey ? (r.repo.parents || []).find(p => p.key === pkey) || { key: pkey } : null;
-      add(paletteEntry({ key: r.key, board: r.board, ref: r.ref, row: r, s: r.s, st: r.st, data: r.data, task: r.task, nwo: r.nwo, parent, hub }));
+      add(paletteEntry({ key: r.key, board: r.board, ref: r.ref, row: r, repoIdx: (doc.repos || []).indexOf(r.repo), s: r.s, st: r.st, data: r.data, task: r.task, nwo: r.nwo, parent, hub }));
     }
     return paletteOrder(out);
   }
@@ -75,7 +104,7 @@ function paletteEntries({ multi, doc, scope, state: st0 }) {
   return paletteOrder(out);
 }
 
-/* The entries whose haystack holds every word of `query` (any case, any order). An empty query keeps them all; the order is the candidates' (waiting ones first, the rest in the list's order). */
+/* The entries whose haystack holds every word of `query` (any case, any order). An empty query keeps them all; the order is the candidates' (paletteOrder). */
 function paletteFilter(entries, query) {
   const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   return words.length ? entries.filter(e => words.every(w => e.hay.includes(w))) : entries;
@@ -120,15 +149,11 @@ function setPaletteActive(key, scroll = true) {
 function renderPalette() {
   const list = palEl('palette-list'), status = palEl('palette-status');
   pal.shown = paletteFilter(pal.entries, palEl('palette-input').value);
-  if (!pal.shown.some(e => e.key === pal.active)) pal.active = pal.shown[0]?.key ?? null;
-  const notice = paletteNotice();
   const drawn = pal.shown.slice(0, PALETTE_SHOWN);
+  pal.active = paletteActiveKey(drawn, pal.active);
   list.innerHTML = drawn.map(paletteRowHtml).join('');
-  const rest = pal.shown.length - drawn.length;
-  status.textContent = notice
-    || (!pal.entries.length ? 'セッションがありません' : !pal.shown.length ? '該当するセッションがありません' : rest > 0 ? `ほか ${rest} 件があります。言葉を足して絞り込んでください` : '')
-    || (multiBoard && work.error ? '最新の状態を読めませんでした（前回の一覧です）' : '');
-  setPaletteActive(drawn.some(e => e.key === pal.active) ? pal.active : null, false);
+  status.textContent = paletteStatusText({ notice: paletteNotice(), total: pal.entries.length, found: pal.shown.length, drawn: drawn.length, stale: multiBoard && !!work.error, unread: multiBoard ? paletteUnreadRepos(work.doc, orgScope()) : [] });
+  setPaletteActive(pal.active, false);
   const el = list.querySelector('[aria-selected="true"]');
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
@@ -137,7 +162,7 @@ function renderPalette() {
 function syncPalette() {
   if (!palEl('palette').open) return;
   pal.entries = paletteEntries(paletteSource());
-  const sig = JSON.stringify([pal.entries.map(e => [e.key, e.title, e.sub, e.st, e.hay]), paletteNotice(), multiBoard && work.error]);
+  const sig = JSON.stringify([pal.entries.map(e => [e.key, e.title, e.sub, e.st, e.hay]), paletteNotice(), multiBoard && work.error, multiBoard && paletteUnreadRepos(work.doc, orgScope())]);
   if (sig === pal.sig) return;
   pal.sig = sig;
   renderPalette();
