@@ -25,7 +25,7 @@ const ctx = vm.createContext({
 vm.runInContext(read('my-work.js').match(/^function workRowOrder[\s\S]*?^}/m)[0], ctx);
 for (const f of ['util.js', 'sessions.js']) vm.runInContext(read(f), ctx, { filename: f });
 vm.runInContext(pure, ctx, { filename: 'palette.js' });
-const { paletteEntries, paletteFilter, isPaletteShortcut, paletteStatusText, paletteActiveKey, paletteUnreadRepos } = ctx;
+const { paletteEntries, paletteFilter, isPaletteShortcut, paletteShortcutHint, paletteStatusText, paletteActiveKey, paletteUnreadRepos } = ctx;
 const plain = v => JSON.parse(JSON.stringify(v));
 const keys = es => plain([...es].map(e => e.key));
 
@@ -217,4 +217,9 @@ test('the shortcut: Cmd+K on macOS, Ctrl+K elsewhere, never the other, never wit
   assert.strictEqual(isPaletteShortcut(k({ metaKey: true, keyCode: 229 }), true), false);
   assert.strictEqual(isPaletteShortcut(k({ metaKey: true, key: 'j' }), true), false);
   assert.strictEqual(isPaletteShortcut(k({ metaKey: true, type: 'keyup' }), true), false);
+});
+
+test('the shortcut hint names the key this platform takes', () => {
+  assert.deepStrictEqual(plain(paletteShortcutHint(true)), { text: '⌘K', aria: 'Meta+K' });
+  assert.deepStrictEqual(plain(paletteShortcutHint(false)), { text: 'Ctrl+K', aria: 'Control+K' });
 });

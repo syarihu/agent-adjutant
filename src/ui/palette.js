@@ -12,6 +12,11 @@ function isPaletteShortcut(e, mac = IS_MAC) {
   return !!mod && !e.altKey && !e.shiftKey && String(e.key ?? '').toLowerCase() === 'k';
 }
 
+/* How the shortcut is named on this platform: the text a person reads, and the value of aria-keyshortcuts. */
+function paletteShortcutHint(mac = IS_MAC) {
+  return mac ? { text: '⌘K', aria: 'Meta+K' } : { text: 'Ctrl+K', aria: 'Control+K' };
+}
+
 /* The most rows drawn at once: a query narrows the rest. */
 const PALETTE_SHOWN = 100;
 
@@ -215,6 +220,16 @@ function movePaletteActive(step) {
   if (!keys.length) return;
   const i = keys.indexOf(pal.active);
   setPaletteActive(keys[i < 0 ? (step > 0 ? 0 : keys.length - 1) : (i + step + keys.length) % keys.length]);
+}
+
+// The rail button names the shortcut this platform takes.
+{
+  const btn = palEl('btn-palette'), hint = paletteShortcutHint();
+  if (btn) {
+    btn.title = `セッションを検索 (${hint.text})`;
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-keyshortcuts', hint.aria);
+  }
 }
 
 palEl('palette-input').addEventListener('input', renderPalette);
