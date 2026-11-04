@@ -6,6 +6,11 @@ mod common;
 use common::*;
 use serde_json::{Value, json};
 
+/// When a fixture's running read was launched: later than any clock the test runs on, so the
+/// resident's queue job, which fails a running read with no pid once its start grace is over
+/// (and one with no launch time at once), leaves it running while the test looks at it.
+const LAUNCHED_LATER: &str = "99991231T235959Z";
+
 // GitHub's upper-case enum values are made from lower-case words rather than written into the
 // JSON: a bare upper-case string after a colon reads as a tracker key to the guard over
 // everything that ships.
@@ -221,7 +226,11 @@ fn with_read(fixture: &Fixture, resident: &Resident, status: &str) {
     assert_eq!(code, 200, "{text}");
     let path = fixture.state.join("others/acme~widget~7.json");
     let mut record = body(&std::fs::read_to_string(&path).unwrap());
-    record["ai"] = json!({"status": status, "startedAt": "20261002T000000Z"});
+    record["ai"] = json!({
+        "status": status,
+        "startedAt": "20261002T000000Z",
+        "launchedAt": LAUNCHED_LATER,
+    });
     std::fs::write(&path, record.to_string()).unwrap();
 }
 
@@ -687,7 +696,12 @@ fn a_reader_can_only_tell_the_code_review_hub() {
             "deletions": 1, "changedFiles": 1, "requested": true,
             "requestedAt": "20261001T000000Z", "firstSeenAt": "20261001T000000Z",
             "readAt": "20261001T000000Z",
-            "ai": {"status": "running", "sessionId": "sid-a", "startedAt": "20261001T000000Z"}
+            "ai": {
+                "status": "running",
+                "sessionId": "sid-a",
+                "startedAt": "20261001T000000Z",
+                "launchedAt": LAUNCHED_LATER,
+            }
         })
         .to_string(),
     )
@@ -952,7 +966,11 @@ fn get_api_others_leaves_out_a_task_s_pr_but_counts_its_reader_in_the_hub() {
             "prState": "open", "additions": 1, "deletions": 1, "changedFiles": 1,
             "requested": requested, "requestedAt": "20261001T000000Z",
             "firstSeenAt": "20261001T000000Z", "readAt": "20261001T000000Z",
-            "ai": {"status": "running", "startedAt": "20261002T000000Z"}
+            "ai": {
+                "status": "running",
+                "startedAt": "20261002T000000Z",
+                "launchedAt": LAUNCHED_LATER,
+            }
         });
         if let Some(task) = task {
             record["task"] = task;

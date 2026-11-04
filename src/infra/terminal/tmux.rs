@@ -399,6 +399,10 @@ pub enum StartWatch {
 /// moment, and a window that is still up after this long is taken to be running.
 const WATCH_POLLS: u32 = 12;
 const WATCH_EVERY: Duration = Duration::from_millis(250);
+/// How many more times a dead pane is asked for its status if tmux has not filled it in yet.
+pub(crate) const DEAD_STATUS_TRIES: u32 = 10;
+/// How long between asks for a dead pane's exit status.
+pub(crate) const DEAD_STATUS_EVERY: Duration = Duration::from_millis(50);
 /// How much of a dead pane's screen is reported.
 const WATCH_SCREEN_LINES: usize = 10;
 
@@ -411,6 +415,18 @@ pub fn tmux_watch_start(socket: Option<&str>, pane: &str) -> Result<StartWatch, 
         WATCH_POLLS,
         WATCH_EVERY,
     )
+}
+
+/// Whether the pane tmux answered about is dead, and its exit status when tmux has one. `None`
+/// when the answer is not about `pane`, as tmux answers for some panes that are gone.
+fn parse_watch_pane(answer: &str, pane: &str) -> Option<(bool, Option<i32>)> {
+    let mut fields = answer.trim_end().split('\t');
+    if fields.next() != Some(pane) {
+        return None;
+    }
+    let dead = fields.next() == Some("1");
+    let status = fields.next().and_then(|s| s.trim().parse().ok());
+    Some((dead, status))
 }
 
 /// The same, with the runner and the pause handed in so a test need not wait.
@@ -445,13 +461,29 @@ pub fn tmux_watch_start_with(
                 return Err(e);
             }
         };
-        let mut fields = answer.trim_end().split('\t');
         // tmux answers an empty line, status 0, for some panes that are gone.
-        if fields.next() != Some(pane) {
+        let Some((dead, mut status)) = parse_watch_pane(&answer, pane) else {
             return Ok(StartWatch::Gone);
-        }
-        if fields.next() == Some("1") {
-            let status = fields.next().and_then(|s| s.trim().parse().ok());
+        };
+        if dead {
+            // tmux marks a pane dead when its pty closes, but sets its exit status only once
+            // the child process has been reaped. If the status is not yet there, ask again.
+            if status.is_none() {
+                for _ in 0..DEAD_STATUS_TRIES {
+                    pause(DEAD_STATUS_EVERY);
+                    match run(&ask) {
+                        Ok(retry) => match parse_watch_pane(&retry, pane) {
+                            Some((true, Some(code))) => {
+                                status = Some(code);
+                                break;
+                            }
+                            Some((true, None)) => {}
+                            _ => break,
+                        },
+                        Err(_) => break,
+                    }
+                }
+            }
             let screen = run(&format!("{prefix} capture-pane -p -J -t {pane_q} -S -40"))
                 .map(|out| last_lines(&out))
                 .ok();
