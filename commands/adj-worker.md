@@ -36,6 +36,15 @@ what to tell them, not the words to use.
 - **Do not use `EnterWorktree`.** You are already inside.
 - **`isolation: worktree` is forbidden.** It digs another worktree under the one you are standing
   in. Sub-agents work in the current cwd too.
+- **Never touch the person's tmux server.** You run inside the person's own tmux, so `$TMUX` and
+  `$TMUX_PANE` name their real server, and while `$TMUX` is set tmux ignores `TMUX_TMPDIR`. When
+  you run tmux against an isolated server (checking a change against a test tmux, for example),
+  run **every** command for it, the cleanup included, as
+  `env -u TMUX -u TMUX_PANE TMUX_TMPDIR=<dir> tmux …`, or name the server with `tmux -L <name> …`
+  / `tmux -S <path> …`; the cleanup is then
+  `env -u TMUX -u TMUX_PANE TMUX_TMPDIR=<dir> tmux kill-server`. Never run `kill-server` or
+  `kill-session` against any server but that isolated one: with only `TMUX_TMPDIR` set, it kills
+  the person's server, and with it the hub and every agent running in it, with no sign of why.
 - **Do not hand the implementation back to the hub.** Do everything up to the final report
   yourself, and **give that report to the user at this tab**. The hub only hands work out; results
   sent to it have nowhere to go (and the same report shows up in two places). You send the hub

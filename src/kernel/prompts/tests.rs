@@ -138,6 +138,96 @@ fn the_copilot_review_request_follows_the_brief() {
     // The writer's side of the label is held by the label tests in `transport::cli::task`.
 }
 
+/// A worker runs inside a pane of the person's own tmux server, so `$TMUX` and `$TMUX_PANE` are
+/// set in its environment. When `$TMUX` is set, tmux talks to that server and ignores
+/// `TMUX_TMPDIR`. A worker cleaning up a test server with bare `tmux kill-server` would kill
+/// the person's server and every agent running on it.
+#[test]
+fn a_worker_runs_a_test_tmux_server_without_the_person_s_tmux_environment() {
+    let worker = section(
+        find("adj-worker").unwrap().raw_content,
+        "## Where you stand",
+    );
+    let flowed = flow(&worker);
+    for phrase in [
+        "env -u TMUX -u TMUX_PANE",
+        "tmux -L <name>",
+        "tmux -S <path>",
+        "kill-server",
+        "kill-session",
+        "ignores `TMUX_TMPDIR`",
+    ] {
+        assert!(
+            flowed.contains(phrase),
+            "the worker's 'Where you stand' section is missing {phrase:?}: {worker}"
+        );
+    }
+}
+
+/// Running `tmux kill-server` or `tmux kill-session` against the default server kills the person's
+/// server and every agent session on it. Any tmux kill command in a procedure must name an
+/// isolated server or strip the person's environment.
+#[test]
+fn no_procedure_shows_a_tmux_kill_without_naming_the_server() {
+    let names = [
+        "adj-hub",
+        "adj-worker",
+        "adj-report",
+        "adj-review-hub",
+        "adj-reviewer",
+    ];
+    let mut offenders = Vec::new();
+    let mut compliant_in_worker = 0usize;
+
+    for name in names {
+        // Every procedure is read: one that `find` no longer knows would otherwise be skipped,
+        // and the guard would pass by reading nothing.
+        let prompt = find(name).unwrap_or_else(|| panic!("no procedure named {name}"));
+        for (i, span) in prompt.raw_content.split('`').enumerate() {
+            if i % 2 == 0 {
+                continue;
+            }
+            let trimmed = span.trim();
+            let has_tmux = trimmed.contains("tmux");
+            let has_kill = trimmed.contains("kill-server") || trimmed.contains("kill-session");
+            if !has_tmux || !has_kill {
+                continue;
+            }
+            // The bare subcommand names carry no `tmux`, so prose naming them never reaches
+            // here: a span that does is a command line, and a bare `tmux kill-server` is
+            // exactly the one that killed the person's server.
+            let kill_pos = [trimmed.find("kill-server"), trimmed.find("kill-session")]
+                .into_iter()
+                .flatten()
+                .min()
+                .unwrap();
+            let before_kill = &trimmed[..kill_pos];
+            // Unsetting `$TMUX` alone is not enough: with no `TMUX_TMPDIR` the command still
+            // reaches the default socket, which is where the person's server usually lives.
+            let compliant = (trimmed.starts_with("env -u TMUX ")
+                && before_kill.contains("TMUX_TMPDIR="))
+                || before_kill.contains(" -L ")
+                || before_kill.contains(" -S ");
+            if compliant {
+                if name == "adj-worker" {
+                    compliant_in_worker += 1;
+                }
+            } else {
+                offenders.push(format!("{name}: `{trimmed}`"));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "procedures show tmux kill without naming the server: {offenders:#?}"
+    );
+    assert!(
+        compliant_in_worker > 0,
+        "adj-worker has no compliant tmux kill example"
+    );
+}
+
 /// A `gh pr create` with nothing to base it on is the defect itself, not just one
 /// wording of it: the flag is easy to drop when the surrounding prose is rewritten.
 ///
