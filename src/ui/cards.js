@@ -70,8 +70,9 @@ function openCardTask(task, el) {
   const slug = owner ? owner.slug : task._slug;
   const live = ['dispatched', 'pr'].includes(task.status);
   const hcol = owner ? owner.humanCol : humanColOf(task);
+  // The card pressed says which board its id is on: a hub's card picks its hub, any other card drops an earlier pick.
+  panelOwnerPick = owner ? { id: task.id, slug: owner.slug } : null;
   if (multiBoard && owner && nav.board && nav.board !== 'all') {
-    panelOwnerPick = { id: task.id, slug: owner.slug };
     if (live || hcol) return openTaskPanel(task.id, 'term');
     const tagged = { ...task, _slug: owner.slug, _base: `/b/${owner.slug}` };
     openTaskDetail(tagged, el);

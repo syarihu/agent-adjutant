@@ -8,9 +8,10 @@ const taskById = (id, data = stateNow()) => (data.tasks || []).find(t => t.id ==
 
 /* The gate each tab of the open task shows when a person picked one in 経過 (keyed by the tab
    renderers' names, task-view.js). It belongs to one task: another task starts with none. */
-let panelPick = { id: null, pick: {} };
+let panelPick = { id: null, slug: null, pick: {} };
 function panelPickOf(id) {
-  if (panelPick.id !== id) panelPick = { id, pick: {} };
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (panelPick.id !== id || panelPick.slug !== slug) panelPick = { id, slug, pick: {} };
   return panelPick.pick;
 }
 
@@ -65,7 +66,8 @@ function markSelectedCards() {
 /* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
 function showTaskPanel(id) {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = dialogReturn = null; }
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (selectedTaskId !== id || panelPick.slug !== slug) { sessView.git = null; panelPick = { id: null, slug: null, pick: {} }; dialogFor = dialogReturn = null; }
   selectedTaskId = id;
   markSelectedCards();
   renderTaskPanel();
@@ -75,7 +77,8 @@ function showTaskPanel(id) {
    of the card that is open replaces the one it is on. */
 function openTaskPanel(id, pane = 'detail') {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = dialogReturn = null; }
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (selectedTaskId !== id || panelPick.slug !== slug) { sessView.git = null; panelPick = { id: null, slug: null, pick: {} }; dialogFor = dialogReturn = null; }
   selectedTaskId = id;
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
@@ -87,7 +90,8 @@ function openTaskPanel(id, pane = 'detail') {
    card or the close puts it back (panelPop). */
 function openTask(id, tab = 'overview', gateId = null) {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (selectedTaskId !== id || panelPick.slug !== slug) { sessView.git = null; panelPick = { id: null, slug: null, pick: {} }; }
   if (gateId) {
     panelPickOf(id)[tab] = gateId;
     // A gate picked is read from the top.
@@ -514,7 +518,7 @@ function panelHeadHtml(task) {
     : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています${taskPassedGate(task) ? '（答えないまま進行中）' : ''}</span>`
     : stuck ? `<span class="m3-pill pill-err">${esc(stuck)}</span>`
     : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
-  const b = selectedBoard();
+  const b = (task?._slug && task._slug !== nav.board && (typeof boards !== 'undefined' ? boards : []).find(x => x.slug === task._slug)) || selectedBoard();
   const origin = b ? boardName(b) : (stateNow().repo || '').split('/').pop();
   return `
     <div class="tp-head-main">

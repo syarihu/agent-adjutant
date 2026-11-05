@@ -822,6 +822,7 @@ async function refresh(force = false) {
     if (view === 'board' && typeof refreshPanelOther === 'function' && (panelOtherSlug() || panelOther.slug)) refreshPanelOther(false);
   } catch (e) {
     note(`状態を取得できませんでした: ${e.message}`, true);
+    if (view === 'board' && typeof refreshPanelOther === 'function' && (panelOtherSlug() || panelOther.slug)) refreshPanelOther(false);
   }
 }
 

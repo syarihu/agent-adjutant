@@ -509,16 +509,16 @@ function openGateInWork(g) {
 /* The review comments of the task the panel is open on, once a person asked for them.
    Kept here rather than in /api/state: listing them is a round trip to GitHub, done when
    somebody wants to choose, and the choice has to survive the panel being redrawn. */
-let relay = { taskId: null, loading: false, error: '', findings: [], picked: new Set() };
+let relay = { taskId: null, base: null, loading: false, error: '', findings: [], picked: new Set() };
 
-async function loadFindings(id) {
-  const asked = { taskId: id, loading: true, error: '', findings: [], picked: new Set() };
+async function loadFindings(id, base = null) {
+  const t = (stateNow().tasks || []).find(x => x.id === id);
+  const targetBase = base || (t ? baseOf(t) : BASE);
+  const asked = { taskId: id, base: targetBase, loading: true, error: '', findings: [], picked: new Set() };
   relay = asked;
   renderTaskPanel();
   let data = null, failed = null;
-  const t = (stateNow().tasks || []).find(x => x.id === id);
-  const base = t ? baseOf(t) : BASE;
-  try { data = await boardApi(base, `/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
+  try { data = await boardApi(targetBase, `/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
   // Another list was asked for meanwhile — another task's, or this one again. That one's
   // answer is the one to show; this one would put its comments under the wrong card.
   if (relay !== asked) return;
@@ -548,14 +548,14 @@ async function relayPicked(id) {
     note(line, false, `${comments.length} 件を PR にコメントしました。Jules が読んで直します`);
     // Read again only if the panel is still on this list; otherwise the reload would
     // replace whatever is being looked at now.
-    if (relay === asked && selectedTaskId === id) await loadFindings(id);
+    if (relay === asked && selectedTaskId === id) await loadFindings(id, base);
   } catch (e) { note(`${line} → ${e.message}`, true); }
   asked.posting = false;
   if (relay === asked) renderTaskPanel();
 }
 
 function relayHtml(task) {
-  const mine = relay.taskId === task.id;
+  const mine = relay.taskId === task.id && relay.base === baseOf(task);
   let h = `
     <div class="m3-filled-card">
       <div style="font-size:11px;font-weight:800;color:var(--md-sys-color-outline);text-transform:uppercase;margin-bottom:6px;">レビュー指摘を Jules に回す</div>
@@ -625,6 +625,8 @@ document.addEventListener('click', e => {
   if (dr) {
     e.stopPropagation();
     const ownerCard = dr.closest('[data-owner]');
+    // A chip on a card of this board drops the hub picked by an earlier press.
+    if (!ownerCard) panelOwnerPick = null;
     if (ownerCard && !scopeAll()) {
       const cardId = ownerCard.dataset.id;
       const slug = ownerCard.dataset.slug || null;

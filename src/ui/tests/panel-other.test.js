@@ -373,3 +373,89 @@ test('panelOwnerSlug applies to agent (board) view only, returning null in work 
   ctx.nav.view = 'todo';
   assert.strictEqual(ctx.panelOwnerSlug('t1'), null);
 });
+
+test('when repository task and clicked hub card share an id, hub task wins in panelState', () => {
+  const ctx = createContext({
+    multiBoard: true,
+    nav: { board: 'repo1', view: 'agent', task: 'shared1' },
+    state: {
+      tasks: [{ id: 'shared1', title: 'Local repo task' }],
+      hubTasks: [{ id: 'shared1', title: 'Hub task', ownerHub: { slug: 'hub1' } }],
+    },
+  });
+
+  // Before clicking, the local task would be seen because panelOwnerSlug is null
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), null);
+  assert.strictEqual(ctx.panelState().tasks.find(t => t.id === 'shared1').title, 'Local repo task');
+
+  // Once the hub card is clicked, panelOwnerPick identifies hub1 as owner
+  ctx.openCardTask({ id: 'shared1', status: 'dispatched', ownerHub: { slug: 'hub1' } }, null);
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), 'hub1');
+
+  // Before hub data arrives: hub card comes before page's own tasks
+  const beforeData = ctx.panelState().tasks.find(t => t.id === 'shared1');
+  assert.strictEqual(beforeData._slug, 'hub1');
+  assert.strictEqual(beforeData.title, 'Hub task');
+
+  // After hub data arrives: hub task from data comes before page's own tasks
+  ctx.panelOther.data = { tasks: [{ id: 'shared1', title: 'Hub task from api' }] };
+  ctx.panelOther.slug = 'hub1';
+  const afterData = ctx.panelState().tasks.find(t => t.id === 'shared1');
+  assert.strictEqual(afterData._slug, 'hub1');
+  assert.strictEqual(afterData.title, 'Hub task from api');
+});
+
+test('once the picked hub\'s data no longer lists nav.task, another hub card with same id is excluded from cards', () => {
+  const ctx = createContext({
+    multiBoard: true,
+    nav: { board: 'repo1', view: 'agent', task: 'shared1' },
+    state: {
+      tasks: [],
+      hubTasks: [
+        { id: 'shared1', ownerHub: { slug: 'hubA' } },
+        { id: 'shared1', ownerHub: { slug: 'hubB' } },
+      ],
+    },
+  });
+
+  ctx.openCardTask({ id: 'shared1', status: 'dispatched', ownerHub: { slug: 'hubA' } }, null);
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), 'hubA');
+
+  // Before data arrives, hubA card is present
+  assert.strictEqual(ctx.panelState().tasks.find(t => t.id === 'shared1')._slug, 'hubA');
+
+  // When hubA data arrives but does NOT list shared1, hubB card must not stand in
+  ctx.panelOther.data = { tasks: [{ id: 'otherTask' }] };
+  ctx.panelOther.slug = 'hubA';
+  assert.strictEqual(ctx.panelState().tasks.find(t => t.id === 'shared1'), undefined);
+});
+
+test('pressing a card of this board drops the hub picked for the same id', () => {
+  const ctx = createContext({
+    multiBoard: true,
+    nav: { board: 'repo1', view: 'agent', task: 'shared1' },
+    state: {
+      tasks: [{ id: 'shared1', status: 'dispatched' }],
+      hubTasks: [{ id: 'shared1', ownerHub: { slug: 'hub1' } }],
+    },
+  });
+  ctx.openCardTask({ id: 'shared1', status: 'dispatched', ownerHub: { slug: 'hub1' } }, null);
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), 'hub1');
+  ctx.openCardTask({ id: 'shared1', status: 'dispatched' }, null);
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), null);
+});
+
+test('when the picked hub\'s card leaves the page, another hub\'s card of the same id does not stand in', () => {
+  const ctx = createContext({
+    multiBoard: true,
+    nav: { board: 'repo1', view: 'agent', task: 'shared1' },
+    state: {
+      tasks: [],
+      hubTasks: [{ id: 'shared1', ownerHub: { slug: 'hubA' } }, { id: 'shared1', ownerHub: { slug: 'hubB' } }],
+    },
+  });
+  ctx.openCardTask({ id: 'shared1', status: 'dispatched', ownerHub: { slug: 'hubA' } }, null);
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), 'hubA');
+  ctx.state.hubTasks = [{ id: 'shared1', ownerHub: { slug: 'hubB' } }];
+  assert.strictEqual(ctx.panelOwnerSlug('shared1'), null);
+});

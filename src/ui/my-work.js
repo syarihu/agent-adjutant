@@ -561,15 +561,15 @@ function workSelected() {
     // A gate that only has a row of its own: nothing to open beside it.
     if (isGateRef(ref)) {
       const slug = ref.slice(WORK_GATE_REF.length).split('/')[0];
-      if (workBoardOf(repo, slug) === nav.board) return { row: { board: slug, session: null, task: null }, repo, session: null };
+      if (workBoardOf(repo, slug) === board) return { row: { board: slug, session: null, task: null }, repo, session: null };
     }
     // A task that waits on the person with nothing running: there is no session to show.
     if (!isHubRef(ref) && !isSessRef(ref)) {
-      const t = (repo.turns || []).find(x => x.task?.id === ref && workBoardOf(repo, x.board) === nav.board);
+      const t = (repo.turns || []).find(x => x.task?.id === ref && workBoardOf(repo, x.board) === board);
       if (t) return { row: { board: t.board, session: null, task: t.task }, repo, session: null };
     }
     if (isHubRef(ref)) {
-      const h = (repo.hubSessions || []).find(x => workBoardOf(repo, x.board) === nav.board && HUB_REF + x.session.id === ref);
+      const h = (repo.hubSessions || []).find(x => workBoardOf(repo, x.board) === board && HUB_REF + x.session.id === ref);
       if (h) return { row: { board: h.board, session: h.session, task: null }, repo, session: h.session };
     }
   }

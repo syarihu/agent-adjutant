@@ -33,7 +33,7 @@ const taskRead = {
 const taskReadActive = task => !!task && workTermOn() && !!task.pr && task.id === nav.task && cardDialog.mode === 'own-read' && cardDialog.subject === task.id;
 const taskReadTaskOf = () => workTermOn() && isTaskRef(nav.task) ? withPanelState(() => taskById(nav.task)) || null : null;
 const taskReadTask = () => { const t = taskReadTaskOf(); return taskReadActive(t) ? t : null; };
-const taskReadKey = task => `${nav.board}/${task.id}/${task.pr}`;
+const taskReadKey = task => `${task?._slug || nav.board}/${task.id}/${task.pr}`;
 
 /* What the read-through's buttons are on, for `prShown` (pr-panel.js): null unless the dialog is open on the task, and until the task's
    document has come, or when its PR is not one that can be read. `rec` is null while the PR has no record. There is no reader's terminal

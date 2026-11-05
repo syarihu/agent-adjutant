@@ -51,9 +51,13 @@ let panelOwnerPick = null; // { id, slug }
    page's own tasks; null when the task is this board's or no hub owns it. */
 function panelOwnerSlug(ref) {
   if (!multiBoard || !nav.board || nav.board === 'all' || nav.view !== 'agent' || !isTaskRef(ref)) return null;
+  // The hub of the card that was pressed. While it is picked, another hub's card of the same id never stands in for it.
+  if (panelOwnerPick?.id === ref) {
+    if (!hubTaskOf(ref, panelOwnerPick.slug)) return null;
+    return panelOwnerPick.slug === nav.board ? null : panelOwnerPick.slug;
+  }
   if ((state.tasks || []).some(t => t.id === ref)) return null;
-  const pickSlug = panelOwnerPick?.id === ref && hubTaskOf(ref, panelOwnerPick.slug) ? panelOwnerPick.slug : null;
-  const card = pickSlug ? hubTaskOf(ref, pickSlug) : hubTaskOf(ref);
+  const card = hubTaskOf(ref);
   const slug = card?.ownerHub?.slug;
   if (!slug || slug === nav.board) return null;
   return slug;
@@ -101,6 +105,7 @@ async function refreshPanelOther(force = false) {
   try {
     const next = await boardApi('/b/' + slug, '/api/state');
     if (epoch !== panelOther.epoch || nEpoch !== navEpoch || panelOtherSlug() !== slug) return;
+    panelOtherFailed = false;
     const isAnswered = g => (typeof answeredGates !== 'undefined' && answeredGates) ? answeredGates.has(typeof gateKey === 'function' ? gateKey({ ...g, _slug: slug }) : `${slug}/${g.id}`) : false;
     if ((next.gates || []).some(isAnswered)) {
       next.gates = next.gates.filter(g => !isAnswered(g));
@@ -112,7 +117,6 @@ async function refreshPanelOther(force = false) {
     panelOther.slug = slug;
     panelOther.data = next;
     panelOther.json = nextJson;
-    panelOtherFailed = false;
     if (typeof renderTaskPanel === 'function') renderTaskPanel();
     if (typeof taskDetailFollow === 'function') taskDetailFollow();
   } catch (e) {
@@ -126,7 +130,7 @@ async function refreshPanelOther(force = false) {
   }
 }
 
-let panelStateMemo = { state: null, otherData: null, slug: null, result: null };
+let panelStateMemo = { state: null, otherData: null, slug: null, task: null, owner: null, result: null };
 
 /* The state the panel, the terminal beside the board and the detail dialog draw from: the page's own, with the owner
    hub's tasks, gates and waits added, tagged with their board. The page's own tasks stay in it, so a task panel of this
@@ -135,22 +139,35 @@ let panelStateMemo = { state: null, otherData: null, slug: null, result: null };
 function panelState() {
   const slug = panelOtherSlug();
   if (!slug) return state;
-  if (panelStateMemo.state === state && panelStateMemo.otherData === panelOther.data && panelStateMemo.slug === slug) {
+  const owner = panelOwnerSlug(nav.task);
+  if (panelStateMemo.state === state && panelStateMemo.otherData === panelOther.data && panelStateMemo.slug === slug && panelStateMemo.task === nav.task
+    && panelStateMemo.owner === owner) {
     return panelStateMemo.result;
   }
   const tag = (list, s) => (list || []).map(x => ({ ...x, _slug: s, _base: '/b/' + s }));
   const data = panelOther.data && panelOther.slug === slug ? panelOther.data : null;
-  const cards = (state.hubTasks || []).filter(t => t.ownerHub?.slug && !(data && t.ownerHub.slug === slug))
-    .map(t => ({ ...t, _slug: t.ownerHub.slug, _base: '/b/' + t.ownerHub.slug }))
+  const dropOtherDup = data && panelOwnerSlug(nav.task) === slug && !(data.tasks || []).some(t => t.id === nav.task);
+  const cards = (state.hubTasks || []).filter(t => {
+    if (!t.ownerHub?.slug) return false;
+    if (data && t.ownerHub.slug === slug) return false;
+    if (dropOtherDup && t.id === nav.task && t.ownerHub.slug !== slug) return false;
+    return true;
+  }).map(t => ({ ...t, _slug: t.ownerHub.slug, _base: '/b/' + t.ownerHub.slug }))
     // Ids are unique only per hub: this hub's card is found before another hub's of the same id.
     .sort((x, y) => (y._slug === slug) - (x._slug === slug));
+  const hubTasks = data ? tag(data.tasks, slug) : cards.filter(c => c._slug === slug);
+  const otherCards = cards.filter(c => c._slug !== slug);
+  const ownTasks = state.tasks || [];
+  const tasks = panelOwnerSlug(nav.task)
+    ? [...hubTasks, ...ownTasks, ...otherCards]
+    : [...ownTasks, ...hubTasks, ...otherCards];
   const result = {
     ...state,
-    tasks: [...(state.tasks || []), ...(data ? tag(data.tasks, slug) : []), ...cards],
+    tasks,
     gates: [...(state.gates || []), ...(data ? tag(data.gates, slug) : [])],
     waits: [...(state.waits || []), ...(data ? tag(data.waits, slug) : [])],
   };
-  panelStateMemo = { state, otherData: panelOther.data, slug, result };
+  panelStateMemo = { state, otherData: panelOther.data, slug, task: nav.task, owner, result };
   return result;
 }
 
@@ -306,6 +323,9 @@ function askWorkOnMove(prevView, boardChanged) {
 /* Draw the screen the address names. */
 function applyNav(boardChanged, panelOnly = false) {
   const wantTask = nav.task;
+  // A hub picked by pressing its card holds only while the address stays on that card's task: any other way there (a link, back or
+  // forward) is not a press of that card.
+  if (panelOwnerPick && panelOwnerPick.id !== wantTask) panelOwnerPick = null;
   if (!panelOnly) drawScreen(boardChanged);
   // The address names the card that is open: back to one with none closes the panel, back to
   // the card that is open shows its tab, and another card is opened below.
