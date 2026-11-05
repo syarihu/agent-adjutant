@@ -185,11 +185,16 @@ pub fn model_slot(template: &str) -> ModelSlot {
     if contains_placeholder(template, MODEL_PLACEHOLDER) {
         return ModelSlot::Placeholder;
     }
-    let is_claude =
-        agent_token(template).is_some_and(|span| agent_name(&template[span]) == "claude");
-    let passes_own = template
-        .split_whitespace()
-        .any(|word| word == "--model" || word.starts_with("--model="));
+    // The executable may be quoted (`"/usr/local/bin/claude"`); unquote it for this decision only.
+    let agent = agent_token(template).map(|span| unquoted_word(&template[span]));
+    let is_claude = agent
+        .as_deref()
+        .is_some_and(|word| agent_name(word) == "claude");
+    // Match on the unquoted words, so `--model` inside another option's quoted value is not
+    // mistaken for the option itself while `"--model"` is.
+    let passes_own = shell_words(template)
+        .iter()
+        .any(|(_, word)| word == "--model" || word.starts_with("--model="));
 
     if is_claude {
         if passes_own {
@@ -198,8 +203,8 @@ pub fn model_slot(template: &str) -> ModelSlot {
             ModelSlot::Appended
         }
     } else {
-        let agent = agent_token(template)
-            .map(|span| agent_name(&template[span]))
+        let agent = agent
+            .map(|word| agent_name(&word))
             .unwrap_or_else(|| agent_from_runner(template));
         ModelSlot::Refused(format!(
             "has no {{{MODEL_PLACEHOLDER}}}, so a model cannot be passed to {agent}"
@@ -399,53 +404,118 @@ fn model_template(template: &str, model: Option<&str>) -> String {
     }
 }
 
-fn is_placeholder_word(word: &str) -> bool {
-    let placeholder = format!("{{{MODEL_PLACEHOLDER}}}");
-    word == placeholder
-        || word == format!("\"{placeholder}\"")
-        || word == format!("'{placeholder}'")
-}
-
 fn is_model_option(word: &str) -> bool {
     word == "-m" || (word.starts_with("--") && word.contains("model"))
 }
 
+/// Remove every `{model}` from a template that is run without a model, together with the
+/// option that introduces it (`--model {model}`, `-m {model}`, `--model={model}`) so no
+/// dangling flag is left behind. Words are compared unquoted, so `"--model" {model}` and
+/// `'--model={model}'` are recognised like their unquoted forms.
 fn drop_model_placeholder(template: &str) -> String {
     let placeholder = format!("{{{MODEL_PLACEHOLDER}}}");
-    if !template.contains(&placeholder) {
-        return template.to_string();
-    }
-    let words = word_spans(template);
-    if let Some(idx) = words
-        .iter()
-        .position(|r| template[r.clone()].contains(&placeholder))
-    {
-        let word = &template[words[idx].clone()];
-        if is_placeholder_word(word) {
-            if idx > 0 && is_model_option(&template[words[idx - 1].clone()]) {
-                return remove_span_and_space(template, words[idx - 1].start..words[idx].end);
+    let mut template = template.to_string();
+    while template.contains(&placeholder) {
+        let words = shell_words(&template);
+        let Some(idx) = words
+            .iter()
+            .position(|(span, _)| template[span.clone()].contains(&placeholder))
+        else {
+            break;
+        };
+        let (span, text) = &words[idx];
+        let next = if *text == placeholder {
+            match idx.checked_sub(1).map(|i| &words[i]) {
+                Some((prev, prev_text)) if is_model_option(prev_text) => {
+                    remove_span_and_space(&template, prev.start..span.end)
+                }
+                _ => remove_span_and_space(&template, span.clone()),
             }
-            return remove_span_and_space(template, words[idx].clone());
-        }
-
-        if word.starts_with("--")
-            && let Some((opt, val)) = word.split_once('=')
+        } else if text.starts_with("--")
+            && let Some((opt, val)) = text.split_once('=')
             && opt.contains("model")
-            && is_placeholder_word(val)
+            && val == placeholder
         {
-            return remove_span_and_space(template, words[idx].clone());
-        }
+            remove_span_and_space(&template, span.clone())
+        } else {
+            // A placeholder embedded in some other word: drop it plainly, all occurrences.
+            return drop_placeholder(&template, MODEL_PLACEHOLDER);
+        };
+        template = next;
     }
-    drop_placeholder(template, MODEL_PLACEHOLDER)
+    template
 }
 
-fn word_spans(s: &str) -> Vec<Range<usize>> {
-    s.split_whitespace()
-        .map(|word| {
-            let start = word.as_ptr() as usize - s.as_ptr() as usize;
-            start..start + word.len()
-        })
-        .collect()
+/// The first shell word of `s`, unquoted (the word itself when it holds no quotes).
+fn unquoted_word(s: &str) -> String {
+    shell_words(s)
+        .into_iter()
+        .next()
+        .map(|(_, word)| word)
+        .unwrap_or_else(|| s.to_string())
+}
+
+/// Split a template into shell words: each word's byte span in `s` and its unquoted text.
+///
+/// Single quotes are literal. Inside double quotes a backslash escapes only `"`, `\`, `$`
+/// and a backtick. Outside quotes a backslash escapes the next character. An unterminated
+/// quote runs to the end of the string.
+fn shell_words(s: &str) -> Vec<(Range<usize>, String)> {
+    let mut words = Vec::new();
+    let mut chars = s.char_indices().peekable();
+    while let Some(&(start, c)) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+            continue;
+        }
+        let mut text = String::new();
+        let mut end = start;
+        while let Some(&(i, c)) = chars.peek() {
+            if c.is_whitespace() {
+                break;
+            }
+            chars.next();
+            end = i + c.len_utf8();
+            match c {
+                '\'' => {
+                    for (j, q) in chars.by_ref() {
+                        end = j + q.len_utf8();
+                        if q == '\'' {
+                            break;
+                        }
+                        text.push(q);
+                    }
+                }
+                '"' => {
+                    while let Some((j, q)) = chars.next() {
+                        end = j + q.len_utf8();
+                        match q {
+                            '"' => break,
+                            '\\' => match chars.peek() {
+                                Some(&(k, n)) if matches!(n, '"' | '\\' | '$' | '`') => {
+                                    chars.next();
+                                    end = k + n.len_utf8();
+                                    text.push(n);
+                                }
+                                _ => text.push(q),
+                            },
+                            _ => text.push(q),
+                        }
+                    }
+                }
+                '\\' => match chars.next() {
+                    Some((k, n)) => {
+                        end = k + n.len_utf8();
+                        text.push(n);
+                    }
+                    None => text.push(c),
+                },
+                _ => text.push(c),
+            }
+        }
+        words.push((start..end, text));
+    }
+    words
 }
 
 fn remove_span_and_space(template: &str, span: Range<usize>) -> String {
@@ -1105,6 +1175,77 @@ mod tests {
                 }
                 other => panic!("expected Refused, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn shell_words_unquotes_and_reports_spans() {
+        let s = r#"a 'b c' "d \"e\" \x" f\ g --m='x y'"#;
+        let words = shell_words(s);
+        let texts: Vec<&str> = words.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(texts, ["a", "b c", "d \"e\" \\x", "f g", "--m=x y"]);
+        assert_eq!(&s[words[1].0.clone()], "'b c'");
+        assert_eq!(&s[words[4].0.clone()], "--m='x y'");
+    }
+
+    #[test]
+    fn model_slot_recognises_a_quoted_claude_executable() {
+        for template in [
+            "\"/usr/local/bin/claude\" {prompt}",
+            "'/opt/claude' {prompt}",
+        ] {
+            assert_eq!(model_slot(template), ModelSlot::Appended, "{template}");
+        }
+        assert!(matches!(
+            model_slot("\"/usr/local/bin/claude\" --model opus {prompt}"),
+            ModelSlot::Refused(_)
+        ));
+        let line = worker_command(
+            Some("'/opt/claude' {prompt}"),
+            &[],
+            SID,
+            "go",
+            "/wt",
+            "T",
+            None,
+            Some("opus"),
+        );
+        assert_eq!(line, "'/opt/claude' --model opus go");
+    }
+
+    #[test]
+    fn model_slot_ignores_model_text_inside_quoted_values() {
+        assert_eq!(
+            model_slot("claude --append-system-prompt 'Use --model for selection' {prompt}"),
+            ModelSlot::Appended
+        );
+        for template in [
+            "claude --model opus {prompt}",
+            "claude --model=opus {prompt}",
+            "claude \"--model\" opus {prompt}",
+            "claude '--model=opus' {prompt}",
+        ] {
+            assert!(
+                matches!(model_slot(template), ModelSlot::Refused(_)),
+                "{template}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_placeholder_removal_drops_every_occurrence_and_quoted_options() {
+        for (template, expected) in [
+            (
+                "claude --model {model} --fallback-model {model} {prompt}",
+                "claude go",
+            ),
+            ("claude \"--model\" {model} {prompt}", "claude go"),
+            ("claude '-m' {model} {prompt}", "claude go"),
+            ("claude '--model={model}' {prompt}", "claude go"),
+            ("claude --verbose {model} {prompt}", "claude --verbose go"),
+        ] {
+            let line = worker_command(Some(template), &[], SID, "go", "/wt", "T", None, None);
+            assert_eq!(line, expected, "{template}");
         }
     }
 

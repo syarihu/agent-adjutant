@@ -32,7 +32,9 @@ pub struct StartRequest {
 /// `ctx` is the dispatching side's own (see `work`): the hub being handed to the new worker
 /// is the caller's, never one read out of the worktree.
 pub fn start(ctx: &Context, request: &StartRequest, dry_run: bool) -> Result<Started, String> {
-    if let Some(m) = &request.model {
+    // A blank model means none was chosen: nothing is checked or forwarded.
+    let model = request.model.as_deref().filter(|m| !m.trim().is_empty());
+    if let Some(m) = model {
         runner::check_model(m)?;
         let template = ctx
             .settings
@@ -101,7 +103,7 @@ pub fn start(ctx: &Context, request: &StartRequest, dry_run: bool) -> Result<Sta
     if let Some(task) = task_id {
         parts.push(format!("--task={task}"));
     }
-    if let Some(m) = &request.model {
+    if let Some(m) = model {
         parts.push(format!("--model={m}"));
     }
     let name_it = title_command(&ctx.settings, title);

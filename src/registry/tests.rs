@@ -556,7 +556,7 @@ fn relinking_keeps_the_process_fields_and_sets_task_and_hub() {
     let worktree = dir.path();
     register_worker(worktree, "try-retry", None, None, None).unwrap();
     let before = read_json(&worker_record_path(worktree)).unwrap();
-    save_worker_session(worktree, "try-retry", None, None, "sid-1", None).unwrap();
+    save_worker_session(worktree, "try-retry", None, None, "sid-1", Some("opus")).unwrap();
 
     relink_worker(worktree, Some("WID-957"), "task-1", None).unwrap();
     let after = read_json(&worker_record_path(worktree)).unwrap();
@@ -571,6 +571,7 @@ fn relinking_keeps_the_process_fields_and_sets_task_and_hub() {
     assert_eq!(saved.session_id, "sid-1");
     assert_eq!(saved.hub.as_deref(), Some("WID-957"));
     assert_eq!(saved.task.as_deref(), Some("task-1"));
+    assert_eq!(saved.model.as_deref(), Some("opus"));
 
     // Back to the repository's own hub: no key at all, and a phase already there stays.
     set_worker_phase(worktree, "verify").unwrap();

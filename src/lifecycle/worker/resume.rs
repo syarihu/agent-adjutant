@@ -31,6 +31,8 @@ pub fn resume_worker(
     dry_run: bool,
     model: Option<&str>,
 ) -> Result<Started, String> {
+    // A blank model means none was chosen: nothing is checked or forwarded.
+    let model = model.filter(|m| !m.trim().is_empty());
     let worktree = worker_worktree(Some(worktree))?;
     // Refused here rather than in the tab, so the caller — often a hub — hears about it.
     let saved = saved_worker_session(&worktree)?;

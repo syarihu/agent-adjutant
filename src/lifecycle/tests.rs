@@ -497,3 +497,119 @@ fn resuming_a_worker_forwards_model_flag_when_given() {
         performed.script
     );
 }
+
+fn start_request(wt: &std::path::Path, model: Option<&str>) -> worker::StartRequest {
+    worker::StartRequest {
+        worktree: wt.to_string_lossy().to_string(),
+        title: "T".to_string(),
+        task: None,
+        prompt: None,
+        repo: None,
+        model: model.map(str::to_string),
+    }
+}
+
+fn resume_with(
+    ctx: &crate::registry::Context,
+    wt: &std::path::Path,
+    model: Option<&str>,
+) -> Result<worker::Started, String> {
+    worker::resume_worker(
+        ctx,
+        None,
+        None,
+        &wt.to_string_lossy(),
+        "T",
+        None,
+        true,
+        model,
+    )
+}
+
+/// A model the runner cannot take is refused before a slot is claimed or a tab is opened.
+#[test]
+fn starting_a_worker_with_a_model_a_runner_cannot_take_claims_no_slot() {
+    let (sandbox, mut ctx) = hub_with_checkout();
+    ctx.settings.agent_runner = Some("codex exec {prompt}".to_string());
+    let wt = sandbox.state().join("worktree");
+    std::fs::create_dir_all(&wt).unwrap();
+
+    let err = worker::start(&ctx, &start_request(&wt, Some("opus")), false)
+        .err()
+        .unwrap();
+    assert!(err.starts_with("agentRunner "), "{err}");
+    assert!(!crate::registry::is_starting(
+        &wt,
+        crate::infra::clock::now_secs()
+    ));
+    assert!(!wt.join(".claude").exists());
+
+    // An invalid name is refused whatever the runner.
+    ctx.settings.agent_runner = None;
+    let err = worker::start(&ctx, &start_request(&wt, Some("-x")), false)
+        .err()
+        .unwrap();
+    assert!(err.contains("refused model name"), "{err}");
+    assert!(!crate::registry::is_starting(
+        &wt,
+        crate::infra::clock::now_secs()
+    ));
+}
+
+#[test]
+fn resuming_a_worker_with_a_model_a_runner_cannot_take_claims_no_slot() {
+    let (sandbox, mut ctx) = hub_with_checkout();
+    ctx.settings.agent_resume_runner = Some("codex resume {sessionId} {prompt}".to_string());
+    let wt = sandbox.state().join("worktree");
+    std::fs::create_dir_all(&wt).unwrap();
+    crate::registry::save_worker_session(&wt, "T", None, None, "sid-1", None).unwrap();
+
+    let err = resume_with(&ctx, &wt, Some("opus")).err().unwrap();
+    assert!(err.starts_with("agentResumeRunner "), "{err}");
+    assert!(!crate::registry::is_starting(
+        &wt,
+        crate::infra::clock::now_secs()
+    ));
+
+    ctx.settings.agent_resume_runner = None;
+    let err = resume_with(&ctx, &wt, Some("-x")).err().unwrap();
+    assert!(err.contains("refused model name"), "{err}");
+    assert!(!crate::registry::is_starting(
+        &wt,
+        crate::infra::clock::now_secs()
+    ));
+}
+
+/// A blank model is no model: it is not checked, and nothing is forwarded.
+#[test]
+fn a_blank_model_is_not_forwarded_by_start_or_resume() {
+    let (sandbox, mut ctx) = hub_with_checkout();
+    ctx.settings.agent_runner = Some("codex exec {prompt}".to_string());
+    let wt = sandbox.state().join("worktree");
+    std::fs::create_dir_all(&wt).unwrap();
+    crate::registry::save_worker_session(&wt, "T", None, None, "sid-1", None).unwrap();
+
+    // A runner that cannot take a model would refuse a real one.
+    let worker::Started::Opened(performed) =
+        worker::start(&ctx, &start_request(&wt, Some("  ")), true).unwrap()
+    else {
+        panic!("expected worker to start");
+    };
+    assert!(
+        !performed.script.contains("--model"),
+        "{}",
+        performed.script
+    );
+
+    for blank in ["", " "] {
+        let worker::Started::Opened(performed) = resume_with(&ctx, &wt, Some(blank)).unwrap()
+        else {
+            panic!("expected worker to resume");
+        };
+        assert!(
+            !performed.script.contains("--model"),
+            "{}",
+            performed.script
+        );
+    }
+}

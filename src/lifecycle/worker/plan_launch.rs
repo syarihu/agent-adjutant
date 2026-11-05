@@ -52,7 +52,9 @@ pub struct Launch {
 /// This is the deciding half: nothing is registered. When a worker is already running here
 /// it gives back the slot `adj work` marked and returns `Running`, saying nothing.
 pub fn plan_launch(request: &WorkerRequest) -> Result<Planned, String> {
-    if let Some(m) = &request.model {
+    // A blank model means none was chosen, so a resume falls back to the saved one.
+    let requested = request.model.as_deref().filter(|m| !m.trim().is_empty());
+    if let Some(m) = requested {
         runner::check_model(m)?;
     }
     let worktree = worker_worktree(request.worktree.as_deref())?;
@@ -123,10 +125,9 @@ pub fn plan_launch(request: &WorkerRequest) -> Result<Planned, String> {
     };
     let template = configured.unwrap_or(default);
 
-    let is_explicit = request.model.is_some();
-    let candidate = request
-        .model
-        .clone()
+    let is_explicit = requested.is_some();
+    let candidate = requested
+        .map(str::to_string)
         .or_else(|| resumed.as_ref().and_then(|saved| saved.model.clone()));
 
     let mut model_to_pass: Option<String> = None;

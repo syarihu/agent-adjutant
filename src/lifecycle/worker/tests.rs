@@ -1,4 +1,4 @@
-use super::{Planned, WorkerRequest, plan_launch};
+use super::{Planned, WorkerRequest, plan_launch, register_launch};
 use crate::registry;
 use std::path::Path;
 
@@ -154,6 +154,64 @@ fn a_resumed_worker_with_an_explicit_model_overrides_the_saved_one() {
     );
     assert_eq!(launch.model.as_deref(), Some("opus"));
     assert!(launch.model_note.is_none());
+}
+
+/// The registration changes into the worktree, which is process-wide state: put it back so
+/// the next test (and the tempdir's removal) does not find the process standing in it.
+struct RestoreCwd(std::path::PathBuf);
+
+impl Drop for RestoreCwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
+#[test]
+fn registering_a_resume_with_an_explicit_model_rewrites_the_saved_model() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    // Declared after `dir` so it drops first: the process leaves the tempdir before it is removed.
+    let _cwd = RestoreCwd(std::env::current_dir().unwrap());
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    let mut req = fresh(dir.path());
+    req.resume = true;
+    req.model = Some("opus".to_string());
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    let registered = register_launch(&launch).unwrap();
+    assert!(registered.session.is_none());
+    let saved = registry::worker_session(dir.path()).unwrap();
+    assert_eq!(saved.model.as_deref(), Some("opus"));
+    assert_eq!(saved.session_id, "sid-1");
+}
+
+#[test]
+fn a_blank_model_is_no_model_so_a_resume_keeps_the_saved_one() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    for blank in ["", "  "] {
+        let mut req = fresh(dir.path());
+        req.resume = true;
+        req.model = Some(blank.to_string());
+        let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+            panic!("expected planned launch");
+        };
+        assert!(
+            launch.command.contains("--model haiku"),
+            "{}",
+            launch.command
+        );
+        assert_eq!(launch.model.as_deref(), Some("haiku"));
+    }
+    let mut req = fresh(dir.path());
+    req.model = Some(" ".to_string());
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(!launch.command.contains("--model"), "{}", launch.command);
+    assert_eq!(launch.model, None);
 }
 
 #[test]
