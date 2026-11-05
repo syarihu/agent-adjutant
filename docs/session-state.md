@@ -128,7 +128,8 @@ event: a sweep checks processes, and `PostToolUse` fires after every tool call. 
   has been quiet that long is a process that died without `Stop` or `SessionEnd`. Unlike proctor, a
   `running` row is not exempt; there it could stay `running` for ever.
 - `SessionEnd` removes only the `.json`. The sweep removes a `.lock` that has no row beside it, and
-  only after taking it without waiting. Unlinking a lock another process holds open would hand
+  only after taking it without waiting for its holder (`infra::fs::try_lock` asks again for up to
+  0.5 s, for a forked child that has not exec'd yet). Unlinking a lock another process holds open would hand
   two callers two different locks (see `infra::fs::open_lock`), so a writer checks, once it holds
   a lock, that the path still names that file, and opens it again if not
   (`infra::fs::lock_checked`). A `.json.broken` file older than a week goes too.

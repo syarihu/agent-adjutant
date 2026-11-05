@@ -301,20 +301,10 @@ impl Drop for SyncLock {
 
 /// The lock a sync holds from start to end; `None` when another one holds it.
 ///
-/// A sync of this process is found in `RUNNING` and refused at once. A file lock held with none
-/// of ours running is asked again for a while before it is believed: a process that forks and
-/// takes time to exec (a pty's child between `fork` and `exec`) holds a copy of every open file
-/// until it execs, and `flock` belongs to the open file, not to the descriptor, so the lock of a
-/// sync that has just ended can look held to the next one.
+/// A sync of this process is found in `RUNNING` and refused at once, without the wait. A
+/// file lock is asked through `infra::fs::try_lock`, which already allows for a forked
+/// child that has not exec'd yet.
 pub(super) fn try_lock_sync(root: &Path) -> Result<Option<SyncLock>, String> {
-    try_lock_sync_asking(root, LOCK_ASKS, LOCK_WAIT)
-}
-
-pub(super) fn try_lock_sync_asking(
-    root: &Path,
-    asks: u32,
-    wait: std::time::Duration,
-) -> Result<Option<SyncLock>, String> {
     let mut lock = {
         let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         if running.iter().any(|r| r == root) {
@@ -328,20 +318,12 @@ pub(super) fn try_lock_sync_asking(
         }
     };
     let path = dir(root).join("sync.lock");
-    for attempt in 0..asks {
-        if let Some(file) = crate::infra::fs::try_lock(&path)? {
-            lock._file = Some(file);
-            return Ok(Some(lock));
-        }
-        if attempt + 1 < asks {
-            std::thread::sleep(wait);
-        }
+    if let Some(file) = crate::infra::fs::try_lock(&path)? {
+        lock._file = Some(file);
+        return Ok(Some(lock));
     }
     Ok(None)
 }
-
-const LOCK_ASKS: u32 = 100;
-const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(20);
 
 pub(super) fn read_last_sync(root: &Path) -> Option<LastSync> {
     serde_json::from_str(&std::fs::read_to_string(dir(root).join("sync.json")).ok()?).ok()
