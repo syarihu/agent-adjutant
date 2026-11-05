@@ -86,13 +86,22 @@ impl MachineChecks {
     }
 }
 
+/// Why a probe gave no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunError {
+    /// The program could not be started or waited on: not installed, not executable, ...
+    CannotRun(String),
+    /// It started but did not finish within the deadline it was given.
+    TimedOut(Duration),
+}
+
 /// What the check asks of the machine, handed in so that a test runs no process and reads no
 /// real config. A plain struct, not a trait: there is one real set and the tests' own.
 pub struct Probes<'a> {
-    /// Run a program with arguments and a deadline: `Ok((exited cleanly, stdout))`, and `Err`
-    /// when it could not be run or did not finish in time.
+    /// Run a program with arguments and a deadline: `Ok((exited cleanly, stdout))`, and
+    /// `Err(RunError)` when it could not be run or did not finish in time.
     #[allow(clippy::type_complexity)]
-    pub run: &'a dyn Fn(&str, &[&str], Duration) -> Result<(bool, String), String>,
+    pub run: &'a dyn Fn(&str, &[&str], Duration) -> Result<(bool, String), RunError>,
     /// The resolved config for a repository, as `resolve_config` gives it.
     pub resolve: &'a dyn Fn(&str) -> Result<Resolved, String>,
     /// Claude Code's `.claude.json`.
@@ -165,51 +174,76 @@ pub fn check_machine_with(nwo: &str, probes: &Probes<'_>) -> MachineChecks {
     };
 
     let tmux_backend = crate::infra::terminal::watches_start(&settings.terminal);
-    let tmux_out = (probes.run)("tmux", &["-V"], crate::infra::env::deadline(QUICK))
-        .ok()
-        .filter(|(clean, _)| *clean)
-        .map(|(_, out)| out);
-    checks.push(Check {
-        id: CheckId::Tmux,
-        ok: tmux_out.is_some(),
-        fatal: tmux_backend,
-        detail: None,
-    });
     let mut tmux = None;
-    if let Some(out) = &tmux_out {
-        let shown = out.trim();
-        let version = crate::infra::terminal::parse_tmux_version(out).filter(|&v| v >= (3, 1));
-        if cfg!(unix) {
-            tmux = version;
+    match (probes.run)("tmux", &["-V"], crate::infra::env::deadline(QUICK)) {
+        Ok((true, out)) => {
+            checks.push(Check {
+                id: CheckId::Tmux,
+                ok: true,
+                fatal: tmux_backend,
+                detail: None,
+            });
+            let shown = out.trim();
+            let version = crate::infra::terminal::parse_tmux_version(&out).filter(|&v| v >= (3, 1));
+            if cfg!(unix) {
+                tmux = version;
+            }
+            checks.push(Check {
+                id: CheckId::TmuxVersion,
+                ok: version.is_some(),
+                fatal: false,
+                detail: Some(
+                    shown
+                        .strip_prefix("tmux")
+                        .unwrap_or(shown)
+                        .trim()
+                        .to_string(),
+                ),
+            });
         }
-        checks.push(Check {
-            id: CheckId::TmuxVersion,
-            ok: version.is_some(),
-            fatal: false,
-            detail: Some(
-                shown
-                    .strip_prefix("tmux")
-                    .unwrap_or(shown)
-                    .trim()
-                    .to_string(),
-            ),
-        });
+        Err(RunError::TimedOut(d)) => {
+            checks.push(Check {
+                id: CheckId::Tmux,
+                ok: false,
+                fatal: false,
+                detail: Some(format!("tmux -V did not answer in {}s", d.as_secs())),
+            });
+        }
+        Ok((false, _)) | Err(RunError::CannotRun(_)) => {
+            checks.push(Check {
+                id: CheckId::Tmux,
+                ok: false,
+                fatal: tmux_backend,
+                detail: None,
+            });
+        }
     }
 
-    let gh_ran = (probes.run)("gh", &["--version"], crate::infra::env::deadline(QUICK))
-        .is_ok_and(|(clean, _)| clean);
+    let (gh_ok, gh_detail) =
+        match (probes.run)("gh", &["--version"], crate::infra::env::deadline(QUICK)) {
+            Ok((true, _)) => (true, None),
+            Err(RunError::TimedOut(d)) => (
+                false,
+                Some(format!("gh --version did not answer in {}s", d.as_secs())),
+            ),
+            Ok((false, _)) | Err(RunError::CannotRun(_)) => (false, None),
+        };
     checks.push(Check {
         id: CheckId::Gh,
-        ok: gh_ran,
+        ok: gh_ok,
         fatal: false,
-        detail: None,
+        detail: gh_detail,
     });
-    if gh_ran {
+    if gh_ok {
         // Only the exit status is kept: what `gh auth status` prints can show part of a token.
         let (ok, detail) =
             match (probes.run)("gh", &["auth", "status"], crate::infra::env::deadline(AUTH)) {
                 Ok((clean, _)) => (clean, None),
-                Err(_) => (false, Some("gh auth status did not answer".to_string())),
+                Err(RunError::TimedOut(d)) => (
+                    false,
+                    Some(format!("gh auth status did not answer in {}s", d.as_secs())),
+                ),
+                Err(RunError::CannotRun(e)) => (false, Some(e)),
             };
         checks.push(Check {
             id: CheckId::GhAuth,
@@ -323,9 +357,13 @@ fn toml_registers(text: &str, name: &str) -> bool {
 }
 
 /// Run `program` without a shell and with no input, and give it `deadline` to finish; one that
-/// does not is killed. `Ok((exited cleanly, stdout))`. `Err` when it could not be started
-/// (including when it is not installed) or did not finish in time.
-fn run_program(program: &str, args: &[&str], deadline: Duration) -> Result<(bool, String), String> {
+/// does not is killed. `Ok((exited cleanly, stdout))`. `Err(RunError)` when it could not be
+/// started (including when it is not installed) or did not finish in time.
+fn run_program(
+    program: &str,
+    args: &[&str],
+    deadline: Duration,
+) -> Result<(bool, String), RunError> {
     use std::io::Read;
     use std::process::{Command, Stdio};
 
@@ -335,7 +373,7 @@ fn run_program(program: &str, args: &[&str], deadline: Duration) -> Result<(bool
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("cannot run {program}: {e}"))?;
+        .map_err(|e| RunError::CannotRun(format!("cannot run {program}: {e}")))?;
     // Read on a thread so a program that writes more than a pipe holds is not stuck waiting
     // for us while we wait for it.
     let mut stdout = child.stdout.take();
@@ -356,20 +394,23 @@ fn run_program(program: &str, args: &[&str], deadline: Duration) -> Result<(bool
             Ok(None) if std::time::Instant::now() >= end => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "{program} did not finish in {}s",
-                    deadline.as_secs()
-                ));
+                return Err(RunError::TimedOut(deadline));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => return Err(format!("cannot wait for {program}: {e}")),
+            Err(e) => {
+                return Err(RunError::CannotRun(format!(
+                    "cannot wait for {program}: {e}"
+                )));
+            }
         }
     };
     let left = end.saturating_duration_since(std::time::Instant::now());
-    let out = rx
-        .recv_timeout(left.max(Duration::from_millis(100)))
-        .map_err(|_| format!("{program} did not finish in {}s", deadline.as_secs()))?;
-    Ok((status.success(), out))
+    match rx.recv_timeout(left.max(Duration::from_millis(100))) {
+        Ok(out) => Ok((status.success(), out)),
+        // It exited and failed, which is the answer whatever still holds its stdout open.
+        Err(_) if !status.success() => Ok((false, String::new())),
+        Err(_) => Err(RunError::TimedOut(deadline)),
+    }
 }
 
 /// The latest `MachineChecks` of a resident, shared with every board it opens so that a tmux
@@ -478,15 +519,19 @@ mod tests {
     /// What the fake machine has: the versions programs print, or `None` for not installed.
     struct Machine {
         tmux: Option<&'static str>,
+        tmux_slow: bool,
         gh: bool,
-        auth: Result<bool, ()>,
+        gh_slow: bool,
+        auth: Result<bool, RunError>,
     }
 
     impl Machine {
         fn healthy() -> Machine {
             Machine {
                 tmux: Some("tmux 3.4"),
+                tmux_slow: false,
                 gh: true,
+                gh_slow: false,
                 auth: Ok(true),
             }
         }
@@ -516,21 +561,35 @@ mod tests {
         dirs: &Dirs,
     ) -> (MachineChecks, Vec<String>) {
         let calls = RefCell::new(Vec::new());
-        let run = |program: &str, args: &[&str], _: Duration| {
+        let run = |program: &str, args: &[&str], deadline: Duration| {
             calls
                 .borrow_mut()
                 .push(format!("{program} {}", args.join(" ")));
             match (program, args) {
-                ("tmux", ["-V"]) => machine
-                    .tmux
-                    .map(|v| (true, format!("{v}\n")))
-                    .ok_or("not installed".to_string()),
-                ("gh", ["--version"]) if machine.gh => Ok((true, "gh version 2\n".to_string())),
-                ("gh", ["auth", "status"]) => match machine.auth {
-                    Ok(clean) => Ok((clean, "token: gho_secret".to_string())),
-                    Err(()) => Err("timed out".to_string()),
+                ("tmux", ["-V"]) => {
+                    if machine.tmux_slow {
+                        Err(RunError::TimedOut(deadline))
+                    } else {
+                        machine
+                            .tmux
+                            .map(|v| (true, format!("{v}\n")))
+                            .ok_or_else(|| RunError::CannotRun("not installed".to_string()))
+                    }
+                }
+                ("gh", ["--version"]) => {
+                    if machine.gh_slow {
+                        Err(RunError::TimedOut(deadline))
+                    } else if machine.gh {
+                        Ok((true, "gh version 2\n".to_string()))
+                    } else {
+                        Err(RunError::CannotRun("not installed".to_string()))
+                    }
+                }
+                ("gh", ["auth", "status"]) => match &machine.auth {
+                    Ok(clean) => Ok((*clean, "token: gho_secret".to_string())),
+                    Err(err) => Err(err.clone()),
                 },
-                _ => Err("not installed".to_string()),
+                _ => Err(RunError::CannotRun("not installed".to_string())),
             }
         };
         let resolve = |_: &str| config.clone().map(resolved);
@@ -606,6 +665,22 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_tmux_is_a_warning_even_with_the_tmux_backend() {
+        let dirs = dirs();
+        let machine = Machine {
+            tmux_slow: true,
+            ..Machine::healthy()
+        };
+        let (checks, _) = check_with(&machine, Ok(serde_json::json!({})), &dirs);
+        let tmux = find(&checks, CheckId::Tmux).unwrap();
+        assert!(!tmux.ok && !tmux.fatal);
+        assert!(tmux.detail.as_deref().unwrap().contains("did not answer"));
+        assert!(find(&checks, CheckId::TmuxVersion).is_none());
+        assert_eq!(checks.tmux, None);
+        assert_eq!(checks.fatal().count(), 0);
+    }
+
+    #[test]
     fn a_spawn_template_makes_a_missing_tmux_a_warning() {
         let dirs = dirs();
         let machine = Machine {
@@ -655,6 +730,21 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_gh_fails_and_its_login_is_not_asked() {
+        let dirs = dirs();
+        let machine = Machine {
+            gh_slow: true,
+            ..Machine::healthy()
+        };
+        let (checks, calls) = check_with(&machine, Ok(serde_json::json!({})), &dirs);
+        let gh = find(&checks, CheckId::Gh).unwrap();
+        assert!(!gh.ok && !gh.fatal);
+        assert!(gh.detail.as_deref().unwrap().contains("did not answer"));
+        assert!(find(&checks, CheckId::GhAuth).is_none());
+        assert!(!calls.contains(&"gh auth status".to_string()), "{calls:?}");
+    }
+
+    #[test]
     fn gh_that_is_not_logged_in_fails_and_nothing_it_printed_is_kept() {
         let dirs = dirs();
         let machine = Machine {
@@ -671,13 +761,26 @@ mod tests {
     fn gh_that_does_not_answer_fails_and_says_so() {
         let dirs = dirs();
         let machine = Machine {
-            auth: Err(()),
+            auth: Err(RunError::TimedOut(AUTH)),
             ..Machine::healthy()
         };
         let (checks, _) = check_with(&machine, Ok(serde_json::json!({})), &dirs);
         let auth = find(&checks, CheckId::GhAuth).unwrap();
         assert!(!auth.ok);
         assert!(auth.detail.as_deref().unwrap().contains("did not answer"));
+    }
+
+    #[test]
+    fn gh_auth_that_cannot_run_keeps_its_reason() {
+        let dirs = dirs();
+        let machine = Machine {
+            auth: Err(RunError::CannotRun("permission denied".to_string())),
+            ..Machine::healthy()
+        };
+        let (checks, _) = check_with(&machine, Ok(serde_json::json!({})), &dirs);
+        let auth = find(&checks, CheckId::GhAuth).unwrap();
+        assert!(!auth.ok);
+        assert_eq!(auth.detail.as_deref(), Some("permission denied"));
     }
 
     #[test]
@@ -811,5 +914,33 @@ mod tests {
         let now = crate::infra::clock::now_secs();
         let state = MachineState::new("", Some(checks_at(now)));
         assert_eq!(state.recheck().unwrap().checked_at, now);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn run_program_tells_a_slow_program_apart_from_a_missing_one() {
+        let missing = run_program(
+            "no_such_program_exists_for_adj_test",
+            &[],
+            Duration::from_millis(200),
+        );
+        assert!(matches!(missing, Err(RunError::CannotRun(_))));
+
+        let start = std::time::Instant::now();
+        let deadline = Duration::from_millis(200);
+        let slow = run_program("sleep", &["30"], deadline);
+        assert_eq!(slow, Err(RunError::TimedOut(deadline)));
+        assert!(start.elapsed() < Duration::from_secs(15));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_program_that_fails_while_a_child_holds_its_stdout_is_a_failure_not_slow() {
+        let ran = run_program(
+            "sh",
+            &["-c", "sleep 2 & exit 3"],
+            Duration::from_millis(200),
+        );
+        assert_eq!(ran, Ok((false, String::new())));
     }
 }

@@ -233,6 +233,13 @@ pub fn machine_check(check: &Check, all: &MachineChecks) -> (String, Option<Stri
             detail.to_string(),
             format!("fix or move aside {}", all.config_path),
         ),
+        CheckId::Tmux if check.detail.is_some() => (
+            format!(
+                "tmux was slow to answer ({detail}); this does not stop the server, and the check runs again on its own"
+            ),
+            "nothing to do if the machine was busy; if it keeps happening, run tmux -V to see why it is slow"
+                .to_string(),
+        ),
         CheckId::Tmux if check.fatal => (
             "tmux was not found, and workers open in tmux".to_string(),
             format!(
@@ -249,18 +256,28 @@ pub fn machine_check(check: &Check, all: &MachineChecks) -> (String, Option<Stri
             format!("tmux {detail} is older than 3.1; the board's terminal is off"),
             install("tmux", "brew upgrade tmux"),
         ),
+        CheckId::Gh if check.detail.is_some() => (
+            format!(
+                "gh was slow to answer ({detail}); pull requests, issues and reviews may not be read while it is slow"
+            ),
+            "nothing to do if the machine was busy; if it keeps happening, run gh --version to see why it is slow"
+                .to_string(),
+        ),
         CheckId::Gh => (
             "gh was not found; pull requests, issues and reviews are not read".to_string(),
             install("gh", "brew install gh"),
         ),
+        // A detail means `gh auth status` gave no answer (it timed out or could not run), so
+        // whether gh is logged in is not known, and `gh auth login` is not the fix.
+        CheckId::GhAuth if check.detail.is_some() => (
+            format!(
+                "could not tell whether gh is logged in ({detail}); pull requests, issues and reviews may not be read"
+            ),
+            "nothing to do if the machine was busy; if it keeps happening, run gh auth status to see what it says"
+                .to_string(),
+        ),
         CheckId::GhAuth => (
-            match check.detail.as_deref() {
-                Some(why) => format!(
-                    "gh is not logged in; pull requests, issues and reviews are not read ({why})"
-                ),
-                None => "gh is not logged in; pull requests, issues and reviews are not read"
-                    .to_string(),
-            },
+            "gh is not logged in; pull requests, issues and reviews are not read".to_string(),
             "gh auth login".to_string(),
         ),
         CheckId::Mcp => (
@@ -336,6 +353,48 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_tmux_says_slow_to_answer_and_not_not_found() {
+        let all = failing(CheckId::Tmux, false, Some("tmux -V did not answer in 5s"));
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("slow to answer"), "{message}");
+        assert!(!message.contains("not found"), "{message}");
+        let fix = fix.unwrap();
+        assert!(fix.contains("tmux -V"), "{fix}");
+    }
+
+    #[test]
+    fn gh_auth_that_gave_no_answer_is_not_called_logged_out() {
+        let all = failing(
+            CheckId::GhAuth,
+            false,
+            Some("gh auth status did not answer in 15s"),
+        );
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("could not tell"), "{message}");
+        assert!(!message.contains("not logged in"), "{message}");
+        assert!(!fix.unwrap().contains("gh auth login"));
+
+        let all = failing(CheckId::GhAuth, false, None);
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("not logged in"), "{message}");
+        assert_eq!(fix.as_deref(), Some("gh auth login"));
+    }
+
+    #[test]
+    fn a_slow_gh_says_slow_to_answer_and_not_not_found() {
+        let all = failing(
+            CheckId::Gh,
+            false,
+            Some("gh --version did not answer in 5s"),
+        );
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("slow to answer"), "{message}");
+        assert!(!message.contains("not found"), "{message}");
+        let fix = fix.unwrap();
+        assert!(fix.contains("gh --version"), "{fix}");
+    }
+
+    #[test]
     fn the_json_carries_the_id_the_words_and_a_null_fix_for_a_pass() {
         let mut all = failing(
             CheckId::GhAuth,
@@ -358,7 +417,18 @@ mod tests {
                 .unwrap()
                 .contains("did not answer")
         );
-        assert_eq!(json["checks"][0]["fix"], "gh auth login");
+        assert!(
+            json["checks"][0]["fix"]
+                .as_str()
+                .unwrap()
+                .contains("gh auth status")
+        );
+        assert!(
+            !json["checks"][0]["fix"]
+                .as_str()
+                .unwrap()
+                .contains("gh auth login")
+        );
         assert_eq!(json["checks"][1]["fix"], serde_json::Value::Null);
         assert_eq!(json["checks"][1]["message"], "gh found");
     }
