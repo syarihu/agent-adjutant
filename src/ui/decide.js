@@ -6,7 +6,7 @@
 const gateRef = g => g._slug ? `${g._slug}/${g.id}` : g.id;
 /* The open gate or record a ref names; a plain id from an old link takes the first of that id. */
 function gateByRef(ref) {
-  const gates = state.gates || [];
+  const gates = stateNow().gates || [];
   return gates.find(g => gateRef(g) === ref) || recordByRef(ref)
     || (ref && !String(ref).includes('/') ? gates.find(g => g.id === ref) : undefined);
 }

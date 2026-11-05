@@ -663,7 +663,9 @@ async function hand(id, instruction = null, order = null) {
 
 async function update(id, body, line, why) {
   try {
-    const data = await api(`/api/tasks/${encodeURIComponent(id)}`, {
+    const t = (stateNow().tasks || []).find(x => x.id === id);
+    const base = t ? baseOf(t) : BASE;
+    const data = await boardApi(base, `/api/tasks/${encodeURIComponent(id)}`, {
       method:'POST', body: JSON.stringify(body),
     });
     note(line, false, why + handedNote(data.handed));
@@ -876,7 +878,9 @@ async function fetchIssue(id, e) {
   const button = e?.currentTarget;
   if (button) button.disabled = true;
   try {
-    await api(`/api/tasks/${encodeURIComponent(id)}/issue`, { method: 'POST' });
+    const t = (stateNow().tasks || []).find(x => x.id === id);
+    const base = t ? baseOf(t) : BASE;
+    await boardApi(base, `/api/tasks/${encodeURIComponent(id)}/issue`, { method: 'POST' });
     note(line, false, 'Issue を取得しました');
     await refresh();
   } catch (err) {
@@ -1078,7 +1082,7 @@ parkEl('park-text').addEventListener('keydown', e => { if (e.key === 'Enter' && 
 function parkClick(e) {
   const b = e.target.closest('[data-park-task]');
   if (!b) return false;
-  const task = (state.tasks || []).find(t => t.id === b.dataset.parkTask && (!b.dataset.parkBoard || t._slug === b.dataset.parkBoard));
+  const task = (stateNow().tasks || []).find(t => t.id === b.dataset.parkTask && (!b.dataset.parkBoard || t._slug === b.dataset.parkBoard));
   if (!task) return true;
   if ('parkOff' in b.dataset) setPark(task, baseOf(task), null); else openParkDialog(task, baseOf(task));
   return true;

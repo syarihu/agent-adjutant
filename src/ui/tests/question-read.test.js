@@ -19,6 +19,7 @@ function world() {
   const ctx = vm.createContext({
     console, Promise, encodeURIComponent, document: { getElementById: () => ({ addEventListener() {} }), activeElement: null },
     Date: { now: () => w.clock }, nav: { board: 'acme' }, multiBoard: true, BASE: '/b/acme', boards: [], view: 'work', state: { gates: [], now: 1 },
+    stateNow: () => ctx.state,
     TODO_BOARD_FRESH_MS: 1000, answeredGates: new Set(), manualChecked: new Set(),
     registerView() {}, dialogStack: { isOpen: () => w.open, layerEl: () => layer, has: () => false, push() {}, closeAll() {} },
     taskForGate: () => w.task, gateKey: g => `${g._slug || ''}/${g.id}`, issueNumberOf: () => '',

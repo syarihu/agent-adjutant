@@ -42,7 +42,7 @@ async function taskReadHand() {
   prDraftsChanged(id);
   try {
     await prSaveSettled(id, '渡していません');
-    const res = await boardApi(BASE, `/api/tasks/${encodeURIComponent(task.id)}/hand`, { method: 'POST', body: JSON.stringify({ pr: id }) });
+    const res = await boardApi(baseOf(task), `/api/tasks/${encodeURIComponent(task.id)}/hand`, { method: 'POST', body: JSON.stringify({ pr: id }) });
     // What was sent is marked, with the stamp of the answer, which is the one `sentAt` is held to.
     const doc = structuredClone(prDoc(id, read));
     for (const d of doc.drafts) if ((res.sent || []).includes(d.key)) d.sentAt = res.at;

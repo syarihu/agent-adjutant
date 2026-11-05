@@ -13,7 +13,7 @@ const historyFailed = new Set();
 /* A task of another board (the Sessions sidebar reads those) is kept under its board's path,
    since task ids are only unique within a board; the ones of this page keep the bare id. */
 const historyKey = (task, base) => base === BASE ? task.id : `${base}|${task.id}`;
-function historyOf(task, base = baseOf(task), data = state) {
+function historyOf(task, base = baseOf(task), data = stateNow()) {
   // The polled records leave their diffs out and say how big each is, so a record that was
   // written or rewritten since shows as a different key here and its diff is read again.
   const sizes = (task.records || []).map(r => `${r.id}:${r.diffSize ?? ''}`).join(',');
@@ -61,7 +61,7 @@ function redrawHistoryOf(id) {
 /* A record from /api/state has no diff, only `diffSize`; the diff is the history's copy of the
    same record. Without it yet (still loading) the record is returned as it is, and
    `diffPending` says to show that rather than "no diff". */
-function withDiff(record, task, base = baseOf(task), data = state) {
+function withDiff(record, task, base = baseOf(task), data = stateNow()) {
   if (!record || record.diff != null || !record.diffSize || !task) return record;
   const kept = historyOf(task, base, data).records.find(r => r.id === record.id);
   return kept?.diff != null ? { ...record, diff: kept.diff } : record;
@@ -73,7 +73,7 @@ const DIFF_LOADING = `<div class="panel"><div class="empty-state">差分を読�
 
 /* Every gate of a task, oldest first: answered, kept as records, and waiting now. A live
    task's records come from /api/state, which is polled, so a send-back shows at once. */
-function gatesOf(task, data = state, base = baseOf(task)) {
+function gatesOf(task, data = stateNow(), base = baseOf(task)) {
   const h = historyOf(task, base, data);
   const byId = new Map();
   // What the history holds belongs to the task's board; in a merged state it says so, as the
@@ -638,9 +638,9 @@ function historyEventsOf(task, all, waiting = isWaiting) {
 /* The timeline of 経過, drawn by the 経過 tab. It holds the gates and what people did, not the
    worker's phases: those are kept (`session.phases`) but read by 離れていた間に (my-work-away.js),
    so the phase it is in now closes this list rather than running through it. */
-function timelineHtml(task, all, data = state, base = baseOf(task)) {
+function timelineHtml(task, all, data = stateNow(), base = baseOf(task)) {
   // The waiting gates are those of the board the task is on, not of this page's.
-  const events = historyEventsOf(task, all, data === state ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));
+  const events = historyEventsOf(task, all, data === stateNow() ? isWaiting : g => (data.gates || []).some(x => x.id === g.id));
   const worker = ['dispatched', 'pr'].includes(task.status) ? workerOf(task, data) : null;
   let h = '';
   h += `<ol class="timeline">` + events.map(e =>

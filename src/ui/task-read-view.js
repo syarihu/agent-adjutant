@@ -31,9 +31,9 @@ const taskRead = {
 
 /* The dialog is open on a task that has a PR: the work view or the terminal beside the board is on it, and the dialog was opened for it (it stays 'own-read' with no subject once closed). */
 const taskReadActive = task => !!task && workTermOn() && !!task.pr && task.id === nav.task && cardDialog.mode === 'own-read' && cardDialog.subject === task.id;
-const taskReadTaskOf = () => workTermOn() && isTaskRef(nav.task) ? taskById(nav.task) || null : null;
+const taskReadTaskOf = () => workTermOn() && isTaskRef(nav.task) ? withPanelState(() => taskById(nav.task)) || null : null;
 const taskReadTask = () => { const t = taskReadTaskOf(); return taskReadActive(t) ? t : null; };
-const taskReadKey = task => `${nav.board}/${task.id}/${task.pr}`;
+const taskReadKey = task => `${task?._slug || nav.board}/${task.id}/${task.pr}`;
 
 /* What the read-through's buttons are on, for `prShown` (pr-panel.js): null unless the dialog is open on the task, and until the task's
    document has come, or when its PR is not one that can be read. `rec` is null while the PR has no record. There is no reader's terminal
@@ -70,7 +70,7 @@ async function taskReadRefresh(force = false) {
   const epoch = navEpoch;
   let changed = false;
   try {
-    const doc = await boardApi(BASE, `/api/tasks/${encodeURIComponent(task.id)}/ai`);
+    const doc = await boardApi(baseOf(task), `/api/tasks/${encodeURIComponent(task.id)}/ai`);
     if (taskRead.key === key && epoch === navEpoch) {
       const sig = JSON.stringify(doc);
       changed = sig !== taskRead.sig || taskRead.error != null;
@@ -115,7 +115,7 @@ async function taskReadAsk(mode) {
   others.asking.add(id);
   taskReadRedraw();
   try {
-    const res = await boardApi(BASE, `/api/tasks/${encodeURIComponent(task.id)}/ai`, { method: 'POST', body: JSON.stringify(mode ? { mode } : {}) });
+    const res = await boardApi(baseOf(task), `/api/tasks/${encodeURIComponent(task.id)}/ai`, { method: 'POST', body: JSON.stringify(mode ? { mode } : {}) });
     // The request stands; this is what the queue could not do after it.
     if (res?.warning) note('adj review request', true, res.warning);
   } catch (e) {

@@ -4,13 +4,14 @@
    #tp-term-host is never moved, rebuilt or redrawn: a terminal that is moved reconnects. The
    redraws below touch the parts around it, and never the host or what holds it. */
 const tp = id => document.getElementById(id);
-const taskById = id => (state.tasks || []).find(t => t.id === id);
+const taskById = (id, data = stateNow()) => (data.tasks || []).find(t => t.id === id);
 
 /* The gate each tab of the open task shows when a person picked one in 経過 (keyed by the tab
    renderers' names, task-view.js). It belongs to one task: another task starts with none. */
-let panelPick = { id: null, pick: {} };
+let panelPick = { id: null, slug: null, pick: {} };
 function panelPickOf(id) {
-  if (panelPick.id !== id) panelPick = { id, pick: {} };
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (panelPick.id !== id || panelPick.slug !== slug) panelPick = { id, slug, pick: {} };
   return panelPick.pick;
 }
 
@@ -39,7 +40,7 @@ function gateOfPanelRef(ref) {
   const id = at > 0 ? rest.slice(at + 1) : rest;
   // The state is one board's: a gate of another board is not in it.
   if (slug && multiBoard && nav.board && nav.board !== 'all' && slug !== nav.board) return null;
-  return (state.gates || []).find(g => g.id === id && (!g._slug || !slug || g._slug === slug)) || null;
+  return (stateNow().gates || []).find(g => g.id === id && (!g._slug || !slug || g._slug === slug)) || null;
 }
 
 /* A `gate:` subject whose gate has its task on this board becomes that task, with the tab and the
@@ -65,7 +66,8 @@ function markSelectedCards() {
 /* The panel on `id`, as the address says: no history entry is made, the address is what asked. */
 function showTaskPanel(id) {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = dialogReturn = null; }
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (selectedTaskId !== id || panelPick.slug !== slug) { sessView.git = null; panelPick = { id: null, slug: null, pick: {} }; dialogFor = dialogReturn = null; }
   selectedTaskId = id;
   markSelectedCards();
   renderTaskPanel();
@@ -75,7 +77,8 @@ function showTaskPanel(id) {
    of the card that is open replaces the one it is on. */
 function openTaskPanel(id, pane = 'detail') {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; dialogFor = dialogReturn = null; }
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (selectedTaskId !== id || panelPick.slug !== slug) { sessView.git = null; panelPick = { id: null, slug: null, pick: {} }; dialogFor = dialogReturn = null; }
   selectedTaskId = id;
   markSelectedCards();
   go({ task: id, pane }, { replace: id === nav.task });
@@ -87,7 +90,8 @@ function openTaskPanel(id, pane = 'detail') {
    card or the close puts it back (panelPop). */
 function openTask(id, tab = 'overview', gateId = null) {
   pendingTask = null;
-  if (selectedTaskId !== id) { sessView.git = null; panelPick = { id: null, pick: {} }; }
+  const slug = (typeof panelOwnerSlug === 'function' ? panelOwnerSlug(id) : null) || null;
+  if (selectedTaskId !== id || panelPick.slug !== slug) { sessView.git = null; panelPick = { id: null, slug: null, pick: {} }; }
   if (gateId) {
     panelPickOf(id)[tab] = gateId;
     // A gate picked is read from the top.
@@ -206,6 +210,10 @@ function renderTaskPanel() {
 }
 
 function renderTaskPanelNow() {
+  withPanelState(drawTaskPanelNow);
+}
+
+function drawTaskPanelNow() {
   const panel = tp('task-panel');
   if (!panel) return;
   syncBoardSide();
@@ -262,7 +270,7 @@ function renderTaskPanelNow() {
   const gone = !!selectedTaskId && !task && !hub && !sess && !parent && !gateOf && !(isParentRef(selectedTaskId) && !work.doc);
   if (gone && view !== 'work') return dismissTaskPanel();
   // Until the board has answered once, what it lacks is not known to be missing.
-  if (gone && state.now == null) return;
+  if (gone && stateNow().now == null) return;
   // In the work view a hub has no right column: its heading over the terminal has its status, and 「hub の詳細」 the rest. Nor has a
   // task, whose details are in a dialog opened from the heading (task-detail-view.js), as is its AI 下読み (task-read-view.js). A parent
   // (「親タスクの詳細」), a session with no task (the heading's ⋯ menu) and a row the list no longer has (the middle says so) have none
@@ -344,10 +352,12 @@ function renderTaskPanelNow() {
 
   // The terminal is all that is shown, so the other tabs are left as they were: what is typed in
   // one is still there when it is shown again, and it is drawn again then.
-  if (task && pane === 'term') return renderHandForm(colId === 'backlog' ? task : null);
+  // The hand-over form posts to the page's board: a parent-task hub's task (`_base`, read beside the page's) is handed over on its own board.
+  const handable = colId === 'backlog' && !task?._base ? task : null;
+  if (task && pane === 'term') return renderHandForm(handable);
   if (task) drawTaskPane(task, colId, gate, pane, all, pick, shownGate);
   else drawSessionPane(s, hub, pane);
-  renderHandForm(colId === 'backlog' ? task : null);
+  renderHandForm(handable);
   tp('tp-form').hidden = !!task && pane !== 'detail';
   // Another task, or another tab, starts at the top, not where the last one was scrolled to; a
   // poll keeps the place. Set once the pane is shown, since a hidden one has no scroll to set.
@@ -415,7 +425,7 @@ function drawSessionPane(s, hub, pane) {
 /* The open gates a hub or a session with no task waits on, longest first: the ones the hub opened for a person, or the
    ones opened from the worker's worktree. Read from the board's state, so only for a session of the board that is shown. */
 function sessGatesOf(s) {
-  return (state.gates || [])
+  return (stateNow().gates || [])
     .filter(g => g.wait !== false && (s.kind === 'hub' ? !!g.answeredByHub : !g.answeredByHub && !!s.worktree && g.worktree === s.worktree))
     .sort((a, b) => (stampSecs(a.openedAt) || 0) - (stampSecs(b.openedAt) || 0) || (a.id < b.id ? -1 : 1));
 }
@@ -478,7 +488,7 @@ function gatePanelHeadHtml(g) {
     <div class="tp-head-main">
       <div class="tp-badges">
         <span class="tp-key">確認待ち</span>
-        ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
+        ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : stateNow().repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
         <span class="m3-pill pill-warn">${esc(label)}</span>
       </div>
       <h2 class="tp-title">${esc(g.title)}</h2>
@@ -508,13 +518,13 @@ function panelHeadHtml(task) {
     : hcol ? `<span class="m3-pill pill-warn">${esc(humanLabel(hcol))}を待っています${taskPassedGate(task) ? '（答えないまま進行中）' : ''}</span>`
     : stuck ? `<span class="m3-pill pill-err">${esc(stuck)}</span>`
     : `<span class="m3-pill pill-blue">${esc(colObj ? colObj.label : task.status)}</span>`;
-  const b = selectedBoard();
-  const origin = b ? boardName(b) : (state.repo || '').split('/').pop();
+  const b = (task?._slug && task._slug !== nav.board && (typeof boards !== 'undefined' ? boards : []).find(x => x.slug === task._slug)) || selectedBoard();
+  const origin = b ? boardName(b) : (stateNow().repo || '').split('/').pop();
   return `
     <div class="tp-head-main">
       <div class="tp-badges">
         ${ghHeadLinksHtml(task)}
-        ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : state.repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
+        ${origin ? `<span class="origin-chip" title="${esc(b ? `${boardName(b)} (${b.nwo})` : stateNow().repo || '')}"><span class="material-symbols-outlined" aria-hidden="true">${b?.hub ? 'account_tree' : 'folder'}</span><span>${esc(origin)}</span></span>` : ''}
         ${pill}
       </div>
       <h2 class="tp-title">${esc(task.title)}${titlePendingPill(task)}</h2>
@@ -544,7 +554,7 @@ const panelTab = (pane, id, label, extra, off) =>
 
 /* A task has five tabs, a session with no task the first two. `all` is the task's gates. */
 function panelTabsHtml(task, gate, s, pane, all = []) {
-  const usable = hasSession(s) && !!state.boardTerminal?.available;
+  const usable = hasSession(s) && !!stateNow().boardTerminal?.available;
   const hint = hasSession(s) ? '端末はボードから開けません' : 'セッションなし';
   // The tab shows a word, so five tabs fit; the reason is its tooltip.
   // The work view has the terminal in the middle, beside the panel.
@@ -670,7 +680,7 @@ const hubPanelWakeBase = h => hubAway(h) ? null : hubBaseOf(h);
 /* Why the hub's terminal cannot be opened, as [the tab's hint, its tooltip]; null when it can. */
 function hubTermWhy(h, s) {
   if (!s.present) return hubStartingNow(h) ? ['起動中', 'hub を起動しています'] : ['hub 停止中', 'hub が止まっています'];
-  if (!state.boardTerminal?.available) return ['端末はボードから開けません', '端末はボードから開けません'];
+  if (!stateNow().boardTerminal?.available) return ['端末はボードから開けません', '端末はボードから開けません'];
   if (!boardTerminalReady(s)) return ['tmux の外', 'tmux の外で動いている hub は、ボードから端末を開けません'];
   return null;
 }
@@ -693,7 +703,7 @@ function hubPanelHeadHtml(h, s) {
   const row = hubRowOf(h);
   const [pillText, pillCls] = hubStatusOf(h, s);
   const origin = row ? boardName(row) : repoName();
-  const nwo = row?.nwo || state.repo || '';
+  const nwo = row?.nwo || stateNow().repo || '';
   const title = h.parent ? `親タスク hub — ${[h.key, h.title].filter(Boolean).join(' ') || '（キー不明）'}`
     : `リポジトリ hub — ${nwo}`;
   const jump = multiBoard && hubOther(h)
@@ -727,7 +737,7 @@ const hubListMore = n => n > 0 ? `<div class="tp-muted">ほか ${n} 件</div>` :
 function idleWorktreesOf(h) {
   const repoHub = repoHubId();
   const groups = new Map();
-  for (const s of state.sessions || []) {
+  for (const s of stateNow().sessions || []) {
     if (s.kind !== 'worker') continue;
     const st = sessionState(s);
     if (st !== 'none' && st !== 'ended') continue;
@@ -736,7 +746,7 @@ function idleWorktreesOf(h) {
     groups.set(owner, [...(groups.get(owner) || []), s]);
   }
   return [...groups].map(([id, list]) => {
-    const hub = (state.hubs || []).find(x => x.id === id);
+    const hub = (stateNow().hubs || []).find(x => x.id === id);
     return { id, label: hub ? hubShortName(hub) : id, repo: !hub?.parent, list: list.sort((a, b) => sessionKey(a) < sessionKey(b) ? -1 : sessionKey(a) > sessionKey(b) ? 1 : 0) };
   }).sort((a, b) => (b.repo - a.repo) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
 }
@@ -766,9 +776,9 @@ const workerSlotsText = w => w.max == null ? `${w.busy || 0} 稼働（上限な�
 function hubCountsOf(h) {
   const other = hubOther(h);
   const row = hubRowOf(h);
-  const queued = other ? row?.queued : (state.tasks || []).filter(t => t.status === 'queued').length;
+  const queued = other ? row?.queued : (stateNow().tasks || []).filter(t => t.status === 'queued').length;
   const counts = [];
-  if (!other && state.workerSlots) counts.push(['worker', workerSlotsText(state.workerSlots)]);
+  if (!other && stateNow().workerSlots) counts.push(['worker', workerSlotsText(stateNow().workerSlots)]);
   else if (other && row) counts.push(['作業中', `${row.working || 0} 件`]);
   if (!other) counts.push(['あなたの確認待ち', `${waitingIn()} 件`]);
   else if (row) counts.push(['あなたの確認待ち', `${row.waiting || 0} 件`]);
@@ -793,7 +803,7 @@ function hubDetailHtml(h, s, opts = {}) {
   const pend = sessionPendingRows().filter(p => p.hubId === h.id);
   if (pend.length) html += `<div class="m3-filled-card">${secTitle('起動を依頼中')}${pend.map(pendingRowHtml).join('')}</div>`;
 
-  const line = other ? [] : (state.tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
+  const line = other ? [] : (stateNow().tasks || []).filter(t => t.status === 'queued').sort((a, b) => (a.order || 0) - (b.order || 0));
   html += `<div class="m3-filled-card">${secTitle('いまの状態')}<div class="tp-kvs">${hubCountsOf(h).map(([label, value]) => kv(label, value)).join('')}</div>${agentFactsHtml(s, opts)}</div>`;
 
   // Only the page's own board has its tasks to name; another board's are read on its own page.
@@ -829,8 +839,8 @@ function hubDetailHtml(h, s, opts = {}) {
   // Starting a session with no task, or a parent task's hub, asks this page's board: not another one's, nor one this server
   // does not serve.
   const away = hubAway(h);
-  const startOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.sessionStart?.agent ? '起動するエージェントが分かりません' : '');
-  const parentOff = !state.resident ? 'resident サーバーのボードからだけ使えます' : away || (!state.hubStart?.available ? NO_START : '');
+  const startOff = !stateNow().resident ? 'resident サーバーのボードからだけ使えます' : away || (!stateNow().sessionStart?.agent ? '起動するエージェントが分かりません' : '');
+  const parentOff = !stateNow().resident ? 'resident サーバーのボードからだけ使えます' : away || (!stateNow().hubStart?.available ? NO_START : '');
   const addBtn = (act, icon, label, off, title) =>
     `<button type="button" class="btn-m3-tonal" data-tp-hub="${act}"${off ? ' disabled' : ''} title="${esc(off || title)}"><span class="material-symbols-outlined" style="font-size:16px;" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
   html += `<div class="m3-filled-card">${secTitle('操作')}
@@ -942,16 +952,16 @@ function termPlaceholderHtml(s) {
     : !s.present ? 'このセッションは動いていません'
     : 'このセッションの端末はボードから開けません（tmux で動いているセッションだけ開けます）';
   const shot = sessView.screens[s.id];
-  const mins = shot && state.now != null && shot.at != null ? minutesSince(shot.at, state.now) : null;
+  const mins = shot && stateNow().now != null && shot.at != null ? minutesSince(shot.at, stateNow().now) : null;
   const resume = canResume(s) ? '' : !s.present && s.kind === 'worker'
-    ? `<div class="tp-muted">${esc(!s.conversation ? '保存された会話がないため再開できません' : state.sessionResume?.reason || 'ボードからは再開できません')}</div>` : '';
+    ? `<div class="tp-muted">${esc(!s.conversation ? '保存された会話がないため再開できません' : stateNow().sessionResume?.reason || 'ボードからは再開できません')}</div>` : '';
   return `<div class="tp-ph-head">${esc(head)}</div>`
     + (shot?.lines.length ? `<div class="tp-muted">このページで最後に見た画面${mins == null ? '' : `（${esc(agoLabel(mins))}）`}</div><pre class="sess-last-out">${esc(shot.lines.join('\n'))}</pre>` : '')
     + resume;
 }
 
 /* Events are heard on the panel itself: its parts are drawn again, it is not. */
-tp('task-panel').addEventListener('click', e => {
+function onTaskPanelClick(e) {
   if (isPrRef(selectedTaskId)) return view === 'work' ? prPanelClick(e) : undefined;
   const hub = hubOfRef(selectedTaskId);
   const task = hub || isHubRef(selectedTaskId) ? null : taskById(selectedTaskId);
@@ -1025,7 +1035,8 @@ tp('task-panel').addEventListener('click', e => {
     panelTerm.reconnect = true;
     renderTaskPanel();
   }
-});
+}
+tp('task-panel').addEventListener('click', e => withPanelState(() => onTaskPanelClick(e)));
 /* A gate with no task card: its head's buttons and its judge. */
 function gatePanelClick(e) {
   let b;
@@ -1119,7 +1130,7 @@ function hubPanelClick(e, h) {
     renderTaskPanel();
   }
 }
-tp('task-panel').addEventListener('focusout', e => {
+function onTaskPanelFocusout(e) {
   if (!panelHeld || !e.target.matches('.gate-comment')) return;
   // Focus moving to a button of the panel: drawing now would replace the button between its
   // mousedown and its click and lose the click. That click (or the next poll) redraws instead.
@@ -1129,13 +1140,16 @@ tp('task-panel').addEventListener('focusout', e => {
     panelHeld = false;
     renderTaskPanel();
   });
-});
-tp('task-panel').addEventListener('change', e => {
+}
+tp('task-panel').addEventListener('focusout', e => withPanelState(() => onTaskPanelFocusout(e)));
+
+function onTaskPanelChange(e) {
   const b = e.target.closest('[data-relay-pick]');
   if (!b) return;
   if (b.checked) relay.picked.add(b.dataset.relayPick); else relay.picked.delete(b.dataset.relayPick);
   renderTaskPanel();
-});
+}
+tp('task-panel').addEventListener('change', e => withPanelState(() => onTaskPanelChange(e)));
 // Clicking outside the dialog closes the panel; the dialog mode stays.
 tp('tp-scrim').addEventListener('click', () => closeTaskPanel());
 
@@ -1228,7 +1242,7 @@ function renderHandForm(task) {
   const textarea = el.querySelector('#tp-instruction');
   el.dataset.shown = textarea.value;
   el.querySelector('[data-reload]').addEventListener('click', () => {
-    const now = (state.tasks || []).find(t => t.id === task.id);
+    const now = (stateNow().tasks || []).find(t => t.id === task.id);
     if (!now) return;
     el.replaceChildren();
     renderHandForm(now);

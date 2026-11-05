@@ -20,9 +20,9 @@ const rec = { id: PR, url: 'https://github.com/acme/widget/pull/12', ai: { sha: 
 
 /* `shown` is what `prShown` answers: a task's read-through, a review request, or nothing (a task selected whose AI tab is not on). */
 function world({ shown = 'task', stored = { id: PR, savedAt: 's', version: 1, drafts: [], overall: { body: '' } } } = {}) {
-  const w = { notes: [], posts: [], hands: [], order: [], redrawn: 0, saves: [], handFail: null, handGate: null, refreshed: 0, timeline: 0, stored, shown };
+  const w = { notes: [], posts: [], hands: [], handBases: [], order: [], redrawn: 0, saves: [], handFail: null, handGate: null, refreshed: 0, timeline: 0, stored, shown };
   const c = vm.createContext({
-    structuredClone, wk: () => null, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console, BASE: '/b/acme',
+    structuredClone, wk: () => null, CSS: { escape: x => x }, PR_BOX_SEL: '.pr-overall', JSON, Promise, clearTimeout, setTimeout: () => 1, console, BASE: '/b/acme', baseOf: x => x?._base || '/b/acme',
     selectedTaskId: 't1', PR_REF: 'pr:', PR_SAVE_MS: 800, cardDialog: {},
     note: (...a) => { w.notes.push(a); }, prDraftsChanged: () => { w.redrawn++; }, prRedrawFor() {}, document: { getElementById: () => null }, renderTaskPanel() {},
     prNextKey: (doc, prefix) => { let n = 1; while (doc.drafts.some(d => d.key === `${prefix}${n}`)) n++; return `${prefix}${n}`; },
@@ -35,7 +35,7 @@ function world({ shown = 'task', stored = { id: PR, savedAt: 's', version: 1, dr
     boardApi: async (base, url, o) => {
       if (url === '/api/others/drafts' && o) { w.posts.push(JSON.parse(o.body)); w.order.push('save'); return {}; }
       if (url === '/api/tasks/t1/hand') {
-        w.order.push('hand'); w.hands.push(JSON.parse(o.body));
+        w.order.push('hand'); w.hands.push(JSON.parse(o.body)); w.handBases.push(base);
         if (w.handGate) await w.handGate.promise;
         if (w.handFail) throw Object.assign(new Error(w.handFail.error), { why: w.handFail.why });
         return { gate: { id: 'g1', kind: 'diff', shelf: 'record' }, sent: ['p1', 'p2'], overall: true, at: '20261012T010203Z', present: true, woken: true };
@@ -237,4 +237,13 @@ test('the drafts of the task\'s PR are asked for by its dialog, and drawing it a
   vm.runInContext(`prEnsureDrafts('${PR}')`, c);
   await new Promise(r => setImmediate(r));
   assert.deepStrictEqual(calls, ['read', ['comments', PR], ['send', PR]]);
+});
+
+test('handing over comments for a task of another hub posts to that hub\'s base', async () => {
+  const x = await loaded({ shown: 'task' });
+  x.c.taskReadTask = () => ({ id: 't1', pr: 'https://github.com/acme/widget/pull/12', _base: '/b/hub1' });
+  x.run(`prEditDrafts('${PR}', null, d => { d.drafts.push({ key: 'p1', source: 'person', path: 'a', side: 'right', body: 'instruction' }); })`);
+  await x.run('taskReadHand()');
+  assert.strictEqual(x.w.hands.length, 1);
+  assert.deepStrictEqual(x.w.handBases, ['/b/hub1']);
 });
