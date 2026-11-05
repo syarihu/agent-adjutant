@@ -165,7 +165,7 @@ pub fn check_machine_with(nwo: &str, probes: &Probes<'_>) -> MachineChecks {
     };
 
     let tmux_backend = crate::infra::terminal::watches_start(&settings.terminal);
-    let tmux_out = (probes.run)("tmux", &["-V"], QUICK)
+    let tmux_out = (probes.run)("tmux", &["-V"], crate::infra::env::deadline(QUICK))
         .ok()
         .filter(|(clean, _)| *clean)
         .map(|(_, out)| out);
@@ -196,7 +196,8 @@ pub fn check_machine_with(nwo: &str, probes: &Probes<'_>) -> MachineChecks {
         });
     }
 
-    let gh_ran = (probes.run)("gh", &["--version"], QUICK).is_ok_and(|(clean, _)| clean);
+    let gh_ran = (probes.run)("gh", &["--version"], crate::infra::env::deadline(QUICK))
+        .is_ok_and(|(clean, _)| clean);
     checks.push(Check {
         id: CheckId::Gh,
         ok: gh_ran,
@@ -205,10 +206,11 @@ pub fn check_machine_with(nwo: &str, probes: &Probes<'_>) -> MachineChecks {
     });
     if gh_ran {
         // Only the exit status is kept: what `gh auth status` prints can show part of a token.
-        let (ok, detail) = match (probes.run)("gh", &["auth", "status"], AUTH) {
-            Ok((clean, _)) => (clean, None),
-            Err(_) => (false, Some("gh auth status did not answer".to_string())),
-        };
+        let (ok, detail) =
+            match (probes.run)("gh", &["auth", "status"], crate::infra::env::deadline(AUTH)) {
+                Ok((clean, _)) => (clean, None),
+                Err(_) => (false, Some("gh auth status did not answer".to_string())),
+            };
         checks.push(Check {
             id: CheckId::GhAuth,
             ok,

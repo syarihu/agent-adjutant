@@ -204,7 +204,10 @@ impl Fixture {
             // Where `gh` keeps its login: an empty one has none, so a `gh` that a test did not
             // stub finds no account to use rather than the developer's.
             .env("GH_CONFIG_DIR", self._dir.path().join("gh-config"))
-            .hermetic();
+            .hermetic()
+            // Stub programs on a loaded machine can take seconds to start, and 60 s is
+            // `wait_until`'s patience; it only lengthens a wait, so a passing test is not slowed.
+            .env("ADJUTANT_DEADLINE_FLOOR_SECS", "60");
         command
     }
 
@@ -294,6 +297,8 @@ pub fn mcp_in(
         .env("ADJUTANT_CONFIG", &fixture.config)
         .env("ADJUTANT_STATE_DIR", &fixture.state)
         .hermetic()
+        // As `Fixture::command` gives it, for a tool call that moves a task to done.
+        .env("ADJUTANT_DEADLINE_FLOOR_SECS", "60")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -342,13 +347,32 @@ impl Resident {
         Resident::start_with(fixture, &[])
     }
 
+    /// Start a resident server in the foreground. Stderr is captured to a file in the fixture's
+    /// tempdir and reported if the server fails to come up.
     pub fn start_with(fixture: &Fixture, env: &[(&str, &str)]) -> Resident {
-        Resident::start_logging(fixture, env, Stdio::null())
+        static RESIDENT_COUNT: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let n = RESIDENT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let stderr_path = fixture._dir.path().join(format!("resident-{n}.stderr"));
+        let file = std::fs::File::create(&stderr_path).unwrap();
+        Resident::start_inner(fixture, env, Stdio::from(file), Some(&stderr_path))
     }
 
     /// `start_with`, with what the resident prints on stderr (the startup check's warnings)
-    /// going to `stderr`, for a test that reads it.
+    /// going to the caller-supplied `stderr`, for a test that reads it.
     pub fn start_logging(fixture: &Fixture, env: &[(&str, &str)], stderr: Stdio) -> Resident {
+        Resident::start_inner(fixture, env, stderr, None)
+    }
+
+    fn start_inner(
+        fixture: &Fixture,
+        env: &[(&str, &str)],
+        stderr: Stdio,
+        stderr_path: Option<&Path>,
+    ) -> Resident {
+        let tmp = fixture._dir.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+
         let child = fixture
             .command([
                 "server",
@@ -358,6 +382,12 @@ impl Resident {
                 "--port",
                 "0",
             ])
+            // The wake's pane locks (`adjutant-wake-locks`) and staged commands live under
+            // the temp directory and are keyed by tmux socket and pane, which are the same
+            // fake names in every test run, so two `cargo test` runs at once would contend
+            // on one machine-wide lock. Set before `envs` so a test that passes its own
+            // `TMPDIR` still wins.
+            .env("TMPDIR", &tmp)
             .envs(env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(stderr)
@@ -375,11 +405,33 @@ impl Resident {
             .read_line(&mut said)
             .unwrap();
         // Not a terminal, so the line names no token: it is what lands in a log.
-        let url = said
-            .split("serving on ")
-            .nth(1)
-            .unwrap_or_else(|| panic!("no URL in {said:?}"))
-            .trim();
+        let Some(rest) = said.split("serving on ").nth(1) else {
+            // An empty line is stdout closed, so it is on its way out: give it a moment to
+            // finish, but never wait on it unbounded, or the report this is for never comes.
+            let patience = if said.is_empty() { 100 } else { 0 };
+            let mut status = "still running".to_string();
+            for tried in 0..=patience {
+                match resident.child.try_wait() {
+                    Ok(Some(s)) => status = format!("{s}"),
+                    Ok(None) if tried < patience => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(e) => status = format!("cannot wait: {e}"),
+                }
+                break;
+            }
+            let stderr_report = match stderr_path {
+                Some(path) => std::fs::read_to_string(path)
+                    .unwrap_or_else(|e| format!("cannot read {}: {e}", path.display())),
+                None => "went to the caller's Stdio".to_string(),
+            };
+            panic!(
+                "resident did not report 'serving on '\nline read: {said:?}\nstatus: {status}\nstderr: {stderr_report}"
+            );
+        };
+        let url = rest.trim();
         let host = url
             .strip_prefix("http://")
             .unwrap()
@@ -408,6 +460,11 @@ impl Resident {
 
 impl Drop for Resident {
     fn drop(&mut self) {
+        // Already reaped (a start that failed reads its exit status): its pid may be another
+        // process's by now, and whatever it left running was reparented, so nothing is killed.
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return;
+        }
         // Its `sh -c "tmux …"` children in flight would outlive it and race the test's
         // teardown, so they go with it. Collected first: once it is dead they are reparented.
         let mut pids = vec![self.child.id() as i32];
