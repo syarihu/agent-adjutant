@@ -1711,26 +1711,26 @@ fn the_wake_button_is_in_the_hub_panel_and_beside_the_chip_in_the_work_view() {
 }
 
 #[test]
-fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_six_equal_ones() {
+fn card_issue_and_pr_chips_sit_together_and_agent_columns_are_seven_equal_ones() {
     assert!(UI_HTML.contains("<span class=\"card-gh-chips\">${issue}${pr}</span>"));
     assert!(UI_HTML.contains("PR #${esc(prNumber)}"));
-    // Six equal columns, none narrower than the width the person set: a narrow window or the sidebar scrolls the board sideways.
+    // Seven equal columns, none narrower than the width the person set: a narrow window or the sidebar scrolls the board sideways.
     assert!(
         UI_HTML
-            .contains("grid-template-columns: repeat(6, minmax(var(--board-col-w, 280px), 1fr));")
+            .contains("grid-template-columns: repeat(7, minmax(var(--board-col-w, 280px), 1fr));")
     );
     assert!(!UI_HTML.contains("body.board-side #board-agent"));
     assert!(UI_HTML.contains("function bindColResize"));
 }
 
 #[test]
-fn the_board_has_six_stages_with_the_person_first_and_opens_as_a_list() {
+fn the_board_has_seven_stages_with_the_person_first_and_opens_as_a_list() {
     let stages = page_table("const AGENT_COLUMNS = [", "];");
     let ids: Vec<&str> = stages
         .lines()
         .filter_map(|l| l.split("id:'").nth(1)?.split('\'').next())
         .collect();
-    assert_eq!(ids, ["me", "rev", "ai", "work", "before", "done"]);
+    assert_eq!(ids, ["me", "merge", "rev", "ai", "work", "before", "done"]);
     for piece in [
         // The list is the default, the columns the other drawing; both are in the head, beside the title.
         "prefs.boardView = prefs.boardView === 'cols' ? 'cols' : 'list';",

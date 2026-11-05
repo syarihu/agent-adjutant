@@ -58,9 +58,9 @@ const gate = (taskId, kind, humanCol, extra = {}) => ({ id: `g-${taskId}-${kind}
 const worker = (taskId, phase, extra = {}) => ({ worktree: `/w/${taskId}`, task: taskId, phase, present: true, ...extra });
 const at = (task, data = {}) => agentColOf(task, { gates: [], workers: [], ...data });
 
-test('the six stages are in the order of the person first, and every phase has a stage', () => {
-  assert.deepEqual(AGENT_COLUMNS.map(c => c.id), ['me', 'rev', 'ai', 'work', 'before', 'done']);
-  assert.deepEqual(AGENT_COLUMNS.map(c => c.label), ['セルフレビュー', 'コードレビュー待ち', 'AIレビュー', '計画・実装', '着手前', '完了']);
+test('the seven stages are in the order of the person first, and every phase has a stage', () => {
+  assert.deepEqual(AGENT_COLUMNS.map(c => c.id), ['me', 'merge', 'rev', 'ai', 'work', 'before', 'done']);
+  assert.deepEqual(AGENT_COLUMNS.map(c => c.label), ['セルフレビュー', 'マージ待ち', 'コードレビュー待ち', 'AIレビュー', '計画・実装', '着手前', '完了']);
   for (const phase of ['plan', 'implement', 'self-review', 'verify', 'pr', 'pr-bots', 'review', 'report']) {
     assert.ok(AGENT_COLUMNS.some(c => c.id === AGENT_COL_OF_PHASE[phase]), phase);
   }
@@ -78,9 +78,12 @@ test('a diff or verify gate that waits, or a PR on the person turn, is セルフ
   const w = [worker('1', 'implement')];
   assert.equal(at(t('1'), { gates: [gate('1', 'diff', 'diff')], workers: w }), 'me');
   assert.equal(at(t('1'), { gates: [gate('1', 'verify', 'verify')], workers: w }), 'me');
-  // The worker is in pr-bots, and the PR is approved and ready to merge: the person's.
+  // Approved and ready to merge is マージ待ち, not the person's: see the test below.
   const merge = t('1', { pr: 'https://x/pull/1', waitsOnPerson: true, prTurn: 'merge', prStatus: { state: 'open', review: 'approved' } });
-  assert.equal(at(merge, { workers: [worker('1', 'pr-bots')] }), 'me');
+  assert.equal(at(merge, { workers: [worker('1', 'pr-bots')] }), 'merge');
+  // Changes requested is the person's whatever the review state is called.
+  const changes = t('1', { pr: 'https://x/pull/1', waitsOnPerson: true, prTurn: 'changes', prStatus: { state: 'open', review: 'changes' } });
+  assert.equal(at(changes, { workers: [worker('1', 'pr-bots')] }), 'me');
   assert.equal(at(t('1', { waitsOnPerson: true, prTurn: 'changes', pr: 'u' }), { workers: [worker('1', 'review')] }), 'me');
 });
 
@@ -93,17 +96,38 @@ test('a plan gate, or the plan and implement phases, are 計画・実装; self-r
   assert.equal(at(t('1'), { workers: [worker('1', 'verify')] }), 'ai');
 });
 
-test('with a PR the review decides: asked for or given is コードレビュー待ち, bots and CI are AIレビュー, merged is 完了', () => {
+test('with a PR the review decides: asked for is コードレビュー待ち, approved is マージ待ち, bots and CI are AIレビュー, merged is 完了', () => {
   const pr = (prStatus, extra = {}) => t('1', { pr: 'https://x/pull/1', prStatus: { state: 'open', ...prStatus }, ...extra });
   const w = { workers: [worker('1', 'pr-bots')] };
   assert.equal(at(pr({ review: 'required' }), w), 'rev');
-  assert.equal(at(pr({ review: 'approved' }), w), 'rev');
+  assert.equal(at(pr({ review: 'approved' }), w), 'merge');
   assert.equal(at(pr({ review: 'none' }), w), 'ai');
   assert.equal(at(pr({ review: 'none' }, { prTurn: 'draft' }), w), 'ai');
   assert.equal(at(pr({ state: 'merged', review: 'approved' }), w), 'done');
   assert.equal(at(pr({}), { workers: [worker('1', 'review')] }), 'rev');
   // No PR state read yet: the bots' and CI's.
   assert.equal(at(t('1', { pr: 'https://x/pull/1' }), w), 'ai');
+});
+
+test('an approved open PR is マージ待ち whatever the phase and CI say, unless a gate or an earlier phase holds it', () => {
+  const pr = (extra = {}, prStatus = {}) => t('1', { pr: 'https://x/pull/1', prStatus: { state: 'open', review: 'approved', ...prStatus }, ...extra });
+  for (const phase of ['pr', 'pr-bots', 'review', 'report']) {
+    assert.equal(at(pr({ waitsOnPerson: true, prTurn: 'merge' }), { workers: [worker('1', phase)] }), 'merge', phase);
+  }
+  assert.equal(at(pr(), {}), 'merge', 'no worker');
+  // CI pending or failed: the stage follows the review.
+  assert.equal(at(pr({ prTurn: 'checks' }, { ci: { pass: 1, fail: 0, pending: 2 } }), { workers: [worker('1', 'pr-bots')] }), 'merge');
+  assert.equal(at(pr({ waitsOnPerson: true, prTurn: 'ci-failed' }, { ci: { pass: 1, fail: 1, pending: 0 } }), { workers: [worker('1', 'pr-bots')] }), 'merge');
+  // A diff gate still is the person's; the earlier phases still outrank the PR; merged is 完了.
+  assert.equal(at(pr(), { gates: [gate('1', 'diff', 'diff')] }), 'me');
+  assert.equal(at(pr(), { gates: [gate('1', 'verify', 'verify')] }), 'me');
+  assert.equal(at(pr(), { gates: [gate('1', 'relay', 'prreview')] }), 'me');
+  assert.equal(at(pr({ waitsOnPerson: true }), { gates: [gate('1', 'relay', 'prreview')], workers: [worker('1', 'review')] }), 'me');
+  // A parent hub's card: a prreview with no PR wait is its hub's gate (relay); with the PR's wait it reads as the PR's.
+  assert.equal(at(pr({ ownerHub: { slug: 'parent', humanCol: 'prreview' } })), 'me');
+  assert.equal(at(pr({ ownerHub: { slug: 'parent', humanCol: 'prreview' }, waitsOnPerson: true })), 'merge');
+  assert.equal(at(pr(), { workers: [worker('1', 'implement')] }), 'work');
+  assert.equal(at(pr({}, { state: 'merged' }), { workers: [worker('1', 'review')] }), 'done');
 });
 
 test('CI pending does not move a card: the stage follows the review, not prTurn', () => {
@@ -124,6 +148,7 @@ test('a Jules task with a PR is read like any other, and before it by its sessio
   const jules = (extra = {}) => t('1', { executor: 'jules', ...extra });
   assert.equal(at(jules({ pr: 'https://x/pull/1', prStatus: { state: 'open', review: 'required' } })), 'rev');
   assert.equal(at(jules({ pr: 'https://x/pull/1', waitsOnPerson: true })), 'me');
+  assert.equal(at(jules({ pr: 'https://x/pull/1', waitsOnPerson: true, prStatus: { state: 'open', review: 'approved' } })), 'merge');
   assert.equal(at(jules({ pr: 'https://x/pull/1', prStatus: { state: 'open', review: 'none' } })), 'ai');
   assert.equal(at(jules({ jules: { state: 'PLANNING' } })), 'work');
   assert.equal(at(jules({ jules: { state: 'IN_PROGRESS' } })), 'work');
