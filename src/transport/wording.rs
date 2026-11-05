@@ -233,6 +233,13 @@ pub fn machine_check(check: &Check, all: &MachineChecks) -> (String, Option<Stri
             detail.to_string(),
             format!("fix or move aside {}", all.config_path),
         ),
+        CheckId::Tmux if check.detail.is_some() => (
+            format!(
+                "tmux was slow to answer ({detail}); this does not stop the server, and the check runs again on its own"
+            ),
+            "nothing to do if the machine was busy; if it keeps happening, run tmux -V to see why it is slow"
+                .to_string(),
+        ),
         CheckId::Tmux if check.fatal => (
             "tmux was not found, and workers open in tmux".to_string(),
             format!(
@@ -248,6 +255,13 @@ pub fn machine_check(check: &Check, all: &MachineChecks) -> (String, Option<Stri
         CheckId::TmuxVersion => (
             format!("tmux {detail} is older than 3.1; the board's terminal is off"),
             install("tmux", "brew upgrade tmux"),
+        ),
+        CheckId::Gh if check.detail.is_some() => (
+            format!(
+                "gh was slow to answer ({detail}); pull requests, issues and reviews are not read until it does"
+            ),
+            "nothing to do if the machine was busy; if it keeps happening, run gh --version to see why it is slow"
+                .to_string(),
         ),
         CheckId::Gh => (
             "gh was not found; pull requests, issues and reviews are not read".to_string(),
@@ -333,6 +347,30 @@ mod tests {
             fix.contains("iterm2") && fix.contains("/cfg/config.json"),
             "{fix}"
         );
+    }
+
+    #[test]
+    fn a_slow_tmux_says_slow_to_answer_and_not_not_found() {
+        let all = failing(CheckId::Tmux, false, Some("tmux -V did not answer in 5s"));
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("slow to answer"), "{message}");
+        assert!(!message.contains("not found"), "{message}");
+        let fix = fix.unwrap();
+        assert!(fix.contains("tmux -V"), "{fix}");
+    }
+
+    #[test]
+    fn a_slow_gh_says_slow_to_answer_and_not_not_found() {
+        let all = failing(
+            CheckId::Gh,
+            false,
+            Some("gh --version did not answer in 5s"),
+        );
+        let (message, fix) = machine_check(&all.checks[0], &all);
+        assert!(message.contains("slow to answer"), "{message}");
+        assert!(!message.contains("not found"), "{message}");
+        let fix = fix.unwrap();
+        assert!(fix.contains("gh --version"), "{fix}");
     }
 
     #[test]
