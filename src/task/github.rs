@@ -203,6 +203,7 @@ pub fn pr_ref_from_api(url: &str) -> Option<PrRef> {
 
 /// How long reading one issue may take. A person is waiting on the command or the click, and
 /// an issue is one request, so this is shorter than a whole refresh's allowance.
+/// Raised by `ADJUTANT_DEADLINE_FLOOR_SECS` when set.
 const ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Run `gh` from `main` and return what it printed, or the reason it failed.
@@ -225,7 +226,7 @@ pub fn read_issue(main: &str, url: &str) -> Result<IssueSnapshot, String> {
     if url.starts_with('-') {
         return Err(format!("not an issue: {url}"));
     }
-    let deadline = std::time::Instant::now() + ISSUE_TIMEOUT;
+    let deadline = std::time::Instant::now() + crate::infra::env::deadline(ISSUE_TIMEOUT);
     let json = gh_output(
         main,
         // `--` so the URL is only ever a positional, whatever it starts with.
