@@ -263,8 +263,10 @@ function agentColOf(t, data = state) {
   const hc = humanColOf(t, data);
   if (hc === 'diff' || hc === 'verify') return 'me';
   // A relay gate (humanCol prreview) is one the person must answer, so it stays theirs on an approved PR; only the wait the PR
-  // itself puts on the person is skipped there. A parent hub's card has no gate of this board's, so its humanCol is read as the PR's.
-  if (!t.ownerHub && openGate(t, data)?.kind === 'relay') return 'me';
+  // itself puts on the person is skipped there. A prreview with no PR wait can only have come from a gate, which is how a
+  // parent hub's card (whose humanCol is built on the server from its hub's gate) shows one; when both are there, the parent
+  // hub's card cannot tell them apart and reads as the PR's.
+  if ((!t.ownerHub && openGate(t, data)?.kind === 'relay') || (hc === 'prreview' && !t.waitsOnPerson)) return 'me';
   if ((hc === 'prreview' || t.waitsOnPerson) && !approvedOpenPr(t)) return 'me';
 
   // A parent-task hub's task has no gate among this board's: an id is unique only within one hub, so a gate of this board's own

@@ -123,6 +123,9 @@ test('an approved open PR is マージ待ち whatever the phase and CI say, unle
   assert.equal(at(pr(), { gates: [gate('1', 'verify', 'verify')] }), 'me');
   assert.equal(at(pr(), { gates: [gate('1', 'relay', 'prreview')] }), 'me');
   assert.equal(at(pr({ waitsOnPerson: true }), { gates: [gate('1', 'relay', 'prreview')], workers: [worker('1', 'review')] }), 'me');
+  // A parent hub's card: a prreview with no PR wait is its hub's gate (relay); with the PR's wait it reads as the PR's.
+  assert.equal(at(pr({ ownerHub: { slug: 'parent', humanCol: 'prreview' } })), 'me');
+  assert.equal(at(pr({ ownerHub: { slug: 'parent', humanCol: 'prreview' }, waitsOnPerson: true })), 'merge');
   assert.equal(at(pr(), { workers: [worker('1', 'implement')] }), 'work');
   assert.equal(at(pr({}, { state: 'merged' }), { workers: [worker('1', 'review')] }), 'done');
 });

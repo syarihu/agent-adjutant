@@ -30,8 +30,9 @@ in `agentColOf` ([#809](https://github.com/syarihu/agent-adjutant/issues/809) sp
    `review` and `report`, which is why the review is read, not that flag). An open `diff`, `verify`
    or `relay` gate is a gate the person must answer, so it is still `me` on an approved PR.
    (`humanCol` `verify` also covers a `result` gate and `prreview` a `relay` gate, so those are `me`
-   too.) A parent hub's card has no gate of this board's; its `humanCol` `prreview` is read as the
-   PR's wait.
+   too.) A parent hub's card has no gate of this board's: its `humanCol` `prreview` with no
+   `waitsOnPerson` can only come from its hub's gate and is `me`; with `waitsOnPerson` the two
+   cannot be told apart, and it is read as the PR's wait.
 3. An open `plan` gate, or the worker's phase `plan` / `implement` → `work`.
 4. The phase `self-review` / `verify` → `ai`.
 5. With a PR (or status `pr`): `prStatus.state` `merged` → `done`; an open PR with `prStatus.review`
