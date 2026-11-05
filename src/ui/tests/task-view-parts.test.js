@@ -23,6 +23,7 @@ const utilSrc = read('util.js');
 
 const WAITING = [];
 const ctx = vm.createContext({
+  TextEncoder, TextDecoder,
   state: { gates: WAITING },
   BASE: 'main', baseOf: () => 'main',
   DONE_WHEN: { pr: 'PR作成まで' }, STOP_AT: { plan: '計画の承認だけ待つ' },
@@ -74,6 +75,7 @@ load([
   ...['gateWaitHeadHtml', 'gateJudgeHtml', 'reviewPanels', 'roundsCardHtml', 'findingsCardHtml',
     'checkPanels', 'commandsCardHtml', 'manualCardHtml'].map(n => fn(decSrc, n)),
 ].join('\n'));
+vm.runInContext(read('pr-diff.js'), ctx);
 const call = (name, ...a) => { ctx.__a = a; return vm.runInContext(`${name}(...__a)`, ctx); };
 const wait = g => { WAITING.length = 0; WAITING.push(...g); };
 
@@ -461,6 +463,57 @@ test('the dialog has a card for the steps of the plan and of another kind, and o
   const w = dgate('p-w', 'plan', '2026-10-03T00:00:00Z', { ...stepped, id: 'p-w', waiting: true, options: ['approve'], openedAt: '2026-10-03T00:00:00Z' });
   assert.ok(!cardOf(groupsOf([w]), 'gate:p-w:steps'));
   wait([]);
+});
+
+test("filesOf reads paths Git quotes and keeps each file's counts its own", () => {
+  const plain = x => JSON.parse(JSON.stringify(x));
+  const diffBoth = [
+    'diff --git a/a.rs b/a.rs',
+    '--- a/a.rs',
+    '+++ b/a.rs',
+    '@@ -1 +1 @@',
+    '-x',
+    '+y',
+    'diff --git "a/docs/\\346\\227\\245.md" "b/docs/\\346\\227\\245.md"',
+    '--- "a/docs/\\346\\227\\245.md"',
+    '+++ "b/docs/\\346\\227\\245.md"',
+    '@@ -1 +1,2 @@',
+    '-x',
+    '+y',
+    '+z',
+  ].join('\n');
+  assert.deepStrictEqual(plain(call('filesOf', diffBoth)), [
+    { path: 'a.rs', add: 1, del: 1 },
+    { path: 'docs/日.md', add: 2, del: 1 },
+  ]);
+
+  const diffQuoted = [
+    'diff --git "a/docs/\\346\\227\\245.md" "b/docs/\\346\\227\\245.md"',
+    '--- "a/docs/\\346\\227\\245.md"',
+    '+++ "b/docs/\\346\\227\\245.md"',
+    '@@ -1 +1,2 @@',
+    '-x',
+    '+y',
+    '+z',
+  ].join('\n');
+  const quoted = plain(call('filesOf', diffQuoted));
+  assert.strictEqual(quoted.length, 1);
+  assert.deepStrictEqual(quoted, [{ path: 'docs/日.md', add: 2, del: 1 }]);
+
+  assert.deepStrictEqual(plain(call('filesOf', '')), []);
+  assert.deepStrictEqual(plain(call('filesOf', undefined)), []);
+
+  const diffDashes = [
+    'diff --git a/a.rs b/a.rs',
+    '--- a/a.rs',
+    '+++ b/a.rs',
+    '@@ -1 +1 @@',
+    '--- old',
+    '+new',
+  ].join('\n');
+  assert.deepStrictEqual(plain(call('filesOf', diffDashes)), [
+    { path: 'a.rs', add: 1, del: 1 },
+  ]);
 });
 
 /* The buttons of a result gate. */
