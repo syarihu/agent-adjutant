@@ -347,7 +347,7 @@ function bindColResize(handle, col) {
   });
 }
 
-/* Draws the six columns afresh. */
+/* Draws the seven columns afresh. */
 function renderColumns(stages) {
   const ab = document.getElementById('board-agent');
   if (!ab) return;

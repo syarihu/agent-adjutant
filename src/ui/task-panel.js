@@ -604,8 +604,8 @@ function panelGateHtml(task, gate, here = false) {
     </div>`;
 }
 
-/* The flow, not the order the board draws its stages in: the work, the AI's reviews, yours, the reviewers'. The ids are the board's (`agentColOf`). */
-const STEPS = [['work', '計画・実装'], ['ai', 'AIレビュー'], ['me', 'セルフレビュー'], ['rev', 'コードレビュー待ち']];
+/* The flow, not the order the board draws its stages in: the work, the AI's reviews, yours, the reviewers', the merge. The ids are the board's (`agentColOf`). */
+const STEPS = [['work', '計画・実装'], ['ai', 'AIレビュー'], ['me', 'セルフレビュー'], ['rev', 'コードレビュー待ち'], ['merge', 'マージ待ち']];
 
 /* The body of a task's tab: 経過, コードレビュー and 動作確認 are the tab renderers'; タスクサマリ
    is the rest of the card with the 概要 in the middle. */

@@ -15,21 +15,26 @@ task update`), never columns.
 
 The board has two halves, and a task can be on both at once.
 
-**The agent board** has six columns, defined only in the page (`AGENT_COLUMNS` in
-`src/ui/core.js`), in the order of who has the ball: `me` セルフレビュー, `rev` コードレビュー待ち,
+**The agent board** has seven columns, defined only in the page (`AGENT_COLUMNS` in
+`src/ui/core.js`), in the order of who has the ball: `me` セルフレビュー, `merge` マージ待ち, `rev` コードレビュー待ち,
 `ai` AIレビュー, `work` 計画・実装, `before` 着手前, `done` 完了. The page decides the column itself,
 in `agentColOf` ([#809](https://github.com/syarihu/agent-adjutant/issues/809) split the old
 計画 / 実装 / セルフレビュー / PR・レビュー対応 by whose turn it is). The first match wins:
 
 1. No task, or status `backlog` / `queued` → `before`. Status `done` / `cancelled` → `done`.
 2. The ball is the person's: the open gate's `humanCol` is `diff`, `verify` or `prreview`, or the
-   card's `waitsOnPerson` → `me`. This comes before the phase, so a worker in `pr-bots` whose PR is
-   ready to merge is the person's. (`humanCol` `verify` also covers a `result` gate and `prreview` a
+   card's `waitsOnPerson` → `me`. This comes before the phase, so a worker in `pr-bots` whose PR
+   has changes requested is the person's. An approved open PR (`prStatus.state` `open`, `review`
+   `approved`) is the exception for `prreview` and `waitsOnPerson`: it is not `me` here but `merge`
+   by rule 5, even when the server says it waits on the person (`waitsOnPerson` is false in the
+   phases `review` and `report`, which is why the review is read, not that flag); a `diff` or
+   `verify` gate is still `me`. (`humanCol` `verify` also covers a `result` gate and `prreview` a
    `relay` gate, so those are `me` too.)
 3. An open `plan` gate, or the worker's phase `plan` / `implement` → `work`.
 4. The phase `self-review` / `verify` → `ai`.
-5. With a PR (or status `pr`): `prStatus.state` `merged` → `done`; `prStatus.review` `required` or
-   `approved`, or the phase `review` → `rev`; otherwise → `ai` (the bots and CI are still reading, or
+5. With a PR (or status `pr`): `prStatus.state` `merged` → `done`; an open PR with `prStatus.review`
+   `approved` → `merge` (the review decides, so CI pending or failed does not move it); `prStatus.review`
+   `required`, or the phase `review` → `rev`; otherwise → `ai` (the bots and CI are still reading, or
    a draft that does not wait on the person). It is the review that decides, not `prTurn === 'checks'`:
    CI pending outranks the review in `prTurn`, which would move a card between columns on every push.
 6. The phase `pr` / `report` with no PR yet → `ai`; the phase `review` with no PR → `rev`; anything
@@ -144,7 +149,7 @@ from Jules or could not ask, as `t.jules?.state` is today; a Jules task with no 
 `step` from its PR or its gate, so nothing hangs on telling the two apart there.
 
 `step` is the one derived fact: where work in progress stands, whoever does it. It stays a fact of
-the phase alone: the board's split of that work into 計画・実装, AIレビュー, コードレビュー待ち and
+the phase alone: the board's split of that work into 計画・実装, AIレビュー, コードレビュー待ち, マージ待ち and
 セルフレビュー is not a second `step`, it is a column condition over `step`, `prTurn` and `yourTurn`
 (see the columns above). It is `plan`, `implement`, `self-review` or `pr`, computed as `agentColOf`
 did before that split (the old steps 2 to 5: Jules, worker phase, open gate, status `pr` or a PR), in that order,
@@ -357,7 +362,7 @@ as 調査 and 置いている, copies both into one layout):
 
 | Preset | Agent side | Human side |
 |---|---|---|
-| `default` | Today's six | Today's six |
+| `default` | Today's seven | Today's six |
 | `investigation` | Adds 調査 (`work: investigate`, `step: "*"`) and 設計 (`work: design`, `step: "*"`) after 着手前, so those tasks stay in one column whatever their phase while they are in progress | Today's six, plus 調査報告 (`gate: result`) before 動作確認, which then takes `verify` gates only |
 | `waiting` | `default`, plus 他の人の確認待ち (`parked: "*"`) right after 着手前 | `default`, plus 置いている (`parked: "*"`) first |
 

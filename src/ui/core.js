@@ -94,7 +94,7 @@ prefs.notify = notifyPrefs(prefs.notify);
 // The board's view: the list (the default) or the columns, and whether the list groups 「セルフレビュー」 by parent Issue.
 prefs.boardView = prefs.boardView === 'cols' ? 'cols' : 'list';
 prefs.boardGroup = prefs.boardGroup === true;
-// How wide each column of the columns view is at least (one value for all six), within its range; a value that is not a number is the default.
+// How wide each column of the columns view is at least (one value for all the columns), within its range; a value that is not a number is the default.
 const BOARD_COL_W = { min: 200, max: 520, def: 280 };
 const clampBoardColWidth = v => Math.min(BOARD_COL_W.max, Math.max(BOARD_COL_W.min, Math.round(Number(v)) || BOARD_COL_W.def));
 prefs.boardColWidth = clampBoardColWidth(prefs.boardColWidth);
@@ -176,6 +176,7 @@ function jump(id) {
    worker's phase alone; the stage is a condition over the phase, the PR's turn and whose ball it is (`agentColOf`). */
 const AGENT_COLUMNS = [
   { id:'me',     label:'セルフレビュー',      icon:'person' },
+  { id:'merge',  label:'マージ待ち',          icon:'merge' },
   { id:'rev',    label:'コードレビュー待ち',  icon:'rate_review' },
   { id:'ai',     label:'AIレビュー',          icon:'rule' },
   { id:'work',   label:'計画・実装',          icon:'code' },
@@ -226,24 +227,32 @@ function humanColOf(t, data = state) {
   return openGate(t, data)?.humanCol || (t.waitsOnPerson ? 'prreview' : null);
 }
 
-/* The stage of a task that has a PR: merged is done; a review asked for or given is the reviewers'; the rest (bots and CI
-   still reading, a draft that does not wait on the person) is the AI's. Decided by the review, not by `prTurn`: CI pending
-   outranks the review in `prTurn`, which would move a card between stages on every push. */
+/* An open PR a person has approved: only the merge is left. The server's `waitsOnPerson` is not read for it, because that is
+   false whenever the worker's phase is not pr / pr-bots (review, report), which left an approved PR among the reviewers'. */
+const approvedOpenPr = t => t.prStatus?.state === 'open' && t.prStatus?.review === 'approved';
+
+/* The stage of a task that has a PR: merged is done; approved is マージ待ち; a review asked for (or the phase review) is the
+   reviewers'; the rest (bots and CI still reading, a draft that does not wait on the person) is the AI's. Decided by the review,
+   not by `prTurn`: CI pending outranks the review in `prTurn`, which would move a card between stages on every push. For the
+   same reason an approved PR stays in マージ待ち with CI pending or failed; its badge still shows the CI state. */
 function prColOf(t, phase) {
   const st = t.prStatus?.state;
   const review = t.prStatus?.review;
   if (st === 'merged') return 'done';
-  if (review === 'required' || review === 'approved' || phase === 'review') return 'rev';
+  if (approvedOpenPr(t)) return 'merge';
+  if (review === 'required' || phase === 'review') return 'rev';
   return 'ai';
 }
 
 /* The stage a task is in, first match wins:
    1. backlog / queued is 着手前; done / cancelled is 完了.
    2. The person's ball — a diff or verify gate open, or the PR on the person's turn — is セルフレビュー, whatever the phase
-      says (a worker in pr-bots with the PR ready to merge is the person's).
+      says; except an approved open PR, which is マージ待ち even when it waits on the person (rule 5), though a diff or verify
+      gate is still セルフレビュー.
    3. An open plan gate, or the phase plan / implement, is 計画・実装.
    4. The phase self-review / verify is AIレビュー.
-   5. With a PR: merged is 完了, a review asked for or given is コードレビュー待ち, else AIレビュー.
+   5. With a PR: merged is 完了, approved is マージ待ち, a review asked for (or the phase review) is コードレビュー待ち, else
+      AIレビュー.
    6. With no PR yet: the phase pr / pr-bots / report is AIレビュー, review is コードレビュー待ち; anything else is 計画・実装. */
 function agentColOf(t, data = state) {
   if (!t) return 'before';
@@ -252,7 +261,8 @@ function agentColOf(t, data = state) {
 
   // The same reading as the card's waiting mark (`humanColOf`), so a gate just answered leaves the stage at once.
   const hc = humanColOf(t, data);
-  if (hc === 'diff' || hc === 'verify' || hc === 'prreview' || t.waitsOnPerson) return 'me';
+  if (hc === 'diff' || hc === 'verify') return 'me';
+  if ((hc === 'prreview' || t.waitsOnPerson) && !approvedOpenPr(t)) return 'me';
 
   // A parent-task hub's task has no gate among this board's: an id is unique only within one hub, so a gate of this board's own
   // task of the same id is not its.
