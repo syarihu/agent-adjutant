@@ -175,18 +175,30 @@ function openTaskDetail(task, opener) {
   tocWire(dialogStack.layerEl(key));
 }
 
+/* The slug whose state the open task detail dialog needs, when not the page's own board. */
+function taskDetailOwnerSlug() {
+  if (!taskDetail || !dialogStack.isOpen() || taskDetail.gone || !taskDetail.slug) return null;
+  if (taskDetail.slug === nav.board) return null;
+  const isOwner = (state.hubTasks || []).some(t => t.ownerHub?.slug === taskDetail.slug);
+  return isOwner ? taskDetail.slug : null;
+}
+
+function taskDetailFollow() {
+  withPanelState(drawTaskDetailFollow);
+}
+
 /* The open detail as the page's state now has it. It is drawn again only when its markup changed, keeping where it was scrolled to
    and which entry is current, and not while the focus is in something of the body other than the body itself or the table of
    contents. A task the state no longer lists is marked once and left as it was. A detail of another board than the page's is left. */
-function taskDetailFollow() {
+function drawTaskDetailFollow() {
   const info = taskDetail;
   if (!info || !dialogStack.isOpen() || info.gone || nav.board !== info.board) return;
   const layer = taskDetailLayer();
   if (!layer) return;
-  const task = (state.tasks || []).find(t => t.id === info.id && (!info.slug || t._slug === info.slug));
+  const task = (stateNow().tasks || []).find(t => t.id === info.id && (!info.slug || t._slug === info.slug));
   if (!task) {
     // A state not read yet lists nothing: not the task being gone.
-    if (state.now == null) return;
+    if (stateNow().now == null) return;
     info.gone = true;
     layer.querySelector('.qd-head')?.insertAdjacentHTML('afterend', '<p class="qd-gone" role="status">このタスクは、いまの一覧にありません（最後に表示した内容です）</p>');
     return;
@@ -216,7 +228,7 @@ function openTaskDetailCard(info, ref, opener) {
   });
 }
 
-questionDialogEl().addEventListener('click', e => {
+function onTaskDetailQuestionClick(e) {
   const go = e.target.closest?.('[data-td-go]');
   const info = taskDetail;
   if (go && go.closest('.td-layer')) {
@@ -242,11 +254,12 @@ questionDialogEl().addEventListener('click', e => {
     return;
   }
   openTaskDetailCard(info, card.dataset.tdCard, card);
-}, true);
+}
+questionDialogEl().addEventListener('click', e => withPanelState(() => onTaskDetailQuestionClick(e)), true);
 
 /* The buttons of a card as it was asked that open a layer need the gate the card was drawn from, which a read-only card does not carry
    (it answers nothing), so they are answered here, before `question-dialog.js` looks for a root they do not have. */
-questionDialogEl().addEventListener('click', e => {
+function onTaskDetailCardLayerClick(e) {
   const open = e.target.closest?.('[data-qc-open]');
   const layer = open?.closest('.qd-layer');
   const was = layer && taskDetailCards.get(layer.dataset.qdKey);
@@ -263,6 +276,7 @@ questionDialogEl().addEventListener('click', e => {
   if (open.dataset.qcOpen === 'report') {
     return void dialogStack.push({ key: `report:${layer.dataset.qdKey}`, opener: open, title: `レポート — ${title}`, body: `<div class="body">${md(g.body)}</div>` });
   }
-}, true);
+}
+questionDialogEl().addEventListener('click', e => withPanelState(() => onTaskDetailCardLayerClick(e)), true);
 
 registerView('task-detail', { render: () => taskDetailFollow() });

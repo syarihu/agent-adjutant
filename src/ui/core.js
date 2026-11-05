@@ -22,14 +22,14 @@ const panelTerm = { host: () => document.getElementById('tp-term-host'), redraw:
 const HUB_REF = 'hub:';
 const isHubRef = id => typeof id === 'string' && id.startsWith(HUB_REF);
 const hubIdOfRef = id => id.slice(HUB_REF.length);
-const hubOfRef = (id, data = state) => isHubRef(id) ? (data.hubs || []).find(h => h.id === hubIdOfRef(id)) || null : null;
+const hubOfRef = (id, data = stateNow()) => isHubRef(id) ? (data.hubs || []).find(h => h.id === hubIdOfRef(id)) || null : null;
 /* The hub's own session; a hub with none is only as alive as its record says. */
 const hubSessionOf = h => (state.sessions || []).find(s => s.kind === 'hub' && s.id === h.id)
   || { kind: 'hub', id: h.id, present: !!h.state?.present };
 const SESS_REF = 'session:';
 const isSessRef = id => typeof id === 'string' && id.startsWith(SESS_REF);
 const sessIdOfRef = id => id.slice(SESS_REF.length);
-const sessOfRef = (id, data = state) => isSessRef(id) ? (data.sessions || []).find(s => s.id === sessIdOfRef(id)) || null : null;
+const sessOfRef = (id, data = stateNow()) => isSessRef(id) ? (data.sessions || []).find(s => s.id === sessIdOfRef(id)) || null : null;
 /* A parent issue opens in the work view as `parent:<key>`: the terminal of the hub that runs it in the
    middle, and its overview in a dialog opened from the heading over it (「親タスクの詳細」). The key is the one `parents[].key` carries. */
 const PARENT_REF = 'parent:';
@@ -207,21 +207,21 @@ const HUMAN_LABEL = {
 
 /* 要対応 is derived from the gate directory, never stored as a status — so the board reads
    the thing it is describing rather than a second copy of it. */
-const openGate = (t, data = state) => (data.gates || []).find(g => g.task === t.id && (!t._slug || g._slug === t._slug));
+const openGate = (t, data = stateNow()) => (data.gates || []).find(g => g.task === t.id && (!t._slug || g._slug === t._slug));
 
 const humanLabel = col => HUMAN_LABEL[col] || col;
 const agentLabel = col => (AGENT_COLUMNS.find(c => c.id === col) || {}).label || col;
 
 // A worker that names another task is that task's, whatever worktree a stale record still points
 // at; one that names none is a session waiting to be linked, and the worktree joins it.
-const workerOf = (t, data = state) => t && t.worktree && (data.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
+const workerOf = (t, data = stateNow()) => t && t.worktree && (data.workers || []).find(w => w.worktree === t.worktree && (!w.task || w.task === t.id));
 
 /* The person's column a card sits in: its open gate's (`humanCol`), else the PR's when the
    server says the PR waits on the person (`waitsOnPerson`). The page puts the two together
    itself, not the server, because it drops a gate it has just answered from a state that was
    already on its way (`dropGate`, `refresh`, `mergeStates`), and the card must leave that
    gate's column at once. */
-function humanColOf(t, data = state) {
+function humanColOf(t, data = stateNow()) {
   if (!t) return null;
   if (t.ownerHub) return t.ownerHub.humanCol || null;
   return openGate(t, data)?.humanCol || (t.waitsOnPerson ? 'prreview' : null);
@@ -254,7 +254,7 @@ function prColOf(t, phase) {
    5. With a PR: merged is 完了, approved is マージ待ち, a review asked for (or the phase review) is コードレビュー待ち, else
       AIレビュー.
    6. With no PR yet: the phase pr / pr-bots / report is AIレビュー, review is コードレビュー待ち; anything else is 計画・実装. */
-function agentColOf(t, data = state) {
+function agentColOf(t, data = stateNow()) {
   if (!t) return 'before';
   if (t.status === 'backlog' || t.status === 'queued') return 'before';
   if (t.status === 'done' || t.status === 'cancelled') return 'done';
@@ -294,7 +294,7 @@ function agentColOf(t, data = state) {
 
 /* When the task started waiting on the person (ms): its open gate's `openedAt`; else, for a PR on the person's turn, when
    the turn last changed (`prTurnAt`); else when the worker entered its phase; else when the task was last written. */
-function waitingSinceMs(t, data = state) {
+function waitingSinceMs(t, data = stateNow()) {
   const g = t.ownerHub ? null : openGate(t, data);
   if (g && g.openedAt) {
     const s = stampSecs(g.openedAt);
@@ -309,12 +309,12 @@ function waitingSinceMs(t, data = state) {
   return updatedMs(t);
 }
 
-function waitingMinutes(t, data = state) {
+function waitingMinutes(t, data = stateNow()) {
   const since = waitingSinceMs(t, data);
   return minutesSince(since / 1000, Date.now() / 1000);
 }
 
-function columnOf(t, data = state) {
+function columnOf(t, data = stateNow()) {
   // Human-owned moves and the hand-over form key off the status-level columns.
   if (t && (t.status === 'backlog' || t.status === 'queued')) return t.status;
   const hc = humanColOf(t, data);
@@ -799,7 +799,10 @@ async function refresh(force = false) {
     const minute = Math.floor((now || 0) / 60);
     const changed = nextJson !== lastStateJson;
     const clockOnly = !changed && minute !== lastMinute && (view === 'board' || view === 'work');
-    if (!force && !changed && !clockOnly) return;
+    if (!force && !changed && !clockOnly) {
+      if (view === 'board' && typeof refreshPanelOther === 'function' && (panelOtherSlug() || panelOther.slug)) refreshPanelOther(false);
+      return;
+    }
     lastStateJson = nextJson;
     lastMinute = minute;
     // A hub that was not running and is now: it has finished starting, whatever the page
@@ -816,6 +819,7 @@ async function refresh(force = false) {
     // What changed here changes the counts in the sidebar: read them now rather than at the
     // next tick.
     if (multiBoard && (changed || force)) refreshBoards();
+    if (view === 'board' && typeof refreshPanelOther === 'function' && (panelOtherSlug() || panelOther.slug)) refreshPanelOther(false);
   } catch (e) {
     note(`状態を取得できませんでした: ${e.message}`, true);
   }
@@ -823,7 +827,7 @@ async function refresh(force = false) {
 
 /* How many things wait on the person in `data`: tasks with the ball, and gates whose task is
    not on the board. */
-function waitingIn(data = state) {
+function waitingIn(data = stateNow()) {
   const humanItems = (data.tasks || []).filter(t => humanColOf(t, data));
   const taskIds = new Set((data.tasks || []).map(t => t.id));
   const standalone = (data.gates || []).filter(g => !g.task || !taskIds.has(g.task));

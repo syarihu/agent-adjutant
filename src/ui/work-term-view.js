@@ -10,7 +10,7 @@ const workAskFolded = new Set();
 let workAskHeld = false;
 /* What the held draw was for (`workAskSubject`): a hold is dropped when the selection moved, or the old question would stay over the new terminal. */
 let workAskDrawnFor = null;
-const workAskSubject = () => `${nav.board}/${nav.task}`;
+const workAskSubject = () => `${panelSlug()}/${nav.task}`;
 /* What was written in 「書いて送る」 and not sent, by `${board}/${session id}`; kept while the page is. A page reload does not keep it. */
 const workSendDrafts = new Map();
 
@@ -22,7 +22,7 @@ const workCommentFocused = () => !!document.activeElement?.matches?.('#wk-term-a
 /* The gates that slide down for what is selected: a task's own; a hub's (the page's own hub: another board's are not read here) or a
    session's with no task, which no task card shows. */
 function workTermAskGates(task, own, hub) {
-  const base = { gates: state.gates || [], taskOfGate, answered: answeredGates, keyOf: gateKey };
+  const base = { gates: stateNow().gates || [], taskOfGate, answered: answeredGates, keyOf: gateKey };
   if (task) return workTermGatesOf({ ...base, task });
   const sessGates = hub ? (hubOther(hub) ? [] : sessGatesOf(hubSessionOf(hub)))
     : own?.kind === 'worker' && boardOfSession(own).own ? sessGatesOf(own) : [];
@@ -83,7 +83,7 @@ const workSendWhy = () => workTerm.ended != null ? 'ターミナルは切れて�
 function drawWorkFabs(own, hub) {
   const s = hub ? hubSessionOf(hub) : own;
   const a = s?.present ? s.agentSession : null;
-  const mins = a?.lastMessageAt != null && state.now != null ? minutesSince(a.lastMessageAt, state.now) : null;
+  const mins = a?.lastMessageAt != null && stateNow().now != null ? minutesSince(a.lastMessageAt, stateNow().now) : null;
   const html = workTerm.term && s?.present
     ? workTermFabsHtml({ hasLast: !!a?.lastMessage, lastAge: mins != null ? agoLabel(mins) : '', sendWhy: workSendWhy() }) : '';
   setWorkTermPart('fabs', wk('wk-term-fabs'), html);
@@ -119,7 +119,7 @@ function workTermAskClick(b) {
     .then(() => renderWorkTerm());
 }
 
-workAskEl().addEventListener('click', e => {
+function onWorkAskClick(e) {
   const promptKey = e.target.closest('[data-wk-prompt-key]');
   if (promptKey) {
     const { wkPromptBoard, wkPromptSession, wkPromptId, wkPromptKey: key } = promptKey.dataset;
@@ -147,7 +147,8 @@ workAskEl().addEventListener('click', e => {
   if (open) return questionOpenLayer(open.dataset.qcOpen, open);
   const b = e.target.closest('[data-qc-gate] .pick[data-choice], [data-qc-gate] [data-act], [data-qc-ide]');
   if (b && !b.disabled) questionAct(b);
-});
+}
+workAskEl().addEventListener('click', e => withPanelState(() => onWorkAskClick(e)));
 workAskEl().addEventListener('input', e => {
   const box = e.target.closest?.('.gate-comment');
   const key = box?.closest('[data-qc-gate]')?.dataset.qcGate;
@@ -173,11 +174,11 @@ function workTermSession() {
   const sel = workSelected();
   const id = sel?.session?.id || (isSessRef(nav.task) ? sessIdOfRef(nav.task) : null);
   if (!id) return null;
-  const hub = sel?.session?.kind === 'hub' ? (state.hubs || []).find(x => x.id === id) : null;
-  return (state.sessions || []).find(x => x.id === id) || (hub ? hubSessionOf(hub) : null);
+  const hub = sel?.session?.kind === 'hub' ? (stateNow().hubs || []).find(x => x.id === id) : null;
+  return (stateNow().sessions || []).find(x => x.id === id) || (hub ? hubSessionOf(hub) : null);
 }
 
-wk('wk-term-head').addEventListener('click', e => {
+function onWorkTermHeadClick(e) {
   // 「下読みを見る」 / 「下読みする」: the task's AI 下読み, as a dialog; the second asks for a read too.
   const own = e.target.closest('[data-own-read]');
   if (own) return own.disabled ? undefined : openOwnReadDialog(own, { ask: own.dataset.ownRead === 'ask' });
@@ -195,13 +196,14 @@ wk('wk-term-head').addEventListener('click', e => {
   }
   if (!s) return;
   if (act === 'hubinfo') {
-    const hub = (state.hubs || []).find(h => h.id === s.id);
+    const hub = (stateNow().hubs || []).find(h => h.id === s.id);
     return hub ? openWorkHubInfo(hub, b) : undefined;
   }
   // The same two the session's buttons have, with the same checks.
   if (act === 'ide' && linkedWorktree(s)) return runSessionAction('ide', s);
   if (act === 'close' && s.kind === 'worker' && linkedWorktree(s)) return runSessionAction('close', s);
-});
+}
+wk('wk-term-head').addEventListener('click', e => withPanelState(() => onWorkTermHeadClick(e)));
 
 /* ── the ⋯ menu of a worker's heading ── */
 
@@ -240,7 +242,7 @@ function workMoreAct(b) {
   if (['restart', 'open', 'copy', 'cleanup'].includes(act)) return runSessionAction(act, s);
 }
 
-wk('wk-term-head').addEventListener('click', e => {
+function onWorkTermHeadMoreClick(e) {
   const toggle = e.target.closest('[data-wk-more]');
   if (toggle) {
     // A press from the keyboard (no pointer, so no click count) goes into the menu, as the arrow keys do.
@@ -251,7 +253,8 @@ wk('wk-term-head').addEventListener('click', e => {
   if (!item || item.disabled) return;
   closeWorkMore(true);
   workMoreAct(item);
-});
+}
+wk('wk-term-head').addEventListener('click', e => withPanelState(() => onWorkTermHeadMoreClick(e)));
 wk('wk-term-head').addEventListener('keydown', e => {
   const box = e.target.closest?.('.wk-more');
   if (!box) return;

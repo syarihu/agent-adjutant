@@ -44,7 +44,7 @@ function questionLive(key) {
   if (view === 'todo' && src) return src.gone ? null : src.g;
   // Elsewhere the page's state comes first, and a source answers only while its read of the board is young: it is read only while
   // the TODO or its popover is on, so an old one may hold a gate that has been answered since.
-  return (state.gates || []).find(x => gateKey(x) === key) || questionSourceFresh(src)?.g || null;
+  return (stateNow().gates || []).find(x => gateKey(x) === key) || questionSourceFresh(src)?.g || null;
 }
 
 /* `live` (as the page lists it) with the board `like` was opened on, so a card follows the gate and keeps sending to its board. */
@@ -290,12 +290,13 @@ async function questionAct(b) {
 }
 
 const questionDialogEl = () => document.getElementById('question-dialog');
-questionDialogEl().addEventListener('click', e => {
+function onQuestionDialogClick(e) {
   const open = e.target.closest('[data-qc-open]');
   if (open) return questionOpenLayer(open.dataset.qcOpen, open);
   const b = e.target.closest('.pick[data-choice], [data-act], [data-qc-ide]');
   if (b && !b.disabled) questionAct(b);
-});
+}
+questionDialogEl().addEventListener('click', e => withPanelState(() => onQuestionDialogClick(e)));
 questionDialogEl().addEventListener('input', e => {
   const box = e.target.closest?.('.gate-comment');
   const key = box?.closest('[data-qc-gate]')?.dataset.qcGate;

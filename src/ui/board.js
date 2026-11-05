@@ -168,7 +168,7 @@ window.addEventListener('storage', e => {
   if (view === 'work') renderTaskPanel();
 });
 // A record of a merged state carries its board, so answering it reaches the right one.
-const allRecords = () => (state.tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);
+const allRecords = () => (stateNow().tasks || []).flatMap(t => t._base ? (t.records || []).map(r => ({ ...r, _slug: t._slug, _base: t._base })) : t.records || []);
 const recordById = id => allRecords().find(r => r.id === id);
 const recordByRef = ref => allRecords().find(r => gateRef(r) === ref) || (ref && !String(ref).includes('/') ? recordById(ref) : undefined);
 const recordSeq = r => +(/-record-(\d+)$/.exec(r.id)?.[1] || 1);
@@ -227,8 +227,8 @@ async function act(action, id) {
   acting.add(id);
 
   try {
-    const t = (state.tasks || []).find(x => x.id === id);
-    const gate = t ? openGate(t) : (state.gates || []).find(g => gateRef(g) === id);
+    const t = (stateNow().tasks || []).find(x => x.id === id);
+    const gate = t ? openGate(t) : (stateNow().gates || []).find(g => gateRef(g) === id);
     let succeeded = true;
 
     if (action === 'start') {
@@ -516,7 +516,9 @@ async function loadFindings(id) {
   relay = asked;
   renderTaskPanel();
   let data = null, failed = null;
-  try { data = await api(`/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
+  const t = (stateNow().tasks || []).find(x => x.id === id);
+  const base = t ? baseOf(t) : BASE;
+  try { data = await boardApi(base, `/api/tasks/${encodeURIComponent(id)}/findings`); } catch (e) { failed = e; }
   // Another list was asked for meanwhile — another task's, or this one again. That one's
   // answer is the one to show; this one would put its comments under the wrong card.
   if (relay !== asked) return;
@@ -539,8 +541,10 @@ async function relayPicked(id) {
   asked.posting = true;
   renderTaskPanel();
   const line = `adj jules relay --id ${id} ${comments.map(c => `--comment ${c}`).join(' ')}`;
+  const t = (stateNow().tasks || []).find(x => x.id === id);
+  const base = t ? baseOf(t) : BASE;
   try {
-    await api(`/api/tasks/${encodeURIComponent(id)}/relay`, { method: 'POST', body: JSON.stringify({ comments }) });
+    await boardApi(base, `/api/tasks/${encodeURIComponent(id)}/relay`, { method: 'POST', body: JSON.stringify({ comments }) });
     note(line, false, `${comments.length} 件を PR にコメントしました。Jules が読んで直します`);
     // Read again only if the panel is still on this list; otherwise the reload would
     // replace whatever is being looked at now.
@@ -620,6 +624,16 @@ document.addEventListener('click', e => {
   const dr = e.target.closest('[data-record]');
   if (dr) {
     e.stopPropagation();
+    const ownerCard = dr.closest('[data-owner]');
+    if (ownerCard && !scopeAll()) {
+      const cardId = ownerCard.dataset.id;
+      const slug = ownerCard.dataset.slug || null;
+      if (slug) panelOwnerPick = { id: cardId, slug };
+      const card = hubTaskOf(cardId, slug);
+      const rec = (card?.records || []).find(r => r.id === dr.dataset.record);
+      // A record the card no longer lists (a poll came between) opens the task's 経過 in place rather than moving the board.
+      return rec ? openTask(cardId, TAB_OF_KIND[rec.kind] || 'history', rec.id) : openTask(cardId, 'history');
+    }
     return onBoard(slugOf(dr), () => openRecord(dr.dataset.record));
   }
 });

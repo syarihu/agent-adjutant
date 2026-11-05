@@ -513,6 +513,7 @@ test('pressing the heading\'s 下読み button opens the dialog from the termina
     cardDialog: { token: 0, mode: null, subject: null }, cardDialogEl: () => dlg, cardDialogShell: () => {}, ownReadDialogSync: () => {},
     cardDialogSpy: () => {}, prDialogDrawn: {}, taskRead: { key: null, doc: null }, workSelected: () => null,
     ownReadTitleText: () => '', ownReadSubText: () => '', ownReadRepoHint: () => ({}), taskReadAsk: () => {}, othersOutOfReview: () => false,
+    withPanelState: fn => fn(),
     // The heading's listener is captured when work-term-view.js registers it.
     wk: id => (id === 'wk-term-head' ? { addEventListener: (_, fn) => { listener ??= fn; } } : id === 'work-view' ? { style: {} } : null),
     document: { body: { classList: { toggle: () => {} } } }, requestAnimationFrame: () => {}, refreshWork: () => {}, disposeTermSlot: () => {}, workTerm: {},
@@ -530,7 +531,7 @@ test('pressing the heading\'s 下読み button opens the dialog from the termina
   vm.runInContext(fnSrc(view, 'openOwnReadDialog'), c);
   vm.runInContext(fnSrc(view, 'closeOwnReadDialog'), c);
   vm.runInContext(cut(view, /^const taskReadKey = .*$/m), c);
-  vm.runInContext(cut(read('work-term-view.js'), /^wk\('wk-term-head'\)\.addEventListener\('click', e => \{[\s\S]*?\n\}\);/m), c);
+  vm.runInContext(cut(read('work-term-view.js'), /^function onWorkTermHeadClick\(e\) \{[\s\S]*?\nwk\('wk-term-head'\)\.addEventListener\('click', e => withPanelState\(\(\) => onWorkTermHeadClick\(e\)\)\);/m), c);
   assert.strictEqual(typeof listener, 'function');
   const press = ownRead => listener({ target: { closest: q => (q === '[data-own-read]' ? { disabled: false, dataset: { ownRead } } : null) } });
   run("var view = 'board'; var nav = { board: 'acme', task: 't1', pane: 'term' };");

@@ -300,7 +300,7 @@ function workSelectedId(sel) {
 /* Follow the address: moving it off the open row leaves that one, and arriving on a row (by a click or by a link) opens it. A
    poll that drops the row for a moment is not leaving, as the address has not moved. */
 function workTrack() {
-  const addr = nav.board && nav.board !== 'all' && nav.task && !isParentRef(nav.task) ? `${nav.board}/${nav.task}` : null;
+  const addr = nav.board && nav.board !== 'all' && nav.task && !isParentRef(nav.task) ? `${panelSlug()}/${nav.task}` : null;
   if (work.open && work.open.nav !== addr) workLeave();
   if (work.open || !addr) return;
   const sel = workSelected();
@@ -547,10 +547,11 @@ function workSelected() {
     const parent = parentOfRef(ref);
     return parent ? { parent, session: workParentSession(parent) } : null;
   }
+  const board = panelSlug();
   for (const repo of workRepos()) {
     let found = null;
     for (const r of repo.rows || []) {
-      if (workBoardOf(repo, r.board) !== nav.board) continue;
+      if (workBoardOf(repo, r.board) !== board) continue;
       const mine = isHubRef(ref) ? r.session.kind === 'hub' && HUB_REF + r.session.id === ref
         : isSessRef(ref) ? r.session.id === sessIdOfRef(ref) : r.task?.id === ref;
       // Of several sessions of one task, the one the list shows.
@@ -1515,6 +1516,10 @@ let workHeadFor = null;
 /* The terminal of what is selected, in the middle. A session of the board that was selected is the page's
    own (its actions and its socket are that board's); one that board does not list is shown without them. */
 function renderWorkTerm() {
+  withPanelState(drawWorkTerm);
+}
+
+function drawWorkTerm() {
   if (!workTermOn()) return;
   // With nothing selected the middle is the empty state in the place of the terminal and the read-through.
   const empty = !nav.task;
@@ -1536,16 +1541,16 @@ function renderWorkTerm() {
   // A worktree with no process (the hub's 「動いていない worktree」) is no row of the list, but the board lists it.
   const free = !sel && isSessRef(nav.task) ? sessOfRef(nav.task) : null;
   const ds = sel?.session || null;
-  const own = ds ? (state.sessions || []).find(x => x.id === ds.id) || null : free;
+  const own = ds ? (stateNow().sessions || []).find(x => x.id === ds.id) || null : free;
   const s = own || ds;
   const task = isTaskRef(nav.task) ? taskById(nav.task) || null : null;
   // The hub of a hub's row, or of a parent's: its status and its detail dialog are the heading's, and its terminal is the middle.
-  const hub = ds?.kind === 'hub' ? (state.hubs || []).find(h => h.id === ds.id) || null : null;
+  const hub = ds?.kind === 'hub' ? (stateNow().hubs || []).find(h => h.id === ds.id) || null : null;
   const { revealed } = taskReadFollow(task);
   // The ⋯ menu stays open, with the keyboard where it was, when the heading of the same selection is drawn again under it (a poll
   // changes the state word); another selection's heading starts with it shut.
   const moreMenu = wk('wk-term-head').querySelector('.wk-more-menu');
-  const headFor = `${nav.board}/${nav.task}`;
+  const headFor = `${panelSlug()}/${nav.task}`;
   const moreOpen = !!moreMenu && !moreMenu.hidden && workHeadFor === headFor;
   workHeadFor = headFor;
   const moreFocus = moreOpen ? document.activeElement?.closest?.('#wk-term-head [data-wk-more-act]')?.dataset.wkMoreAct : null;
@@ -1569,7 +1574,7 @@ function renderWorkTerm() {
   const closed = !!workTerm.term && workTerm.ended != null;
   const again = closed && !!own && boardTerminalReady(own);
   ph.hidden = !!workTerm.term && !stopped && !coming && !closed;
-  const loaded = state.now != null;
+  const loaded = stateNow().now != null;
   const text = coming ? '<div class="tp-muted">起動しています…</div>' : again ? workReconnectHtml() : workTerm.term && !closed ? ''
     : !nav.task || nav.board === 'all' ? ''
       : !work.doc ? '<div class="tp-muted">読み込み中…</div>'
@@ -1588,14 +1593,14 @@ function renderWorkTerm() {
 }
 
 /* The buttons over the middle terminal's placeholder: 再接続, 再開, and a stopped hub's own. Heard on the pane. */
-wk('wk-term-pane').addEventListener('click', e => {
+function onWorkTermPaneClick(e) {
   const b = e.target.closest('[data-sess-act], [data-tp-reconnect]');
   if (!b || b.disabled) return;
   const sel = workSelected();
   const id = sel?.session?.id || (isSessRef(nav.task) ? sessIdOfRef(nav.task) : null);
   // A stopped hub may have no session in the state: it is only as alive as its record says (`hubSessionOf`).
-  const hub = sel?.session?.kind === 'hub' ? (state.hubs || []).find(x => x.id === id) : null;
-  const s = id ? (state.sessions || []).find(x => x.id === id) || (hub ? hubSessionOf(hub) : null) : null;
+  const hub = sel?.session?.kind === 'hub' ? (stateNow().hubs || []).find(x => x.id === id) : null;
+  const s = id ? (stateNow().sessions || []).find(x => x.id === id) || (hub ? hubSessionOf(hub) : null) : null;
   if (!s) return;
   if (b.dataset.tpReconnect != null) {
     workTerm.reconnect = true;
@@ -1605,7 +1610,8 @@ wk('wk-term-pane').addEventListener('click', e => {
   if (b.dataset.sessAct === 'hub-start' && hub) return workStartHub(hub);
   if (b.dataset.sessAct === 'resume' || b.dataset.sessAct === 'hub-start') workTerm.reconnect = true;
   runSessionAction(b.dataset.sessAct, s);
-});
+}
+wk('wk-term-pane').addEventListener('click', e => withPanelState(() => onWorkTermPaneClick(e)));
 
 /* The one place the middle terminal is asked to take the keyboard: 「ターミナルで話す」. */
 function focusWorkTerm() {

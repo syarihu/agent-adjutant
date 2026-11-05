@@ -40,6 +40,124 @@ let pendingGate = null;          // `<board>/<gate>` of an old link, opened once
 let boardJob = null;             // { slug, fn }: run once that board has loaded
 const boardStates = {};          // 「すべて」: each board's last state, by slug
 const baseOf = x => x?._base || BASE;
+
+/* A card in the page's hubTasks with that id and optionally owner slug, or null. */
+const hubTaskOf = (id, slug = null) => (state.hubTasks || []).find(t => t.id === id && (!slug || t.ownerHub?.slug === slug)) || null;
+
+/* The owner hub chosen when a card was pressed, kept across the move to it. */
+let panelOwnerPick = null; // { id, slug }
+
+/* On a resident server showing a real board in the board view, the owner slug for a hub task not listed in the
+   page's own tasks; null when the task is this board's or no hub owns it. */
+function panelOwnerSlug(ref) {
+  if (!multiBoard || !nav.board || nav.board === 'all' || nav.view !== 'agent' || !isTaskRef(ref)) return null;
+  if ((state.tasks || []).some(t => t.id === ref)) return null;
+  const pickSlug = panelOwnerPick?.id === ref && hubTaskOf(ref, panelOwnerPick.slug) ? panelOwnerPick.slug : null;
+  const card = pickSlug ? hubTaskOf(ref, pickSlug) : hubTaskOf(ref);
+  const slug = card?.ownerHub?.slug;
+  if (!slug || slug === nav.board) return null;
+  return slug;
+}
+
+/* The state of the other board whose task or detail dialog is currently open beside this one. */
+const panelOther = { slug: null, asked: null, data: null, json: '', epoch: 0 };
+let panelOtherBusy = false;
+let panelOtherFailed = false;
+
+/* The slug whose state is needed now: the owner of the selected task, else the open detail dialog's. */
+function panelOtherSlug() {
+  const s = panelOwnerSlug(nav.task);
+  if (s) return s;
+  if (typeof taskDetailOwnerSlug === 'function') {
+    const td = taskDetailOwnerSlug();
+    if (td) return td;
+  }
+  return null;
+}
+
+/* The board the selected task belongs to, falling back to the page's board. */
+const panelSlug = () => panelOwnerSlug(nav.task) || nav.board;
+
+/* Fetch the owner hub's /api/state when a card of another board is open, and redraw when it changed. */
+async function refreshPanelOther(force = false) {
+  const slug = panelOtherSlug();
+  if (!slug) {
+    panelOther.slug = null;
+    panelOther.asked = null;
+    panelOther.data = null;
+    panelOther.json = '';
+    panelOtherFailed = false;
+    panelOtherBusy = false;
+    return;
+  }
+  // The board last asked, not the last answered: until its first answer is in, a poll must not drop the request on its way.
+  const slugChanged = slug !== panelOther.asked;
+  if (!force && !slugChanged && panelOtherBusy) return;
+  panelOther.asked = slug;
+  panelOther.epoch++;
+  const epoch = panelOther.epoch;
+  panelOtherBusy = true;
+  const nEpoch = navEpoch;
+  try {
+    const next = await boardApi('/b/' + slug, '/api/state');
+    if (epoch !== panelOther.epoch || nEpoch !== navEpoch || panelOtherSlug() !== slug) return;
+    const isAnswered = g => (typeof answeredGates !== 'undefined' && answeredGates) ? answeredGates.has(typeof gateKey === 'function' ? gateKey({ ...g, _slug: slug }) : `${slug}/${g.id}`) : false;
+    if ((next.gates || []).some(isAnswered)) {
+      next.gates = next.gates.filter(g => !isAnswered(g));
+    }
+    const { now, rateLimits, ...rest } = next;
+    const nextJson = JSON.stringify(rest);
+    const changed = nextJson !== panelOther.json;
+    if (!changed && !force) return;
+    panelOther.slug = slug;
+    panelOther.data = next;
+    panelOther.json = nextJson;
+    panelOtherFailed = false;
+    if (typeof renderTaskPanel === 'function') renderTaskPanel();
+    if (typeof taskDetailFollow === 'function') taskDetailFollow();
+  } catch (e) {
+    if (epoch !== panelOther.epoch || nEpoch !== navEpoch) return;
+    if (!panelOtherFailed) {
+      panelOtherFailed = true;
+      if (typeof note === 'function') note(`状態を取得できませんでした: ${e.message}`, true);
+    }
+  } finally {
+    if (panelOther.epoch === epoch) panelOtherBusy = false;
+  }
+}
+
+let panelStateMemo = { state: null, otherData: null, slug: null, result: null };
+
+/* The state the panel, the terminal beside the board and the detail dialog draw from: the page's own, with the owner
+   hub's tasks, gates and waits added, tagged with their board. The page's own tasks stay in it, so a task panel of this
+   board that is open while a hub card's detail is (or the other way round) is not taken for gone; the other hubs' cards
+   are added too, as the last copy the page has of them, and so is this hub's card until its state is in. */
+function panelState() {
+  const slug = panelOtherSlug();
+  if (!slug) return state;
+  if (panelStateMemo.state === state && panelStateMemo.otherData === panelOther.data && panelStateMemo.slug === slug) {
+    return panelStateMemo.result;
+  }
+  const tag = (list, s) => (list || []).map(x => ({ ...x, _slug: s, _base: '/b/' + s }));
+  const data = panelOther.data && panelOther.slug === slug ? panelOther.data : null;
+  const cards = (state.hubTasks || []).filter(t => t.ownerHub?.slug && !(data && t.ownerHub.slug === slug))
+    .map(t => ({ ...t, _slug: t.ownerHub.slug, _base: '/b/' + t.ownerHub.slug }))
+    // Ids are unique only per hub: this hub's card is found before another hub's of the same id.
+    .sort((x, y) => (y._slug === slug) - (x._slug === slug));
+  const result = {
+    ...state,
+    tasks: [...(state.tasks || []), ...(data ? tag(data.tasks, slug) : []), ...cards],
+    gates: [...(state.gates || []), ...(data ? tag(data.gates, slug) : [])],
+    waits: [...(state.waits || []), ...(data ? tag(data.waits, slug) : [])],
+  };
+  panelStateMemo = { state, otherData: panelOther.data, slug, result };
+  return result;
+}
+
+/* Run `fn` inside the owner hub's state when viewing a task of another board, else in the page's. */
+function withPanelState(fn) {
+  return panelOtherSlug() ? withViewState(panelState(), fn) : fn();
+}
 /* 「すべて」 is the merged board. The work view has no board of its own while nothing is selected, and
    reads its own document instead (my-work.js): it is not 「すべて」, whatever `nav.board` says. */
 const scopeAll = () => multiBoard && nav.board === 'all' && nav.view !== 'work';
@@ -112,6 +230,14 @@ function switchBoard() {
   lastStateJson = '';
   lastMinute = null;
   if (!multiBoard) seenGateIds = null;
+  panelOther.slug = null;
+  panelOther.asked = null;
+  panelOther.data = null;
+  panelOther.json = '';
+  panelOther.epoch++;
+  panelOtherBusy = false;
+  panelOtherFailed = false;
+  panelOwnerPick = null;
   // Each view forgets what it kept for the board being left.
   resetViews();
   boardJob = null;
@@ -191,6 +317,7 @@ function applyNav(boardChanged, panelOnly = false) {
   if (boardChanged) render();
   if (boardChanged) refresh(true);
   else applyPendingTask();
+  if (panelOwnerSlug(wantTask)) refreshPanelOther(true);
   // The first-run guide shows on some screens only, and the banner steps aside while it does (scDraw draws both).
   scDraw();
 }
@@ -219,7 +346,7 @@ function applyPendingTask(final = false) {
   if (id !== pendingTask) { pendingTask = id; setNav({ task: id }); }
   // A parent is in the work document, not in this board's state. In the work view, a board that has
   // no such task answers for it: the panel says so (renderTaskPanel) instead of closing.
-  const there = isPrRef(id) ? prReady() : isParentRef(id) ? !!parentOfRef(id) : isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : isGateRef(id) ? !!gateOfPanelRef(id) : (state.tasks || []).some(t => t.id === id);
+  const there = isPrRef(id) ? prReady() : isParentRef(id) ? !!parentOfRef(id) : isHubRef(id) ? !!hubOfRef(id) : isSessRef(id) ? !!sessOfRef(id) : isGateRef(id) ? !!gateOfPanelRef(id) : ((state.tasks || []).some(t => t.id === id) || !!panelOwnerSlug(id));
   if (!there) {
     // A parent is in the work document, which may not have come yet: the pending task waits for it (refreshWork).
     if (final && !isParentRef(id) && !isPrRef(id)) {

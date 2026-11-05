@@ -24,7 +24,7 @@ const ctx = vm.createContext({
   BASE: '/b/own', multiBoard: true, boards: [{ slug: 'own' }, { slug: 'other' }], navEpoch: 0, note() {}, refresh: async () => {},
   redrawHubWake() {}, pageHub: () => ({ id: 'own', slug: 'own' }), document: { activeElement: null, body: {}, querySelectorAll: sel => { looked.push(sel); return []; } },
   CSS: { escape: x => x }, boardApi: async (base, p, o) => { posts.push([base, p, o.method]); return { woken: true }; },
-  esc: x => String(x),
+  esc: x => String(x), state: { tasks: [], resident: true }, stateNow: () => ctx.state,
 });
 vm.runInContext([
   cut(/^const hubWake = [^\n]*;/m),
@@ -83,7 +83,7 @@ test('the panel wakes the hub on its own board: the page\'s, another served one,
 test('the hub panel draws the wake button in its 受信箱 card, enabled for an unseen message and off for none', () => {
   const names = ['hubStartWhy', 'hubWaitWhy', 'sessionPendingRows', 'sinceLabel', 'secTitle', 'kv', 'agentFactsHtml', 'waitingIn', 'hubListMore', 'hubActionOf', 'canRestart', 'restartWhy', 'idleWorktreesHtml', 'when', 'pendingRowHtml', 'hubCountsOf'];
   for (const n of names) ctx[n] = n === 'sessionPendingRows' || n === 'hubCountsOf' ? () => [] : () => '';
-  Object.assign(ctx, { state: { tasks: [], resident: true }, HUB_LIST_MAX: 5, NO_START: 'x', hubActionOf: () => null });
+  Object.assign(ctx, { state: { tasks: [], resident: true }, stateNow: () => ctx.state, HUB_LIST_MAX: 5, NO_START: 'x', hubActionOf: () => null });
   vm.runInContext(cutPanel(/^function hubDetailHtml[\s\S]*?^}/m), ctx);
   const html = h => { ctx.h = h; return vm.runInContext('hubDetailHtml(h, { present: true })', ctx); };
   const hub = (extra = {}) => ({ id: 'own', slug: 'own', unseen: 1, seen: 0, inbox: [], inboxCount: 1, state: { present: true }, ...extra });
