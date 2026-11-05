@@ -64,6 +64,7 @@ vm.runInContext([
   cut(/^function workProgressCounts[\s\S]*?^}/m),
   cut(/^function workProgressText[\s\S]*?^}/m),
   cut(/^function workProgressHtml[\s\S]*?^}/m),
+  cut(/^function workBarHtml[\s\S]*?^}/m),
   cut(/^const workParentName = [^\n]*;/m),
   cut(/^function workParentMeta[\s\S]*?^}/m),
   ...['afterTitlesOf', 'afterText'].map(n => fs.readFileSync(path.join(__dirname, '..', 'util.js'), 'utf8').match(new RegExp(`^function ${n}\\([\\s\\S]*?^}`, 'm'))[0]),
@@ -637,7 +638,7 @@ test('a parent heading draws the title state of the hub that gave it its title, 
     { slug: 'b-own', titleState: { status: 'failed', why: 'nope', retryAt: 0 } },
   ] };
   const head = parent => run('workHeadHtml(node, false)', { node: { kind: 'parent', key: 'p', parent: { key: 'acme/widget#9', repo, ...parent }, rows: [], items: [], hubs: [] },
-    nav: {}, workSegments: () => [] });
+    nav: {} });
   ctx.boards = [{ slug: 'b-own' }];
   const html = head({ titleHub: 'b-own' });
   assert.ok(html.includes('data-hub-title-read="b-own"') && html.includes('タイトルを読めませんでした: nope'));
@@ -1375,4 +1376,69 @@ test('the progress html has a dot of the bar\'s colour before each state, and th
   const [bar, count] = run('workParentMeta(p)', { p });
   assert.ok(bar.includes(`aria-label="${run('workProgressText(p)', { p })}"`));
   assert.strictEqual(count, run('workProgressHtml(p)', { p }));
+});
+
+test('a parent with an unlisted remainder gets one not-started segment scaled to match the tracker total', () => {
+  const p = { children: kids('merged', 'working', 'pr'), total: 200 };
+  const segs = plain(run('workSegments(p)', { p }));
+  assert.strictEqual(segs.length, 4);
+  assert.strictEqual(segs[3].cls, 'not-started');
+  assert.strictEqual(segs[3].title, '未着手 197 件');
+  assert.strictEqual(segs[3].grow, 197);
+  const totalWidth = segs.reduce((sum, s) => sum + (s.grow || 1), 0);
+  const counts = plain(run('workProgressCounts(p)', { p }));
+  assert.strictEqual(totalWidth, counts.total);
+  assert.strictEqual(totalWidth, 200);
+});
+
+test('a parent whose remainder is one gets no grow above one, and one with none gets no extra segment', () => {
+  // A remainder of exactly 1 has grow 1 and no grow above 1.
+  const pOne = { children: kids('merged', 'working', 'pr'), total: 4 };
+  const segsOne = plain(run('workSegments(p)', { p: pOne }));
+  assert.strictEqual(segsOne.length, 4);
+  assert.strictEqual(segsOne[3].cls, 'not-started');
+  assert.strictEqual(segsOne[3].title, '未着手 1 件');
+  assert.strictEqual(segsOne[3].grow, 1);
+  assert.ok(segsOne.every(s => !(s.grow > 1)));
+
+  // Total equals children length: no extra segment.
+  const pEqual = { children: kids('merged', 'working', 'pr'), total: 3 };
+  const segsEqual = plain(run('workSegments(p)', { p: pEqual }));
+  assert.strictEqual(segsEqual.length, 3);
+  assert.ok(segsEqual.every(s => !s.grow));
+
+  // Total is less than children length: no extra segment.
+  const pLess = { children: kids('merged', 'working', 'pr'), total: 2 };
+  const segsLess = plain(run('workSegments(p)', { p: pLess }));
+  assert.strictEqual(segsLess.length, 3);
+  assert.ok(segsLess.every(s => !s.grow));
+
+  // Total is missing: no extra segment.
+  const pMissing = { children: kids('merged', 'working', 'pr') };
+  const segsMissing = plain(run('workSegments(p)', { p: pMissing }));
+  assert.strictEqual(segsMissing.length, 3);
+  assert.ok(segsMissing.every(s => !s.grow));
+});
+
+test('the bar helper adds flex-grow only for remainder above one, and labels the bar with the progress text', () => {
+  const p200 = { children: kids('merged', 'working', 'pr'), total: 200 };
+  const html200 = run('workBarHtml(p)', { p: p200 });
+  const matches = html200.match(/style="flex-grow:197"/g);
+  assert.strictEqual(matches?.length, 1);
+  assert.strictEqual(html200.match(/style=/g)?.length, 1);
+  assert.ok(html200.includes(`aria-label="${run('workProgressText(p)', { p: p200 })}"`));
+
+  // A parent with no remainder contains no style attribute.
+  const pNone = { children: kids('merged', 'working', 'pr'), total: 3 };
+  const htmlNone = run('workBarHtml(p)', { p: pNone });
+  assert.ok(!htmlNone.includes('style='));
+  assert.ok(htmlNone.includes(`aria-label="${run('workProgressText(p)', { p: pNone })}"`));
+
+  // A parent whose remainder is one contains no style attribute either.
+  const pOne = { children: kids('merged', 'working', 'pr'), total: 4 };
+  const htmlOne = run('workBarHtml(p)', { p: pOne });
+  assert.ok(!htmlOne.includes('style='));
+
+  // The row that heads a parent's group draws the same bar.
+  assert.strictEqual(run('workParentMeta(p)', { p: p200 })[0], html200);
 });
