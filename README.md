@@ -190,7 +190,7 @@ Configuration lives at `~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and 
 
 For tmux integration, custom runner templates, and environment resolution, see [Configuration & Runtime Reference](docs/configuration.md).
 
-**Upgrading from the iTerm2 default:** new workers now open as tmux windows. Set `"terminal": {"preset": "iterm2"}` to keep iTerm2, and run `adj server restart` so the resident server picks the setting up. Sessions already running keep the backend they started with. Details: [Migrating from the iTerm2 default](docs/configuration.md#migrating-from-the-iterm2-default).
+**Upgrading from the iTerm2 default:** new workers now open as tmux windows. Set `"terminal": {"preset": "iterm2"}` to keep iTerm2, and run `adj server restart` so the resident server runs the upgraded version (later config edits reach the boards on their next request, without a restart). Sessions already running keep the backend they started with. Details: [Migrating from the iTerm2 default](docs/configuration.md#migrating-from-the-iterm2-default).
 
 ---
 

@@ -190,7 +190,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 
 tmux との連携やカスタムランナーテンプレート、環境変数の解決順序については、[設定とランタイム詳細](docs/configuration.ja.md) を参照してください。
 
-**iTerm2 が既定だった環境からの移行:** 新しい worker は tmux のウィンドウで開くようになります。iTerm2 のままにするには `"terminal": {"preset": "iterm2"}` を設定し、常駐サーバーに反映させるため `adj server restart` を実行してください。すでに動いているセッションは、起動時のバックエンドのまま扱われます。詳しくは [iTerm2 既定からの移行](docs/configuration.ja.md#iterm2-既定からの移行) を参照してください。
+**iTerm2 が既定だった環境からの移行:** 新しい worker は tmux のウィンドウで開くようになります。iTerm2 のままにするには `"terminal": {"preset": "iterm2"}` を設定し、常駐サーバーを新しいバージョンで動かすため `adj server restart` を実行してください(以降の設定変更は、再起動しなくても次のボードへのリクエストから反映されます)。すでに動いているセッションは、起動時のバックエンドのまま扱われます。詳しくは [iTerm2 既定からの移行](docs/configuration.ja.md#iterm2-既定からの移行) を参照してください。
 
 ---
 
