@@ -429,11 +429,9 @@ mod tests {
 
     #[test]
     fn a_get_with_nothing_listening_says_it_cannot_connect() {
-        let port = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.local_addr().unwrap().port()
-        };
-        let err = get(port, "/", "x", Duration::from_secs(2)).unwrap_err();
+        // Nothing can listen on port 0, so the result does not depend on a
+        // freed port staying free.
+        let err = get(0, "/", "x", Duration::from_secs(2)).unwrap_err();
         assert!(err.starts_with("cannot connect"), "{err}");
     }
 
