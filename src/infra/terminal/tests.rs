@@ -1281,6 +1281,93 @@ fn a_pane_that_exited_reports_what_it_printed_and_is_closed() {
 }
 
 #[test]
+fn a_dead_pane_is_asked_again_for_a_status_tmux_has_not_filled_in() {
+    let screen = "adjutant: run this inside a git repository\n\nPane is dead (status 1, Thu Oct  9 12:00:00 2026)\n";
+    let (got, calls) = watch(
+        vec![
+            Ok("%7\t1\t\n".into()),
+            Ok("%7\t1\t\n".into()),
+            Ok("%7\t1\t1\n".into()),
+            Ok(screen.into()),
+            Ok(String::new()),
+        ],
+        3,
+    );
+    assert_eq!(
+        got,
+        Ok(StartWatch::Exited {
+            status: Some(1),
+            screen: Some("adjutant: run this inside a git repository".to_string()),
+        })
+    );
+    assert_eq!(calls.len(), 5, "{calls:?}");
+    assert!(calls[0].contains("display-message -p -t %7"), "{calls:?}");
+    assert!(calls[1].contains("display-message -p -t %7"), "{calls:?}");
+    assert!(calls[2].contains("display-message -p -t %7"), "{calls:?}");
+    assert!(
+        calls[3].contains("capture-pane -p -J -t %7 -S -40"),
+        "{calls:?}"
+    );
+    assert!(calls[4].ends_with("kill-pane -t %7"), "{calls:?}");
+}
+
+#[test]
+fn a_dead_pane_whose_status_never_comes_is_still_read() {
+    let screen = "adjutant: run this inside a git repository\n\nPane is dead\n";
+    let mut answers: Vec<Result<String, String>> = (0..1 + DEAD_STATUS_TRIES)
+        .map(|_| Ok("%7\t1\t\n".into()))
+        .collect();
+    answers.push(Ok(screen.into()));
+    answers.push(Ok(String::new()));
+    let (got, calls) = watch(answers, 3);
+    assert_eq!(
+        got,
+        Ok(StartWatch::Exited {
+            status: None,
+            screen: Some("adjutant: run this inside a git repository".to_string()),
+        })
+    );
+    let asks = (1 + DEAD_STATUS_TRIES) as usize;
+    assert_eq!(calls.len(), asks + 2, "{calls:?}");
+    for call in &calls[..asks] {
+        assert!(call.contains("display-message -p -t %7"), "{call}");
+    }
+    assert!(
+        calls[asks].contains("capture-pane -p -J -t %7 -S -40"),
+        "{calls:?}"
+    );
+    assert!(calls[asks + 1].ends_with("kill-pane -t %7"), "{calls:?}");
+}
+
+#[test]
+fn a_dead_pane_that_goes_while_asked_again_is_exited_with_nothing_read() {
+    let (got, calls) = watch(
+        vec![
+            Ok("%7\t1\t\n".into()),
+            Err("can't find pane: %7".into()),
+            Err("capture failed".into()),
+            Ok(String::new()),
+        ],
+        3,
+    );
+    assert_eq!(
+        got,
+        Ok(StartWatch::Exited {
+            status: None,
+            screen: None,
+        })
+    );
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert!(calls[0].contains("display-message -p -t %7"), "{calls:?}");
+    assert!(calls[1].contains("display-message -p -t %7"), "{calls:?}");
+    assert!(
+        calls[2].contains("capture-pane -p -J -t %7 -S -40"),
+        "{calls:?}"
+    );
+    assert!(calls[3].ends_with("kill-pane -t %7"), "{calls:?}");
+}
+
+#[test]
 fn a_pane_that_is_gone_is_gone_not_alive() {
     // tmux sometimes answers an empty line, status 0, for a pane that no longer exists.
     assert_eq!(watch(vec![Ok(String::new())], 3).0, Ok(StartWatch::Gone));
