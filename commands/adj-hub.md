@@ -416,23 +416,25 @@ what is unassigned, so **subtasks assigned to others and children of repos not i
 dropped** (the parent collection does not look at assignment). The numbers are reassigned too, and
 drift from the ones just shown.
 
-**Carry the machine row whole.** Pick columns and either later steps fetch the dropped ones again or
-they reach the worker as `-`. This route skips that step's fetch, so **everything later steps
-describe as "the earlier step has it" comes from this row here**:
+**Carry the machine row whole.** Rows are read as JSON by key, as Step 3 of the Dashboard says.
+Pick some keys and either later steps fetch the dropped ones again or they reach the worker as `-`.
+This route skips that step's fetch, so **everything later steps describe as "the earlier step has
+it" comes from this row here**:
 
-- **repo and item id** — used for the assignment and the board update in "2. Claim it" (which says
-  "for a selected task the item id is at hand" and "do not fetch it twice").
-- **title and URL** — the task record's title and `--issue-url` in Step 2 (`adj task brief` writes the
-  brief's Task line from the record); that title is also what `adjutant work` names the tab from
-  through `--task`, so the title is never written on a command line. Step 1 of "4. Start the worker" saying "the title is
-  held by '1. Pick the task'" is about that route, and **this route does not pass through it**.
-- **The resolved branch** — this value is what goes to `git worktree add -b`, and **it is not fetched
-  again in "3. Create the worktree"**. That step builds it from `branchPattern`, but a `linear` branch
-  is `gitBranchName` and does not come from a pattern ("Task sources" `linear`). The path for its
-  location may come from the conventions (proctor or `adj worktree-path`) — only the branch is not
-  fetched again.
-- **Worktree path and PR number** — if filled in, that child has already started. "When handing on
-  to start" below.
+- **repo and item id** (`item`) — used for the assignment and the board update in "2. Claim it"
+  (which says "for a selected task the item id is at hand" and "do not fetch it twice").
+- **title and URL** (`title` and `url`) — the task record's title and `--issue-url` in Step 2
+  (`adj task brief` writes the brief's Task line from the record); that title is also what
+  `adjutant work` names the tab from through `--task`, so the title is never written on a command
+  line. Step 1 of "4. Start the worker" saying "the title is held by '1. Pick the task'" is about
+  that route, and **this route does not pass through it**.
+- **The resolved branch** (`branch`) — this value is what goes to `git worktree add -b`, and **it is
+  not fetched again in "3. Create the worktree"**. That step builds it from `branchPattern`, but a
+  `linear` branch is `gitBranchName` and does not come from a pattern ("Task sources" `linear`). The
+  path for its location may come from the conventions (proctor or `adj worktree-path`) — only the
+  branch is not fetched again.
+- **Worktree path and PR number** (`worktree` and `pr`) — if filled in, that child has already
+  started. "When handing on to start" below.
 
 **When handing on to start — only the list is not rebuilt.** What is skipped is the fetch and
 numbering of "1. Pick the task"; **the later processing attached to it still happens**. The parent
@@ -445,12 +447,13 @@ has to be done here yourself:
   disappear**. Say that in the line that asks. If the answer is to go ahead, from there it is the
   same as "2. Claim it".
 - **Do not create a worktree for a row that has already started.** When a row under "in progress" or
-  "held by others" is named, look at the machine row's worktree path and PR number. **If the path is
-  filled in, do not run `git worktree add -b`** — it fails on a branch that already exists. Use that
-  worktree as it is and hand it to 4 of "When asked to work on an existing worktree" (start a worker,
-  or open it in the IDE). With proctor installed, the start of "3. Create the worktree" notices, but
-  **on a machine without it nobody is looking**. **For a row with a PR but no worktree**, growing one
-  with `-b` makes something other than that PR's branch, so say so and stop.
+  "held by others" is named, look at the machine row's `worktree` path and `pr` number. **If the path
+  is filled in, do not run `git worktree add -b`** — it fails on a branch that already exists. Use
+  that worktree as it is and hand it to 4 of "When asked to work on an existing worktree" (start a
+  worker, or open it in the IDE). With proctor installed, the start of "3. Create the worktree"
+  notices, but **on a machine without it nobody is looking**. **For a row with a PR but no
+  worktree**, growing one with `-b` makes something other than that PR's branch, so say so and
+  stop.
 - **Rows with no key configured have no number.** The list above says so, so when one is named by
   key, give the same answer and stop (ask whether to add it to `issueKeys`). Do not send it on to
   "3. Create the worktree" without a branch name.
@@ -499,16 +502,16 @@ URL are **fetched here** (the brief's "Parent task" line needs that URL):
 
   ```bash
   gh api --paginate repos/{parent repo}/issues/{parent number}/sub_issues \
-    --jq '.[] | "\(.number) | \(.title) | \(.state) | \(.html_url) | \(.node_id) | \(.repository_url | sub(".*/repos/"; "")) | \([.labels[].name] | join(",")) | \([.assignees[].login] | join(","))"'
+    --jq '.[] | {number, title, state, html_url, node_id, repo: (.repository_url | sub(".*/repos/"; "")), labels: [.labels[].name], assignees: [.assignees[].login]}'
   ```
 
-  **Do not trim these columns.** `state` is itself the test for "done" (the sorting above; `closed`
+  **Do not trim these fields.** `state` is itself the test for "done" (the sorting above; `closed`
   is done). The URL is needed by the report's machine rows. `node_id` is passed as it is to
   `nodes(ids:)` by `github-project` below. The repo taken from `repository_url` is needed so as not
   to apply your own repo's key to a child in another repo (`issueKeys` is per repo, and a board is
   not a repo). Labels are the only clue for telling started ones apart on a plain `github` source
   with no board ("Task sources" `github`). **`assignees` is needed to sort out "held by others"** —
-  the parent collection does not filter by assignment, so without this column others' tasks are
+  the parent collection does not filter by assignment, so without this field others' tasks are
   listed, numbered, under "next candidates".
   **Do not drop `--paginate` either** — a list cut off halfway cannot be told from a short list.
 - **`github-project`** — sub-issues are fetched the same way as `github`. Parenthood is an attribute
@@ -743,7 +746,8 @@ itself.
 
 - **The same for "2. Start a task", "3. File and start", Step 4 of "When a request arrives" and A of
   "When asked to work on an existing worktree".** Every route that starts a worker carries this line.
-- **Take the URL from the parent task row the collection's report returned.** The hub holds only the
+- **Take the URL from the parent task row the collection's report returned.** It is the `url` of
+  the `"kind": "parent"` row (read by key as Step 3 of the Dashboard says). The hub holds only the
   key. Only when a dispatch comes before the report has returned, fetch the parent once on the spot
   ("Fetching the parent itself" in "Fetching what sits under the parent"). It is a single thing with a
   person right in front of you, separate from keeping startup to one block.
@@ -1176,7 +1180,15 @@ checkout under `[Worktrees]` and marks that task as started. Go by the marker, n
 paths with `adjutant_config`'s `main`, as in Step 1.
 
 **Do not show the Project item id in this table** (it means nothing to a person). Pick it up from the
-machine rows that come with the agent's report, and use it in "2. Claim it".
+machine rows that come with the agent's report, and use it in "2. Claim it". **The machine rows are
+JSON Lines** (one JSON object per line; the collection briefs in the appendices). Read each line as
+JSON and take values by key (`item`, `title`, `url` ...); the repo is the `owner/repo` before `#` in
+`identifier`. **Never split a row on `|` or any other character** — a title may contain it, and
+every later value then lands in the wrong field. `kind` says what a row is (`task`, `worktree`,
+`pr`, `review`, `parent`, `subtask`); read the other keys as that kind's. A line that does not
+parse is not repaired by guessing: for a task, fetch that one directly, as "1. Pick the task" says
+for a task asked for before the report returns; for anything else, say in one line that it could
+not be read.
 
 ```
 ═══════════════════════════════════════════
@@ -1234,10 +1246,10 @@ Then, over the merged list:
    `statusCategory`; the reason is in "Task sources" `jira`).
 
 This list normally comes from the Dashboard collection agent's report (the machine rows carry the
-repo, key, item id and status). **If told "start ALPHA-233" before that has come back, do not wait.**
-Go ahead by fetching just that one directly (for the `github` family `gh issue view`, plus one
-`nodes(ids:)` if the item id is needed; for `jira` one `getJiraIssue`).
-The collection can be shown when it arrives.
+repo, key, item id and status; read by key as Step 3 of the Dashboard says). **If told "start
+ALPHA-233" before that has come back, do not wait.** Go ahead by fetching just that one directly
+(for the `github` family `gh issue view`, plus one `nodes(ids:)` if the item id is needed; for
+`jira` one `getJiraIssue`). The collection can be shown when it arrives.
 
 Present up to 4 with `AskUserQuestion`, highest priority first, and say how many more there
 are. Group by key when more than one is in play.
@@ -1321,7 +1333,7 @@ Everything here uses **the selected task's own source**, not the repo's first on
     --jq '.fields[] | select(.name == "Status") | {fieldId: .id, options: .options}'
   ```
 
-  If a selected task's row carries `no-item` in place of an id, the issue has **no item on that
+  If a selected task's row carries `no-item` as its `item`, the issue has **no item on that
   board**: skip the status update, tell the user, and carry on.
   **Status options are per board, not universal.** One board's `In Progress` may not exist on
   another — a content board might run Not started / In production / Done instead. `projectFields`
@@ -2754,7 +2766,7 @@ gh api graphql -f query="{ nodes(ids: [$idlist]) { ... on Issue {
     fieldValueByName(name: \"Status\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }" \
   --jq '.data.nodes[] | . as $i
         | ([$i.projectItems.nodes[] | select(.project.number == <projectNumber>)][0]) as $it
-        | "\($i.repository.nameWithOwner)#\($i.number) | \($i.title) | \($it.fieldValueByName.name // "N/A") | \($it.id // "no-item")"'
+        | {identifier: "\($i.repository.nameWithOwner)#\($i.number)", title: $i.title, url: $i.url, status: ($it.fieldValueByName.name // "N/A"), item: ($it.id // "no-item")}'
 ```
 
 Carry two things forward on every row, because neither is recoverable later without another
@@ -2931,14 +2943,23 @@ Do not:
 Put both of these in the report:
 
 1. A table for people — exactly the shape of Step 3 of the Dashboard
-2. Rows for machines — one task per line, `|`-separated, in this order:
-   {identifier} | {KEY-number} | {project item id or -} | {status} | {title} | {URL}
+2. Rows for machines — JSON Lines: one JSON object per line, no line breaks inside an object.
+   Write each object with a JSON encoder (for example `jq -c`, or `gh --jq` printing an object),
+   never by pasting values between quotes by hand: a title can hold `|`, `"` or a newline, and only
+   an encoder escapes them. The reason: a value may contain any character, so a row split on a
+   separator character moves every later value into the wrong field. Fill what is missing with `"-"`;
+   never drop a key.
+   Shape of a task row (keys in this order):
+   {"kind": "task", "identifier": "{identifier}", "key": "{KEY-number}", "item": "{project item id or -}", "status": "{status}", "title": "{title}", "url": "{URL}"}
    The identifier is `{owner/repo}#{number}` for the `github` family, and the issue key for `jira` /
    `linear`.
    The hub uses this item id as it is when starting. Drop it and GraphQL has to be run again, so always
    include it for `github-project` (`jira` has none, so `-`).
    For `jira` the URL is the `webUrl` the search returns, as it is (do not build it).
-   Worktrees, your own PRs and review requests go one per line the same way.
+   Worktrees, your own PRs and review requests go one JSON object per line as well, in these shapes:
+   {"kind": "worktree", "path": "{worktree path}", "branch": "{branch}"}
+   {"kind": "pr", "number": "{PR number}", "title": "{title}", "url": "{URL}"}
+   {"kind": "review", "number": "{PR number}", "title": "{title}", "url": "{URL}"}
 
 Issues left out for having no key configured also go in the report, with the count and repo (do not
 drop them silently).
@@ -2970,17 +2991,18 @@ Collect how things stand under {parent key}.
 - Resolve the branch per child — as "Resolve the branch per child" in "Fetching what sits under the
   parent" says, it is the `branch` `adj worktree-path` returns (`gitBranchName` for `linear` alone).
   **Do not build the shape yourself**
-- Worktrees go one per line the same way (`proctor worktree ls --json`, or `git worktree list`
-  without it). **The main checkout does not count as a worktree** — it is on both lists, the
-  `isMain: true` row for proctor and the first line for `git worktree list`. Drop that row first. Do
-  not look for it by matching the path with `adjutant_config`'s `main` — proctor prints paths with
-  symlinks resolved, so the strings can differ for the same place. When the hub is on a task's branch
-  it matches that subtask, which is then read as "has a worktree" and a worker opens under the hub's
-  feet.
+- Worktrees go one JSON object per line, `{"kind": "worktree", "path": "{worktree path}", "branch":
+  "{branch}"}` (`proctor worktree ls --json`, or
+  `git worktree list` without it). **The main checkout does not count as a worktree** — it is on both
+  lists, the `isMain: true` row for proctor and the first line for `git worktree list`. Drop that row
+  first. Do not look for it by matching the path with `adjutant_config`'s `main` — proctor prints paths
+  with symlinks resolved, so the strings can differ for the same place. When the hub is on a task's
+  branch it matches that subtask, which is then read as "has a worktree" and a worker opens under the
+  hub's feet.
   Which subtask a worktree belongs to is decided by **an exact string match with the resolved
   branch** (strip `refs/heads/` first if present). **Do not look for whether the key is contained** —
   `ALPHA-1` would match `ALPHA-10`'s worktree. **Put worktrees that matched no subtask in the report
-  together on one line** — a sign the conventions have drifted; drop them silently and "no worktree"
+  together on one line** (in the part for people, not as a machine row) — a sign the conventions have drifted; drop them silently and "no worktree"
   is read as "nobody has touched it"
 
 Do not:
@@ -2995,13 +3017,15 @@ Put both of these in the report:
 
 1. A table for people — the parent task on one line (with the title and URL you fetched), and under it
    the subtasks one per line (showing state and PR)
-2. Rows for machines — first the parent task on one line: `parent | {parent key} | {title} | {URL}`.
+2. Rows for machines — JSON Lines: one JSON object per line, no line breaks inside an object.
+   Write each object with a JSON encoder (the same as the dashboard collection's brief: never paste
+   values by hand, and never split on a separator).
+   First the parent task on one line:
+   {"kind": "parent", "key": "{parent key}", "title": "{title}", "url": "{URL}"}
    The hub passes this URL as `--parent` (`adj task add` / `adj task brief`), so drop it and that
    line stays empty.
-   Then the subtasks one per line, `|`-separated, in this order:
-   {identifier} | {KEY-number} | {project item id or -} | {status} | {assignee or -} |
-   {resolved branch} | {title} | {URL} |
-   {PR number or -} | {PR state or -} | {worktree path or -}
+   Then the subtasks one per line, in this order:
+   {"kind": "subtask", "identifier": "{identifier}", "key": "{KEY-number}", "item": "{project item id or -}", "status": "{status}", "assignee": "{assignee or -}", "branch": "{resolved branch}", "title": "{title}", "url": "{URL}", "pr": "{PR number or -}", "prState": "{PR state or -}", "worktree": "{worktree path or -}"}
    The identifier and project item id are written as in the dashboard collection's brief.
    The PR state and the worktree are what the hub uses to sort "done / in progress / next candidates".
    **`{assignee}` is used to sort out children held by others** — drop it and others' tasks are listed,
@@ -3016,7 +3040,7 @@ Put both of these in the report:
    **On a plain `github` source with no board, put the labels in `{status}`** — that is the only clue
    to in progress, and without it started subtasks are listed under "next candidates" (when finished,
    the above takes precedence).
-   Fill what is missing with `-`, and **never drop a column.**
+   Fill what is missing with `-`, and **never drop a key.**
 
 Issues left out for having no key configured also go in the report, with the count and repo (do not
 drop them silently).

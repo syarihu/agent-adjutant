@@ -979,15 +979,15 @@ fn a_sub_issue_row_carries_the_columns_its_readers_need() {
     );
     let flowed: String = flow(&fetch);
     assert!(
-        flowed.contains("\\(.html_url)"),
+        flowed.contains("{number, title, state, html_url,"),
         "the sub-issue rows carry no URL: {fetch}"
     );
     assert!(
-        flowed.contains("\\(.node_id)"),
+        flowed.contains("html_url, node_id,"),
         "the sub-issue rows carry no node id: {fetch}"
     );
     assert!(
-        flowed.contains("\\(.repository_url"),
+        flowed.contains("repo: (.repository_url"),
         "the sub-issue rows carry no repository: {fetch}"
     );
     // The node id is dead weight unless the step that spends it says so.
@@ -1173,7 +1173,9 @@ fn a_subtask_s_branch_is_resolved_from_the_convention_rather_than_spelled_out() 
     // The row is the only channel to the hub, so the resolved branch has to travel on it —
     // as a column of the row, not merely as a word in the prose beside it.
     assert!(
-        brief_flowed.contains("{status} | {assignee or -} | {resolved branch} | {title}"),
+        brief_flowed.contains(
+            "\"status\": \"{status}\", \"assignee\": \"{assignee or -}\", \"branch\": \"{resolved branch}\", \"title\": \"{title}\""
+        ),
         "the row the collector returns has no column for the resolved branch: {brief}"
     );
     assert!(
@@ -1306,7 +1308,7 @@ fn a_started_subtask_is_recognised_where_the_source_marks_it_with_a_label() {
     let fetch = step(raw, "### Fetching what sits under the parent");
     let fetch_flowed: String = flow(&fetch);
     assert!(
-        fetch_flowed.contains("\\([.labels[].name]"),
+        fetch_flowed.contains("labels: [.labels[].name]"),
         "the sub-issue rows carry no labels: {fetch}"
     );
     // A column nobody is told the purpose of is a column the next edit deletes.
@@ -1460,7 +1462,7 @@ fn the_parent_route_keeps_the_selection_step_s_rules_when_it_skips_the_fetch() {
     );
     let fetch_flowed: String = flow(&fetch);
     assert!(
-        fetch_flowed.contains("\\([.assignees[].login]"),
+        fetch_flowed.contains("assignees: [.assignees[].login]"),
         "the sub-issue rows carry no assignee: {fetch}"
     );
     assert!(
@@ -1562,7 +1564,7 @@ fn a_row_handed_to_the_claim_step_travels_whole_rather_than_column_by_column() {
     );
     let brief_flowed: String = flow(&brief);
     assert!(
-        brief_flowed.contains("{title} | {URL} |"),
+        brief_flowed.contains("\"title\": \"{title}\", \"url\": \"{URL}\""),
         "the collector's row has no title and URL columns to carry: {brief}"
     );
     assert!(
@@ -2095,6 +2097,135 @@ fn a_filed_issue_s_board_item_is_found_by_its_repository_and_number() {
     assert!(
         !start.contains("gh project item-list"),
         "the filing route still points at the number-only lookup: {start}"
+    );
+}
+
+/// A collected row travels as one JSON object so no value can split it into wrong fields.
+///
+/// A separator-split row breaks when a value contains the separator: a task title holding `|`
+/// splits its own row and shifts every later field. In the eleven-field parent row, the title
+/// sits in the middle, so a pipe in the title moves the issue URL, PR, branch and worktree
+/// into neighbouring slots and leaves the hub acting on corrupted data that parses cleanly.
+/// Every machine row is therefore one JSON Lines object written by a JSON encoder and read
+/// by key.
+#[test]
+fn a_collected_row_is_one_json_object_so_no_value_can_split_it() {
+    let raw = find("adj-hub").unwrap().raw_content;
+
+    let dash_brief = section(
+        raw,
+        "## Appendix — Brief for the dashboard collection agent",
+    );
+    let dash_flowed: String = flow(&dash_brief);
+    assert!(
+        dash_flowed.contains("one JSON object per line"),
+        "dashboard brief does not require JSON Lines: {dash_brief}"
+    );
+    assert!(
+        dash_flowed.contains("JSON encoder"),
+        "dashboard brief does not require a JSON encoder: {dash_brief}"
+    );
+    assert!(
+        !dash_flowed.contains("`|`-separated"),
+        "dashboard brief still mentions `|`-separated: {dash_brief}"
+    );
+    assert!(
+        !dash_flowed.contains("} | {"),
+        "dashboard brief still has pipe-separated placeholders: {dash_brief}"
+    );
+
+    let parent_brief = section(
+        raw,
+        "## Appendix — Brief for the parent task collection agent",
+    );
+    let parent_flowed: String = flow(&parent_brief);
+    assert!(
+        parent_flowed.contains("one JSON object per line"),
+        "parent brief does not require JSON Lines: {parent_brief}"
+    );
+    assert!(
+        parent_flowed.contains("JSON encoder"),
+        "parent brief does not require a JSON encoder: {parent_brief}"
+    );
+    assert!(
+        !parent_flowed.contains("`|`-separated"),
+        "parent brief still mentions `|`-separated: {parent_brief}"
+    );
+    assert!(
+        !parent_flowed.contains("} | {"),
+        "parent brief still has pipe-separated placeholders: {parent_brief}"
+    );
+    assert!(
+        parent_flowed.contains("\"kind\": \"parent\""),
+        "parent brief lacks kind: parent row: {parent_brief}"
+    );
+    assert!(
+        parent_flowed.contains("\"title\": \"{title}\""),
+        "parent brief subtask lacks title key: {parent_brief}"
+    );
+    assert!(
+        parent_flowed.contains("\"url\": \"{URL}\""),
+        "parent brief subtask lacks url key: {parent_brief}"
+    );
+    assert!(
+        parent_flowed.contains("\"assignee\": \"{assignee or -}\""),
+        "parent brief subtask lacks assignee key: {parent_brief}"
+    );
+    assert!(
+        parent_flowed.contains("\"branch\": \"{resolved branch}\""),
+        "parent brief subtask lacks branch key: {parent_brief}"
+    );
+    // Worktrees are matched to subtasks by branch, so their key names are fixed too: a
+    // collector that invents its own would leave every worktree unmatched.
+    for (name, brief) in [("dashboard", &dash_flowed), ("parent", &parent_flowed)] {
+        assert!(
+            brief.contains(
+                "{\"kind\": \"worktree\", \"path\": \"{worktree path}\", \"branch\": \"{branch}\"}"
+            ),
+            "the {name} brief leaves the worktree row's keys open"
+        );
+    }
+
+    let display = step(raw, "### Step 3: Display");
+    let display_flowed: String = flow(&display);
+    assert!(
+        display_flowed.contains("take values by key"),
+        "Step 3: Display does not say to take values by key: {display}"
+    );
+    assert!(
+        display_flowed.contains("Never split a row on `|` or any other character"),
+        "Step 3: Display does not ban splitting on a character: {display}"
+    );
+
+    let startup = step(raw, "### Read at startup");
+    let startup_flowed: String = flow(&startup);
+    assert!(
+        startup_flowed.contains("read as JSON by key, as Step 3 of the Dashboard says"),
+        "Read at startup does not point to the Step 3 reading rule: {startup}"
+    );
+
+    let pick = step(raw, "### 1. Pick the task");
+    let pick_flowed: String = flow(&pick);
+    assert!(
+        pick_flowed.contains("read by key as Step 3 of the Dashboard says"),
+        "1. Pick the task does not point to the Step 3 reading rule: {pick}"
+    );
+
+    let fetch = step(raw, "### Fetching what sits under the parent");
+    let fetch_flowed: String = flow(&fetch);
+    assert!(
+        !fetch_flowed.contains("\\(.title) |"),
+        "sub-issue fetch still builds a pipe-separated string: {fetch}"
+    );
+    // The board recipe the collector runs for `github-project` feeds the same rows, and the
+    // task row it becomes needs the URL the query already fetches.
+    assert!(
+        !raw.contains("\\($i.title) |"),
+        "the board's nodes(ids:) recipe still builds a pipe-separated string"
+    );
+    assert!(
+        raw.contains("{identifier: \"\\($i.repository.nameWithOwner)#\\($i.number)\", title: $i.title, url: $i.url,"),
+        "the board's nodes(ids:) recipe drops the keys the task row is built from"
     );
 }
 
