@@ -1,8 +1,11 @@
 //! The queue of readers, what they hand in, and the material they read.
 
+use super::claim_reads::queued_on_a_done_pr;
+use super::fail_read::fail_read_if;
 use super::model::{MyReview, is_stale};
 use super::read_context::hunk_headers;
 use super::read_through::MAX_READ_BYTES;
+use super::reap_reads::reap_listed;
 use super::request_read::HUNG_READER_SECS;
 use super::store;
 use super::tests::{NOW, pr, record};
@@ -332,6 +335,109 @@ fn a_reader_with_no_pid_is_waited_for_only_through_the_grace() {
             .unwrap()
             .contains("did not start")
     );
+}
+
+#[test]
+fn a_reader_that_notes_its_pid_after_the_listing_is_not_failed() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-1"));
+    let listed = store::list(root.path());
+    note_reader(root.path(), &pr(1), "sid-1", 4242, None, None).unwrap();
+    let never = |_: u32, _: Option<&str>| panic!("no pid to ask about");
+    let failed = reap_listed(
+        root.path(),
+        listed,
+        NOW + READER_START_GRACE_SECS + 1,
+        &never,
+    );
+    assert!(failed.is_empty());
+    assert_eq!(status(root.path(), 1), "running");
+    assert_eq!(load(root.path(), 1).ai.unwrap().pid, Some(4242));
+
+    let asked_about = std::cell::Cell::new(None);
+    let alive = |pid: u32, _: Option<&str>| {
+        asked_about.set(Some(pid));
+        Liveness::Alive
+    };
+    let failed_fresh = reap_reads(root.path(), NOW + READER_START_GRACE_SECS + 1, &alive);
+    assert!(failed_fresh.is_empty());
+    assert_eq!(asked_about.get(), Some(4242));
+    assert_eq!(status(root.path(), 1), "running");
+}
+
+#[test]
+fn a_reader_whose_pid_changed_after_the_listing_is_not_failed() {
+    let root = tempfile::tempdir().unwrap();
+    let mut r = running(1, "sid-1");
+    r.ai.as_mut().unwrap().pid = Some(10);
+    put(root.path(), r);
+    let listed = store::list(root.path());
+    let mut current = load(root.path(), 1);
+    current.ai.as_mut().unwrap().pid = Some(11);
+    put(root.path(), current);
+    let alive = |pid: u32, _: Option<&str>| match pid {
+        10 => Liveness::Gone,
+        _ => Liveness::Alive,
+    };
+    let failed = reap_listed(root.path(), listed, NOW + 1000, &alive);
+    assert!(failed.is_empty());
+    assert_eq!(status(root.path(), 1), "running");
+    assert_eq!(load(root.path(), 1).ai.unwrap().pid, Some(11));
+}
+
+#[test]
+fn a_failure_whose_premise_no_longer_holds_changes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), running(1, "sid-1"));
+    let res = fail_read_if(root.path(), &pr(1), Some("sid-1"), "boom", NOW + 5, &|_| {
+        false
+    });
+    assert_eq!(res, Ok(false));
+    let ai = load(root.path(), 1).ai.unwrap();
+    assert_eq!(ai.status, "running");
+    assert_eq!(ai.error, None);
+
+    let res = fail_read_if(root.path(), &pr(1), Some("sid-1"), "boom", NOW + 5, &|_| {
+        true
+    });
+    assert_eq!(res, Ok(true));
+    let ai = load(root.path(), 1).ai.unwrap();
+    assert_eq!(ai.status, "failed");
+    assert_eq!(ai.error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn a_queued_read_whose_pr_is_open_again_is_not_failed_as_done() {
+    let root = tempfile::tempdir().unwrap();
+    let mut r = asked(1, "queued", 0);
+    r.pr_state = PrOpenState::Merged;
+    put(root.path(), r);
+    let listed = store::list(root.path());
+    assert!(listed.iter().all(queued_on_a_done_pr));
+    // What `claim_reads` fails on is decided from such a listing, and a sync opens the PR again
+    // before the failure. This drives the failure `claim_reads` makes, with its premise.
+    let mut open = load(root.path(), 1);
+    open.pr_state = PrOpenState::Open;
+    put(root.path(), open);
+    let fail = || {
+        fail_read_if(
+            root.path(),
+            &pr(1),
+            None,
+            "the PR is no longer open",
+            NOW,
+            &queued_on_a_done_pr,
+        )
+    };
+    assert_eq!(fail(), Ok(false));
+    assert_eq!(status(root.path(), 1), "queued");
+
+    // Still done under the lock, it fails.
+    let mut done = load(root.path(), 1);
+    done.pr_state = PrOpenState::Merged;
+    put(root.path(), done);
+    assert_eq!(fail(), Ok(true));
+    assert_eq!(status(root.path(), 1), "failed");
 }
 
 // ── naming a PR ──────────────────────────────────────────────────────

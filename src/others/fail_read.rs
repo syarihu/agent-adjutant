@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::infra::clock::utc_stamp;
 use crate::task::PrRef;
 
-use super::model::AiRead;
+use super::model::{AiRead, Record};
 use super::store;
 
 /// Mark the read of `pr` as `failed`, with `why`. Only a read that is `queued` or `running`
@@ -21,17 +21,32 @@ pub fn fail_read(
     why: &str,
     now: i64,
 ) -> Result<bool, String> {
+    fail_read_if(root, pr, session_id, why, now, &|_| true)
+}
+
+/// Like `fail_read`, but only when `still` holds on the record under the lock. The caller decided
+/// from a listing taken without the lock, and `still` is that decision's premise checked again
+/// under it.
+pub(super) fn fail_read_if(
+    root: &Path,
+    pr: &PrRef,
+    session_id: Option<&str>,
+    why: &str,
+    now: i64,
+    still: &dyn Fn(&Record) -> bool,
+) -> Result<bool, String> {
     let _lock = store::lock(root, &store::stem(pr))?;
     let mut record = store::load(root, pr)?.ok_or("no record of this pull request")?;
-    let Some(ai) = record.ai.as_mut() else {
-        return Ok(false);
-    };
-    let current = matches!(ai.status.as_str(), "queued" | "running")
-        && session_id.is_none_or(|s| ai.session_id.as_deref() == Some(s));
-    if !current {
+    let current = record.ai.as_ref().is_some_and(|ai| {
+        matches!(ai.status.as_str(), "queued" | "running")
+            && session_id.is_none_or(|s| ai.session_id.as_deref() == Some(s))
+    });
+    if !current || !still(&record) {
         return Ok(false);
     }
-    mark_failed(ai, why, now);
+    if let Some(ai) = record.ai.as_mut() {
+        mark_failed(ai, why, now);
+    }
     store::save(root, &mut record)?;
     Ok(true)
 }

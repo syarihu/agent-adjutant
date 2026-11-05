@@ -39,12 +39,18 @@ pub fn claim_reads(
     let _lock = store::review_lock(root)?;
     // A PR that went done while it waited is not read: it is failed with the reason, and takes no
     // place from one that is open. (Failing takes the record's lock, after this one, as always.)
-    for done in store::list(root)
-        .into_iter()
-        .filter(|r| r.state == State::Done && r.ai.as_ref().is_some_and(|ai| ai.status == "queued"))
-    {
+    for done in store::list(root).into_iter().filter(queued_on_a_done_pr) {
         if let Some(pr) = pr_ref(&done.url, None) {
-            let _ = super::fail_read::fail_read(root, &pr, None, "the PR is no longer open", now);
+            // A sync may have opened the PR again since the listing: it writes under the record's
+            // lock only.
+            let _ = super::fail_read::fail_read_if(
+                root,
+                &pr,
+                None,
+                "the PR is no longer open",
+                now,
+                &queued_on_a_done_pr,
+            );
         }
     }
     let records = store::list(root);
@@ -111,4 +117,9 @@ pub fn claim_reads(
         (true, Some(e)) => Err(e),
         _ => Ok(claims),
     }
+}
+
+/// A read that waits in the queue for a PR that is done: failed rather than claimed.
+pub(super) fn queued_on_a_done_pr(r: &Record) -> bool {
+    r.state == State::Done && r.ai.as_ref().is_some_and(|ai| ai.status == "queued")
 }

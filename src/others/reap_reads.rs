@@ -6,7 +6,8 @@ use crate::infra::clock::utc_stamp;
 use crate::registry::Liveness;
 use crate::task::pr_ref;
 
-use super::fail_read::fail_read;
+use super::fail_read::fail_read_if;
+use super::model::Record;
 use super::store;
 
 /// How long a reader that has not said where it is may take to start, in seconds.
@@ -21,10 +22,21 @@ pub fn reap_reads(
     now: i64,
     alive: &dyn Fn(u32, Option<&str>) -> Liveness,
 ) -> Vec<String> {
+    reap_listed(root, store::list(root), now, alive)
+}
+
+/// Like `reap_reads`, but over `records`. The listing may be stale (taken without any lock),
+/// which is why each failure re-checks under the lock.
+pub(super) fn reap_listed(
+    root: &Path,
+    records: Vec<Record>,
+    now: i64,
+    alive: &dyn Fn(u32, Option<&str>) -> Liveness,
+) -> Vec<String> {
     // Stamps sort as text, so the cut-off is a stamp.
     let cutoff = utc_stamp(now - READER_START_GRACE_SECS);
     let mut failed = Vec::new();
-    for record in store::list(root) {
+    for record in records {
         let Some(ai) = record.ai.as_ref().filter(|ai| ai.status == "running") else {
             continue;
         };
@@ -42,8 +54,20 @@ pub fn reap_reads(
         let Some(pr) = pr_ref(&record.url, None) else {
             continue;
         };
+        let listed_pid = ai.pid;
+        let listed_ps_started = ai.ps_started.clone();
+        let listed_launched_at = ai.launched_at.clone();
+        // A reader may have noted its pid, or another may be running, since the listing.
+        let still = |r: &Record| {
+            r.ai.as_ref().is_some_and(|cur| {
+                cur.status == "running"
+                    && cur.pid == listed_pid
+                    && cur.ps_started == listed_ps_started
+                    && cur.launched_at == listed_launched_at
+            })
+        };
         if matches!(
-            fail_read(root, &pr, ai.session_id.as_deref(), why, now),
+            fail_read_if(root, &pr, ai.session_id.as_deref(), why, now, &still),
             Ok(true)
         ) {
             failed.push(record.id);
