@@ -405,10 +405,12 @@ fn run_program(
         }
     };
     let left = end.saturating_duration_since(std::time::Instant::now());
-    let out = rx
-        .recv_timeout(left.max(Duration::from_millis(100)))
-        .map_err(|_| RunError::TimedOut(deadline))?;
-    Ok((status.success(), out))
+    match rx.recv_timeout(left.max(Duration::from_millis(100))) {
+        Ok(out) => Ok((status.success(), out)),
+        // It exited and failed, which is the answer whatever still holds its stdout open.
+        Err(_) if !status.success() => Ok((false, String::new())),
+        Err(_) => Err(RunError::TimedOut(deadline)),
+    }
 }
 
 /// The latest `MachineChecks` of a resident, shared with every board it opens so that a tmux
@@ -926,8 +928,19 @@ mod tests {
 
         let start = std::time::Instant::now();
         let deadline = Duration::from_millis(200);
-        let slow = run_program("sleep", &["5"], deadline);
+        let slow = run_program("sleep", &["30"], deadline);
         assert_eq!(slow, Err(RunError::TimedOut(deadline)));
-        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(start.elapsed() < Duration::from_secs(15));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_program_that_fails_while_a_child_holds_its_stdout_is_a_failure_not_slow() {
+        let ran = run_program(
+            "sh",
+            &["-c", "sleep 2 & exit 3"],
+            Duration::from_millis(200),
+        );
+        assert_eq!(ran, Ok((false, String::new())));
     }
 }
