@@ -562,6 +562,7 @@ fn all_repo_hubs_discovers_hub_from_saved_worker_session_when_record_absent() {
         Some("unregistered-worker-hub"),
         None,
         "sid-prev",
+        None,
     )
     .unwrap();
 
@@ -614,7 +615,7 @@ fn a_parent_hub_with_an_ended_worker_is_listed_with_its_count() {
     let root = sandbox.state();
     let dir = tempfile::tempdir().unwrap();
     // The worker's record is gone; its saved session still names the hub.
-    save_worker_session(dir.path(), "WID-957", Some("WID-957"), None, "sid-1").unwrap();
+    save_worker_session(dir.path(), "WID-957", Some("WID-957"), None, "sid-1", None).unwrap();
 
     let hubs = all_repo_hubs(&root, &widget_repo(dir.path()));
     assert_eq!(hubs.len(), 2, "{hubs:?}");
@@ -656,7 +657,7 @@ fn a_worker_moved_to_another_hub_counts_only_there() {
     let dir = tempfile::tempdir().unwrap();
     // Dispatched by A, moved to B: the record says B, the session still says A.
     write_json(&worker_record_path(dir.path()), &json!({"hub": "B"})).unwrap();
-    save_worker_session(dir.path(), "t", Some("A"), None, "sid-1").unwrap();
+    save_worker_session(dir.path(), "t", Some("A"), None, "sid-1", None).unwrap();
     let a = crate::kernel::identity::slug_for("acme/widget", Some("A"));
     save_hub_session(&root, &a, "acme/widget", Some("A"), "adjutant-a", "sess-a").unwrap();
 
@@ -1355,7 +1356,7 @@ fn a_session_with_a_row_is_held_by_it_on_any_terminal_and_one_without_is_not() {
     assert!(!wake_looks_at_screen(&ctx.settings, false));
     assert!(!wake_holds_for_session(&ctx, worktree.path(), false));
 
-    save_worker_session(worktree.path(), "t", None, None, "sid-1").unwrap();
+    save_worker_session(worktree.path(), "t", None, None, "sid-1", None).unwrap();
     let event = AgentEvent {
         agent: "claude".to_string(),
         session_id: "sid-1".to_string(),

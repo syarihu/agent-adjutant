@@ -85,6 +85,13 @@ AppleScript を使ってタブの作成、タイトルの設定、テキスト�
   - 設定ファイルと MCP の読み込みを無効化し（`--setting-sources '' --strict-mcp-config --permission-mode dontAsk`）、読み取り専用の安全な環境で動作させます。
 - `agentResumeRunner` / `hubResumeRunner`: `--resume` 指定時に既存の会話を再開するためのテンプレート。
 
+### エージェントのモデル指定（`--model`）
+- **CLI フラグ**: `adj work` / `adj worker` に `--model <MODEL>` を付けると、その worker セッションのモデルを指定できます。
+- **`{model}` プレースホルダ**: worker のランナーテンプレート（`agentRunner`、`agentResumeRunner`）では、モデルを渡したい位置に `{model}` を書けます。値はシェル用にクォートして埋め込まれるため、テンプレート側でクォートしないでください。モデルを指定しなかったときは `{model}` を取り除きます。直前の単語がモデル指定オプション（`-m` や、`--` で始まって名前に `model` を含む `--model`、`--agent-model` 等）の場合、または `--*model*={model}` の形式の場合は、オプション語ごと取り除いて空の引数や二重の空白が残らないようにします。
+- **`{model}` を含まない claude ランナー**: `claude` を起動し、自分では `--model` を渡していないランナー（既定のランナーを含む）には、`claude` の直後に `--model <MODEL>` を足します。モデルを受け取れないランナー（`{model}` を含まない claude 以外のランナーや、すでに `--model` を渡している claude のランナー）で `--model` を指定すると、起動前に拒否します。
+- **使える文字**: ASCII の `A-Z a-z 0-9 . _ - : / @ [ ]` で 1〜128 文字、先頭は英数字（例: `opus`、`sonnet`、`claude-opus-5-5`、`sonnet[1m]`、`openai/gpt-5`）。
+- **再開時の引き継ぎ**: 指定したモデルは `.claude/adjutant-session.json` に保存し、`adj work --resume` では同じモデルで再開します。`--resume` に `--model` を付けると、保存済みのモデルを置き換えます。`agentResumeRunner` が保存済みのモデルを受け取れないときは、モデルを渡さずに再開し、警告を表示します。
+
 ### セッションのライフサイクルと自動再開
 - **自動再開の有効期間（`hubAutoResumeHours`）**: hub の終了からこの時間（既定: 3時間）以内であれば、素の `adj hub` を実行するだけで前回の会話を自動的に再開します。有効期間を過ぎている場合は空の会話で新しく立ち上がります。
 - **セッション ID の管理**: ランナーに `{sessionId}` を含めると、ID を `~/.local/state/adjutant/sessions/`（hub）または `.claude/adjutant-session.json`（worker）に保持し、次回以降の確実な再開に利用します。

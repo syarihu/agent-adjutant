@@ -146,6 +146,7 @@ fn a_worker_session_carries_what_the_worker_was_started_with() {
         Some("ALPHA-1"),
         Some("WID-1"),
         "sid-w",
+        None,
     )
     .unwrap();
     // `close` clears the presence record; the session is not its to clear.
@@ -163,6 +164,36 @@ fn a_worker_session_carries_what_the_worker_was_started_with() {
     assert_eq!(saved.title.as_deref(), Some("WID-1 fix"));
     assert_eq!(saved.hub.as_deref(), Some("ALPHA-1"));
     assert_eq!(saved.task.as_deref(), Some("WID-1"));
+}
+
+#[test]
+fn a_resumed_worker_session_rewritten_with_a_different_model_updates_saved_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+    save_worker_session(
+        worktree,
+        "WID-1",
+        Some("ALPHA-1"),
+        Some("WID-1"),
+        "sid-w",
+        Some("haiku"),
+    )
+    .unwrap();
+    let saved = worker_session(worktree).expect("the session should be found");
+    assert_eq!(saved.model.as_deref(), Some("haiku"));
+
+    rewrite_worker_session(
+        worktree,
+        &saved,
+        "WID-1",
+        Some("ALPHA-1"),
+        Some("WID-1"),
+        Some("opus"),
+    )
+    .unwrap();
+    let updated = worker_session(worktree).expect("the session should still be found");
+    assert_eq!(updated.model.as_deref(), Some("opus"));
+    assert_eq!(updated.session_id, "sid-w");
 }
 
 #[test]
@@ -525,7 +556,7 @@ fn relinking_keeps_the_process_fields_and_sets_task_and_hub() {
     let worktree = dir.path();
     register_worker(worktree, "try-retry", None, None, None).unwrap();
     let before = read_json(&worker_record_path(worktree)).unwrap();
-    save_worker_session(worktree, "try-retry", None, None, "sid-1").unwrap();
+    save_worker_session(worktree, "try-retry", None, None, "sid-1", None).unwrap();
 
     relink_worker(worktree, Some("WID-957"), "task-1", None).unwrap();
     let after = read_json(&worker_record_path(worktree)).unwrap();
@@ -1186,10 +1217,42 @@ fn a_saved_session_rewrite_keeps_unknown_keys() {
     assert!(after.get("hub").is_none());
 
     let saved = worker_session(worktree).unwrap();
-    rewrite_worker_session(worktree, &saved, "t", Some("B"), Some("task-2")).unwrap();
+    rewrite_worker_session(worktree, &saved, "t", Some("B"), Some("task-2"), None).unwrap();
     let after = read_json(&worker_session_path(worktree)).unwrap();
     assert_eq!(after["x-unknown"], json!({"a": [1]}));
     assert_eq!(after["hub"], "B");
+}
+
+#[test]
+fn worker_session_model_round_trips_and_is_removed_on_none_rewrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = dir.path();
+
+    // Model round-trips through save -> worker_session
+    save_worker_session(worktree, "title", None, None, "sid-1", Some("opus")).unwrap();
+    let saved = worker_session(worktree).unwrap();
+    assert_eq!(saved.model.as_deref(), Some("opus"));
+
+    // Inject an unknown key into the file to verify it survives a rewrite
+    let mut raw = read_json(&worker_session_path(worktree)).unwrap();
+    raw.as_object_mut()
+        .unwrap()
+        .insert("customKey".to_string(), json!("preserved"));
+    write_json(&worker_session_path(worktree), &raw).unwrap();
+
+    let saved = worker_session(worktree).unwrap();
+    assert_eq!(saved.other["customKey"], json!("preserved"));
+    assert_eq!(saved.model.as_deref(), Some("opus"));
+
+    // rewrite_worker_session with None removes it; unknown key survives
+    rewrite_worker_session(worktree, &saved, "title2", None, None, None).unwrap();
+    let after = worker_session(worktree).unwrap();
+    assert_eq!(after.model, None);
+    assert_eq!(after.other["customKey"], json!("preserved"));
+
+    let raw_after = read_json(&worker_session_path(worktree)).unwrap();
+    assert!(raw_after.get("model").is_none());
+    assert_eq!(raw_after["customKey"], json!("preserved"));
 }
 
 #[test]
@@ -1351,7 +1414,7 @@ fn worker_hub_key_prefers_the_record_and_skips_a_blank_one() {
     let _sandbox = Sandbox::empty();
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(worker_hub_key(dir.path()), None);
-    save_worker_session(dir.path(), "t", Some(" A "), None, "sid-1").unwrap();
+    save_worker_session(dir.path(), "t", Some(" A "), None, "sid-1", None).unwrap();
     assert_eq!(worker_hub_key(dir.path()).as_deref(), Some("A"));
     write_json(&worker_record_path(dir.path()), &json!({"hub": "  "})).unwrap();
     assert_eq!(worker_hub_key(dir.path()).as_deref(), Some("A"));

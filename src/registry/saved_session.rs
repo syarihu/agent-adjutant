@@ -82,11 +82,12 @@ pub fn save_worker_session(
     hub: Option<&str>,
     task: Option<&str>,
     session_id: &str,
+    model: Option<&str>,
 ) -> Result<PathBuf, String> {
-    write_worker_session(worktree, Map::new(), session_id, title, hub, task)
+    write_worker_session(worktree, Map::new(), session_id, title, hub, task, model)
 }
 
-/// Save `saved` again with a new title, hub and task, keeping the keys it carries that this
+/// Save `saved` again with a new title, hub, task and model, keeping the keys it carries that this
 /// version does not know. For a session that already exists: a fresh one starts from nothing
 /// and uses `save_worker_session`.
 pub fn rewrite_worker_session(
@@ -95,6 +96,7 @@ pub fn rewrite_worker_session(
     title: &str,
     hub: Option<&str>,
     task: Option<&str>,
+    model: Option<&str>,
 ) -> Result<PathBuf, String> {
     write_worker_session(
         worktree,
@@ -103,6 +105,7 @@ pub fn rewrite_worker_session(
         title,
         hub,
         task,
+        model,
     )
 }
 
@@ -115,6 +118,7 @@ fn write_worker_session(
     title: &str,
     hub: Option<&str>,
     task: Option<&str>,
+    model: Option<&str>,
 ) -> Result<PathBuf, String> {
     let path = worker_session_path(worktree);
     fields.insert("sessionId".to_string(), json!(session_id));
@@ -127,6 +131,10 @@ fn write_worker_session(
     match said(task) {
         Some(task) => fields.insert("task".to_string(), json!(task)),
         None => fields.remove("task"),
+    };
+    match said(model) {
+        Some(model) => fields.insert("model".to_string(), json!(model)),
+        None => fields.remove("model"),
     };
     write_json(&path, &Value::Object(fields))?;
     Ok(path)

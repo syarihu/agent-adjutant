@@ -51,6 +51,7 @@ pub fn relink_worker(
             saved.title.as_deref().unwrap_or_default(),
             hub,
             Some(task),
+            saved.model.as_deref(),
         )?;
     }
     if let Err(e) = write_worker_record(worktree, &record) {

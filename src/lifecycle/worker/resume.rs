@@ -1,7 +1,7 @@
 use super::claim_slot::{claim_worker_slot, open_worker_tab};
 use crate::infra::paths::exe_path;
 use crate::infra::terminal::{self, SpawnRequest};
-use crate::kernel::identity;
+use crate::kernel::{identity, runner};
 use crate::lifecycle::{forwarded_env, resume_template, title_command};
 use crate::registry::{self, Context};
 
@@ -20,6 +20,7 @@ pub enum Started {
 /// `ctx` is the caller's to build. It has to address no hub of its own (see `work_resumed`),
 /// and this does not look at the process's directory: the resident server runs nowhere near
 /// the repository.
+#[allow(clippy::too_many_arguments)]
 pub fn resume_worker(
     ctx: &Context,
     repo_arg: Option<&str>,
@@ -28,14 +29,22 @@ pub fn resume_worker(
     title: &str,
     prompt: Option<&str>,
     dry_run: bool,
+    model: Option<&str>,
 ) -> Result<Started, String> {
     let worktree = worker_worktree(Some(worktree))?;
     // Refused here rather than in the tab, so the caller — often a hub — hears about it.
     let saved = saved_worker_session(&worktree)?;
-    resume_template(
+    let resume_runner = resume_template(
         ctx.settings.agent_resume_runner.as_deref(),
         "agentResumeRunner",
     )?;
+    if let Some(m) = model {
+        runner::check_model(m)?;
+        let template = resume_runner.unwrap_or(runner::DEFAULT_AGENT_RESUME_RUNNER);
+        if let runner::ModelSlot::Refused(reason) = runner::model_slot(template) {
+            return Err(format!("agentResumeRunner {reason}"));
+        }
+    }
     // A reopened worker is as much a process as a fresh one.
     if let Some(refusal) = claim_worker_slot(ctx, &worktree, dry_run)? {
         return Ok(Started::Full(refusal));
@@ -65,6 +74,9 @@ pub fn resume_worker(
     }
     if let Some(hub) = hub_arg.map(str::trim).filter(|hub| !hub.is_empty()) {
         parts.push(format!("--hub={hub}"));
+    }
+    if let Some(m) = model {
+        parts.push(format!("--model={m}"));
     }
     let name_it = title_command(&ctx.settings, title);
     open_worker_tab(

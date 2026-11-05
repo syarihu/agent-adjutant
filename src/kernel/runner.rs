@@ -17,11 +17,20 @@ use crate::kernel::identity;
 /// `--session-id` is what lets `adj worker --resume` find this conversation again: the id is
 /// made up before the agent starts and written down next to the worker record, so the session
 /// can be reopened by name rather than guessed at with "the most recent one in this directory".
+///
+/// A chosen model (`--model`) is added as `--model <model>` right after `claude`. A flag is
+/// passed rather than `ANTHROPIC_MODEL` because `--model` is Claude Code's highest-precedence
+/// model setting (an `env` or `settings.json` model cannot override it), it shows in the
+/// command line (`adj worker --dry-run`), and it does not leak into every child process the agent
+/// runs (an exported `ANTHROPIC_MODEL` would reach a nested `claude -p`).
 pub const DEFAULT_AGENT_RUNNER: &str =
     "claude --session-id {sessionId} --permission-mode auto {settings} {prompt}";
 
 /// The same worker, brought back. Only reached through `--resume`, with the id the start
 /// command was given.
+///
+/// A chosen model is added as `--model <model>` after `claude`, the same way as for
+/// [`DEFAULT_AGENT_RUNNER`].
 pub const DEFAULT_AGENT_RESUME_RUNNER: &str =
     "claude --resume {sessionId} --permission-mode auto {settings} {prompt}";
 
@@ -132,6 +141,72 @@ pub const SESSION_PLACEHOLDER: &str = "sessionId";
 /// or nothing, so it is written unquoted like the others.
 pub const SETTINGS_PLACEHOLDER: &str = "settings";
 
+/// The placeholder a runner template puts the chosen agent model in.
+pub const MODEL_PLACEHOLDER: &str = "model";
+
+/// Validate a model name.
+///
+/// A model name is 1 to 128 ASCII characters from `A-Z a-z 0-9 . _ - : / @ [ ]`,
+/// and its first character must be a letter or a digit so it can never be read as an option.
+pub fn check_model(model: &str) -> Result<(), String> {
+    let len = model.len();
+    if (1..=128).contains(&len)
+        && model.is_ascii()
+        && model
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && model.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/' | '@' | '[' | ']')
+        })
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "refused model name {model:?}: must be 1 to 128 ASCII characters (letters, digits, or . _ - : / @ [ ]), starting with a letter or digit"
+        ))
+    }
+}
+
+/// How a worker template takes a model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelSlot {
+    Placeholder,
+    Appended,
+    Refused(String),
+}
+
+/// Determine how a worker template takes a model.
+///
+/// - `Placeholder`: the template names `{model}`.
+/// - `Appended`: no `{model}`, the agent is `claude`, and the template does not pass `--model` of its own.
+/// - `Refused`: anything else: a non-claude agent without `{model}`, or a claude template that already passes `--model`.
+pub fn model_slot(template: &str) -> ModelSlot {
+    if contains_placeholder(template, MODEL_PLACEHOLDER) {
+        return ModelSlot::Placeholder;
+    }
+    let is_claude =
+        agent_token(template).is_some_and(|span| agent_name(&template[span]) == "claude");
+    let passes_own = template
+        .split_whitespace()
+        .any(|word| word == "--model" || word.starts_with("--model="));
+
+    if is_claude {
+        if passes_own {
+            ModelSlot::Refused("already passes --model; write {model} there instead".to_string())
+        } else {
+            ModelSlot::Appended
+        }
+    } else {
+        let agent = agent_token(template)
+            .map(|span| agent_name(&template[span]))
+            .unwrap_or_else(|| agent_from_runner(template));
+        ModelSlot::Refused(format!(
+            "has no {{{MODEL_PLACEHOLDER}}}, so a model cannot be passed to {agent}"
+        ))
+    }
+}
+
 /// Whether a template hands the agent a session id, which is the only way a session it starts
 /// can be found again. One that does not starts fine and simply cannot be resumed.
 pub fn records_session(template: Option<&str>, default: &str) -> bool {
@@ -225,6 +300,7 @@ fn hub_line(
 /// `env` is prepended as `env K=V …` rather than being set on the child directly, because
 /// the command does not run here — it is typed into a tab by the terminal, and only the
 /// command line survives that trip.
+#[allow(clippy::too_many_arguments)]
 pub fn worker_command(
     template: Option<&str>,
     env: &[(String, String)],
@@ -233,6 +309,7 @@ pub fn worker_command(
     worktree: &str,
     title: &str,
     settings: Option<&str>,
+    model: Option<&str>,
 ) -> String {
     worker_line(
         template.unwrap_or(DEFAULT_AGENT_RUNNER),
@@ -242,10 +319,12 @@ pub fn worker_command(
         worktree,
         title,
         settings,
+        model,
     )
 }
 
 /// The command line that reopens the worker session `session`.
+#[allow(clippy::too_many_arguments)]
 pub fn worker_resume_command(
     template: Option<&str>,
     env: &[(String, String)],
@@ -254,6 +333,7 @@ pub fn worker_resume_command(
     worktree: &str,
     title: &str,
     settings: Option<&str>,
+    model: Option<&str>,
 ) -> String {
     worker_line(
         template.unwrap_or(DEFAULT_AGENT_RESUME_RUNNER),
@@ -263,9 +343,11 @@ pub fn worker_resume_command(
         worktree,
         title,
         settings,
+        model,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn worker_line(
     template: &str,
     env: &[(String, String)],
@@ -274,19 +356,22 @@ fn worker_line(
     worktree: &str,
     title: &str,
     settings: Option<&str>,
+    model: Option<&str>,
 ) -> String {
     let flag = settings_flag(settings);
     let template = settings_template(template, settings);
-    let mut command = render(
-        &template,
-        &[
-            (SESSION_PLACEHOLDER, Sub::Quoted(session)),
-            ("prompt", Sub::Quoted(prompt)),
-            ("worktree", Sub::Quoted(worktree)),
-            ("title", Sub::Quoted(title)),
-            (SETTINGS_PLACEHOLDER, Sub::Raw(&flag)),
-        ],
-    );
+    let template = model_template(&template, model);
+    let mut subs = vec![
+        (SESSION_PLACEHOLDER, Sub::Quoted(session)),
+        ("prompt", Sub::Quoted(prompt)),
+        ("worktree", Sub::Quoted(worktree)),
+        ("title", Sub::Quoted(title)),
+        (SETTINGS_PLACEHOLDER, Sub::Raw(&flag)),
+    ];
+    if let Some(m) = model {
+        subs.push((MODEL_PLACEHOLDER, Sub::Quoted(m)));
+    }
+    let mut command = render(&template, &subs);
     // A template with nowhere to put the prompt would start an agent with no instructions,
     // which looks like a hung worker rather than a config mistake. Appending is the reading
     // that matches every CLI agent's own argument order.
@@ -294,6 +379,83 @@ fn worker_line(
         command = format!("{command} {}", sh_quote(prompt));
     }
     with_env(env, command)
+}
+
+fn model_template(template: &str, model: Option<&str>) -> String {
+    match model {
+        Some(_) => match model_slot(template) {
+            ModelSlot::Placeholder => template.to_string(),
+            ModelSlot::Appended => match agent_token(template) {
+                Some(span) => format!(
+                    "{} --model {{{MODEL_PLACEHOLDER}}}{}",
+                    &template[..span.end],
+                    &template[span.end..]
+                ),
+                None => template.to_string(),
+            },
+            ModelSlot::Refused(_) => template.to_string(),
+        },
+        None => drop_model_placeholder(template),
+    }
+}
+
+fn is_placeholder_word(word: &str) -> bool {
+    let placeholder = format!("{{{MODEL_PLACEHOLDER}}}");
+    word == placeholder
+        || word == format!("\"{placeholder}\"")
+        || word == format!("'{placeholder}'")
+}
+
+fn is_model_option(word: &str) -> bool {
+    word == "-m" || (word.starts_with("--") && word.contains("model"))
+}
+
+fn drop_model_placeholder(template: &str) -> String {
+    let placeholder = format!("{{{MODEL_PLACEHOLDER}}}");
+    if !template.contains(&placeholder) {
+        return template.to_string();
+    }
+    let words = word_spans(template);
+    if let Some(idx) = words
+        .iter()
+        .position(|r| template[r.clone()].contains(&placeholder))
+    {
+        let word = &template[words[idx].clone()];
+        if is_placeholder_word(word) {
+            if idx > 0 && is_model_option(&template[words[idx - 1].clone()]) {
+                return remove_span_and_space(template, words[idx - 1].start..words[idx].end);
+            }
+            return remove_span_and_space(template, words[idx].clone());
+        }
+
+        if word.starts_with("--")
+            && let Some((opt, val)) = word.split_once('=')
+            && opt.contains("model")
+            && is_placeholder_word(val)
+        {
+            return remove_span_and_space(template, words[idx].clone());
+        }
+    }
+    drop_placeholder(template, MODEL_PLACEHOLDER)
+}
+
+fn word_spans(s: &str) -> Vec<Range<usize>> {
+    s.split_whitespace()
+        .map(|word| {
+            let start = word.as_ptr() as usize - s.as_ptr() as usize;
+            start..start + word.len()
+        })
+        .collect()
+}
+
+fn remove_span_and_space(template: &str, span: Range<usize>) -> String {
+    if span.start > 0 && template.as_bytes()[span.start - 1] == b' ' {
+        format!("{}{}", &template[..span.start - 1], &template[span.end..])
+    } else if span.end < template.len() && template.as_bytes()[span.end] == b' ' {
+        format!("{}{}", &template[..span.start], &template[span.end + 1..])
+    } else {
+        format!("{}{}", &template[..span.start], &template[span.end..])
+    }
 }
 
 /// What `{settings}` renders to: `--settings <file>`, or nothing when there is no file. Raw
@@ -443,7 +605,16 @@ mod tests {
     #[test]
     fn the_default_runner_starts_a_worker_that_can_run_its_own_build() {
         assert_eq!(
-            worker_command(None, &[], SID, "go now", "/wt/wid-957", "WID-957", None),
+            worker_command(
+                None,
+                &[],
+                SID,
+                "go now",
+                "/wt/wid-957",
+                "WID-957",
+                None,
+                None
+            ),
             format!("claude --session-id {SID} --permission-mode auto 'go now'")
         );
     }
@@ -457,6 +628,7 @@ mod tests {
             "read .claude/task-brief.md, it's there",
             "/wt",
             "T",
+            None,
             None,
         );
         let echoed = std::process::Command::new("sh")
@@ -483,7 +655,8 @@ mod tests {
                 "go",
                 "/wt",
                 "T",
-                None
+                None,
+                None,
             ),
             "codex exec go"
         );
@@ -495,7 +668,8 @@ mod tests {
                 "go",
                 "/wt/x",
                 "T",
-                None
+                None,
+                None,
             ),
             "agy run go --cwd /wt/x"
         );
@@ -511,7 +685,8 @@ mod tests {
                 "go now",
                 "/wt",
                 "T",
-                None
+                None,
+                None,
             ),
             "myagent --resume 'go now'"
         );
@@ -619,7 +794,8 @@ mod tests {
                 "go",
                 "/wt",
                 "T",
-                None
+                None,
+                None,
             ),
             format!(
                 "env CLAUDE_CONFIG_DIR='/cfg/app one' claude --session-id {SID} --permission-mode auto go"
@@ -640,6 +816,7 @@ mod tests {
             "go",
             "/wt",
             "T",
+            None,
             None,
         );
         std::process::Command::new("sh")
@@ -662,7 +839,7 @@ mod tests {
     fn both_defaults_hand_the_agent_the_id_they_are_later_resumed_by() {
         let hub = hub_command(None, &[], "adjutant-acme-widget", SID, "go", None);
         assert!(hub.contains(&format!("--session-id {SID}")), "{hub}");
-        let worker = worker_command(None, &[], SID, "go", "/wt", "T", None);
+        let worker = worker_command(None, &[], SID, "go", "/wt", "T", None, None);
         assert!(worker.contains(&format!("--session-id {SID}")), "{worker}");
         assert!(records_session(None, DEFAULT_HUB_RUNNER));
         assert!(records_session(None, DEFAULT_AGENT_RUNNER));
@@ -695,7 +872,8 @@ mod tests {
             "{hub}"
         );
         assert!(!hub.contains("--session-id"), "{hub}");
-        let worker = worker_resume_command(None, &[], SID, WORKER_RESUME_PROMPT, "/wt", "T", None);
+        let worker =
+            worker_resume_command(None, &[], SID, WORKER_RESUME_PROMPT, "/wt", "T", None, None);
         assert!(
             worker.starts_with(&format!("claude --resume {SID} --permission-mode auto ")),
             "{worker}"
@@ -712,7 +890,8 @@ mod tests {
                 "go on",
                 "/wt/x",
                 "T",
-                None
+                None,
+                None,
             ),
             format!("env K=v myagent resume {SID} --in /wt/x 'go on'")
         );
@@ -746,12 +925,12 @@ mod tests {
     const SETTINGS: &str = "/state/agent-hooks/claude-0123abcd.json";
 
     fn worker_with(template: &str, settings: Option<&str>) -> String {
-        worker_command(Some(template), &[], SID, "go", "/wt", "T", settings)
+        worker_command(Some(template), &[], SID, "go", "/wt", "T", settings, None)
     }
 
     #[test]
     fn the_defaults_pass_the_hook_settings_before_the_prompt() {
-        let worker = worker_command(None, &[], SID, "go", "/wt", "T", Some(SETTINGS));
+        let worker = worker_command(None, &[], SID, "go", "/wt", "T", Some(SETTINGS), None);
         assert_eq!(
             worker,
             format!("claude --session-id {SID} --permission-mode auto --settings {SETTINGS} go")
@@ -764,13 +943,14 @@ mod tests {
             "/a b/state.json",
             "T",
             Some("/a b/s.json"),
+            None,
         );
         assert!(spaced.contains("--settings '/a b/s.json' go"), "{spaced}");
         let hub = hub_command(None, &[], "h", SID, "go", Some(SETTINGS));
         assert!(hub.contains(&format!("--settings {SETTINGS} go")), "{hub}");
         let hub = hub_resume_command(None, &[], "h", SID, "go", Some(SETTINGS));
         assert!(hub.contains(&format!("--settings {SETTINGS} go")), "{hub}");
-        let worker = worker_resume_command(None, &[], SID, "go", "/wt", "T", Some(SETTINGS));
+        let worker = worker_resume_command(None, &[], SID, "go", "/wt", "T", Some(SETTINGS), None);
         assert!(
             worker.contains(&format!("--settings {SETTINGS} go")),
             "{worker}"
@@ -852,5 +1032,299 @@ mod tests {
         assert_eq!(&runner[span], "/opt/claude");
         assert!(agent_token("").is_none());
         assert!(agent_token("env A=1").is_none());
+    }
+
+    #[test]
+    fn check_model_accepts_valid_names_and_refuses_invalid_names() {
+        for valid in [
+            "opus",
+            "sonnet",
+            "haiku",
+            "claude-opus-5-5",
+            "sonnet[1m]",
+            "us.anthropic.claude-sonnet-5-5:0",
+            "openai/gpt-5",
+            "gemini-3.8-flash-high",
+        ] {
+            assert!(check_model(valid).is_ok(), "expected {valid} to be ok");
+        }
+
+        let long_name = "a".repeat(129);
+        for invalid in [
+            "",
+            " opus",
+            "-m",
+            "opus; rm -rf ~",
+            "$(x)",
+            "a b",
+            "o'pus",
+            &long_name,
+            "opus🦀",
+            "ずんだ",
+        ] {
+            let err = check_model(invalid).unwrap_err();
+            assert!(
+                err.contains(&format!("{invalid:?}")),
+                "expected error to name refused value: {err}"
+            );
+            assert!(
+                err.contains("1 to 128 ASCII characters"),
+                "expected error to say what is allowed: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_slot_categorises_templates_correctly() {
+        assert_eq!(model_slot(DEFAULT_AGENT_RUNNER), ModelSlot::Appended);
+        assert_eq!(model_slot(DEFAULT_AGENT_RESUME_RUNNER), ModelSlot::Appended);
+        assert_eq!(
+            model_slot("claude --model {model} {prompt}"),
+            ModelSlot::Placeholder
+        );
+        assert_eq!(
+            model_slot("myagent {model} {prompt}"),
+            ModelSlot::Placeholder
+        );
+
+        match model_slot("codex exec {prompt}") {
+            ModelSlot::Refused(reason) => {
+                assert!(reason.contains("has no {model}"), "{reason}");
+                assert!(reason.contains("codex"), "{reason}");
+            }
+            other => panic!("expected Refused, got {other:?}"),
+        }
+
+        for template in [
+            "claude --model opus {prompt}",
+            "claude --model=opus {prompt}",
+        ] {
+            match model_slot(template) {
+                ModelSlot::Refused(reason) => {
+                    assert!(reason.contains("already passes --model"), "{reason}");
+                }
+                other => panic!("expected Refused, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn model_placeholder_renders_quoted() {
+        let out = worker_command(
+            Some("myagent --model {model} {prompt}"),
+            &[],
+            SID,
+            "go",
+            "/wt",
+            "T",
+            None,
+            Some("sonnet[1m]"),
+        );
+        assert_eq!(out, "myagent --model 'sonnet[1m]' go");
+
+        let out = worker_command(
+            Some("myagent --model \"{model}\" {prompt}"),
+            &[],
+            SID,
+            "go",
+            "/wt",
+            "T",
+            None,
+            Some("opus"),
+        );
+        assert_eq!(out, "myagent --model opus go");
+    }
+
+    #[test]
+    fn model_placeholder_removal_forms_with_no_model_leave_no_double_space() {
+        assert_eq!(
+            worker_command(
+                Some("claude --verbose {model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude --verbose go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("claude -p {model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude -p go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("myagent --agent-model {model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "myagent go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("myagent --model \"{model}\" {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "myagent go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("myagent --model '{model}' {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "myagent go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("claude --model {model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("claude -m {model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("claude --model={model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("claude {prompt} {model}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("claude {model} {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude go"
+        );
+        assert_eq!(
+            worker_command(
+                Some("{model} claude {prompt}"),
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                None,
+                None,
+            ),
+            "claude go"
+        );
+    }
+
+    #[test]
+    fn default_runner_with_model_gives_exact_expected_line() {
+        // Fresh with settings
+        assert_eq!(
+            worker_command(
+                None,
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                Some(SETTINGS),
+                Some("opus")
+            ),
+            format!(
+                "claude --model opus --session-id {SID} --permission-mode auto --settings {SETTINGS} go"
+            )
+        );
+        // Fresh without settings
+        assert_eq!(
+            worker_command(None, &[], SID, "go", "/wt", "T", None, Some("opus")),
+            format!("claude --model opus --session-id {SID} --permission-mode auto go")
+        );
+        // Resume with settings
+        assert_eq!(
+            worker_resume_command(
+                None,
+                &[],
+                SID,
+                "go",
+                "/wt",
+                "T",
+                Some(SETTINGS),
+                Some("opus")
+            ),
+            format!(
+                "claude --model opus --resume {SID} --permission-mode auto --settings {SETTINGS} go"
+            )
+        );
+        // Resume without settings
+        assert_eq!(
+            worker_resume_command(None, &[], SID, "go", "/wt", "T", None, Some("opus")),
+            format!("claude --model opus --resume {SID} --permission-mode auto go")
+        );
     }
 }

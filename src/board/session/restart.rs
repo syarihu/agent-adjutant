@@ -56,7 +56,16 @@ pub fn restart(server: &Server, id: &str) -> Result<Restarted, String> {
                 .to_string(),
         );
     }
-    let done = match resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false) {
+    let done = match resume_worker(
+        &ctx,
+        Some(&repo),
+        None,
+        &session.worktree,
+        "",
+        None,
+        false,
+        None,
+    ) {
         Ok(Started::Opened(done)) => done,
         Ok(Started::Full(refusal)) | Err(refusal) => {
             // Nothing was closed when nothing was running, and saying so would be false.

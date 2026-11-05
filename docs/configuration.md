@@ -85,6 +85,13 @@ A config that sets only `terminal.spawn` keeps its own spawn, but focus, close a
   - Drops setting sources and MCP configs (`--setting-sources '' --strict-mcp-config --permission-mode dontAsk`), locking the session into read-only inspection.
 - `agentResumeRunner` / `hubResumeRunner`: Invoked when resuming existing conversations via `--resume`.
 
+### Agent Model Selection (`--model`)
+- **CLI flag**: `--model <MODEL>` on `adj work` or `adj worker` selects the agent model for that worker session.
+- **`{model}` placeholder**: Worker runner templates (`agentRunner`, `agentResumeRunner`) can place `{model}` where the model argument belongs. The value is shell-quoted when rendered; do not quote it in the template. If no model is specified, `{model}` is removed. When the preceding word is a model option (exactly `-m`, or starting with `--` and containing `model`, e.g. `--model {model}`, `-m {model}`, `--agent-model {model}`) or the word is `--*model*={model}`, the option word is removed together with the placeholder so no empty argument or double space remains.
+- **Claude runners without `{model}`**: When a runner invokes `claude` and does not pass `--model` of its own, `--model <MODEL>` is inserted right after `claude`. A runner that cannot take a model (a non-claude runner without `{model}`, or a claude runner that already passes `--model`) is refused before starting when `--model` was given.
+- **Allowed characters**: 1 to 128 ASCII characters from `A-Z a-z 0-9 . _ - : / @ [ ]`, starting with a letter or digit (e.g. `opus`, `sonnet`, `claude-opus-5-5`, `sonnet[1m]`, `openai/gpt-5`).
+- **Persistence across resume**: The chosen model is saved in `.claude/adjutant-session.json`. Resuming with `adj work --resume` reuses the saved model by default, while an explicit `--model` on `--resume` replaces it. When `agentResumeRunner` cannot take the saved model, the session is resumed without it and a warning says so.
+
 ### Session Lifecycle and Auto-Resume
 - **Auto-resume window (`hubAutoResumeHours`)**: A plain `adj hub` automatically reopens the previous session if it ended within this window (default: 3 hours). After this window expires, a clean session is created.
 - **Session IDs**: Runners that accept `{sessionId}` persist the identifier in `~/.local/state/adjutant/sessions/` (for hubs) or `.claude/adjutant-session.json` (for workers).

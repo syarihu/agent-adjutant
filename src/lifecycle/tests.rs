@@ -363,6 +363,7 @@ fn starting_a_worker_in_a_path_that_is_not_a_directory_touches_nothing() {
         task: None,
         prompt: None,
         repo: None,
+        model: None,
     };
     let err = worker::start(&ctx, &request, false).err().unwrap();
     assert_eq!(err, format!("no such worktree: {}", wt.display()));
@@ -391,6 +392,7 @@ fn starting_a_worker_for_a_task_that_does_not_exist_claims_no_slot() {
         task: Some("nope".to_string()),
         prompt: None,
         repo: None,
+        model: None,
     };
     let err = worker::start(&ctx, &request, false).err().unwrap();
     assert_eq!(err, "no such task: nope");
@@ -403,5 +405,95 @@ fn starting_a_worker_for_a_task_that_does_not_exist_claims_no_slot() {
         !std::path::Path::new(&ctx.repo.main)
             .join(".claude")
             .exists()
+    );
+}
+
+#[test]
+fn starting_a_worker_forwards_model_flag_when_given() {
+    let (sandbox, ctx) = hub_with_checkout();
+    let wt = sandbox.state().join("worktree");
+    std::fs::create_dir_all(&wt).unwrap();
+    let request_with_model = worker::StartRequest {
+        worktree: wt.to_string_lossy().to_string(),
+        title: "T".to_string(),
+        task: None,
+        prompt: None,
+        repo: None,
+        model: Some("opus".to_string()),
+    };
+    let worker::Started::Opened(performed) =
+        worker::start(&ctx, &request_with_model, true).unwrap()
+    else {
+        panic!("expected worker to start");
+    };
+    assert!(
+        performed.script.contains("--model=opus"),
+        "{}",
+        performed.script
+    );
+
+    let request_without_model = worker::StartRequest {
+        worktree: wt.to_string_lossy().to_string(),
+        title: "T".to_string(),
+        task: None,
+        prompt: None,
+        repo: None,
+        model: None,
+    };
+    let worker::Started::Opened(performed) =
+        worker::start(&ctx, &request_without_model, true).unwrap()
+    else {
+        panic!("expected worker to start");
+    };
+    assert!(
+        !performed.script.contains("--model"),
+        "{}",
+        performed.script
+    );
+}
+
+#[test]
+fn resuming_a_worker_forwards_model_flag_when_given() {
+    let (sandbox, ctx) = hub_with_checkout();
+    let wt = sandbox.state().join("worktree");
+    std::fs::create_dir_all(&wt).unwrap();
+    crate::registry::save_worker_session(&wt, "T", None, None, "sid-1", None).unwrap();
+
+    let worker::Started::Opened(performed) = worker::resume_worker(
+        &ctx,
+        None,
+        None,
+        &wt.to_string_lossy(),
+        "T",
+        None,
+        true,
+        Some("opus"),
+    )
+    .unwrap() else {
+        panic!("expected worker to resume");
+    };
+    assert!(
+        performed.script.contains("--model=opus"),
+        "{}",
+        performed.script
+    );
+
+    let worker::Started::Opened(performed) = worker::resume_worker(
+        &ctx,
+        None,
+        None,
+        &wt.to_string_lossy(),
+        "T",
+        None,
+        true,
+        None,
+    )
+    .unwrap() else {
+        panic!("expected worker to resume");
+    };
+    assert!(
+        !performed.script.contains("--model"),
+        "{}",
+        performed.script
     );
 }

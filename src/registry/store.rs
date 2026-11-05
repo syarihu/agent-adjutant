@@ -89,6 +89,7 @@ pub(super) fn read_session(path: &Path) -> Option<SavedSession> {
         title: text("title"),
         task: text("task"),
         saved_at: text("savedAt"),
+        model: text("model"),
         other: record
             .as_object()
             .into_iter()
@@ -96,7 +97,14 @@ pub(super) fn read_session(path: &Path) -> Option<SavedSession> {
             .filter(|(key, _)| {
                 !matches!(
                     key.as_str(),
-                    "sessionId" | "hub" | "nwo" | "hubName" | "title" | "task" | "savedAt"
+                    "sessionId"
+                        | "hub"
+                        | "nwo"
+                        | "hubName"
+                        | "title"
+                        | "task"
+                        | "savedAt"
+                        | "model"
                 )
             })
             .map(|(key, value)| (key.clone(), value.clone()))

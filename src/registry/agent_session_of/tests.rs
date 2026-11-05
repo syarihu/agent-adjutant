@@ -139,7 +139,7 @@ fn a_worker_is_found_by_its_record_after_a_clear() {
     let dir = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     put(state.path(), &row("after-clear", Some(5), Some("A"), 30));
-    save_worker_session(dir.path(), "t", None, None, "before-clear").unwrap();
+    save_worker_session(dir.path(), "t", None, None, "before-clear", None).unwrap();
     crate::infra::fs::write_json(
         &worker_record_path(dir.path()),
         &serde_json::json!({"pid": 5, "psStarted": "A"}),
