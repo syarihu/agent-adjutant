@@ -4,6 +4,35 @@ use std::sync::{Arc, Mutex};
 use super::{MachineState, Server};
 use crate::registry::{Address, address_of};
 
+/// What `std::fs::metadata(config_path())` says about the config file: its path, modified
+/// time, and length. `None` when the file cannot be stat'ed (missing).
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct ConfigStamp {
+    pub path: std::path::PathBuf,
+    pub modified: Option<std::time::SystemTime>,
+    pub len: u64,
+}
+
+impl ConfigStamp {
+    fn current() -> Option<Self> {
+        let path = crate::kernel::config::config_path();
+        let meta = std::fs::metadata(&path).ok()?;
+        Some(Self {
+            path,
+            modified: meta.modified().ok(),
+            len: meta.len(),
+        })
+    }
+}
+
+/// An open board with the address and config stamp it was built from.
+#[derive(Clone)]
+pub struct OpenBoard {
+    pub address: Address,
+    pub stamp: Option<ConfigStamp>,
+    pub server: Arc<Server>,
+}
+
 /// The resident server: its token and port, and the boards it has opened. A board is opened
 /// on the first request for it and kept, for the same reason a dedicated one keeps its
 /// `JulesWatch`: what it remembers between polls is a cache, and the records stay the answer.
@@ -12,9 +41,9 @@ pub struct Resident {
     pub root: std::path::PathBuf,
     pub token: String,
     pub port: u16,
-    /// Each open board with the address it was built from, so that one whose address has
-    /// changed since is not served from the old context.
-    pub boards: Mutex<std::collections::HashMap<String, (Address, Arc<Server>)>>,
+    /// Each open board with the address and config stamp it was built from, so that one
+    /// whose address or config has changed since is rebuilt.
+    pub boards: Mutex<std::collections::HashMap<String, OpenBoard>>,
     /// What the last look at the machine found (tmux, `gh`, the MCP registration, the config),
     /// shared with every board. The board terminal is offered only while it finds a tmux.
     pub machine: Arc<MachineState>,
@@ -34,9 +63,10 @@ pub struct Resident {
 impl Resident {
     /// The board for `slug`, or `None` when the address book has no such board any more.
     ///
-    /// The address is read on every call — a small file — and the open board is used only
-    /// while it is the one the file still names: a checkout that moved, or was replaced under
-    /// the same slug, is served from where it is now.
+    /// The address and config stamp are read on every call, and the open board is reused only
+    /// while both still match what it was built from: a checkout that moved or a config file
+    /// that changed rebuilds the board's context. When only the config changed, the board's
+    /// caches are kept across the rebuild.
     pub fn board(&self, slug: &str) -> Option<Arc<Server>> {
         // Bounded: a file rewritten again and again while this builds is not worth chasing.
         for _ in 0..3 {
@@ -44,48 +74,90 @@ impl Resident {
                 self.boards.lock().ok()?.remove(slug);
                 return None;
             };
-            if let Some((built_from, open)) = self.boards.lock().ok()?.get(slug)
-                && *built_from == address
+            let stamp = ConfigStamp::current();
+
+            let cached = self.boards.lock().ok()?.get(slug).cloned();
+            if let Some(ref open) = cached
+                && open.address == address
+                && open.stamp == stamp
             {
-                return Some(Arc::clone(open));
+                return Some(Arc::clone(&open.server));
             }
+
+            let old_server = cached
+                .filter(|open| open.address == address)
+                .map(|open| open.server);
+
             // Outside the lock: resolving the checkout asks git, and every other board waits
             // on this map.
             //
             // Never `set_current_dir`: this process is threaded, and the checkout is named to
             // each call instead.
-            let ctx = crate::registry::context_at_address(&self.root, &address).ok()?;
+            let ctx = match crate::registry::context_at_address(&self.root, &address) {
+                Ok(ctx) => ctx,
+                // A config caught half written does not parse: the board already open keeps
+                // serving with the settings it has, and its stamp is left alone, so the next
+                // call tries again rather than taking the board away until a restart.
+                Err(_) => return old_server,
+            };
+
+            let (jules, hub_titles, last_lines, prompts, diffs) = match &old_server {
+                Some(old) => (
+                    Arc::clone(&old.jules),
+                    Arc::clone(&old.hub_titles),
+                    Arc::clone(&old.last_lines),
+                    Arc::clone(&old.prompts),
+                    Arc::clone(&old.diffs),
+                ),
+                None => (
+                    Arc::default(),
+                    Arc::default(),
+                    Arc::default(),
+                    Arc::default(),
+                    Arc::default(),
+                ),
+            };
+
             let server = Arc::new(Server {
                 ctx,
                 token: self.token.clone(),
                 port: self.port,
                 resident: true,
-                jules: Arc::default(),
-                hub_titles: Arc::default(),
-                last_lines: Arc::default(),
-                prompts: Arc::default(),
-                diffs: Arc::default(),
+                jules,
+                hub_titles,
+                last_lines,
+                prompts,
+                diffs,
                 machine: Arc::clone(&self.machine),
                 terminals: Arc::clone(&self.terminals),
                 pr_poll: Some(Arc::clone(&self.pr_poll)),
                 waits: Arc::clone(&self.waits),
             });
+
             let mut boards = self.boards.lock().ok()?;
             // Asked again under the lock: what was built is only put in place while it is still
-            // what the file says, so a slower build of an older address cannot replace a newer
+            // what the address file and config say, so a slower build cannot replace a newer
             // one — and one that lost the race is thrown away and built again.
-            if address_of(&self.root, slug).as_ref() != Some(&address) {
+            if address_of(&self.root, slug).as_ref() != Some(&address)
+                || ConfigStamp::current() != stamp
+            {
                 continue;
             }
-            match boards.get(slug) {
-                Some((built_from, open)) if *built_from == address => {
-                    return Some(Arc::clone(open));
-                }
-                _ => {
-                    boards.insert(slug.to_string(), (address, Arc::clone(&server)));
-                    return Some(server);
-                }
+            if let Some(open) = boards.get(slug)
+                && open.address == address
+                && open.stamp == stamp
+            {
+                return Some(Arc::clone(&open.server));
             }
+            boards.insert(
+                slug.to_string(),
+                OpenBoard {
+                    address,
+                    stamp,
+                    server: Arc::clone(&server),
+                },
+            );
+            return Some(server);
         }
         None
     }

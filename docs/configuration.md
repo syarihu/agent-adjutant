@@ -70,7 +70,7 @@ iTerm2 used to be the backend when `terminal.preset` was not set. After upgradin
 { "terminal": { "preset": "iterm2" } }
 ```
 
-A config that sets only `terminal.spawn` keeps its own spawn, but focus, close and wake now go to the tmux backend too; add `"preset": "iterm2"` if they should stay on iTerm2. Sessions that are already running keep the backend they were recorded with, so close, focus and wake still reach them. The resident server keeps the settings it started with, so run `adj server restart` after upgrading.
+A config that sets only `terminal.spawn` keeps its own spawn, but focus, close and wake now go to the tmux backend too; add `"preset": "iterm2"` if they should stay on iTerm2. Sessions that are already running keep the backend they were recorded with, so close, focus and wake still reach them. The resident server reads the config again on the next board request after the file changes, but it keeps running the binary it started with, so run `adj server restart` after upgrading.
 
 ---
 

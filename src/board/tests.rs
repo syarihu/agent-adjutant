@@ -1654,3 +1654,131 @@ fn the_last_message_of_a_session_is_read_through_the_boards_join() {
     assert_eq!(read.text.as_deref(), Some(whole.as_str()));
     assert!(read.whole);
 }
+
+// ── resident config reload ──────────────────────────────────────────
+
+/// A resident over the state directory `root`, with nothing opened yet.
+fn resident_over(root: &Path) -> Resident {
+    Resident {
+        root: root.to_path_buf(),
+        token: "tok".to_string(),
+        port: 4577,
+        boards: Default::default(),
+        machine: Default::default(),
+        terminals: Default::default(),
+        pr_poll: Default::default(),
+        waits: Default::default(),
+        owner_icons: Default::default(),
+        work_cache: Default::default(),
+    }
+}
+
+/// `text` written over the config file at `path`, with its modified time moved `ahead` into
+/// the future so the change shows whatever the file system's timestamp precision.
+fn rewrite_config(path: &str, text: &str, ahead: Duration) {
+    std::fs::write(path, text).unwrap();
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now() + ahead)
+        .unwrap();
+}
+
+#[test]
+fn a_resident_board_is_cached_while_its_config_and_address_stay_unchanged() {
+    let sandbox = crate::testing::Sandbox::new(r#"{"terminal": {"preset": "iterm2"}}"#);
+    let main = tempfile::tempdir().unwrap();
+    crate::testing::init_repo(main.path(), "main");
+    let repo =
+        crate::kernel::identity::resolve_in(Some(main.path()), Some("acme/widget"), None).unwrap();
+    crate::registry::note_board(&sandbox.state(), &repo);
+    let resident = resident_over(&sandbox.state());
+
+    let first = resident.board(&repo.slug).expect("board should open");
+    let second = resident.board(&repo.slug).expect("board should open");
+    assert!(Arc::ptr_eq(&first, &second));
+}
+
+#[test]
+fn a_resident_board_reloads_settings_and_reuses_caches_when_config_changes() {
+    let sandbox = crate::testing::Sandbox::new(r#"{"terminal": {"preset": "iterm2"}}"#);
+    let config_path = std::env::var("ADJUTANT_CONFIG").unwrap();
+    let main = tempfile::tempdir().unwrap();
+    crate::testing::init_repo(main.path(), "main");
+    let repo =
+        crate::kernel::identity::resolve_in(Some(main.path()), Some("acme/widget"), None).unwrap();
+    crate::registry::note_board(&sandbox.state(), &repo);
+    let resident = resident_over(&sandbox.state());
+
+    let first = resident.board(&repo.slug).expect("board should open");
+    assert_eq!(
+        first.ctx.settings.terminal.preset.as_deref(),
+        Some("iterm2")
+    );
+
+    // Rewrite config with a different preset and explicitly bump mtime.
+    rewrite_config(
+        &config_path,
+        r#"{"notification": "true", "terminal": {"preset": "tmux"}}"#,
+        Duration::from_secs(10),
+    );
+
+    let reloaded = resident.board(&repo.slug).expect("board should reload");
+    assert!(!Arc::ptr_eq(&first, &reloaded));
+    assert_eq!(
+        reloaded.ctx.settings.terminal.preset.as_deref(),
+        Some("tmux")
+    );
+    assert!(Arc::ptr_eq(&first.jules, &reloaded.jules));
+    assert!(Arc::ptr_eq(&first.diffs, &reloaded.diffs));
+    assert!(Arc::ptr_eq(&first.hub_titles, &reloaded.hub_titles));
+    assert!(Arc::ptr_eq(&first.last_lines, &reloaded.last_lines));
+    assert!(Arc::ptr_eq(&first.prompts, &reloaded.prompts));
+}
+
+#[test]
+fn a_resident_board_keeps_serving_open_board_when_config_rebuild_fails() {
+    let sandbox = crate::testing::Sandbox::new(r#"{"terminal": {"preset": "iterm2"}}"#);
+    let config_path = std::env::var("ADJUTANT_CONFIG").unwrap();
+    let main = tempfile::tempdir().unwrap();
+    crate::testing::init_repo(main.path(), "main");
+    let repo =
+        crate::kernel::identity::resolve_in(Some(main.path()), Some("acme/widget"), None).unwrap();
+    crate::registry::note_board(&sandbox.state(), &repo);
+    let resident = resident_over(&sandbox.state());
+
+    let first = resident.board(&repo.slug).expect("board should open");
+    assert_eq!(
+        first.ctx.settings.terminal.preset.as_deref(),
+        Some("iterm2")
+    );
+
+    // Rewrite config to invalid JSON with a changed mtime.
+    rewrite_config(&config_path, "{ not valid json", Duration::from_secs(10));
+
+    // The open board is still served with its old settings.
+    let kept = resident
+        .board(&repo.slug)
+        .expect("open board should still be served");
+    assert!(Arc::ptr_eq(&first, &kept));
+    assert_eq!(kept.ctx.settings.terminal.preset.as_deref(), Some("iterm2"));
+
+    // Once fixed again with a newer mtime, it reloads.
+    rewrite_config(
+        &config_path,
+        r#"{"notification": "true", "terminal": {"preset": "tmux"}}"#,
+        Duration::from_secs(20),
+    );
+
+    let reloaded = resident
+        .board(&repo.slug)
+        .expect("board should reload once fixed");
+    assert!(!Arc::ptr_eq(&first, &reloaded));
+    assert_eq!(
+        reloaded.ctx.settings.terminal.preset.as_deref(),
+        Some("tmux")
+    );
+    assert!(Arc::ptr_eq(&first.jules, &reloaded.jules));
+    assert!(Arc::ptr_eq(&first.diffs, &reloaded.diffs));
+    assert!(Arc::ptr_eq(&first.hub_titles, &reloaded.hub_titles));
+    assert!(Arc::ptr_eq(&first.last_lines, &reloaded.last_lines));
+    assert!(Arc::ptr_eq(&first.prompts, &reloaded.prompts));
+}
