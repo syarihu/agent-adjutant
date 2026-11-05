@@ -496,3 +496,43 @@ test('the hub note is not offered for a PR that is done, and what a running hub 
   assert.match(html, /&lt;b&gt;tmux&lt;\/b&gt; が要ります/);
   assert.doesNotMatch(html, /<b>|<button/);
 });
+
+test('the heading\'s 下読み button opens the dialog from the terminal beside the board too, and only while that sidebar is on', () => {
+  const myWork = read('my-work.js');
+  const calls = [];
+  const dlg = {
+    open: false, showModal() { calls.push('showModal'); this.open = true; },
+    querySelector: () => ({ scrollTop: 0, focus() {} }),
+  };
+  const c = vm.createContext({
+    // What the page's other scripts own: the refs, the board lists and the dialog's drawing.
+    PR_REF: 'pr:', HUB_REF: 'hub:', SESS_REF: 'sess:', PARENT_REF: 'parent:', WORK_GATE_REF: 'gate:',
+    isHubRef: id => id.startsWith('hub:'), isSessRef: id => id.startsWith('sess:'),
+    multiBoard: true, taskById: id => (id === 't1' ? task : null),
+    cardDialog: { token: 0, mode: null, subject: null }, cardDialogEl: () => dlg, cardDialogShell: () => {}, ownReadDialogSync: () => {},
+    cardDialogSpy: () => {}, prDialogDrawn: {}, taskRead: { key: null, doc: null }, workSelected: () => null,
+    ownReadTitleText: () => '', ownReadSubText: () => '', ownReadRepoHint: () => ({}), taskReadAsk: () => {}, othersOutOfReview: () => false,
+  });
+  const run = code => vm.runInContext(code, c);
+  vm.runInContext(cut(read('core.js'), /^const isTaskRef = .*$/m), c);
+  vm.runInContext(cut(myWork, /^const boardSideRef = .*$/m), c);
+  vm.runInContext(cut(myWork, /^const boardSideOn = [\s\S]*?;\n/m), c);
+  vm.runInContext(cut(myWork, /^const workTermOn = .*$/m), c);
+  const view = read('task-read-view.js');
+  vm.runInContext(cut(view, /^const taskReadActive = .*$/m), c);
+  vm.runInContext(cut(view, /^const taskReadTaskOf = .*$/m), c);
+  vm.runInContext(fnSrc(view, 'openOwnReadDialog'), c);
+  vm.runInContext(cut(view, /^const taskReadKey = .*$/m), c);
+  vm.runInContext("var view = 'board'; var nav = { board: 'acme', task: 't1', pane: 'term' };", c);
+  assert.strictEqual(run('taskReadTaskOf()')?.id, 't1');
+  run('openOwnReadDialog({})');
+  assert.deepStrictEqual(calls, ['showModal']);
+  assert.strictEqual(c.cardDialog.mode, 'own-read');
+  assert.strictEqual(c.cardDialog.subject, 't1');
+  // The sidebar is off in the board view: no task, so the button does nothing.
+  dlg.open = false; calls.length = 0;
+  vm.runInContext("nav.pane = 'task'", c);
+  assert.strictEqual(run('taskReadTaskOf()'), null);
+  run('openOwnReadDialog({})');
+  assert.deepStrictEqual(calls, []);
+});

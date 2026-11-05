@@ -746,8 +746,9 @@ async function refresh(force = false) {
     taskReadRefresh(force);
     if (nav.board === 'all' || !nav.board) return;
   }
-  // The terminal beside the board is drawn from the work document as well, which the board's poll does not read otherwise.
-  if (boardSideOn()) refreshWork(force);
+  // The terminal beside the board is drawn from the work document as well, which the board's poll does not read otherwise;
+  // its heading's 下読み button says the task's read-through state, so that document is read here too.
+  if (boardSideOn()) { refreshWork(force); taskReadRefresh(force); }
   if (scopeAll()) {
     // Every board is read, so this runs half as often.
     if (!force) {
