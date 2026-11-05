@@ -1182,6 +1182,33 @@ fn a_subtask_s_branch_is_resolved_from_the_convention_rather_than_spelled_out() 
     );
 }
 
+/// A Linear task's branch is its `gitBranchName` in "3. Create the worktree" too.
+///
+/// "Task sources" `linear` already said to use `gitBranchName` verbatim and not build one from
+/// `branchPattern`, but "3. Create the worktree" lumped Linear in with Jira and claimed no
+/// conversion was needed (`ABC-819` → `{user}/ABC-819`). A hub picking a Linear task from its
+/// own list would then build `{user}/ABC-819` while the tracker's branch is `gitBranchName`, so
+/// a PR lookup by branch would answer "none" and a second worktree could be cut beside the
+/// first. Only the worktree location follows the convention; the branch is `gitBranchName`.
+#[test]
+fn a_linear_task_s_branch_is_its_git_branch_name_when_the_worktree_is_created() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let create = step(raw, "### 3. Create the worktree");
+    let flowed: String = flow(&create);
+    assert!(
+        flowed.contains("For `linear` the branch is the issue's `gitBranchName`"),
+        "the worktree step does not take a Linear branch from gitBranchName: {create}"
+    );
+    assert!(
+        flowed.contains("Only the worktree's location comes from the conventions"),
+        "the worktree step does not keep the convention for location: {create}"
+    );
+    assert!(
+        !flowed.contains("For `jira` / `linear`"),
+        "the worktree step still lumps Linear in with Jira: {create}"
+    );
+}
+
 /// Both worktree lists include the main checkout — proctor as the `isMain` row,
 /// `git worktree list` as its first line — and nothing that read them said to drop it. The
 /// cleanup then weighs the hub's own checkout, the hand-over offers it as a worktree to

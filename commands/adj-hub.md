@@ -1363,13 +1363,19 @@ files (`local.properties`, certificates), so write that into `postCreate`. It is
 `git worktree add` is run by this side either way. All that is missing is the conventions, and those
 are filled in above.
 
-The branch name and the worktree name come from the **selected task's source**
-(`branchPattern`, and `worktreeName` defaulting to `{issuekey-lowercase}-{issue}`). A new issue the
-hub filed has no source, so pass that issue's repo through `issueKeys` to make the key
-(`example/team-app` → `ALPHA` → `ALPHA-1234`). For `jira` / `linear` the issue key is the key as it
-is, so no conversion is needed (`ABC-819` → branch `{user}/ABC-819`, worktree `abc-819`). If
-proctor's pattern for this repo bakes in one source's key, stop and settle it with the user —
-"Where proctor ends" in Config says how that is normally resolved.
+The branch name and the worktree name come from the **selected task's source** (`branchPattern` —
+except for `linear`, below — and `worktreeName` defaulting to `{issuekey-lowercase}-{issue}`). A new
+issue the hub filed has no source, so pass that issue's repo through `issueKeys` to make the key
+(`example/team-app` → `ALPHA` → `ALPHA-1234`). For `jira` the issue key is the key as it is, so no
+conversion is needed (`ABC-819` → branch `{user}/ABC-819`, worktree `abc-819`). **For `linear` the
+branch is the issue's `gitBranchName`, used as it is** ("Task sources" `linear`), read from the
+issue the tracker returned; it is not built from `branchPattern`. Only the worktree's location comes
+from the conventions (its name and its path): the worktree name is still the key (`ABC-819` →
+worktree `abc-819`) and the path comes from proctor or `adj worktree-path`, but the `branch` they
+return is not used — the branch is `gitBranchName` (example: `ABC-819` → branch
+`alice/abc-819-fix-login-redirect`, worktree `abc-819`). If proctor's pattern for this repo bakes in
+one source's key, stop and settle it with the user — "Where proctor ends" in Config says how that is
+normally resolved.
 
 **Base branch** — the branching point is decided in two levels. **A branching point given for this
 dispatch takes precedence over the config's `baseBranch`.** Without one, `baseBranch`.
@@ -1397,7 +1403,8 @@ dispatch takes precedence over the config's `baseBranch`.** Without one, `baseBr
   ```
 
 - **Only the branching point changes.** The branch name and the worktree name stay as decided above
-  (`branchPattern` / `worktreeName`), and a given branching point adds nothing to them.
+  (the branch from `branchPattern`, or `gitBranchName` for `linear`; the worktree name from
+  `worktreeName`), and a given branching point adds nothing to them.
 
 When `baseBranch` holds a branch name, that is the branching point. **Treat it the same as a given
 branching point** — add `origin/` and put it through the same fetch and `rev-parse --verify` as above.
