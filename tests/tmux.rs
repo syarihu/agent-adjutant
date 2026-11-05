@@ -133,6 +133,34 @@ fn tmux_cli_spawn_pane_wake_focus_and_close_lifecycle() {
     // 8. Focus real execution
     let focus_real = fixture.ok(&["tmux", "focus", "--pid", &pane_pid.to_string()]);
     assert!(focus_real.contains("focused the tab"), "{focus_real}");
+    // The test child is stripped of the terminal's `ITERM_SESSION_ID` / `TERM_PROGRAM`, so
+    // the focus does not reach `osascript` even when `cargo test` runs in iTerm2.
+    let calls = fixture.osascript_calls();
+    assert!(calls.is_empty(), "{calls:?}");
+
+    // Handed `ITERM_SESSION_ID` on purpose, it asks iTerm2 to come forward on macOS (and only
+    // there), and the guard stub takes the call instead of the real `osascript`.
+    let focus_iterm = fixture
+        .command(["tmux", "focus", "--pid", &pane_pid.to_string()])
+        .env("ITERM_SESSION_ID", "w0t0p0:test")
+        .output()
+        .unwrap();
+    assert!(
+        focus_iterm.status.success(),
+        "tmux focus: {}",
+        String::from_utf8_lossy(&focus_iterm.stderr)
+    );
+    let calls = fixture.osascript_calls();
+    if cfg!(target_os = "macos") {
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.contains("tell application \"iTerm2\" to activate")),
+            "{calls:?}"
+        );
+    } else {
+        assert!(calls.is_empty(), "{calls:?}");
+    }
 
     // 9. Close real execution
     let close_out = fixture.ok(&["tmux", "close", "--pid", &pane_pid.to_string()]);

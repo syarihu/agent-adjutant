@@ -252,7 +252,7 @@ fn a_relative_config_is_read_and_reported_as_an_absolute_path() {
     assert!(reported.is_absolute());
     assert_eq!(
         std::fs::canonicalize(reported).unwrap(),
-        std::fs::canonicalize(fixture.config).unwrap()
+        std::fs::canonicalize(&fixture.config).unwrap()
     );
 }
 
