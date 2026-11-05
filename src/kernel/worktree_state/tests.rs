@@ -1,6 +1,11 @@
 use super::*;
 use crate::infra::git::git;
 
+/// How long a test lets git take to read a worktree. The deadline guards against a git that hangs;
+/// these tests do not test it, and a loaded machine (another test run beside this one) takes far
+/// longer than 10 s for the handful of git calls a read makes.
+const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn run_git(dir: &Path, args: &[&str]) {
     let mut full = vec![
         "-c",
@@ -26,14 +31,18 @@ fn commit_file(dir: &Path, name: &str, text: &str) {
 }
 
 fn state_of(dir: &Path, base: Option<&str>) -> GitState {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    worktree_git_state(dir, base, deadline).unwrap().unwrap()
+    let deadline = std::time::Instant::now() + PATIENCE;
+    match worktree_git_state(dir, base, deadline) {
+        Ok(Some(state)) => state,
+        Ok(None) => panic!("{} was taken for gone", dir.display()),
+        Err(e) => panic!("git state of {} could not be read: {e}", dir.display()),
+    }
 }
 
 #[test]
 fn a_worktree_that_is_gone_has_no_git_state() {
     let here = tempfile::tempdir().unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + PATIENCE;
     let gone = here.path().join("nowhere");
     assert_eq!(worktree_git_state(&gone, None, deadline), Ok(None));
 }
@@ -117,7 +126,7 @@ fn the_uncommitted_look_agrees_with_the_whole_git_state_and_is_none_for_a_gone_d
     let _ = &sandbox;
     let here = tempfile::tempdir().unwrap();
     let dir = here.path();
-    let deadline = || std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = || std::time::Instant::now() + PATIENCE;
     crate::testing::init_repo(dir, "main");
     // Before the first commit, with an untracked file.
     std::fs::write(dir.join("new.txt"), "x\n").unwrap();
@@ -242,7 +251,7 @@ fn the_unpushed_look_agrees_with_the_whole_git_state_and_is_none_for_a_gone_dire
         &work,
         &["remote", "add", "origin", origin.to_str().unwrap()],
     );
-    let deadline = || std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = || std::time::Instant::now() + PATIENCE;
     // No commit yet: nothing is only here.
     assert_eq!(unpushed_of(&work, deadline()), Ok(Some(0)));
 

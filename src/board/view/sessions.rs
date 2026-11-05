@@ -871,9 +871,11 @@ pub fn board_sessions(
     board_sessions_of(server, settings, None)
 }
 
-/// How long the git check of one session may take in all. A worktree on a slow disk or a
-/// network mount must not hold a connection thread indefinitely.
-const GIT_CHECK_SECS: u64 = 10;
+/// How long the git check of one session may take in all. A worktree on a slow disk or network
+/// mount must not hold a connection thread indefinitely, but a busy machine can take well over
+/// 10 s for the several git calls a check makes, and a timeout makes cleanup refuse with "git did
+/// not answer in time" rather than tell what would be lost.
+const GIT_CHECK_SECS: u64 = 30;
 
 /// The session `id` of this board, from the board's own records.
 pub fn find_session(
