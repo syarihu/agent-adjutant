@@ -418,7 +418,7 @@ the contract for the pages and workers that read them; the names below are the J
   or on `GET`. It answers 200 `{lastSync, arrived, removed, records, closeWarning?}` (`removed` are the records done for a day, never one with a reader still open) (`closeWarning` is set when the reader of a merged or closed PR could not be closed; see the reader's close below), 409
   `{"error": "a sync is already running", "busy": true}` when a sync is already running in the same
   process (answered at once) or `others/sync.lock` is held elsewhere (answered after asking again for
-  up to about 2 s, since a forked child can briefly hold a copy of a lock that was just released), and 400
+  up to 0.5 s, as every `infra::fs::try_lock` does, since a forked child can briefly hold a copy of a lock that was just released), and 400
   `{"error": <why>}` when it could not be done at all (`gh` missing or not logged in, the search
   failing, the deadline passing before the search answered); then only `lastSync.error` and
   `lastSync.errorAt` are written. A PR that could not be read is not a failure of the sync: it is in

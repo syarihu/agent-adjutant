@@ -806,17 +806,7 @@ fn a_row_whose_pid_is_gone_is_swept_with_its_lock_and_a_live_one_is_kept() {
     let table = ProcessTable::fixed(Some(HashMap::from([(5, "A".to_string())])));
     sweep_with(root, &table, HookEvent::SessionStart);
     assert!(!exists(root, "gone"));
-    // A lock a process forked by another test still shares is left for the next sweep, so
-    // allow it a moment, as the `try_lock` test does.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while agent_session_lock_path(root, "gone").exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the lock was never swept"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-        sweep_with(root, &table, HookEvent::SessionStart);
-    }
+    assert!(!agent_session_lock_path(root, "gone").exists());
     assert!(exists(root, "alive"));
     assert!(exists(root, "s1"));
 }
@@ -1470,14 +1460,8 @@ fn the_sweep_removes_the_side_file_of_a_dead_row_and_an_orphan_and_keeps_a_live_
     assert!(!exists(root, "gone"));
     assert!(!agent_message_path(root, "gone").exists());
     assert!(!agent_message_path(root, "orphan").exists());
-    // The lock taken to judge the orphan is not left behind for the next sweep (a lock another test's
-    // forked process still shares is let go of in a moment, as above).
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while agent_session_lock_path(root, "orphan").exists() {
-        assert!(std::time::Instant::now() < deadline, "the lock was left");
-        std::thread::sleep(Duration::from_millis(10));
-        sweep_with(root, &table, HookEvent::SessionStart);
-    }
+    // The lock taken to judge the orphan is not left behind for the next sweep.
+    assert!(!agent_session_lock_path(root, "orphan").exists());
     assert!(agent_message_path(root, "alive").exists());
 }
 

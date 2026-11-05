@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// How many names are tried before a claim gives up. Same-second sends are normal (a
 /// worker filing two findings at once), so the counter is not an edge case to skip; a
@@ -101,10 +102,39 @@ pub(crate) fn lock(path: &Path) -> Result<std::fs::File, String> {
     Ok(file)
 }
 
-/// `lock` without waiting: `None` when another handle holds it. What to do then is the caller's.
+/// How long `try_lock` keeps asking before it believes a lock is held elsewhere: a child
+/// between fork and exec gets a copy of every open file descriptor, lock files included,
+/// and keeps it until it execs (`O_CLOEXEC` closes it only at exec). So for that window a
+/// lock dropped in the parent still looks held, and one attempt would wrongly report "busy".
+const RELEASE_GRACE: Duration = Duration::from_millis(500);
+
+/// The pause between attempts while `try_lock` waits for a lock to clear.
+const RELEASE_POLL: Duration = Duration::from_millis(10);
+
+/// `lock` without waiting for another process, but allowing for a forked child: `None` only
+/// once the lock has stayed held for `RELEASE_GRACE`.
+///
+/// A child process between fork and exec keeps a copy of every open lock file until it
+/// execs, so a lock dropped in the parent can still look held for that brief window. To
+/// avoid reporting "busy" prematurely, this retries for up to `RELEASE_GRACE`. A caller
+/// must expect this call to take up to that long when the lock is really held elsewhere.
 pub(crate) fn try_lock(path: &Path) -> Result<Option<std::fs::File>, String> {
+    try_lock_within(path, RELEASE_GRACE)
+}
+
+fn try_lock_within(path: &Path, grace: Duration) -> Result<Option<std::fs::File>, String> {
     let file = open_lock(path)?;
-    Ok(try_hold(&file, path)?.then_some(file))
+    let deadline = Instant::now() + grace;
+    loop {
+        if try_hold(&file, path)? {
+            return Ok(Some(file));
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(RELEASE_POLL.min(deadline - now));
+    }
 }
 
 /// How many times a lock is taken again because its path had been unlinked and made anew.
@@ -170,8 +200,9 @@ fn try_lock_checked_with(
     Ok(names(&file, path).then_some(file))
 }
 
-/// One attempt to lock a file `open_lock` opened: `false` when another handle holds it. For a
-/// caller that polls, so that it opens the file once rather than on every attempt.
+/// One attempt to lock a file `open_lock` opened: `false` when another handle holds it.
+/// The single-attempt form for callers that poll by themselves, so that they open the file
+/// once rather than on every attempt.
 pub(crate) fn try_hold(file: &std::fs::File, path: &Path) -> Result<bool, String> {
     match file.try_lock() {
         Ok(()) => Ok(true),
@@ -286,6 +317,52 @@ pub(crate) fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
+/// Fork a child, call `let_go` while the child is held between fork and exec, then let the child
+/// go on and call `then` while it is still on its way to exec. The child holds a copy of every
+/// file this process has open, lock files included, as a pty's child does in that window, so a
+/// lock released in `let_go` is still held through that copy when `then` starts, and stays so for
+/// about 50 ms. Two pipes make it certain rather than a matter of timing: the child says it has
+/// forked through one, and waits on the other until `let_go` has returned (or panicked, which
+/// closes it). Returns once the child has ended.
+#[cfg(all(test, unix))]
+pub(crate) fn let_go_in_a_fork_window(let_go: impl FnOnce(), then: impl FnOnce()) {
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let (mut forked, said) = std::io::pipe().unwrap();
+    let (wait, mut go) = std::io::pipe().unwrap();
+    let (said_fd, wait_fd, go_fd) = (said.as_raw_fd(), wait.as_raw_fd(), go.as_raw_fd());
+    let forker = std::thread::spawn(move || {
+        let pause = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 50_000_000,
+        };
+        let mut command = std::process::Command::new("true");
+        // SAFETY: only async-signal-safe calls (close, write, read, nanosleep) between fork and
+        // exec, on descriptors that stay open until the spawn returns.
+        unsafe {
+            command.pre_exec(move || {
+                // The child's copy of the writing end, so that a parent that goes away is EOF.
+                libc::close(go_fd);
+                libc::write(said_fd, b"x".as_ptr().cast(), 1);
+                let mut byte = 0u8;
+                libc::read(wait_fd, (&raw mut byte).cast(), 1);
+                libc::nanosleep(&pause, std::ptr::null_mut());
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        drop((said, wait));
+        child.wait().unwrap();
+    });
+    forked.read_exact(&mut [0u8; 1]).unwrap();
+    let_go();
+    go.write_all(b"x").unwrap();
+    drop(go);
+    then();
+    forker.join().unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,16 +392,33 @@ mod tests {
         let held = lock(&path).unwrap();
         assert!(try_lock(&path).unwrap().is_none());
         drop(held);
-        // A child another test forks shares the lock until it execs, so allow it a moment.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while try_lock(&path).unwrap().is_none() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "still held after it was dropped"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        assert!(try_lock(&path).unwrap().is_some());
         assert!(path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_let_go_while_a_forked_child_has_not_exec_d_yet_is_not_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.lock");
+        let held = lock(&path).unwrap();
+        let mut taken = None;
+        let_go_in_a_fork_window(
+            || drop(held),
+            || taken = Some(try_lock(&path).unwrap().is_some()),
+        );
+        assert_eq!(taken, Some(true));
+    }
+
+    #[test]
+    fn a_lock_really_held_elsewhere_is_reported_busy_only_after_the_grace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.lock");
+        let _held = lock(&path).unwrap();
+        let start = Instant::now();
+        assert!(try_lock(&path).unwrap().is_none());
+        assert!(start.elapsed() >= RELEASE_GRACE);
+        assert!(try_lock_within(&path, Duration::ZERO).unwrap().is_none());
     }
 
     #[cfg(unix)]
