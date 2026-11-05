@@ -25,11 +25,13 @@ in `agentColOf` ([#809](https://github.com/syarihu/agent-adjutant/issues/809) sp
 2. The ball is the person's: the open gate's `humanCol` is `diff`, `verify` or `prreview`, or the
    card's `waitsOnPerson` → `me`. This comes before the phase, so a worker in `pr-bots` whose PR
    has changes requested is the person's. An approved open PR (`prStatus.state` `open`, `review`
-   `approved`) is the exception for `prreview` and `waitsOnPerson`: it is not `me` here but `merge`
-   by rule 5, even when the server says it waits on the person (`waitsOnPerson` is false in the
-   phases `review` and `report`, which is why the review is read, not that flag); a `diff` or
-   `verify` gate is still `me`. (`humanCol` `verify` also covers a `result` gate and `prreview` a
-   `relay` gate, so those are `me` too.)
+   `approved`) is the exception for the PR's own wait (`waitsOnPerson`, and the `prreview` that comes
+   from it): that is not `me` here but `merge` by rule 5 (`waitsOnPerson` is false in the phases
+   `review` and `report`, which is why the review is read, not that flag). An open `diff`, `verify`
+   or `relay` gate is a gate the person must answer, so it is still `me` on an approved PR.
+   (`humanCol` `verify` also covers a `result` gate and `prreview` a `relay` gate, so those are `me`
+   too.) A parent hub's card has no gate of this board's; its `humanCol` `prreview` is read as the
+   PR's wait.
 3. An open `plan` gate, or the worker's phase `plan` / `implement` → `work`.
 4. The phase `self-review` / `verify` → `ai`.
 5. With a PR (or status `pr`): `prStatus.state` `merged` → `done`; an open PR with `prStatus.review`

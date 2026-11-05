@@ -120,6 +120,9 @@ test('an approved open PR is マージ待ち whatever the phase and CI say, unle
   assert.equal(at(pr({ waitsOnPerson: true, prTurn: 'ci-failed' }, { ci: { pass: 1, fail: 1, pending: 0 } }), { workers: [worker('1', 'pr-bots')] }), 'merge');
   // A diff gate still is the person's; the earlier phases still outrank the PR; merged is 完了.
   assert.equal(at(pr(), { gates: [gate('1', 'diff', 'diff')] }), 'me');
+  assert.equal(at(pr(), { gates: [gate('1', 'verify', 'verify')] }), 'me');
+  assert.equal(at(pr(), { gates: [gate('1', 'relay', 'prreview')] }), 'me');
+  assert.equal(at(pr({ waitsOnPerson: true }), { gates: [gate('1', 'relay', 'prreview')], workers: [worker('1', 'review')] }), 'me');
   assert.equal(at(pr(), { workers: [worker('1', 'implement')] }), 'work');
   assert.equal(at(pr({}, { state: 'merged' }), { workers: [worker('1', 'review')] }), 'done');
 });

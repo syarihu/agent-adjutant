@@ -247,8 +247,8 @@ function prColOf(t, phase) {
 /* The stage a task is in, first match wins:
    1. backlog / queued is 着手前; done / cancelled is 完了.
    2. The person's ball — a diff or verify gate open, or the PR on the person's turn — is セルフレビュー, whatever the phase
-      says; except an approved open PR, which is マージ待ち even when it waits on the person (rule 5), though a diff or verify
-      gate is still セルフレビュー.
+      says; except the PR's own wait on an approved open PR, which is マージ待ち (rule 5). An open diff, verify or relay gate is
+      still セルフレビュー.
    3. An open plan gate, or the phase plan / implement, is 計画・実装.
    4. The phase self-review / verify is AIレビュー.
    5. With a PR: merged is 完了, approved is マージ待ち, a review asked for (or the phase review) is コードレビュー待ち, else
@@ -262,6 +262,9 @@ function agentColOf(t, data = state) {
   // The same reading as the card's waiting mark (`humanColOf`), so a gate just answered leaves the stage at once.
   const hc = humanColOf(t, data);
   if (hc === 'diff' || hc === 'verify') return 'me';
+  // A relay gate (humanCol prreview) is one the person must answer, so it stays theirs on an approved PR; only the wait the PR
+  // itself puts on the person is skipped there. A parent hub's card has no gate of this board's, so its humanCol is read as the PR's.
+  if (!t.ownerHub && openGate(t, data)?.kind === 'relay') return 'me';
   if ((hc === 'prreview' || t.waitsOnPerson) && !approvedOpenPr(t)) return 'me';
 
   // A parent-task hub's task has no gate among this board's: an id is unique only within one hub, so a gate of this board's own
