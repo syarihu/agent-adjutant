@@ -1400,6 +1400,8 @@ function syncBoardSide() {
     requestAnimationFrame(() => document.querySelector('#board-agent .card.selected, #board-list .list-row.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
     return void refreshWork(true);
   }
+  // The own-read dialog belongs to the sidebar's task: it does not outlive the sidebar (`workLeave` does the same for the work view).
+  closeOwnReadDialog();
   if (view !== 'work') {
     disposeTermSlot(workTerm);
     workTerm.board = null;

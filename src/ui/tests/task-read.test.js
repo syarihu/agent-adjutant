@@ -496,3 +496,58 @@ test('the hub note is not offered for a PR that is done, and what a running hub 
   assert.match(html, /&lt;b&gt;tmux&lt;\/b&gt; が要ります/);
   assert.doesNotMatch(html, /<b>|<button/);
 });
+
+test('pressing the heading\'s 下読み button opens the dialog from the terminal beside the board too, only while that sidebar is on, and closing the sidebar closes it', () => {
+  const myWork = read('my-work.js');
+  const calls = [];
+  let listener = null;
+  const dlg = {
+    open: false, showModal() { calls.push('showModal'); this.open = true; }, close() { calls.push('close'); this.open = false; },
+    querySelector: () => ({ scrollTop: 0, focus() {} }),
+  };
+  const c = vm.createContext({
+    // What the page's other scripts own: the refs, the board lists and the dialog's drawing.
+    PR_REF: 'pr:', HUB_REF: 'hub:', SESS_REF: 'sess:', PARENT_REF: 'parent:', WORK_GATE_REF: 'gate:',
+    isHubRef: id => id.startsWith('hub:'), isSessRef: id => id.startsWith('sess:'),
+    multiBoard: true, taskById: id => (id === 't1' ? task : null),
+    cardDialog: { token: 0, mode: null, subject: null }, cardDialogEl: () => dlg, cardDialogShell: () => {}, ownReadDialogSync: () => {},
+    cardDialogSpy: () => {}, prDialogDrawn: {}, taskRead: { key: null, doc: null }, workSelected: () => null,
+    ownReadTitleText: () => '', ownReadSubText: () => '', ownReadRepoHint: () => ({}), taskReadAsk: () => {}, othersOutOfReview: () => false,
+    // The heading's listener is captured when work-term-view.js registers it.
+    wk: id => (id === 'wk-term-head' ? { addEventListener: (_, fn) => { listener ??= fn; } } : id === 'work-view' ? { style: {} } : null),
+    document: { body: { classList: { toggle: () => {} } } }, requestAnimationFrame: () => {}, refreshWork: () => {}, disposeTermSlot: () => {}, workTerm: {},
+  });
+  const run = code => vm.runInContext(code, c);
+  vm.runInContext(cut(read('core.js'), /^const isTaskRef = .*$/m), c);
+  vm.runInContext(cut(myWork, /^const boardSideRef = .*$/m), c);
+  vm.runInContext(cut(myWork, /^const boardSideOn = [\s\S]*?;\n/m), c);
+  vm.runInContext(cut(myWork, /^const workTermOn = .*$/m), c);
+  vm.runInContext('let boardSideShown = false;', c);
+  vm.runInContext(fnSrc(myWork, 'syncBoardSide'), c);
+  const view = read('task-read-view.js');
+  vm.runInContext(cut(view, /^const taskReadActive = .*$/m), c);
+  vm.runInContext(cut(view, /^const taskReadTaskOf = .*$/m), c);
+  vm.runInContext(fnSrc(view, 'openOwnReadDialog'), c);
+  vm.runInContext(fnSrc(view, 'closeOwnReadDialog'), c);
+  vm.runInContext(cut(view, /^const taskReadKey = .*$/m), c);
+  vm.runInContext(cut(read('work-term-view.js'), /^wk\('wk-term-head'\)\.addEventListener\('click', e => \{[\s\S]*?\n\}\);/m), c);
+  assert.strictEqual(typeof listener, 'function');
+  const press = ownRead => listener({ target: { closest: q => (q === '[data-own-read]' ? { disabled: false, dataset: { ownRead } } : null) } });
+  run("var view = 'board'; var nav = { board: 'acme', task: 't1', pane: 'term' };");
+  assert.strictEqual(run('taskReadTaskOf()')?.id, 't1');
+  press('see');
+  assert.deepStrictEqual(calls, ['showModal']);
+  assert.strictEqual(c.cardDialog.mode, 'own-read');
+  assert.strictEqual(c.cardDialog.subject, 't1');
+  // The sidebar is turned off with the dialog open: it goes with the sidebar.
+  run("boardSideShown = true; nav.pane = 'task';");
+  calls.length = 0;
+  run('syncBoardSide()');
+  assert.deepStrictEqual(calls, ['close']);
+  assert.strictEqual(dlg.open, false);
+  // The sidebar is off in the board view: no task, so the button does nothing.
+  calls.length = 0;
+  assert.strictEqual(run('taskReadTaskOf()'), null);
+  press('see');
+  assert.deepStrictEqual(calls, []);
+});

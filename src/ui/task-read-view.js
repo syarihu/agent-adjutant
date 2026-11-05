@@ -29,9 +29,9 @@ const taskRead = {
   spying: false,
 };
 
-/* The dialog is open on a task that has a PR: the work view is on it, and the dialog was opened for it (it stays 'own-read' with no subject once closed). */
-const taskReadActive = task => !!task && view === 'work' && !!task.pr && task.id === nav.task && cardDialog.mode === 'own-read' && cardDialog.subject === task.id;
-const taskReadTaskOf = () => view === 'work' && isTaskRef(nav.task) ? taskById(nav.task) || null : null;
+/* The dialog is open on a task that has a PR: the work view or the terminal beside the board is on it, and the dialog was opened for it (it stays 'own-read' with no subject once closed). */
+const taskReadActive = task => !!task && workTermOn() && !!task.pr && task.id === nav.task && cardDialog.mode === 'own-read' && cardDialog.subject === task.id;
+const taskReadTaskOf = () => workTermOn() && isTaskRef(nav.task) ? taskById(nav.task) || null : null;
 const taskReadTask = () => { const t = taskReadTaskOf(); return taskReadActive(t) ? t : null; };
 const taskReadKey = task => `${nav.board}/${task.id}/${task.pr}`;
 
@@ -354,7 +354,7 @@ function ownReadDialogClosed() {
 function ownReadDialogFollow() {
   if (cardDialog.mode === 'own-read' && cardDialogEl().open) cardDialogSync();
 }
-/* The work view is left: the dialog goes with it. */
+/* The work view is left, or the terminal beside the board is closed: the dialog goes with it. */
 function closeOwnReadDialog() {
   if (cardDialog.mode !== 'own-read' || !cardDialogEl().open) return;
   cardDialog.quiet = true;
