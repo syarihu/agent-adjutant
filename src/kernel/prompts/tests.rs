@@ -1548,7 +1548,7 @@ fn a_row_handed_to_the_claim_step_travels_whole_rather_than_column_by_column() {
         "nothing says which command must not run on an existing branch: {startup}"
     );
     assert!(
-        flowed.contains("For a row with a PR but no worktree"),
+        flowed.contains("For a row whose `prState` is `OPEN` but which has no worktree"),
         "a branch that exists only on the remote is branched over: {startup}"
     );
 
@@ -1570,6 +1570,100 @@ fn a_row_handed_to_the_claim_step_travels_whole_rather_than_column_by_column() {
     assert!(
         brief_flowed.contains("{worktree path or -}"),
         "the collector's row has no worktree column to carry: {brief}"
+    );
+}
+
+/// A subtask row carries one PR chosen by the collapse rule, and the readers agree on it.
+///
+/// When a branch had several PRs, `--state all` returned every one of them (open, merged,
+/// closed), and the collector put whatever it picked into the subtask row. The readers
+/// then disagreed: the sorting rules expected a merged PR under Done and an open one
+/// under In progress, but the handoff stopped starting for any row with a PR — even merged
+/// or closed. The collapse rule picks an open PR before a merged one before a closed one,
+/// and the startup readers agree on what each state means.
+#[test]
+fn a_branch_with_several_prs_collapses_to_one_the_readers_agree_on() {
+    let raw = find("adj-hub").unwrap().raw_content;
+
+    let fetch = step(raw, "### Fetching what sits under the parent");
+    let fetch_flowed = flow(&fetch);
+    assert!(
+        fetch_flowed.contains(
+            "an open PR before a merged one before a closed one, and within the same state the newest (the highest PR number)"
+        ),
+        "the fetch step does not state the PR collapse rule: {fetch}"
+    );
+
+    let brief = section(
+        raw,
+        "## Appendix — Brief for the parent task collection agent",
+    );
+    let brief_flowed = flow(&brief);
+    assert!(
+        brief_flowed.contains(
+            "an open PR before a merged one before a closed one, and within the same state the newest (the highest PR number)"
+        ),
+        "the collector brief does not state the PR collapse rule: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("`OPEN`, `MERGED` or `CLOSED`"),
+        "the collector brief does not specify PR state values: {brief}"
+    );
+
+    let startup = step(raw, "### Read at startup");
+    let startup_flowed = flow(&startup);
+    assert!(
+        startup_flowed.contains("`prState` is `MERGED`"),
+        "Done does not check that prState is MERGED: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("those with a worktree, a `prState` of `OPEN`"),
+        "In progress does not read an OPEN PR as in flight: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("A `CLOSED` PR alone does not make a row in progress"),
+        "In progress does not exclude a CLOSED PR: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("For a row whose `prState` is `OPEN` but which has no worktree"),
+        "startup handoff does not restrict the worktree stop to OPEN PRs: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("a `MERGED` row is done"),
+        "startup handoff does not handle a MERGED row: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("A `CLOSED` row does not stop the start"),
+        "startup handoff does not handle a CLOSED row: {startup}"
+    );
+    // A closed or merged PR's branch can still be on the remote, and `-b` from the base
+    // then cuts a branch of the same name the worker cannot push.
+    before(
+        &startup,
+        "starts only once its branch is gone from the remote",
+        "A `CLOSED` row does not stop the start",
+    );
+    // A `CLOSED` row sorts under "next candidates" and a `MERGED` one under "done", so the
+    // check must not sit inside the bullet that only covers rows named from "in progress".
+    assert!(
+        startup_flowed.contains(
+            "- **A row whose `prState` is `MERGED` or `CLOSED` and which has no worktree, wherever it is listed**"
+        ),
+        "the remote-branch check only covers rows named from in progress: {startup}"
+    );
+    // A fetch that failed leaves no tracking ref to list, and the empty answer would read
+    // as "gone" for a branch that is still there.
+    assert!(
+        startup_flowed.contains("run `git fetch --prune origin`, and if it fails, say so and stop"),
+        "a failed fetch is read as the branch being gone: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("git branch -r --list 'origin/{branch}'"),
+        "nothing checks for a branch left on the remote before starting a CLOSED row: {startup}"
+    );
+    assert!(
+        !startup_flowed.contains("For a row with a PR but no worktree"),
+        "startup handoff still contains the old rule that blocked any PR: {startup}"
     );
 }
 

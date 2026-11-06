@@ -371,22 +371,25 @@ first, and no one-off lookup is added for it. How to fetch it is "Fetching the p
 **What is read is three levels: parent task → the subtasks under it → the PRs those subtasks
 opened.** Once collected, show them sorted like this:
 
-- **Done** — **subtasks the tracker says are finished**, or those whose PR was merged. Finished is
-  read per type: for the `github` family the issue's `state` is `closed`; for `jira` the
+- **Done** — **subtasks the tracker says are finished**, or those whose `prState` is `MERGED`.
+  Finished is read per type: for the `github` family the issue's `state` is `closed`; for `jira` the
   `statusCategory` is `Done` (the same test by which the default jira query in "Task sources" drops
   them with `statusCategory != Done` — **not judging in-progress by `statusCategory`** is another
   matter, about mistaking `indeterminate`); for `linear` a state treated as completed or cancelled.
   **The parent collection does not filter by state** — showing what is done is this hub's job, so
   this is the only place they are sorted out. Miss them here and finished subtasks fall into "next
   candidates" and are handed out again
-- **In progress** — those with a worktree, an open PR, or started on the board. **On a plain
-  `github` source with no board, those with the in-progress label are in progress too** (that
-  source's mark of being started is a label or a PR, and "on the board" finds nothing; "Task
-  sources" `github`). **For `jira`, a state matching `inProgressStatus`, and for `linear` one
-  matching `inProgressState`, is in progress too** — as with reading Done per type, only
-  `github-project` has a board, so stopping at "on the board" lines up Jira and Linear children that
-  are moving on another machine as "next candidates" (step 2 of "1. Pick the task" does the same
-  matching for the whole repository; not judging by `statusCategory` is the same as there)
+- **In progress** — those with a worktree, a `prState` of `OPEN`, or started on the board. **A
+  `CLOSED` PR alone does not make a row in progress** (a closed PR is work that was dropped or
+  moved, and the collapse rule in "Fetching what sits under the parent" already put an open or
+  merged PR in its place when there is one). **On a plain `github` source with no board, those with
+  the in-progress label are in progress too** (that source's mark of being started is a label or a
+  PR, and "on the board" finds nothing; "Task sources" `github`). **For `jira`, a state matching
+  `inProgressStatus`, and for `linear` one matching `inProgressState`, is in progress too** — as
+  with reading Done per type, only `github-project` has a board, so stopping at "on the board" lines
+  up Jira and Linear children that are moving on another machine as "next candidates" (step 2 of "1.
+  Pick the task" does the same matching for the whole repository; not judging by `statusCategory` is
+  the same as there)
 - **Next candidates** — of the rest, those assigned to you or unassigned. **In the order the tracker
   returned them**, numbered
 - **Held by others** — of the rest, those **assigned to someone other than you**. Listed as `{key}
@@ -433,8 +436,8 @@ it" comes from this row here**:
   `linear` branch is `gitBranchName` and does not come from a pattern ("Task sources" `linear`). The
   path for its location may come from the conventions (proctor or `adj worktree-path`) — only the
   branch is not fetched again.
-- **Worktree path and PR number** (`worktree` and `pr`) — if filled in, that child has already
-  started. "When handing on to start" below.
+- **Worktree path, PR number and PR state** (`worktree`, `pr` and `prState`) — a worktree or an
+  `OPEN` PR means that child has already started. "When handing on to start" below.
 
 **When handing on to start — only the list is not rebuilt.** What is skipped is the fetch and
 numbering of "1. Pick the task"; **the later processing attached to it still happens**. The parent
@@ -447,13 +450,26 @@ has to be done here yourself:
   disappear**. Say that in the line that asks. If the answer is to go ahead, from there it is the
   same as "2. Claim it".
 - **Do not create a worktree for a row that has already started.** When a row under "in progress" or
-  "held by others" is named, look at the machine row's `worktree` path and `pr` number. **If the path
+  "held by others" is named, look at the machine row's `worktree` path and `prState`. **If the path
   is filled in, do not run `git worktree add -b`** — it fails on a branch that already exists. Use
   that worktree as it is and hand it to 4 of "When asked to work on an existing worktree" (start a
   worker, or open it in the IDE). With proctor installed, the start of "3. Create the worktree"
-  notices, but **on a machine without it nobody is looking**. **For a row with a PR but no
-  worktree**, growing one with `-b` makes something other than that PR's branch, so say so and
-  stop.
+  notices, but **on a machine without it nobody is looking**. **For a row whose `prState` is `OPEN`
+  but which has no worktree**, growing one with `-b` makes something other than that PR's branch, so
+  say so and stop.
+- **A row whose `prState` is `MERGED` or `CLOSED` and which has no worktree, wherever it is
+  listed** (a `MERGED` one under "done", a `CLOSED` one under "next candidates" too), starts only
+  once its branch is gone from the remote: run `git fetch --prune origin`, and if it fails, say so
+  and stop (with no fetch, an empty answer below says nothing); then `git branch -r --list
+  'origin/{branch}'` must print nothing. If it prints the branch, `-b` cuts a branch of the same
+  name from the base, with a history the remote one does not share, and the worker's push is
+  refused (or, forced, overwrites the old PR's commits); say so and stop, and let the person delete
+  the remote branch or name another. **This stop is about the branch, not the PR**: GitHub keeps
+  the branch of a PR closed without merging, so it is common, and it is the branch that clashes.
+  With the branch gone, a `MERGED` row is done: if a person names it, say which PR merged it and
+  confirm once before starting it again (it may be follow-up work). A `CLOSED` row does not stop
+  the start: start as usual, but say in the line that its earlier PR #{pr} was closed, and that the
+  work will open a new PR.
 - **Rows with no key configured have no number.** The list above says so, so when one is named by
   key, give the same answer and stop (ask whether to add it to `issueKeys`). Do not send it on to
   "3. Create the worktree" without a branch name.
@@ -577,6 +593,12 @@ key misses those). **`--head` is an exact match**, so pass the branch resolved a
 why it also catches sources with their own `branchPattern` — pass something built by guessing the
 shape and just those miss. Only for the subtasks that turned up nothing that way, pick them up with
 `gh pr list -R <codeRepo> --search '{subtask key}' --state all`.
+
+**A branch can have several PRs, and the row carries one.** Pick an open PR before a merged one
+before a closed one, and within the same state the newest (the highest PR number). A branch
+opened, closed and opened again is ordinary (an abandoned first attempt, a revert, a PR retargeted
+by closing and reopening), and `--state all` returns the closed ones too; left to the collector,
+the choice is whatever it picked. The same rule applies to the PRs `--search` finds.
 
 **Some are still missed.** A PR whose body says only `Closes #233` and **whose branch name strays from
 the conventions** is caught by neither lookup (`--search` looks at the title and body, not the branch
@@ -3028,6 +3050,11 @@ Put both of these in the report:
    {"kind": "subtask", "identifier": "{identifier}", "key": "{KEY-number}", "item": "{project item id or -}", "status": "{status}", "assignee": "{assignee or -}", "branch": "{resolved branch}", "title": "{title}", "url": "{URL}", "pr": "{PR number or -}", "prState": "{PR state or -}", "worktree": "{worktree path or -}"}
    The identifier and project item id are written as in the dashboard collection's brief.
    The PR state and the worktree are what the hub uses to sort "done / in progress / next candidates".
+   `{PR state}` is the `state` as `gh` prints it: `OPEN`, `MERGED` or `CLOSED` (`-` when there is no
+   PR; a draft is still `OPEN`). **When the branch has several PRs, put one in the row**: an open PR
+   before a merged one before a closed one, and within the same state the newest (the highest PR
+   number) — an open one is the work in flight, a merged one is the work done; a closed one only
+   counts when there is nothing else.
    **`{assignee}` is used to sort out children held by others** — drop it and others' tasks are listed,
    numbered, under "next candidates", and starting one steps on someone else's assignment. Unassigned
    is `-`.
