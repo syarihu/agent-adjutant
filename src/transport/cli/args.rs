@@ -351,6 +351,10 @@ pub(crate) struct WorkArgs {
     /// Reopen the worker session saved in this worktree instead of starting a new one
     #[arg(long)]
     pub(crate) resume: bool,
+    /// The model the worker's agent runs on: {model} in agentRunner / agentResumeRunner, or --model
+    /// added to a claude runner without it (with --resume: default the model the session was started with)
+    #[arg(long, value_name = "MODEL")]
+    pub(crate) model: Option<String>,
     #[arg(long)]
     pub(crate) dry_run: bool,
 }
@@ -377,6 +381,10 @@ pub(crate) struct WorkerArgs {
     /// Reopen the worker session saved in this worktree instead of starting a new one
     #[arg(long)]
     pub(crate) resume: bool,
+    /// The model the worker's agent runs on: {model} in agentRunner / agentResumeRunner, or --model
+    /// added to a claude runner without it (with --resume: default the model the session was started with)
+    #[arg(long, value_name = "MODEL")]
+    pub(crate) model: Option<String>,
     /// The task record ID when one is linked
     #[arg(long)]
     pub(crate) task: Option<String>,

@@ -1,4 +1,4 @@
-use super::{Planned, WorkerRequest, plan_launch};
+use super::{Planned, WorkerRequest, plan_launch, register_launch};
 use crate::registry;
 use std::path::Path;
 
@@ -11,6 +11,7 @@ fn fresh(worktree: &Path) -> WorkerRequest {
         task: None,
         prompt: None,
         resume: false,
+        model: None,
     }
 }
 
@@ -65,6 +66,193 @@ fn a_live_worker_turns_the_launch_away_and_gives_back_the_mark() {
         dir.path(),
         crate::infra::clock::now_secs()
     ));
+}
+
+#[test]
+fn a_fresh_plan_with_a_chosen_model_passes_the_model_flag() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let mut req = fresh(dir.path());
+    req.model = Some("opus".to_string());
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(
+        launch.command.contains("--model opus"),
+        "{}",
+        launch.command
+    );
+    assert_eq!(launch.model.as_deref(), Some("opus"));
+    assert!(launch.model_note.is_none());
+}
+
+#[test]
+fn a_fresh_plan_with_an_invalid_model_is_refused() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    let mut req = fresh(dir.path());
+    req.model = Some("-m".to_string());
+    let Err(err) = plan_launch(&req) else {
+        panic!("expected refusal for invalid model");
+    };
+    assert!(err.contains("refused model name"), "{err}");
+}
+
+#[test]
+fn an_explicit_model_with_a_runner_that_has_no_placeholder_is_refused() {
+    let _sandbox = crate::testing::Sandbox::new(
+        r#"{"repos": {}, "defaults": {"agentRunner": "codex exec {prompt}"}}"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut req = fresh(dir.path());
+    req.model = Some("opus".to_string());
+    let Err(err) = plan_launch(&req) else {
+        panic!("expected refusal for runner without placeholder");
+    };
+    assert!(err.contains("agentRunner has no {model}"), "{err}");
+}
+
+#[test]
+fn a_resumed_worker_uses_the_saved_model_when_none_is_requested() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    let mut req = fresh(dir.path());
+    req.resume = true;
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(
+        launch.command.contains("--model haiku"),
+        "{}",
+        launch.command
+    );
+    assert_eq!(launch.model.as_deref(), Some("haiku"));
+    assert!(launch.model_note.is_none());
+}
+
+#[test]
+fn a_resumed_worker_with_an_explicit_model_overrides_the_saved_one() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    let mut req = fresh(dir.path());
+    req.resume = true;
+    req.model = Some("opus".to_string());
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(
+        launch.command.contains("--model opus"),
+        "{}",
+        launch.command
+    );
+    assert!(
+        !launch.command.contains("--model haiku"),
+        "{}",
+        launch.command
+    );
+    assert_eq!(launch.model.as_deref(), Some("opus"));
+    assert!(launch.model_note.is_none());
+}
+
+/// The registration changes into the worktree, which is process-wide state: put it back so
+/// the next test (and the tempdir's removal) does not find the process standing in it.
+struct RestoreCwd(std::path::PathBuf);
+
+impl Drop for RestoreCwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
+#[test]
+fn registering_a_resume_with_an_explicit_model_rewrites_the_saved_model() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    // Declared after `dir` so it drops first: the process leaves the tempdir before it is removed.
+    let _cwd = RestoreCwd(std::env::current_dir().unwrap());
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    let mut req = fresh(dir.path());
+    req.resume = true;
+    req.model = Some("opus".to_string());
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    let registered = register_launch(&launch).unwrap();
+    assert!(registered.session.is_none());
+    let saved = registry::worker_session(dir.path()).unwrap();
+    assert_eq!(saved.model.as_deref(), Some("opus"));
+    assert_eq!(saved.session_id, "sid-1");
+}
+
+#[test]
+fn a_blank_model_is_no_model_so_a_resume_keeps_the_saved_one() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    for blank in ["", "  "] {
+        let mut req = fresh(dir.path());
+        req.resume = true;
+        req.model = Some(blank.to_string());
+        let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+            panic!("expected planned launch");
+        };
+        assert!(
+            launch.command.contains("--model haiku"),
+            "{}",
+            launch.command
+        );
+        assert_eq!(launch.model.as_deref(), Some("haiku"));
+    }
+    let mut req = fresh(dir.path());
+    req.model = Some(" ".to_string());
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(!launch.command.contains("--model"), "{}", launch.command);
+    assert_eq!(launch.model, None);
+}
+
+#[test]
+fn a_saved_model_with_a_refused_resume_runner_keeps_model_in_launch_and_sets_note() {
+    let _sandbox = crate::testing::Sandbox::new(
+        r#"{"repos": {}, "defaults": {"agentResumeRunner": "codex resume {sessionId} {prompt}"}}"#,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("haiku")).unwrap();
+    let mut req = fresh(dir.path());
+    req.resume = true;
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(!launch.command.contains("--model"), "{}", launch.command);
+    assert_eq!(launch.model.as_deref(), Some("haiku"));
+    let note = launch.model_note.expect("model_note should be set");
+    assert!(
+        note.contains("the saved model haiku is not passed: agentResumeRunner has no {model}"),
+        "{note}"
+    );
+}
+
+#[test]
+fn a_saved_invalid_model_is_not_passed_and_sets_note_while_keeping_saved_model() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    registry::save_worker_session(dir.path(), "WID-1", None, None, "sid-1", Some("-x")).unwrap();
+    let mut req = fresh(dir.path());
+    req.resume = true;
+    let Ok(Planned::Launch(launch)) = plan_launch(&req) else {
+        panic!("expected planned launch");
+    };
+    assert!(!launch.command.contains("-x"), "{}", launch.command);
+    assert!(!launch.command.contains("--model"), "{}", launch.command);
+    assert_eq!(launch.model.as_deref(), Some("-x"));
+    let note = launch.model_note.expect("model_note should be set");
+    assert!(
+        note.contains("the saved model -x is not passed: refused model name \"-x\""),
+        "{note}"
+    );
 }
 
 mod open_tab {

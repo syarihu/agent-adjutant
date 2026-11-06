@@ -49,6 +49,7 @@ pub fn work(args: &WorkArgs) -> Result<i32, String> {
             &args.title,
             args.prompt.as_deref(),
             args.dry_run,
+            args.model.as_deref(),
         );
     }
     // The dispatching side: the identifier being handed to the new worker is this caller's
@@ -60,6 +61,7 @@ pub fn work(args: &WorkArgs) -> Result<i32, String> {
         task: args.task.clone(),
         prompt: args.prompt.clone(),
         repo: args.repo.clone(),
+        model: args.model.clone(),
     };
     match crate::lifecycle::worker::start(&ctx, &request, args.dry_run)? {
         Started::Full(refusal) => {
@@ -87,9 +89,12 @@ fn work_resumed(
     title: &str,
     prompt: Option<&str>,
     dry_run: bool,
+    model: Option<&str>,
 ) -> Result<i32, String> {
     let ctx = context_without_hub(repo_arg)?;
-    match resume_worker(&ctx, repo_arg, hub_arg, worktree, title, prompt, dry_run)? {
+    match resume_worker(
+        &ctx, repo_arg, hub_arg, worktree, title, prompt, dry_run, model,
+    )? {
         Started::Full(refusal) => {
             eprintln!("adjutant: {refusal}");
             Ok(WORKER_LIMIT_EXIT)
@@ -187,6 +192,7 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         task: args.task.clone(),
         prompt: args.prompt.clone(),
         resume: args.resume,
+        model: args.model.clone(),
     };
     // Resolved here as well, so a failure below can give the slot back. A worktree that cannot
     // be resolved is a refusal before anything was marked.
@@ -212,6 +218,9 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         }
         Planned::Launch(launch) => launch,
     };
+    if let Some(note) = &launch.model_note {
+        eprintln!("adjutant: {note}");
+    }
     if let Hooks::Skipped(why) = &launch.hooks {
         eprintln!("adjutant: not passing hooks to the agent: {why}");
     }
@@ -229,6 +238,9 @@ pub fn worker(args: &WorkerArgs) -> Result<(), String> {
         }
         Some(SessionNote::StillUnderOldHub(e)) => {
             eprintln!("adjutant: {e}; the worker may still be counted for its old hub");
+        }
+        Some(SessionNote::ModelNotSaved(e)) => {
+            eprintln!("adjutant: {e}; the next --resume may use the previously saved model");
         }
         None => {}
     }

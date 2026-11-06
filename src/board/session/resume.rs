@@ -52,7 +52,16 @@ pub fn resume(server: &Server, id: &str) -> Result<Resumed, String> {
     }
     let ctx = own_hub_context(server, settings)?;
     let repo = ctx.repo.nwo.clone();
-    let done = match resume_worker(&ctx, Some(&repo), None, &session.worktree, "", None, false)? {
+    let done = match resume_worker(
+        &ctx,
+        Some(&repo),
+        None,
+        &session.worktree,
+        "",
+        None,
+        false,
+        None,
+    )? {
         Started::Opened(done) => done,
         Started::Full(refusal) => return Err(refusal),
     };

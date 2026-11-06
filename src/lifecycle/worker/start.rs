@@ -20,6 +20,8 @@ pub struct StartRequest {
     pub prompt: Option<String>,
     /// The `--repo` the tab's command line carries, so the worker reads the same repository.
     pub repo: Option<String>,
+    /// The model the worker's agent runs on.
+    pub model: Option<String>,
 }
 
 /// Open a tab and start a worker agent in it. One command rather than two so the runner
@@ -30,6 +32,19 @@ pub struct StartRequest {
 /// `ctx` is the dispatching side's own (see `work`): the hub being handed to the new worker
 /// is the caller's, never one read out of the worktree.
 pub fn start(ctx: &Context, request: &StartRequest, dry_run: bool) -> Result<Started, String> {
+    // A blank model means none was chosen: nothing is checked or forwarded.
+    let model = request.model.as_deref().filter(|m| !m.trim().is_empty());
+    if let Some(m) = model {
+        runner::check_model(m)?;
+        let template = ctx
+            .settings
+            .agent_runner
+            .as_deref()
+            .unwrap_or(runner::DEFAULT_AGENT_RUNNER);
+        if let runner::ModelSlot::Refused(reason) = runner::model_slot(template) {
+            return Err(format!("agentRunner {reason}"));
+        }
+    }
     let prompt = request
         .prompt
         .as_deref()
@@ -87,6 +102,9 @@ pub fn start(ctx: &Context, request: &StartRequest, dry_run: bool) -> Result<Sta
     }
     if let Some(task) = task_id {
         parts.push(format!("--task={task}"));
+    }
+    if let Some(m) = model {
+        parts.push(format!("--model={m}"));
     }
     let name_it = title_command(&ctx.settings, title);
     open_worker_tab(

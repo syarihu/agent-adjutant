@@ -11,6 +11,9 @@ pub enum SessionNote {
     /// The session could not be re-saved under the new hub, so the worker may still be
     /// counted for its old one.
     StillUnderOldHub(String),
+    /// The session could not be re-saved with the new model, so the next `--resume` may
+    /// use the previously saved model.
+    ModelNotSaved(String),
 }
 
 /// What registering the worker left to say.
@@ -57,6 +60,7 @@ pub fn register_launch(launch: &Launch) -> Result<Registered, String> {
                     ctx.repo.hub.as_deref(),
                     task,
                     id,
+                    launch.model.as_deref(),
                 )
                 .map(|_| ()),
                 None => registry::forget_worker_session(worktree),
@@ -69,16 +73,23 @@ pub fn register_launch(launch: &Launch) -> Result<Registered, String> {
             // Reopened under another hub than the session remembers: say so there too, or the
             // worker would count for the old hub once it has ended and its record is gone.
             let slug_of = |hub: Option<&str>| identity::slug_for(&ctx.repo.nwo, hub);
-            if slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref())
+            let hub_changed = slug_of(ctx.repo.hub.as_deref()) != slug_of(saved.hub.as_deref());
+            let model_changed = launch.model.as_deref() != saved.model.as_deref();
+            if (hub_changed || model_changed)
                 && let Err(e) = registry::rewrite_worker_session(
                     worktree,
                     saved,
                     title,
                     ctx.repo.hub.as_deref(),
                     task,
+                    launch.model.as_deref(),
                 )
             {
-                session = Some(SessionNote::StillUnderOldHub(e));
+                session = if hub_changed {
+                    Some(SessionNote::StillUnderOldHub(e))
+                } else {
+                    Some(SessionNote::ModelNotSaved(e))
+                };
             }
         }
     }
