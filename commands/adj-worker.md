@@ -537,7 +537,7 @@ ask the hub.**
   ## Task                   {task_id} {task_url}
   ```
 
-  `## Task` is the brief's Task line: the work the worktree the hub removes was for.
+  `## Task` is the brief's Task line.
 
 - **Do not wait for a reply.** Once the hub starts cleaning up, this tab is closed, so do not plan on
   coming back to `adjutant_outbox`. Tell the user "I asked the hub to clean up, so the hub will close
