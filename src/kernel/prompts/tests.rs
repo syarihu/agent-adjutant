@@ -319,7 +319,7 @@ fn the_worktree_step_takes_a_base_meant_for_one_dispatch() {
     // `gh pr create`. Written as a ban on the bare form while each fetch is pinned on
     // its own together with the command that follows it.
     assert!(
-        !create.contains("git fetch origin"),
+        !flow(&create).contains("git fetch origin"),
         "the worktree step fetches without pruning, so a deleted base still resolves: {create}"
     );
     assert_once_in(
