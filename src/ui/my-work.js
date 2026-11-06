@@ -1521,14 +1521,17 @@ function renderWorkTerm() {
 
 function drawWorkTerm() {
   if (!workTermOn()) return;
-  // With nothing selected the middle is the empty state in the place of the terminal and the read-through.
-  const empty = !nav.task;
-  wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
   const review = nav.list === 'review';
-  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : review ? reviewMiddleEmptyHtml(reviewMiddleKind(others.doc && { ...others.doc, records: othersInOrg() }, others.error), others.error || '') : WORK_MIDDLE_EMPTY_HTML);
+  // Review requests turned off in the display settings: the review list's middle says so, whatever PR the address names.
+  const hiddenReview = review && !prefs.useReviews;
+  // With nothing selected the middle is the empty state in the place of the terminal and the read-through.
+  const empty = !nav.task || hiddenReview;
+  wk('wk-term').classList.toggle('wk-mid-empty-on', empty);
+  setWorkTermPart('empty', wk('wk-mid-empty'), !empty ? '' : hiddenReview ? othersHiddenHtml() : review ? reviewMiddleEmptyHtml(reviewMiddleKind(others.doc && { ...others.doc, records: othersInOrg() }, others.error), others.error || '') : WORK_MIDDLE_EMPTY_HTML);
   wk('wk-mid-empty').hidden = !empty;
   // No session's terminal stays in the middle under the review list.
   if (empty && review) { disposeTermSlot(workTerm); workTerm.board = null; }
+  if (hiddenReview) return;
   // From the address, not `selectedTaskId`, which lags while the PR's record is still on its way (pr-panel.js).
   // A review request's middle is its read-through, with tabs of its own (pr-panel.js).
   if (isPrRef(nav.task)) {

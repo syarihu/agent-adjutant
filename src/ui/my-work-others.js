@@ -347,3 +347,12 @@ function othersSig(doc, nowEst) {
   return JSON.stringify([recs, ls ? [ls.at, ls.complete, ls.truncated, (ls.failed || []).length, ls.error, ls.errorAt] : null, doc?.hub ?? null,
     Math.floor(nowEst / 60), othersStale(ls, nowEst)]);
 }
+
+/* What is shown in place of the review list, the middle and the PR panel when `prefs.useReviews` is off. */
+function othersHiddenHtml() {
+  return '<div class="wk-empty">'
+    + '<div class="tp-ph-head">レビュー依頼は隠しています</div>'
+    + '<p class="tp-muted">表示の設定で「レビュー依頼を使う」をオフにしています。左の「表示」からオンにすると、ここに一覧が戻ります。</p>'
+    + '<div><button type="button" class="btn-m3-tonal" data-action="display">表示の設定を開く</button></div>'
+    + '</div>';
+}

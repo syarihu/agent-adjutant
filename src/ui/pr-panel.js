@@ -278,7 +278,7 @@ function renderPrRead(rec) {
   readEl.dataset.drafts = 'on';
   // The one view has no tabs.
   showMidTabs('', true);
-  if (!rec) return taskReadSay(`<div class="m3-filled-card"><div class="tp-muted" role="status">${esc(prMissingText(others.doc, others.error))}</div></div>`);
+  if (!rec) return taskReadSay(!prefs.useReviews ? othersHiddenHtml() : `<div class="m3-filled-card"><div class="tp-muted" role="status">${esc(prMissingText(others.doc, others.error))}</div></div>`);
   const hook = PR_HOOKS.diff;
 
   const startHeld = !!document.activeElement?.matches?.('[data-task-read-hub-start]');
@@ -312,7 +312,7 @@ function renderPrPanel() {
   const panel = tp('task-panel');
   if (!panel) return;
   const id = prIdOfRef(selectedTaskId);
-  const rec = othersById(id);
+  const rec = !prefs.useReviews ? null : othersById(id);
   const cls = document.body.classList;
   panel.hidden = false;
   tp('tp-scrim').hidden = true;
@@ -337,7 +337,8 @@ function renderPrPanel() {
   setPanelPart('head', tp('tp-head'), rec ? taskReaderHeadHtml(rec, others.closing.has(id))
     : `<div class="tp-head-main"><h2 class="tp-title">この PR</h2></div>${panelBtnsHtml('')}`);
   const records = othersRecords();
-  drawReaderTerm(rec, records, othersHubView(others.doc?.hub, records), `<div class="tp-muted">${esc(prMissingText(others.doc, others.error))}</div>`);
+  const phHtml = !prefs.useReviews ? othersHiddenHtml() : `<div class="tp-muted">${esc(prMissingText(others.doc, others.error))}</div>`;
+  drawReaderTerm(rec, records, othersHubView(others.doc?.hub, records), phHtml);
   if (reveal && panelTerm.term) panelTerm.term.fit();
 }
 

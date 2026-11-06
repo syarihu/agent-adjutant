@@ -10,7 +10,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js', 'my-work-no
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
+const { notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyEffective, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const DEFAULTS = { waiting: true, done: false, failed: true, review: true };
@@ -41,6 +41,22 @@ test('the settings default to waiting, failed and review, and garbage is the def
 test('settings saved before review existed get review on, and keep their other choices', () => {
   assert.deepStrictEqual(plain(notifyPrefs({ waiting: true, done: false, failed: true })), DEFAULTS);
   assert.strictEqual(notifyPrefs({ waiting: false, done: true, failed: false }).review, true);
+});
+
+test('with review requests turned off only the review kind is off, and the saved choice is left as it was', () => {
+  const input = { waiting: true, done: false, failed: true, review: true };
+  const off = notifyEffective(input, false);
+  assert.deepStrictEqual(plain(off), { waiting: true, done: false, failed: true, review: false });
+  assert.strictEqual(input.review, true);
+  assert.notStrictEqual(off, input);
+
+  const on = notifyEffective(input, true);
+  assert.deepStrictEqual(plain(on), input);
+  assert.notStrictEqual(on, input);
+
+  const alreadyOff = { waiting: false, done: true, failed: false, review: false };
+  assert.deepStrictEqual(plain(notifyEffective(alreadyOff, false)), alreadyOff);
+  assert.deepStrictEqual(plain(notifyEffective(alreadyOff, true)), alreadyOff);
 });
 
 test('the first document rings nothing, and what it holds is learned', () => {

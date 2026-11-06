@@ -1021,6 +1021,10 @@ function drawNotifyDialog() {
   // A blocked permission can only be given back in the browser's settings, which a button here cannot open.
   parkEl('notify-permission-btn').hidden = perm !== 'default';
   for (const [kind, id] of Object.entries(NOTIFY_BOXES)) parkEl(id).checked = prefs.notify[kind];
+  const row = parkEl('notify-review-row');
+  if (row) row.hidden = !prefs.useReviews;
+  const disabledNote = parkEl('notify-review-disabled');
+  if (disabledNote) disabledNote.hidden = prefs.useReviews;
 }
 
 function openNotifyDialog() {
@@ -1040,6 +1044,23 @@ async function requestNotifyFromDialog() {
   await requestNotifyPermission();
   if (parkEl('notify-dialog').open) drawNotifyDialog();
 }
+
+/* The display settings dialog: whether review requests are used. */
+function drawDisplayDialog() {
+  const cb = parkEl('display-use-reviews');
+  if (cb) cb.checked = prefs.useReviews;
+}
+
+function openDisplayDialog() {
+  drawDisplayDialog();
+  parkEl('display-dialog').showModal();
+}
+
+parkEl('display-use-reviews')?.addEventListener('change', e => {
+  prefs.useReviews = e.target.checked;
+  savePrefs();
+  applyReviewsPref();
+});
 
 function openParkDialog(task, base) {
   parkDlg.task = task;

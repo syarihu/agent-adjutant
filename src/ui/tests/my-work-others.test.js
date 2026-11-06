@@ -14,7 +14,7 @@ const plain = x => JSON.parse(JSON.stringify(x));
 const othersWaiting = vm.runInContext('othersWaiting', ctx);
 const { othersItems, othersActedAt, othersSeenClass, othersNewIds, othersSize, othersStale, othersSyncWords, othersHubStopText, othersGroups, othersRepoChips,
   othersEffectiveRepo, othersStateLine, othersStateOf, othersHubView, othersSig, othersOutOfReview, othersRequestedLabel, othersAiView,
-  othersOutOfReviewLine, othersReadMode, othersReadAllPatches, othersAiStage, othersEffectiveStage, othersStageChips, othersHidesDone, othersShown } = ctx;
+  othersOutOfReviewLine, othersReadMode, othersReadAllPatches, othersAiStage, othersEffectiveStage, othersStageChips, othersHidesDone, othersShown, othersHiddenHtml } = ctx;
 
 const stamp = secs => {
   const d = new Date(secs * 1000);
@@ -440,7 +440,7 @@ test('read-all marks only the new records, hidden or not, with the document\'s n
 function listOf(doc, { repo = '', stage = '', marks = {}, hub = '', hideDone } = {}) {
   const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const cut = (src, re) => { const m = src.match(re); assert.ok(m); return m[0]; };
-  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage, othersHideDone: hideDone }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
+  Object.assign(ctx, { others: { doc, error: null }, prefs: { othersRepo: repo, othersStage: stage, othersHideDone: hideDone, useReviews: true }, othersMarks: () => marks, othersNowEst: () => T0 + 60,
     othersSyncButtonHtml: () => '<sync>', othersHubHtml: () => hub, othersNotes: () => [], othersRowHtml: () => '<row>', othersInOrg: () => doc?.records || [] });
   vm.runInContext(cut(read('my-work.js'), /^function workReadAllButtonHtml[\s\S]*?^}/m), ctx);
   vm.runInContext(cut(read('my-work-others-view.js'), /^function othersListHtml[\s\S]*?^}/m), ctx);
@@ -623,4 +623,56 @@ test('hiding finished PRs changes neither the rail\'s count nor 新着', () => {
   const doc = listDoc([finished(2, 'merged', { events: { requested: stamp(T0), rerequested: null, aiReady: null, pushed: null } }), rec(3, { state: 'waiting-on-author' })]);
   assert.strictEqual(othersNewIds(rows, {}).length, 1);
   assert.ok(!listOf(doc).includes('data-ov-read-all') === (othersNewIds(doc.records, {}).length === 0));
+});
+
+test('othersHiddenHtml names the setting and carries the data-action="display" button', () => {
+  const html = othersHiddenHtml();
+  assert.ok(html.includes('レビュー依頼は隠しています'));
+  assert.ok(html.includes('表示の設定'));
+  assert.ok(html.includes('レビュー依頼を使う'));
+  assert.ok(html.includes('<button type="button" class="btn-m3-tonal" data-action="display">表示の設定を開く</button>'));
+});
+
+test('page-body.html and main.js wire the display setting button, dialog, and action', () => {
+  const bodyHtml = fs.readFileSync(path.join(__dirname, '..', 'page-body.html'), 'utf8');
+  assert.ok(bodyHtml.includes('id="btn-display"'));
+  assert.ok(bodyHtml.includes('data-action="display"'));
+  assert.ok(bodyHtml.includes('id="display-dialog"'));
+  assert.ok(bodyHtml.includes('id="display-use-reviews"'));
+  assert.ok(bodyHtml.includes('id="notify-review-row"'));
+  assert.ok(bodyHtml.includes('id="notify-review-disabled"'));
+
+  const mainJs = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.ok(mainJs.includes('display: () => openDisplayDialog(),'));
+  assert.ok(mainJs.includes('applyReviewsPref(false);'));
+});
+
+test('the notification dialog hides the レビュー依頼 row by its hidden attribute, which the label rule would otherwise override', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'my-work.css'), 'utf8');
+  assert.match(css, /\.notify-kinds label \{ display: block;/);
+  assert.match(css, /\.notify-kinds label\[hidden\] \{ display: none; \}/);
+});
+
+test('with review requests turned off the page reads no review records, and a read that lands after is dropped', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'my-work-others-view.js'), 'utf8');
+  const fn = src.match(/^async function refreshOthers[\s\S]*?^}/m)[0];
+  let calls = 0;
+  let release;
+  const c = vm.createContext({
+    multiBoard: true, prefs: { useReviews: false }, others: { doc: null, busy: false, again: false, error: null },
+    boardApi: () => { calls++; return new Promise(r => { release = r; }); },
+    renderWorkBadge() {}, renderOthersStaleDot() {}, renderOthersCount() {}, renderOthersList() {}, workFollowOrg() {}, renderWorkTerm() {}, prFollow() {},
+    view: 'board', nav: {}, Date,
+  });
+  vm.runInContext(fn, c);
+  await vm.runInContext('refreshOthers(true)', c);
+  assert.strictEqual(calls, 0);
+  c.prefs.useReviews = true;
+  const out = vm.runInContext('refreshOthers(true)', c);
+  assert.strictEqual(calls, 1);
+  c.prefs.useReviews = false;
+  release({ records: [{ id: 'a' }], now: 0 });
+  await out;
+  assert.strictEqual(c.others.doc, null);
+  assert.strictEqual(c.others.busy, false);
 });
