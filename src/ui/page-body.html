@@ -33,6 +33,9 @@
     <span class="material-symbols-outlined rail-pill" aria-hidden="true">search</span><span class="rail-lbl">検索</span>
   </button>
 
+  <button type="button" class="rail-btn" id="btn-display" data-action="display" title="表示の設定">
+    <span class="material-symbols-outlined rail-pill" aria-hidden="true">tune</span><span class="rail-lbl">表示</span>
+  </button>
   <button type="button" class="rail-btn" id="btn-notify" data-action="notify" title="デスクトップ通知を設定">
     <span class="material-symbols-outlined rail-pill" aria-hidden="true">notifications</span><span class="rail-lbl">通知</span>
   </button>
@@ -263,6 +266,30 @@
   </form>
 </dialog>
 
+<dialog id="display-dialog" aria-labelledby="display-title">
+  <form method="dialog" id="display-form">
+    <div class="head">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:22px;color:var(--md-sys-color-primary);">tune</span>
+        <span id="display-title">表示の設定</span>
+      </div>
+      <button type="button" class="m3-icon-button" style="padding:4px;" data-dialog-close="display-dialog" title="閉じる" aria-label="閉じる">
+        <span class="material-symbols-outlined" aria-hidden="true" style="font-size:20px;">close</span>
+      </button>
+    </div>
+    <div class="body">
+      <fieldset class="field notify-kinds" aria-describedby="display-help">
+        <legend>レビュー</legend>
+        <label><input type="checkbox" id="display-use-reviews" aria-describedby="display-help"> レビュー依頼を使う</label>
+        <span class="note" id="display-help">オフにすると、画面左の「レビュー」と件数、同期の古さを示す印、レビュー依頼のデスクトップ通知を隠し、一覧の取得を止めます。タスク自身の「AI 下読み」には影響しません。設定はこのブラウザにのみ保存されます</span>
+      </fieldset>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn-m3-text" data-dialog-close="display-dialog">閉じる</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="notify-dialog" aria-labelledby="notify-title">
   <form method="dialog" id="notify-form">
     <div class="head">
@@ -284,7 +311,8 @@
         <label><input type="checkbox" id="notify-waiting"> 確認待ち（確認依頼が届いたとき、入力や許可を待ち始めたとき）</label>
         <label class="notify-multi"><input type="checkbox" id="notify-done"> 完了（worker のターンが終わったとき）</label>
         <label class="notify-multi"><input type="checkbox" id="notify-failed"> 失敗（セッションが失敗したとき）</label>
-        <label class="notify-multi"><input type="checkbox" id="notify-review"> レビュー依頼（同期で、レビューの依頼か頼み直しが届いたとき）</label>
+        <label class="notify-multi" id="notify-review-row"><input type="checkbox" id="notify-review"> レビュー依頼（同期で、レビューの依頼か頼み直しが届いたとき）</label>
+        <span class="note" id="notify-review-disabled" hidden>レビュー依頼の通知は、表示の設定でレビュー依頼を使わないようにしているので出ません</span>
         <span class="note" id="notify-help">通知を押すと「いまの仕事」でそのタスクを開きます。置いているタスクと、いま開いている行（このタブを見ている間）には通知しません。確認待ちがオンでブラウザが通知を許可しているあいだ、このページが確認待ちを通知し、サーバーの <code>notification</code> は鳴らしません。オフにしたとき（約90秒以内）や、このページを開いていないときは、サーバーの <code>notification</code> が鳴ります（確認依頼もこのとき鳴ります）。レビュー依頼は、同期をしたタブが同期のたびに 1 回だけ通知し、push だけでは鳴りません</span>
       </fieldset>
     </div>

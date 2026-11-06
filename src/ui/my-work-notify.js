@@ -18,6 +18,14 @@ function notifyPrefs(raw) {
   return out;
 }
 
+/* What the notification settings are with the display pref applied: when `useReviews` is false,
+   `review` is turned off and the input is left unchanged. A copy is returned either way. */
+function notifyEffective(notifyPrefs, useReviews) {
+  const out = Object.assign({}, notifyPrefs);
+  if (!useReviews) out.review = false;
+  return out;
+}
+
 /* Whether this page rings desktop notifications for waits and gates at all: the browser allows them and the person
    left 確認待ち on. The server is told on every request, and rings its own `notification` instead once no page has said true for about 90 seconds. */
 function notifyPageRings(permission, prefs) {

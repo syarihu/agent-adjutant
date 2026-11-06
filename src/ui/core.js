@@ -70,6 +70,7 @@ if (prefs.panelDock !== 'left') prefs.panelDock = 'right';
 prefs.panelDialog = prefs.panelDialog === true;
 prefs.railHidden = prefs.railHidden === true;
 prefs.questionWide = prefs.questionWide === true;
+prefs.useReviews = prefs.useReviews !== false;
 // Not shrunk to the window here: that would be saved back. The panel's max-width bounds it.
 if (!(prefs.panelWidth >= 320)) prefs.panelWidth = 520;
 // What is in the browser's storage is not trusted: a width outside its range is the default, a fold
@@ -359,7 +360,8 @@ let seenGateIds = null;
 
 /* The kinds the page rings for, in words, for the button's tooltip. Single-board mode has no 「いまの仕事」, so only waits. */
 function notifyKindsText() {
-  const on = [prefs.notify.waiting && '確認待ち', multiBoard && prefs.notify.done && '完了', multiBoard && prefs.notify.failed && '失敗', multiBoard && prefs.notify.review && 'レビュー依頼'].filter(Boolean);
+  const eff = notifyEffective(prefs.notify, prefs.useReviews);
+  const on = [eff.waiting && '確認待ち', multiBoard && eff.done && '完了', multiBoard && eff.failed && '失敗', multiBoard && eff.review && 'レビュー依頼'].filter(Boolean);
   return on.length ? on.join('・') : 'なし';
 }
 

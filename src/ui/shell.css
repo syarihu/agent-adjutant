@@ -84,6 +84,7 @@
 /* A board served alone has no list of boards: the rail and the middle are all there is. */
 body.single-board #side-list { display: none; }
 .single-board #nav-work, .single-board #nav-todo, .single-board #nav-review { display: none; }
+.single-board #btn-display { display: none; }
 
 .brand-badge {
   background: var(--md-sys-color-primary);

@@ -109,7 +109,7 @@ test('othersInOrg keeps the selected organisation\'s review records and an unlis
 test('othersNewCount counts only the selected organisation\'s new review records, as the rail\'s レビュー count is scoped', () => {
   const records = [{ id: 'a', repo: 'acme/x' }, { id: 'b', repo: 'beta/y' }, { id: 'b2', repo: 'beta/z' }, { id: 'old', repo: 'beta/y' }];
   const ctx = run(cutFrom('my-work-others-view.js', /^const othersInOrg = [^\n]*;/m) + cutFrom('my-work-others-view.js', /^const othersNewCount = \(\) => \{[\s\S]*?^};/m), {
-    others: { doc: {} }, othersRecords: () => records, othersMarks: () => ({}),
+    others: { doc: {} }, prefs: { useReviews: true }, othersRecords: () => records, othersMarks: () => ({}),
     othersNewIds: (rs, marks) => rs.filter(r => r.id !== 'old').map(r => r.id),
     orgScope: scopeOf('beta', ['acme', 'beta']),
   });
@@ -118,6 +118,10 @@ test('othersNewCount counts only the selected organisation\'s new review records
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 2);
   ctx.orgScope = scopeOf('acme', ['acme', 'beta']);
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 1);
+  // Review requests turned off in the display settings: records read before do not count in the page title.
+  ctx.prefs = { useReviews: false };
+  assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 0);
+  ctx.prefs = { useReviews: true };
   ctx.others = { doc: null };
   assert.strictEqual(vm.runInContext('othersNewCount()', ctx), 0);
 });

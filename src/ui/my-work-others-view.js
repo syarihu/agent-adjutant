@@ -49,18 +49,42 @@ function othersWriteMarks(patches) {
 /* How many records of the selected organisation are new, whatever the list is narrowed to: the page title's share, scoped as the rail's
    レビュー count is. Nothing before the first read; a failed read keeps the last. */
 const othersNewCount = () => {
-  if (!others.doc) return 0;
+  if (!prefs.useReviews || !others.doc) return 0;
   return othersNewIds(othersInOrg(), othersMarks()).length;
 };
 
 /* The dot on the switch's 「AI 下読み」: the last sync is more than 30 minutes old. */
 function renderOthersStaleDot() {
   const dot = wk('ov-stale-dot');
-  if (dot) dot.hidden = !(others.doc && othersStale(others.doc.lastSync, othersNowEst()));
+  if (dot) dot.hidden = !prefs.useReviews || !(others.doc && othersStale(others.doc.lastSync, othersNowEst()));
+}
+
+/* Apply `prefs.useReviews` without a reload: hide or show the rail entry, redraw the marks, the notify dialog if open, and the
+   review list / middle if on screen. `fetch` reads the records again when the setting is on (boot reads them by itself). */
+function applyReviewsPref(fetch = true) {
+  // Records read before it was turned off are let go, so no PR route keeps reaching them; turning it on reads them again.
+  if (!prefs.useReviews) {
+    others.doc = null;
+    others.error = null;
+  }
+  const navReview = document.getElementById('nav-review');
+  if (navReview) navReview.hidden = !prefs.useReviews;
+  renderOthersCount();
+  renderOthersStaleDot();
+  if (typeof renderWorkBadge === 'function') renderWorkBadge();
+  if (typeof updateNotifyButton === 'function') updateNotifyButton();
+  if (document.getElementById('notify-dialog')?.open && typeof drawNotifyDialog === 'function') drawNotifyDialog();
+  if (view === 'work' && nav.list === 'review') {
+    renderOthersList(true);
+    renderWorkTerm();
+  }
+  // A PR open in the panel is drawn again now, not at the next poll: off, it says the list is hidden.
+  if (isPrRef(selectedTaskId)) renderTaskPanel();
+  if (fetch && prefs.useReviews) refreshOthers(true);
 }
 
 async function refreshOthers(force = false) {
-  if (!multiBoard) return;
+  if (!multiBoard || !prefs.useReviews) return;
   if (others.busy) {
     // An answer to a sync just done must not be lost to the read already out, which may predate it.
     if (force) others.again = true;
@@ -69,6 +93,8 @@ async function refreshOthers(force = false) {
   others.busy = true;
   try {
     const doc = await boardApi('', '/api/others');
+    // Turned off while the read was out: what it brought is not shown.
+    if (!prefs.useReviews) return;
     others.doc = doc;
     others.fetchedMs = Date.now();
     others.error = null;
@@ -98,6 +124,11 @@ async function refreshOthers(force = false) {
 function renderOthersCount() {
   const badge = document.getElementById('review-count');
   if (!badge) return;
+  if (!prefs.useReviews) {
+    badge.textContent = '0';
+    badge.classList.add('zero');
+    return;
+  }
   const n = othersWaiting(othersRecords(), todoInScope()).length;
   badge.textContent = n;
   badge.classList.toggle('zero', n === 0);
@@ -126,13 +157,14 @@ function openReviewNotified(notification) {
 /* One desktop notification for what a sync brought in, from the tab that synced; the tag makes the next sync's replace it. */
 function ringReviewRequests(res) {
   const content = notifyReviewContent(res.arrived, res.records);
-  if (!content || !prefs.notify.review || !(window.Notification && Notification.permission === 'granted')) return;
+  const eff = notifyEffective(prefs.notify, prefs.useReviews);
+  if (!content || !eff.review || !(window.Notification && Notification.permission === 'granted')) return;
   const n = new Notification(content.title, { body: content.body, tag: `adj-review-${res.lastSync?.at || ''}` });
   n.onclick = () => openReviewNotified(n);
 }
 
 async function syncOthers() {
-  if (!multiBoard || others.syncing) return;
+  if (!multiBoard || !prefs.useReviews || others.syncing) return;
   others.syncing = true;
   others.syncError = null;
   renderOthersList();
@@ -375,6 +407,7 @@ function othersNotes(lastSync) {
 }
 
 function othersListHtml() {
+  if (!prefs.useReviews) return othersHiddenHtml();
   const doc = others.doc;
   if (!doc) return `<div class="wk-empty">${esc(others.error ? `読み込めませんでした: ${others.error}` : '読み込み中…')}</div>`;
   const nowEst = othersNowEst();
@@ -452,7 +485,7 @@ function othersHeldSel(el) {
 function renderOthersList(force = false) {
   const root = wk('ov-groups');
   if (!root || nav.list !== 'review') return;
-  const sig = JSON.stringify([others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, prefs.othersHideDone, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task, currentOrg()]);
+  const sig = JSON.stringify([prefs.useReviews, others.doc ? othersSig(others.doc, othersNowEst()) : null, prefs.othersRepo, prefs.othersStage, prefs.othersHideDone, othersMarks(), others.error, others.syncing, others.syncError, [...others.asking], [...others.closing], others.starting, others.stopping, nav.task, currentOrg()]);
   if (!force && sig === others.sig) return;
   others.sig = sig;
   const scroll = root.closest('.wk-list-scroll');

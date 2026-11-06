@@ -107,6 +107,7 @@ const ACTIONS = {
   todo: () => todoOpen(),
   boards: () => { if (view === 'work' || view === 'todo') go({ board: 'all', view: 'agent', task: null, pane: 'detail' }); },
   'rail-toggle': () => { prefs.railHidden = !prefs.railHidden; applyLayout(); },
+  display: () => openDisplayDialog(),
   notify: () => toggleNotify(),
   'notify-permission': () => requestNotifyFromDialog(),
   theme: () => toggleTheme(),
@@ -168,6 +169,7 @@ async function boot() {
   // Draws the screen the address names and starts its first poll.
   applyNav(true);
   updateNotifyButton();
+  applyReviewsPref(false);
   // The server holds no clock, so the page carries one: it asks, nothing pushes.
   setInterval(refresh, 2000);
   // The sidebar's count of what is new is the work document's, so the views that do not poll it ask now and then.
