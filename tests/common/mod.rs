@@ -39,7 +39,7 @@ pub const FEATURE_HUB: &str = "adjutant-acme-widget-wid-957-5283c95d4f4cc314";
 /// `ADJUTANT_HUB` re-addresses every inbox asserted on here, and — since `adj hub
 /// --no-dashboard` sets it — `ADJUTANT_STARTUP_DASHBOARD` outranks the `startupDashboard` a
 /// fixture has just written into its own config file.
-pub const AMBIENT: [&str; 19] = [
+pub const AMBIENT: [&str; 21] = [
     // Where Codex keeps its hooks file; a child must not reach the developer's real one.
     "CODEX_HOME",
     "ADJUTANT_HUB",
@@ -57,6 +57,11 @@ pub const AMBIENT: [&str; 19] = [
     // tmux would have it ask the developer's own server where it is.
     "TMUX",
     "TMUX_PANE",
+    // The tmux focus script raises iTerm2 through `osascript` when either says the terminal is
+    // iTerm2, so a `cargo test` typed in iTerm2 would bring the developer's real iTerm2 to the
+    // front.
+    "ITERM_SESSION_ID",
+    "TERM_PROGRAM",
     // `cargo test` run from a git hook has these pointing at the developer's own checkout,
     // and a fixture set up with git would be set up there instead of in its tempdir.
     "GIT_DIR",
@@ -76,6 +81,67 @@ pub const AMBIENT: [&str; 19] = [
     "CLAUDE_CONFIG_DIR",
 ];
 
+/// The directory holding the guard `osascript` stub that keeps test children from reaching a
+/// real `osascript`. Created lazily once per test binary.
+fn osascript_guard_dir() -> &'static Path {
+    static GUARD_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    GUARD_DIR.get_or_init(|| {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("osascript-guard");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("osascript");
+        let script = r#"#!/bin/sh
+if [ -n "$ADJUTANT_TEST_OSASCRIPT_LOG" ]; then
+  echo "osascript $*" >> "$ADJUTANT_TEST_OSASCRIPT_LOG"
+fi
+echo "test child ran osascript and was stopped by osascript-guard" >&2
+exit 127
+"#;
+        let tmp = dir.join(format!(
+            "osascript.tmp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::write(&tmp, script).unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&tmp, &target).unwrap();
+        // The directory outlives the run, so a log an earlier binary left under the same pid
+        // would otherwise be blamed on this one.
+        let _ = std::fs::remove_file(dir.join(format!("test-{}.log", std::process::id())));
+        dir
+    })
+}
+
+/// The log file capturing unexpected `osascript` invocations from test children that were
+/// sanitised by `Ambient::hermetic` outside of a fixture.
+fn test_binary_osascript_log() -> PathBuf {
+    osascript_guard_dir().join(format!("test-{}.log", std::process::id()))
+}
+
+/// Takes the recorded calls out of `path`: renamed away first and read after, so a call a child
+/// appends meanwhile lands in a new file for the next look rather than being removed unread.
+/// A missing log is no calls; one that exists and cannot be read fails the test, since reading
+/// it as empty would let the call through.
+fn take_log_lines(path: &Path) -> Vec<String> {
+    let taken = path.with_extension(format!("taken-{}", std::process::id()));
+    match std::fs::rename(path, &taken) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => panic!("cannot take the osascript log {}: {e}", path.display()),
+    }
+    let contents = std::fs::read_to_string(&taken)
+        .unwrap_or_else(|e| panic!("cannot read the osascript log {}: {e}", taken.display()));
+    let _ = std::fs::remove_file(&taken);
+    contents
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Strip `AMBIENT` from a child about to be run.
 ///
 /// One list in one place, because the alternative is what this replaced: the rule had
@@ -89,6 +155,12 @@ pub const AMBIENT: [&str; 19] = [
 /// Applied before any deliberate `.env(…)`, so a test that means to hand a child one of
 /// these still can. Sanitising first is what makes such a value the test's own rather than
 /// the terminal's.
+///
+/// Also places the guard directory holding a stub `osascript` first on `PATH` (unless already
+/// first), and sets `ADJUTANT_TEST_OSASCRIPT_LOG` to a per-test-binary log file (unless already
+/// set explicitly), so a test child that runs `osascript` from `PATH` (the iTerm2 preset's
+/// scripts, the tmux focus, the built-in notifier without `terminal-notifier`) reaches the stub
+/// instead of the developer's real iTerm2.
 pub trait Ambient {
     fn hermetic(&mut self) -> &mut Self;
 }
@@ -98,6 +170,37 @@ impl Ambient for Command {
         for name in AMBIENT {
             self.env_remove(name);
         }
+        let explicit_path = self.get_envs().find_map(|(k, v)| {
+            if k == "PATH" {
+                v.map(|val| val.to_os_string())
+            } else {
+                None
+            }
+        });
+        let current_path = explicit_path.or_else(|| std::env::var_os("PATH"));
+        let guard_dir = osascript_guard_dir();
+        let new_path = match current_path {
+            Some(path) => {
+                let first = std::env::split_paths(&path).next();
+                if first.as_deref() == Some(guard_dir) {
+                    path
+                } else {
+                    let mut paths = vec![guard_dir.to_path_buf()];
+                    paths.extend(std::env::split_paths(&path));
+                    std::env::join_paths(paths).unwrap()
+                }
+            }
+            None => guard_dir.as_os_str().to_os_string(),
+        };
+        self.env("PATH", new_path);
+
+        let has_log = self
+            .get_envs()
+            .any(|(k, v)| k == "ADJUTANT_TEST_OSASCRIPT_LOG" && v.is_some());
+        if !has_log {
+            self.env("ADJUTANT_TEST_OSASCRIPT_LOG", test_binary_osascript_log());
+        }
+
         self
     }
 }
@@ -207,8 +310,19 @@ impl Fixture {
             .hermetic()
             // Stub programs on a loaded machine can take seconds to start, and 60 s is
             // `wait_until`'s patience; it only lengthens a wait, so a passing test is not slowed.
-            .env("ADJUTANT_DEADLINE_FLOOR_SECS", "60");
+            .env("ADJUTANT_DEADLINE_FLOOR_SECS", "60")
+            .env("ADJUTANT_TEST_OSASCRIPT_LOG", self.osascript_log());
         command
+    }
+
+    pub fn osascript_log(&self) -> PathBuf {
+        self._dir.path().join("osascript.log")
+    }
+
+    /// Returns the recorded lines of the fixture's `osascript` log (empty when the file does not
+    /// exist) and removes the file so a test that expects calls can take them.
+    pub fn osascript_calls(&self) -> Vec<String> {
+        take_log_lines(&self.osascript_log())
     }
 
     /// `adj config`'s `warnings`, less the one this fixture's guard brought
@@ -241,6 +355,26 @@ impl Fixture {
 
     pub fn json(&self, args: &[&str]) -> serde_json::Value {
         serde_json::from_str(&self.ok(args)).unwrap()
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let fixture_calls = take_log_lines(&self.osascript_log());
+        // Taken rather than read: a call from a child no fixture owns fails the first fixture
+        // dropped after it, not every one after that.
+        let binary_calls = take_log_lines(&test_binary_osascript_log());
+        if !fixture_calls.is_empty() || !binary_calls.is_empty() {
+            let mut all_calls = fixture_calls;
+            all_calls.extend(binary_calls);
+            panic!(
+                "test child ran osascript:\n{}\nOn a developer's Mac this drives their real iTerm2 / notifications; strip the variable from the child or stub the call.",
+                all_calls.join("\n")
+            );
+        }
     }
 }
 
@@ -1014,12 +1148,16 @@ pub fn stub_bin_exact(dir: &Path, name: &str, script: &str) -> PathBuf {
     bin
 }
 
-/// `dir` ahead of the inherited `PATH`: prepended rather than replacing, so a child still
-/// finds the real `git`.
+/// `dir` ahead of the guard directory and the inherited `PATH`: prepended rather than
+/// replacing, so a child still finds the real `git`, and a test that replaces `PATH` with
+/// this after `hermetic()` keeps the guard. A `PATH` built some other way does not; the ones
+/// that hold only a symlinked `git` have no `osascript` to reach.
 pub fn path_with(dir: &Path) -> String {
-    format!(
-        "{}:{}",
-        dir.to_string_lossy(),
-        std::env::var("PATH").unwrap_or_default()
-    )
+    let guard = osascript_guard_dir();
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    if inherited.is_empty() {
+        format!("{}:{}", dir.display(), guard.display())
+    } else {
+        format!("{}:{}:{inherited}", dir.display(), guard.display())
+    }
 }
