@@ -444,7 +444,20 @@ numbering of "1. Pick the task"; **the later processing attached to it still hap
 collection lists every child without looking at assignment or key, so what that fetch took care of
 has to be done here yourself:
 
-- **Check the assignment.** If someone names a row under "held by others", which has no number,
+- **If the listing is older than 10 minutes** (the age set out after "Keep no state" below), **fetch
+  that one row again on the spot** ("Fetching what sits under the parent", for one item — the same
+  single lookup "Fetch that one" in "When asked to split it" makes for a key just filed) and do the
+  matching below on the fresh row: its assignment, status, PR and worktree replace the old row's,
+  and the other columns (`item`, `title`, `url`, `branch`) are carried as they were. Only that row
+  decides the start, so the whole collection is not re-sent. A person named the number on the old
+  listing, so the number still refers to the row shown, but **the matching below reads the row by
+  where the fresh one now sorts, not by the list it was named from**: a numbered child now assigned
+  to someone else is held by others (confirm once, as below), and one now started is matched as
+  such. **A child the fresh row shows finished** (the "done" test above) **with no PR is not
+  started**: say it was closed after the list was shown, and start it only if the person names it
+  again after hearing that (the bullets below stop only a merged or closed PR, not a closed issue).
+- **Check the assignment.** If someone names a row under "held by others", which has no number (or
+  a numbered row the fresh lookup above found assigned to someone else),
   **confirm once before starting**. The `github` family's `--add-assignee @me` adds, but `jira`'s
   `editJiraIssue` and `linear`'s `save_issue` **replace — someone else's assignment really does
   disappear**. Say that in the line that asks. If the answer is to go ahead, from there it is the
@@ -492,6 +505,19 @@ got. That is why however many parent task hubs are side by side their contexts d
 starting one again tomorrow with `adj hub --tab --hub {the same key}` lands in the same place.
 **When asked for "1. List", send the same collection again** (this hub's list is what is under the
 parent, not the whole repository).
+
+The listing is a snapshot taken at its `Taken at` time, not the current state of the parent. **A
+reader that is about to file or start from it takes a fresh one when it is older than 10 minutes**
+(compare `Taken at` with the current time, `date -u`; for a start, re-fetching the one row it starts
+is the fresh one, "When handing on to start"). Re-collecting costs one sub-agent run of tens
+of seconds and the hub is not blocked while it runs, while acting on a stale listing costs a
+duplicate issue or a start on a child someone else just took, and nobody is told. People sharing a
+parent file and start things throughout the day, so the bound is about the length of one exchange
+with a person, not a work session. **A `Taken at` line that is missing, cannot be read, or lies in
+the future counts as older than 10 minutes** (fail closed: an unreadable age is not a fresh one).
+Showing the list ("Read at startup", "1. List") is not acting on it; the rule applies at the two
+points that act: starting a row and filing a split. The parent's own row (its URL, used by "Put your
+own parent task on every dispatch") is not what goes stale and needs no re-collection.
 
 **Local knowledge is "use it if it is there".** If something like `lk` is on this machine, the
 collection agent may read it, but the tracker alone is enough. Do not stop because it is absent.
@@ -619,7 +645,10 @@ split its task" below, and the same approval comes first.
 in "Read at startup", so **do not create the same ones again**. Whether that list is at hand splits it
 three ways:
 
-- **The collection was sent and has come back** → use that list as it is.
+- **The collection was sent and has come back** → check its age by its `Taken at` line: when that
+  is within 10 minutes (the age in "Read at startup"), use that list as it is; when it is older (or
+  the line is missing or cannot be read), send the same collection again and wait for it as in the
+  next bullet ("Waiting").
 - **The collection was sent and has not come back yet** → wait for it first (say it is still being
   collected and end the turn; "Waiting").
 - **The collection was never sent** (`settings.startupDashboard` is `false`; "Read at startup")
@@ -653,7 +682,13 @@ block (the same as "Put your own parent task on every dispatch").
 as is / change it / stop". **"One go" is about the count, not the number of times** — if told to
 change it, open the same question again on the changed proposal, and **do not go on to filing until
 approval comes back**. The moment the content changed, the earlier approval is no longer for that
-proposal.
+proposal. If the approval comes back when the listing used for the proposal is older than 10
+minutes (the age in "Read at startup"), collect again and wait for it before filing; if the fresh
+listing shows a child that overlaps a proposed piece, the proposal changed, so show it again and
+re-ask, and if nothing overlaps, file as approved. **A collection re-sent for a split in hand carries
+on here when it arrives** (the proposal, or the filing it was approved for) rather than ending at a
+summary as other collections do ("Waiting"); the person already asked, and stopping at the summary
+leaves an approved split unfiled with nobody told.
 **Do not ask N times** — a hub that takes approval one at a time is useless. **Not opening questions
 is about startup** ("Read at startup"); here a person is right in front of you.
 
@@ -841,7 +876,9 @@ words come to this hub too. What the board shows of the structure is what this h
 - The hub moves on three occasions only: **when woken**, **when a person talks to it**, and **when a
   completion notification for a sub-agent it sent out arrives**. The third is usually the dashboard's
   collection; when it arrives, show a summary and go back to waiting (it is neither a nudge nor
-  anything wrong). The other is a Jules plan: open its gate (Step 3 of "5. Hand it to Jules").
+  anything wrong) — except a parent collection re-sent for a split in hand, which carries on with
+  that split ("When asked to split it"). The other is a Jules plan: open its gate (Step 3 of "5.
+  Hand it to Jules").
 
 **To send to a worker, call `adjutant_tell`.** Its arguments are `worktree` (absolute path) /
 `subject` / `body`. Direct messages between agents are not used — only some coding agents have them,
@@ -3007,6 +3044,11 @@ Collect how things stand under {parent key}.
   parent's id needed to fetch what is under it)
 - Config: take the resolved one from `adjutant_config` (or `adj config --repo {owner/repo}` without
   it). Do not read the config file yourself
+- **Record when the listing was taken.** Before fetching anything, take the current UTC time once
+  (`date -u +%Y-%m-%dT%H:%M:%SZ`), and put it as the first line of the report as
+  `Taken at: {that time}` (a line in the report, outside the machine rows). Take it before the
+  fetches, not after: the listing is only as fresh as its first read, so the earlier time is the
+  honest one
 - Procedure: as "Fetching what sits under the parent" in "A hub for a parent task" in the `adj-hub`
   procedure says, fetch in the order parent task → subtasks → their PRs. How the parent and the
   subtasks are fetched changes with the source's `type`, so follow the branches written there
