@@ -1052,6 +1052,20 @@ fn a_parent_task_listing_has_an_age_and_readers_recollect_a_stale_one() {
         "the split files from a listing that went stale while approval was open: {split}"
     );
 
+    // Filing goes one at a time, so a long run of pieces can outlive the listing part-way.
+    assert!(
+        split_flowed.contains("The same check comes before each piece"),
+        "only the first piece of a split is checked against the listing's age: {split}"
+    );
+    assert!(
+        split_flowed.contains("collect again, wait for it, and match the pieces not yet filed"),
+        "a stale listing part-way through filing is not waited for and matched: {split}"
+    );
+    assert!(
+        split_flowed.contains("the ones already filed stay filed"),
+        "nothing says what becomes of the pieces filed before the listing went stale: {split}"
+    );
+
     // A child someone else took since the listing was named by its number; the fresh row
     // has to be read by where it now sorts, or the assignment check never fires for it.
     assert!(

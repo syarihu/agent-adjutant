@@ -685,7 +685,10 @@ approval comes back**. The moment the content changed, the earlier approval is n
 proposal. If the approval comes back when the listing used for the proposal is older than 10
 minutes (the age in "Read at startup"), collect again and wait for it before filing; if the fresh
 listing shows a child that overlaps a proposed piece, the proposal changed, so show it again and
-re-ask, and if nothing overlaps, file as approved. **A collection re-sent for a split in hand carries
+re-ask, and if nothing overlaps, file as approved. **The same check comes before each piece**, since
+filing goes one at a time: when the listing passes the age part-way, collect again, wait for it,
+and match the pieces not yet filed against it before filing the next (one that now overlaps is shown
+and re-asked as above, the rest are filed as approved, and the ones already filed stay filed). **A collection re-sent for a split in hand carries
 on here when it arrives** (the proposal, or the filing it was approved for) rather than ending at a
 summary as other collections do ("Waiting"); the person already asked, and stopping at the summary
 leaves an approved split unfiled with nobody told.
