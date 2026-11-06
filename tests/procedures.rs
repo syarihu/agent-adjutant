@@ -191,3 +191,63 @@ fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
     }
     assert!(opened >= 5, "found only {opened} gate examples");
 }
+
+#[test]
+fn every_flag_in_the_parent_hub_forward_command_exists() {
+    let help = String::from_utf8(
+        Command::new(BIN)
+            .args(["task", "add", "--help"])
+            .hermetic()
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+
+    let text = std::fs::read_to_string(format!(
+        "{}/commands/adj-hub.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+
+    let heading = "\n### A key that is not one of your children";
+    let start = text
+        .find(heading)
+        .unwrap_or_else(|| panic!("missing {heading} in commands/adj-hub.md"));
+    let rest = &text[start + heading.len()..];
+    let end = match (rest.find("\n### "), rest.find("\n## ")) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => rest.len(),
+    };
+    let step = &rest[..end];
+
+    let code_start = step
+        .find("```bash\n")
+        .expect("missing bash code block in child check step");
+    let code_body = &step[code_start + 8..];
+    let code_end = code_body
+        .find("\n```")
+        .expect("unterminated code block in child check step");
+    let code = &code_body[..code_end];
+
+    let add_line = code
+        .lines()
+        .find(|l| l.contains("adj task add"))
+        .expect("missing adj task add line in code block");
+
+    let flags: Vec<&str> = add_line
+        .split_whitespace()
+        .filter(|token| token.starts_with("--"))
+        .collect();
+    assert!(!flags.is_empty(), "expected --flags in line: {add_line}");
+
+    for flag in flags {
+        assert!(
+            help.lines()
+                .any(|line| line.split_whitespace().next() == Some(flag)),
+            "flag `{flag}` from forward command not found in `adj task add --help`:\n{help}"
+        );
+    }
+}

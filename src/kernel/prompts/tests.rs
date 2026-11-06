@@ -1512,6 +1512,209 @@ fn a_number_answered_to_a_parent_hub_is_read_against_the_list_it_printed() {
     );
 }
 
+/// A parent-task hub checks that a named key is one of its children before starting it.
+///
+/// A number is checked against the list printed at startup, but a key could come from
+/// anywhere. Without checking, starting a foreign key puts this hub's parent URL onto it,
+/// so the worker starts under the wrong parent. A key must go through the child check
+/// before handing on to start.
+#[test]
+fn a_named_key_is_checked_before_a_parent_hub_starts_it() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let startup = step(raw, "### Read at startup");
+    let flowed: String = flow(&startup);
+    assert!(
+        flowed.contains("A key that is not one of your children"),
+        "startup step does not route a named key through the child check: {startup}"
+    );
+    before(
+        &startup,
+        "When a person names a key, first go through \"A key that is not one of your children\"",
+        "only a key found to be a child goes on to \"2. Start a task\"",
+    );
+    // The waiting paragraph is one way in; a person saying "start ALPHA-999" in plain words
+    // is another, and it reaches "1. Pick the task" (which fetches the one key directly)
+    // without passing the startup step at all.
+    let talk = section(raw, "## When a person talks to you");
+    let talk_flowed: String = flow(&talk);
+    assert!(
+        talk_flowed.contains(
+            "In a parent task's hub, a key named to be started goes through \"A key that is not one of your children\" first"
+        ),
+        "a key named in plain words reaches \"2. Start a task\" without the child check: {talk}"
+    );
+    // An existing worktree's key and a key read from a board request reach a start too.
+    let existing = section(raw, "## When asked to work on an existing worktree");
+    assert!(
+        flow(&existing).contains(
+            "In a parent task's hub, check that key as \"A key that is not one of your children\" says before step 4"
+        ),
+        "an existing worktree's task is started under this hub's parent without the child check: {existing}"
+    );
+    let reading = step(raw, "#### Reading a request");
+    assert!(
+        flow(&reading).contains(
+            "In a parent task's hub, an existing issue the text names to work on is checked as \"A key that is not one of your children\" says, before anything below."
+        ),
+        "a board request's issue is read into this hub's record without the child check: {reading}"
+    );
+    // An open point on the dispatch gate is not enough: its approve button starts the task here.
+    before(
+        &reading,
+        "One that is not a child is neither read into this record nor put on a gate",
+        "Open a `dispatch` gate with the reading",
+    );
+}
+
+/// The child check resolves children against a fresh listing or by asking the tracker.
+///
+/// A listing under 10 minutes with a machine row for the key confirms a child. Stale
+/// listings or new keys query the tracker: GitHub via `/parent`, Jira via `fields: ["parent"]`,
+/// Linear via `mcp__linear__get_issue`. When lookup fails, it stops rather than starting
+/// or forwarding blind. Numbers are never checked this way.
+#[test]
+fn a_parent_hub_checks_whether_a_key_is_its_child() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let step_text = step(raw, "### A key that is not one of your children");
+    let flowed: String = flow(&step_text);
+
+    // Fresh listing rule (10 minutes, machine row)
+    assert!(
+        flowed.contains("within 10 minutes")
+            && flowed.contains("machine row whose `key` is the one named")
+            && flowed.contains("the parent's own `\"kind\": \"parent\"` row is never a child"),
+        "the child check does not define a fresh listing: {step_text}"
+    );
+
+    // Tracker lookups: github (/parent), jira (parent), linear
+    assert!(
+        flowed.contains("issues/{number}/parent") && flowed.contains(".html_url"),
+        "missing GitHub /parent lookup in child check: {step_text}"
+    );
+    assert!(
+        flowed.contains("fields: [\"parent\"]") && flowed.contains("parent.key"),
+        "missing Jira parent lookup in child check: {step_text}"
+    );
+    assert!(
+        flowed.contains("mcp__linear__get_issue") && flowed.contains("parent's id"),
+        "missing Linear parent lookup in child check: {step_text}"
+    );
+
+    // Lookup failure fails closed
+    assert!(
+        flowed.contains("When the lookup fails")
+            && flowed.contains("stop. Do not start it and do not forward it"),
+        "child check does not stop without starting or forwarding on lookup failure: {step_text}"
+    );
+
+    // Numbers are not checked this way
+    assert!(
+        flowed.contains("A number is never checked this way"),
+        "child check does not state that numbers are never checked this way: {step_text}"
+    );
+}
+
+/// A key that is not a child is handed off to the repository hub without starting.
+///
+/// The parent hub must not claim it or attach its parent. The forward command uses
+/// `env -u ADJUTANT_HUB adj task add --needs-reading --queue` without `--parent`, and tells
+/// the person whether the repository hub is present or the request waits in its inbox.
+#[test]
+fn a_foreign_key_is_forwarded_to_the_repository_hub() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let step_text = step(raw, "### A key that is not one of your children");
+    let flowed: String = flow(&step_text);
+
+    // Not a child: not started, parent not put on it
+    assert!(
+        flowed.contains("do not start it and do not put your parent on it"),
+        "not a child rule does not forbid starting or attaching parent: {step_text}"
+    );
+
+    // Forward command flags
+    assert!(
+        flowed.contains("env -u ADJUTANT_HUB adj task add --needs-reading --queue"),
+        "forward command is missing required flags or env: {step_text}"
+    );
+
+    // Command block contains no --parent
+    let at = step_text
+        .find("```bash")
+        .expect("missing command block in child check");
+    let block = &step_text[at..];
+    let end = block[7..].find("```").expect("unterminated code block");
+    let cmd_block = &block[..end + 10];
+    assert!(
+        !cmd_block.contains("--parent"),
+        "forward command block attaches --parent to a foreign task: {cmd_block}"
+    );
+    // The body is the person's words: in a heredoc a line equal to the delimiter closes it
+    // and what follows runs as shell ("Keep task text off the shell").
+    assert!(
+        !cmd_block.contains("<<") && cmd_block.contains("--body - < '{main}/.claude/"),
+        "forward command puts the person's words on the shell instead of reading a file: {cmd_block}"
+    );
+
+    // The address and the duplicate are checked before the record is written: a worker record
+    // in the main checkout would send it elsewhere, and a request handed over once (an earlier
+    // attempt, a re-read board request) must not be added twice.
+    before(
+        &step_text,
+        "env -u ADJUTANT_HUB adjutant config)` prints `\"hub\": null`",
+        "env -u ADJUTANT_HUB adj task add --needs-reading",
+    );
+    before(
+        &step_text,
+        "has no record whose `body` is the same request",
+        "env -u ADJUTANT_HUB adj task add --needs-reading",
+    );
+    // Every status but the finished ones: a request the repository's hub has already started
+    // is no longer queued, and is still the same request.
+    assert!(
+        flowed.contains("env -u ADJUTANT_HUB adj task list --json)`")
+            && flowed.contains("whose `status` is neither `done` nor `cancelled`"),
+        "the duplicate check looks at queued records only: {step_text}"
+    );
+    assert!(
+        flowed.contains("there is no command that hands a saved record over again"),
+        "a failed forward is followed by adding the same request again: {step_text}"
+    );
+
+    // Not running case: handed.present and waits in its inbox
+    assert!(
+        flowed.contains("handed.present") && flowed.contains("waits in its inbox"),
+        "procedure does not explain handed.present or waiting in inbox: {step_text}"
+    );
+}
+
+/// Parent dispatch is restricted to children, and split routes foreign keys through check.
+///
+/// Putting the parent task URL on every dispatch must only apply to verified children.
+/// When a key is named after splitting, any key not among the newly filed ones must go
+/// through the child check first.
+#[test]
+fn parent_task_dispatch_and_split_guarded_to_children_only() {
+    let raw = find("adj-hub").unwrap().raw_content;
+
+    // Put your own parent task on every dispatch: children-only sentence
+    let dispatch = step(raw, "### Put your own parent task on every dispatch");
+    let dispatch_flowed = flow(&dispatch);
+    assert!(
+        dispatch_flowed.contains("This applies only to a child"),
+        "parent dispatch rule is not qualified to children only: {dispatch}"
+    );
+
+    // When asked to split it: new sentence
+    let split = step(raw, "### When asked to split it");
+    let split_flowed = flow(&split);
+    assert!(
+        split_flowed.contains(
+            "A key that is not one of the keys this split just filed goes through \"A key that is not one of your children\" first"
+        ),
+        "split step does not send foreign keys through the child check: {split}"
+    );
+}
+
 /// Not rebuilding the list must not mean skipping what the list step does after fetching.
 ///
 /// "1. Pick the task" is a fetch *and* four rules and a question, and "do not rebuild the list" sent
