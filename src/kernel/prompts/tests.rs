@@ -964,6 +964,141 @@ fn a_hub_that_was_told_not_to_collect_does_not_wait_for_the_collection_to_split(
     );
 }
 
+/// A parent task listing has an age, and readers re-collect when it goes stale.
+///
+/// The hub lives all day, and other people under the same parent file and close issues
+/// constantly. A listing taken in the morning has no age, so an issue filed an hour ago is
+/// missing from it; when asked to split, the hub proposes it again, gets approval, and
+/// files a duplicate. The cost of re-collecting is one sub-agent run of tens of seconds
+/// without blocking the hub, while acting on a stale listing creates duplicate issues or
+/// steps on someone else's newly claimed task without anyone being told.
+///
+/// This test pins:
+/// 1. The collection brief records `Taken at:` before fetching, without altering machine-row shapes.
+/// 2. "### Read at startup" states the 10-minute age bound and fails closed on missing,
+///    unreadable, or future times.
+/// 3. "### When asked to split it" qualifies the listing with the age before "use that list as it is"
+///    and sends the collection again when it is older.
+/// 4. "When handing on to start" fetches that one row again on the spot when the listing is older.
+#[test]
+fn a_parent_task_listing_has_an_age_and_readers_recollect_a_stale_one() {
+    let raw = find("adj-hub").unwrap().raw_content;
+
+    // 1. The collection brief records when it was taken, outside the machine rows.
+    let brief = section(
+        raw,
+        "## Appendix — Brief for the parent task collection agent",
+    );
+    let brief_flowed = flow(&brief);
+    assert!(
+        brief_flowed.contains("Taken at:"),
+        "the collection brief does not instruct the agent to record `Taken at:`: {brief}"
+    );
+    let parent_row = brief
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("{\"kind\": \"parent\""))
+        .expect("machine-row template starting with {\"kind\": \"parent\"");
+    assert_eq!(
+        parent_row,
+        r#"{"kind": "parent", "key": "{parent key}", "title": "{title}", "url": "{URL}"}"#,
+        "the parent row changed shape; the time belongs in a report line of its own"
+    );
+    let subtask_row = brief
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("{\"kind\": \"subtask\""))
+        .expect("machine-row template starting with {\"kind\": \"subtask\"");
+    assert_eq!(
+        subtask_row,
+        r#"{"kind": "subtask", "identifier": "{identifier}", "key": "{KEY-number}", "item": "{project item id or -}", "status": "{status}", "assignee": "{assignee or -}", "branch": "{resolved branch}", "title": "{title}", "url": "{URL}", "pr": "{PR number or -}", "prState": "{PR state or -}", "worktree": "{worktree path or -}"}"#,
+        "the subtask row changed shape; the time belongs in a report line of its own"
+    );
+
+    // 2. "### Read at startup" states the 10-minute age and the fail-closed case.
+    let startup = step(raw, "### Read at startup");
+    let startup_flowed = flow(&startup);
+    assert!(
+        startup_flowed.contains("takes a fresh one when it is older than 10 minutes"),
+        "the startup step does not state the 10-minute age bound: {startup}"
+    );
+    assert!(
+        startup_flowed.contains(
+            "missing, cannot be read, or lies in the future counts as older than 10 minutes"
+        ),
+        "the startup step does not fail closed on an unreadable or future age: {startup}"
+    );
+
+    // 3. "### When asked to split it" qualifies by age before "use that list as it is",
+    // and sends the collection again when older.
+    let split = step(raw, "### When asked to split it");
+    let split_flowed = flow(&split);
+    before(
+        &split,
+        "check its age by its `Taken at` line: when that is within 10 minutes",
+        "use that list as it is",
+    );
+    assert!(
+        split_flowed.contains(
+            "when it is older (or the line is missing or cannot be read), send the same collection again"
+        ),
+        "the split step does not say to send the collection again when older: {split}"
+    );
+
+    // An approval can outlive the listing it was given on: the split re-collects before
+    // filing, or the duplicate this test is about is filed one question later.
+    assert!(
+        split_flowed.contains("collect again and wait for it before filing"),
+        "the split files from a listing that went stale while approval was open: {split}"
+    );
+
+    // Filing goes one at a time, so a long run of pieces can outlive the listing part-way.
+    assert!(
+        split_flowed.contains("The same check comes before each piece"),
+        "only the first piece of a split is checked against the listing's age: {split}"
+    );
+    assert!(
+        split_flowed.contains("collect again, wait for it, and match the pieces not yet filed"),
+        "a stale listing part-way through filing is not waited for and matched: {split}"
+    );
+    assert!(
+        split_flowed.contains("the ones already filed stay filed"),
+        "nothing says what becomes of the pieces filed before the listing went stale: {split}"
+    );
+
+    // A child someone else took since the listing was named by its number; the fresh row
+    // has to be read by where it now sorts, or the assignment check never fires for it.
+    assert!(
+        startup_flowed.contains("a numbered child now assigned to someone else is held by others"),
+        "a re-fetched row is still read as the candidate it was: {startup}"
+    );
+
+    // A re-collection whose arrival ends at a summary leaves the approved split unfiled.
+    assert!(
+        split_flowed
+            .contains("A collection re-sent for a split in hand carries on here when it arrives"),
+        "a re-collection for a split ends at a summary: {split}"
+    );
+    assert!(
+        flow(raw).contains("except a parent collection re-sent for a split in hand"),
+        "the waiting rule still ends every collection at a summary"
+    );
+
+    // A child closed since the listing was shown has no PR for the bullets below to stop on.
+    assert!(
+        startup_flowed.contains("with no PR is not started"),
+        "a re-fetched child that was closed meanwhile is started anyway: {startup}"
+    );
+
+    // 4. The start route fetches that one row again when the listing is older than the age.
+    assert!(
+        startup_flowed.contains(
+            "**If the listing is older than 10 minutes** (the age set out after \"Keep no state\" below), **fetch that one row again on the spot**"
+        ),
+        "the start route does not say to fetch that one row again on the spot when older: {startup}"
+    );
+}
+
 /// Every column of the sub-issue row is read by a step further down.
 ///
 /// The call started life as number, title and state — enough to print a list and nothing
