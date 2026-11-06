@@ -409,8 +409,9 @@ opened.** Once collected, show them sorted like this:
 
 Then **list the candidates and start waiting**. **Do not open `AskUserQuestion`** — a hub that stops
 on a question right after starting is a hub that does not read its inbox (Step 5 of "On startup").
-Go back to waiting with the numbers assigned, and when a person names a number or a key, pass it on
-to "2. Start a task".
+Go back to waiting with the numbers assigned. When a person names a key, first go through "A key
+that is not one of your children", and only a key found to be a child goes on to "2. Start a task";
+when a person names a number, pass it on to "2. Start a task".
 
 **The numbers refer to the rows of this list.** Go on to "2. Claim it" holding the chosen key and
 **that row of the collection's machine rows, whole**, and **do not rebuild the list in "1. Pick the
@@ -521,6 +522,77 @@ own parent task on every dispatch") is not what goes stale and needs no re-colle
 
 **Local knowledge is "use it if it is there".** If something like `lk` is on this machine, the
 collection agent may read it, but the tracker alone is enough. Do not stop because it is absent.
+
+### A key that is not one of your children
+
+A number is read against the list that was printed; a key is not, and whatever this hub starts
+carries this hub's parent ("Put your own parent task on every dispatch"), so a key that is not a
+child would reach a worker with a parent it does not hang off. So before a key named to this hub goes
+on to "2. Start a task", check that it is a child.
+
+**In a fresh listing it is a child.** A listing whose `Taken at` is within 10 minutes (the age rule
+after "Keep no state" in "Read at startup"; a missing, unreadable or future `Taken at` is not fresh)
+that has a `"kind": "subtask"` machine row whose `key` is the one named (the parent's own `"kind":
+"parent"` row is never a child), in any section (next candidates, in progress,
+held by others, done): it is a child; go on with that row ("When handing on to start").
+
+An issue named by its URL is the same: its repo and number come from the URL, and `{key}` below is
+the key that repo's `issueKeys` gives it.
+
+**Otherwise, ask the tracker for that one issue's parent.** This covers: the listing is older than
+10 minutes, its age cannot be read, the collection's report has not come back yet, or a fresh
+listing has no row for the key (a child filed after it was taken). Per source type:
+
+- `github` / `github-project`: `gh api repos/{repo}/issues/{number}/parent --jq '.html_url'`. It is a
+  child when this prints this hub's parent URL (the `html_url` from "Fetching the parent itself" in
+  "Fetching what sits under the parent"). `No parent issue found` (HTTP 404) means the issue has no
+  parent: not a child. `{repo}` is the repo the key resolves to through `issueKeys`.
+- `jira`: `getJiraIssue` with `fields: ["parent"]`; a child when `parent.key` is this hub's key.
+- `linear`: `mcp__linear__get_issue`; a child when the parent it names is the parent's id taken in
+  "Fetching the parent itself".
+
+A child found this way goes on as before: with a stale listing, "When handing on to start" fetches
+that one row again; for a key the listing has no row for, there is no machine row, so fetch that one
+the way "Fetch that one" in "When asked to split it" does, and do the matching of "When handing on
+to start".
+
+**When the lookup fails** (any error other than "no parent"), it cannot be told: say so in one line
+and stop. Do not start it and do not forward it; the person can name it again. (Fail closed, the same
+reasoning as the unreadable `Taken at`.)
+
+**Not a child** (the tracker names another parent, or none; this hub's parent itself is not one of
+its children either): **do not start it and do not put your parent on it.** Do not claim it, assign
+it, or create a worktree. Say so in one line (for example "{key} is not under {parent key}, so I
+handed it to the repository's hub") and hand the request to the repository's own hub. Write what
+the person asked, in their own words (when all they said was the key: `Start {key}`), to
+`{main}/.claude/task-request-{key}.md` with a file-writing tool, never onto the command line or into
+a heredoc ("Keep task text off the shell"), then:
+
+```bash
+(cd '{main}' && env -u ADJUTANT_HUB adj task add --needs-reading --queue --json --body - < '{main}/.claude/task-request-{key}.md') && rm '{main}/.claude/task-request-{key}.md'
+```
+
+Why `env -u ADJUTANT_HUB` and the main checkout: `adj task add` addresses `$ADJUTANT_HUB`, which in
+this hub is this hub; without it, and standing in the main checkout (which has no worker record), it
+addresses the repository's own hub. Why `--needs-reading`: it writes the same record the board's
+依頼 form writes, so the repository's hub runs "A request from the dashboard": it reads the words,
+resolves the key and asks the person on a gate before anything starts. That gate is where the
+person confirms; they do not retype the request in another tab. The body is the person's words, not
+a plan or a reading. **No `--parent`**: the parent of that task is the repository hub's to read, not
+this hub's. Not `adjutant_send` with `kind: request`: that delivers a message with no task record,
+and "A request from the dashboard" starts by reading the record (`adj task show --id {task_id}`), so
+it would have nothing to read.
+
+**Read `handed.present` in the answer.** `true`: tell the person the repository's hub has it and will
+ask on its board. `false`: the repository's hub is not running; the request waits in its inbox and is
+read when that hub next starts (`adj hub --tab`). Say so to the person, so they know nothing happens
+until then. **If the command fails**, say so in one line, leave the file, and stop; do not tell the
+person it went to the repository's hub. The record is saved before it is handed over, so it may
+already be there: look at `(cd '{main}' && env -u ADJUTANT_HUB adj task list)` before sending it
+again, so the repository's hub is not handed the same request twice.
+
+A number is never checked this way. It was read against the list this hub printed, and every row
+there is a child.
 
 ### Fetching what sits under the parent
 
@@ -771,12 +843,13 @@ registration has not caught up right after filing are all there. **All that diff
 - **Hand over one.** Leave the rest filed. Tabs for all of them would be more than a person can
   handle, and which comes first is not the hub's to decide (again "Do not invent an order").
 
-**When a key is named after the question is closed, the route is the same.** Do not wait for the
-collection (the same as "1. Pick the task" saying to go ahead by "fetching just that one directly").
-**The longer it has been, the less the matching above comes up empty** — nothing else changes about
-what is fetched or where it goes. **If the title and URL from filing are no longer at hand, use those
-of the fetched issue** — the hub keeps no state, so across turns all that remains is the key the
-person said (where Step 4's title comes from).
+**When a key is named after the question is closed, the route is the same.** A key that is not one
+of the keys this split just filed goes through "A key that is not one of your children" first. Do
+not wait for the collection (the same as "1. Pick the task" saying to go ahead by "fetching just that
+one directly"). **The longer it has been, the less the matching above comes up empty** — nothing
+else changes about what is fetched or where it goes. **If the title and URL from filing are no
+longer at hand, use those of the fetched issue** — the hub keeps no state, so across turns all that
+remains is the key the person said (where Step 4's title comes from).
 
 ### When a worker asks to split its task
 
@@ -804,6 +877,9 @@ the flag. Not `-`. "4. Start the worker" saying "do not guess a parent task that
 about linking through sub-issues; **this is not a guess** — that one item is this hub's identifier
 itself.
 
+- **This applies only to a child.** A task filed under this parent, or a key that "A key that is not
+  one of your children" found to be a child; a key it did not is never started by this hub, so this
+  hub's parent never goes on it (it is forwarded as that step says).
 - **The same for "2. Start a task", "3. File and start", Step 4 of "When a request arrives" and A of
   "When asked to work on an existing worktree".** Every route that starts a worker carries this line.
 - **Take the URL from the parent task row the collection's report returned.** It is the `url` of
@@ -925,6 +1001,10 @@ Ask with `AskUserQuestion` only when you cannot tell which.
 
 **Before passing to 2, look at "Offering a hub for a parent task".** When what was named is a parent
 task itself, or the request is to split something, go through there before starting it.
+**In a parent task's hub, a key named to be started goes through "A key that is not one of your
+children" first** (in "A hub for a parent task"), whether it comes as 2 or as A of 5, and whether or
+not the listing has come back: only a child goes on, and any other key is handed to the repository's
+hub as that step says.
 **In a parent task's hub, "1. List" is the list under the parent** (not the whole repository; "Read at
 startup" in "A hub for a parent task").
 **When a parent task's hub is told "split it", go to "When asked to split it" in "A hub for a parent
@@ -1675,7 +1755,8 @@ comes from:
   its URL by the same lookup and pass `--parent '{url}'`. One subtask of a larger piece of work split up, or a bug found in the middle
   of another task, is such a case. The worker knows only its task, so without this line it cannot
   reach the design context its sibling subtasks share.
-  **But in a parent task's hub this is always filled** — its identifier is that parent, so do not
+  **But in a parent task's hub this is always filled for a child** (a task that is not one is never
+  started there: "A key that is not one of your children") — its identifier is that parent, so do not
   treat it as not handed over ("Put your own parent task on every dispatch" in "A hub for a parent
   task").
   **Being a subtask does not change the branching point** — that is another line, and moves only when
@@ -2220,6 +2301,12 @@ not answers. Run "Reading a request" first. Without it, the request was answered
    one pasted from the text. A worktree-name slug must be lowercase `[a-z0-9-]` and not start with `-`.
    A value that fails is an open point, and no command is built with it.
    What cannot be resolved is an open point: never build a URL or a name from it.
+   **In a parent task's hub, an existing issue the text names to work on is checked as "A key that is
+   not one of your children" says, before anything below.** One that is not a child is neither read
+   into this record nor put on a gate (approving a gate would start it here): hand the request's
+   words to the repository's hub as that step says, and only once that has gone through, close this
+   record with `adj task update --id {task_id} --status cancelled` and a `--note` saying it was handed
+   to the repository's hub (the note through a file, "Keep task text off the shell").
 3. **The rest is inferred from the text**, falling back to the defaults (Done when `pr`, Stop at
    `plan`, the implementer `worker`, the base `baseBranch`): the kind (an existing issue → `start`;
    a change with no issue → `file-and-start`, filed as a sub-issue of a `## Parent task` that is set;
@@ -2740,6 +2827,9 @@ The hub does not go into worktrees, so all that can be done here is **handing ov
    `ABC-819`) and find the source that has that key — for the `github` family by reversing
    `issueKeys`, for `jira` / `linear` the source whose project key / team name matches. Ask the wrong
    one and a different task under the same number comes back **without any error**.
+   **In a parent task's hub, check that key as "A key that is not one of your children" says before
+   step 4** (in "A hub for a parent task"): a worktree of a task that is not a child gets neither A
+   nor this hub's parent, and is handed to the repository's hub as that step says.
 4. What to do, with `AskUserQuestion`:
    - **A) Start a worker and hand over the work (Recommended)** — the same procedure as "4. Start the
      worker". A record is made for that worktree's task (`adj task add --issue-url` of that task,
@@ -2928,6 +3018,7 @@ as standard input to an option that accepts `-`. Remove the file once read:
 | A note (why it could not be started, a gate's comment) | `adj task update --note -` | `{main}/.claude/task-note-{task_id}.md` |
 | A dispatch gate's content (JSON; also the reading of a request) | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
 | A task's title read from a tracker | `adj task update --title -` | `{main}/.claude/task-title-{task_id}.md` |
+| A request a parent task's hub hands to the repository's hub | `adj task add --body -` | `{main}/.claude/task-request-{key}.md` |
 | A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
 | A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
 | Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
