@@ -47,7 +47,7 @@ pub const DEFAULT_WORKTREE_NAME: &str = "{issuekey-lowercase}-{issue}";
 
 /// Keys that configure *the machine*, not the work. They are resolved into `Settings` and
 /// kept out of the per-repo config so there is only ever one copy of each.
-pub(super) const SETTING_KEYS: [&str; 20] = [
+pub(super) const SETTING_KEYS: [&str; 21] = [
     "terminal",
     "notification",
     "agentRunner",
@@ -84,6 +84,9 @@ pub(super) const SETTING_KEYS: [&str; 20] = [
     // How long a worker may stay in one phase before the board flags it. About how somebody
     // works, like the two above it.
     "stuckAfterMinutes",
+    // How long a reader that has handed in may sit idle before the resident closes its
+    // session. About how somebody works, like the three above it.
+    "readerIdleMinutes",
     // How to get the Jules API key. The key belongs to a person's account and sits in their
     // keychain, not to any one repository, so there is one answer per machine.
     "julesKey",
@@ -96,6 +99,11 @@ pub(super) const SETTING_KEYS: [&str; 20] = [
 /// configured. Long enough for a review round or a slow build; short enough that a worker
 /// that stopped at lunch is noticed in the afternoon.
 pub const DEFAULT_STUCK_AFTER_MINUTES: f64 = 120.0;
+
+/// How long a reader that has handed in may sit with nobody talking to it before the resident
+/// closes it, when nothing is configured. Long enough for a person to come back from a meeting
+/// to the same conversation; short enough that readers of PRs left open for days do not pile up.
+pub const DEFAULT_READER_IDLE_MINUTES: f64 = 60.0;
 
 /// The window a plain `adj hub` resumes in, when nothing is configured.
 ///

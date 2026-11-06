@@ -65,6 +65,21 @@ pub(crate) fn close_reader_with(
     alive: &dyn Fn(u32, Option<&str>) -> Liveness,
     stop: &dyn Fn(&HungReader) -> Result<(), String>,
 ) -> Result<ClosedReader, CloseError> {
+    close_reader_of_with(root, pr, None, now, why, alive, stop)
+}
+
+/// `close_reader_with`, closing only the reader that runs as `session` when one is named: a
+/// caller that decided on one reader must not close the one a new request started meanwhile,
+/// which is `NoReader` here and nothing is stopped.
+pub(crate) fn close_reader_of_with(
+    root: &Path,
+    pr: &PrRef,
+    session: Option<&str>,
+    now: i64,
+    why: &str,
+    alive: &dyn Fn(u32, Option<&str>) -> Liveness,
+    stop: &dyn Fn(&HungReader) -> Result<(), String>,
+) -> Result<ClosedReader, CloseError> {
     if others::record(root, pr)
         .map_err(CloseError::Failed)?
         .is_none()
@@ -74,6 +89,9 @@ pub(crate) fn close_reader_with(
     let reader = others::open_reader(root, pr)
         .map_err(CloseError::Failed)?
         .ok_or(CloseError::NoReader)?;
+    if session.is_some_and(|want| reader.session_id != want) {
+        return Err(CloseError::NoReader);
+    }
     // No process recorded yet: the reader is still being started, and there is nothing to stop.
     let pid = reader.pid.ok_or(CloseError::NoReader)?;
     match alive(pid, reader.ps_started.as_deref()) {

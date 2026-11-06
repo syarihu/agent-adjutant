@@ -186,6 +186,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 | `maxWorkers` | 制限なし | チェックアウトごとの同時稼働 worker の上限数 |
 | `hubAutoResumeHours` | `3` | `adj hub` 実行時に前回の会話を自動再開する有効時間（時間単位） |
 | `stuckAfterMinutes` | `120` | worker が同一フェーズにとどまっている場合にカードを赤色表示するまでの分数 |
+| `readerIdleMinutes` | `60` | 下読みを提出した PR の読み手（AI 下読み）に誰も話しかけないまま、この分数が過ぎたらセッションを閉じる。`0` で無効 |
 | `language` | なし | gate やメモ、要約にエージェントが使用する言語（例: `"ja"`） |
 
 tmux との連携やカスタムランナーテンプレート、環境変数の解決順序については、[設定とランタイム詳細](docs/configuration.ja.md) を参照してください。

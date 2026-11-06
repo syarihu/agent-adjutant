@@ -106,7 +106,9 @@ stop, and write nothing more, no file and no message. Do not try again.
 5. **Stay.** After it is handed in, the person may talk to you about the diff in this window. Answer
    from what you read. If your reading changes, submit a revised file the same way. To tell the
    hub something, or to ask the person a question through it, use
-   `adj review say --pr <id> --kind report|question --subject "<line>" --body "<text>"`.
+   `adj review say --pr <id> --kind report|question --subject "<line>" --body "<text>"`. If nobody
+   talks to you for a while (the `readerIdleMinutes` setting) the board closes this window; what
+   you handed in stays.
 
 **If you cannot finish** (the material is missing, `adj review context` fails), say so in two steps,
 in this order, and then stop:

@@ -135,6 +135,9 @@ pub struct Settings {
     /// Minutes in one phase after which the board marks a worker as stuck. `0` turns the
     /// badge off; a dead worker is flagged regardless.
     pub stuck_after_minutes: f64,
+    /// Minutes a reader that has handed in may sit with nobody talking to it before the
+    /// resident closes it; `0` turns it off.
+    pub reader_idle_minutes: f64,
     /// Command that prints the Jules API key on stdout. Built-in: the macOS keychain item
     /// `jules-api`. `false` turns handing tasks to Jules off.
     ///
@@ -214,6 +217,7 @@ impl Default for Settings {
             hub_auto_resume_hours: DEFAULT_HUB_AUTO_RESUME_HOURS,
             max_workers: None,
             stuck_after_minutes: DEFAULT_STUCK_AFTER_MINUTES,
+            reader_idle_minutes: DEFAULT_READER_IDLE_MINUTES,
             jules_key: Hook::default(),
             language: None,
             copilot_review: CopilotReview::Ask,

@@ -3,6 +3,7 @@
 //! rules are `others`'s, and this module is the part that starts processes.
 
 mod close_ended_pr_readers;
+mod close_idle_readers;
 mod close_reader;
 mod close_readers;
 mod close_task_readers;
@@ -19,6 +20,7 @@ mod submit;
 mod tests;
 
 pub use close_ended_pr_readers::*;
+pub use close_idle_readers::*;
 pub use close_reader::*;
 pub use close_readers::*;
 pub use close_task_readers::*;
