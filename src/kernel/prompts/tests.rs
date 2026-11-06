@@ -3816,8 +3816,8 @@ fn a_superseded_reader_is_told_to_stop_and_replies_are_not_entries() {
 ///
 /// In a brief with a parent task the two differ: an answer whose subject carries the
 /// parent's number tells the hub it is about a different task, and a cleanup request naming
-/// the parent says the worktree being removed was for the parent's work. Both must name the
-/// worker's own task, the brief's Task line.
+/// the parent says the worktree being removed was for the parent's work. So §7 and the note
+/// under the §9 template must both point at the brief's Task line.
 #[test]
 fn an_answer_and_the_cleanup_request_name_the_worker_s_own_task() {
     let raw = find("adj-worker").unwrap().raw_content;
