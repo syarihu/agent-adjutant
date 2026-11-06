@@ -369,7 +369,8 @@ first, and no one-off lookup is added for it. How to fetch it is "Fetching the p
 "Fetching what sits under the parent".
 
 **What is read is three levels: parent task → the subtasks under it → the PRs those subtasks
-opened.** Once collected, show them sorted like this:
+opened.** If the collection stopped (whole-list failure), say so with the error and list nothing;
+do not read it as "no subtasks". Once collected, show them sorted like this:
 
 - **Done** — **subtasks the tracker says are finished**, or those whose `prState` is `MERGED`.
   Finished is read per type: for the `github` family the issue's `state` is `closed`; for `jira` the
@@ -390,13 +391,22 @@ opened.** Once collected, show them sorted like this:
   up Jira and Linear children that are moving on another machine as "next candidates" (step 2 of "1.
   Pick the task" does the same matching for the whole repository; not judging by `statusCategory` is
   the same as there)
-- **Next candidates** — of the rest, those assigned to you or unassigned. **In the order the tracker
-  returned them**, numbered
+- **Next candidates** — of the rest, with nothing unknown (`?`), those assigned to you or unassigned.
+  **In the order the tracker returned them**, numbered
 - **Held by others** — of the rest, those **assigned to someone other than you**. Listed as `{key}
   ({login})`, but **not numbered**. The repository-wide route ("1. Pick the task") fetches only yours
   and unassigned ones, so this line appears only in this hub. **Do not drop them silently** — showing
   what is going on underneath is this hub's job; they are not numbered because starting one steps on
   someone else's assignment ("When handing on to start" below)
+- **Could not be read** — a row with `?` in `status`, `item`, `branch`, `pr`, `prState` or
+  `worktree` that is not Done by the tracker. This is decided before "held by others": a row
+  assigned to someone else that has a `?` is listed here, as `{key} ({login}; {which lookup
+  failed})`. It is **not numbered and never a next candidate** (an unknown PR may be one in review,
+  so offering it hands the same work out twice). Listed as `{key} ({which lookup failed})`, and show
+  the collection's "Lookups that failed" line as it is. Done still wins: a subtask the tracker says
+  is finished stays under Done. A row that is In progress for a reason that was read (a worktree, an
+  `OPEN` PR, the board) stays In progress, and is still not started from that row ("When handing on
+  to start" below)
 - **No key configured, left out: `<repo>` ×N** — `sub_issues` returns children in other repos too,
   so children of repos missing from `issueKeys` get mixed in. **Do not list them as candidates;
   show the count and the repo** and offer to add it to `issueKeys` (the same as 3 in "1. Pick the
@@ -449,7 +459,8 @@ has to be done here yourself:
   that one row again on the spot** ("Fetching what sits under the parent", for one item — the same
   single lookup "Fetch that one" in "When asked to split it" makes for a key just filed) and do the
   matching below on the fresh row: its assignment, status, PR and worktree replace the old row's,
-  and the other columns (`item`, `title`, `url`, `branch`) are carried as they were. Only that row
+  and the other columns (`item`, `title`, `url`, `branch`) are carried as they were (except a `?`,
+  which is taken from the fresh row; the `?` bullet below). Only that row
   decides the start, so the whole collection is not re-sent. A person named the number on the old
   listing, so the number still refers to the row shown, but **the matching below reads the row by
   where the fresh one now sorts, not by the list it was named from**: a numbered child now assigned
@@ -487,6 +498,16 @@ has to be done here yourself:
 - **Rows with no key configured have no number.** The list above says so, so when one is named by
   key, give the same answer and stop (ask whether to add it to `issueKeys`). Do not send it on to
   "3. Create the worktree" without a branch name.
+- **A row with `?` in any column, wherever it is listed** (under "Could not be read", which has no
+  number, or under "in progress" for a reason that was read, such as the board), is not started from
+  that row. A person may name one by key. **Fetch that one row again on the spot** ("Fetching what
+  sits under the parent", for one item, as above); if the fresh lookup still fails, say which lookup
+  failed and stop: do not start it; the person can name it again once the lookup works (fail closed,
+  the same as the parent lookup in "A key that is not one of your children"). A column the old row
+  carried as `?` is not carried: `item` and `branch` are taken from the fresh row too, since a `?`
+  there would reach "2. Claim it" as the item id or `git worktree add -b` as the branch. The same
+  holds for the fresh row a stale listing is re-fetched into: a fresh row with `?` left in any
+  column stops here too. A fresh row that does read is matched as usual against the bullets here.
 - **Ask which route.** Ask "leave it to a worker / worktree only" with `AskUserQuestion` — the end of
   "3. Create the worktree" needs this answer. **Not opening questions is about startup** ("list the
   candidates and start waiting" above), and asking after a person has named a number is not that.
@@ -534,7 +555,8 @@ on to "2. Start a task", check that it is a child.
 after "Keep no state" in "Read at startup"; a missing, unreadable or future `Taken at` is not fresh)
 that has a `"kind": "subtask"` machine row whose `key` is the one named (the parent's own `"kind":
 "parent"` row is never a child), in any section (next candidates, in progress,
-held by others, done): it is a child; go on with that row ("When handing on to start").
+held by others, could not be read, done): it is a child; go on with that row ("When handing on to
+start").
 
 An issue named by its URL is the same: its repo and number come from the URL, and `{key}` below is
 the key that repo's `issueKeys` gives it.
@@ -717,6 +739,25 @@ the conventions** is caught by neither lookup (`--search` looks at the title and
 name). A missed subtask is listed as having no PR, so **do not read "no PR" as "nobody has touched it
 yet".**
 
+**A lookup that fails cannot be told from none, so a lookup that fails is `?`, not `-`.** If the
+`--head` lookup fails (a non-zero exit or an error message from `gh`), write `"pr": "?"` and
+`"prState": "?"` for that row without falling back to `--search` as if it had answered; if `--head`
+found nothing and the `--search` lookup fails, also write `"pr": "?"` and `"prState": "?"`. Only
+an empty list from a call that succeeded is none (`-`). A failed lookup is not "no PR": an unknown PR
+may be open and in review, and writing `-` would let the hub sort it under "Next candidates" and hand
+the work out twice.
+
+**Only the parent, the subtask list and who you are stop the collection; every other failure marks
+rows.** If `adj worktree-path` fails for a child, write `"branch": "?"`, and that row's `pr`,
+`prState` and `worktree` are `"?"` too (nothing to match or look up by). If the worktree listing
+fails, write `"worktree": "?"` on every row. If the `github-project` `nodes(ids:)` call fails, write
+`"status": "?"` and `"item": "?"` on the rows it covered, except that a subtask the subtask list
+shows finished (`closed`) keeps `closed` in `status`: that comes from the list, not the board. But
+when the parent fetch or the subtask list fetch (any page of `--paginate` or `nextPageToken`) fails,
+stop the collection and report the failure and its error: no rows are written, and never report
+"none". The same goes for the lookup of who you are above: without it "held by others" cannot be
+told from yours, and others' children would be numbered as next candidates.
+
 ### When asked to split it
 
 **The entry point is a person saying "split it".** The same holds for a hub started on the
@@ -731,15 +772,19 @@ split its task" below, and the same approval comes first.
 in "Read at startup", so **do not create the same ones again**. Whether that list is at hand splits it
 three ways:
 
-- **The collection was sent and has come back** → check its age by its `Taken at` line: when that
-  is within 10 minutes (the age in "Read at startup"), use that list as it is; when it is older (or
-  the line is missing or cannot be read), send the same collection again and wait for it as in the
-  next bullet ("Waiting").
+- **The collection was sent and has come back** → if it stopped on a failed lookup (an error and no
+  rows; "Fetching what sits under the parent"), it is not a list and not an empty one: say so, send
+  the same collection again once and wait for it, and file nothing from it; if that one stops too,
+  say the error and stop, so the person can fix what fails. Otherwise check its age by its `Taken
+  at` line: when that is within 10 minutes (the age in "Read at startup"), use that list as it is;
+  when it is older (or the line is missing or cannot be read), send the same collection again and
+  wait for it as in the next bullet ("Waiting").
 - **The collection was sent and has not come back yet** → wait for it first (say it is still being
   collected and end the turn; "Waiting").
 - **The collection was never sent** (`settings.startupDashboard` is `false`; "Read at startup")
   → **do not wait. Fetch what is under the parent on the spot** ("Fetching what sits under the
-  parent"; the parent's own row comes out there too).
+  parent"; the parent's own row comes out there too). If that stops on a failed lookup, say the
+  error and file nothing.
   **Waiting would wait forever** — it would be waiting on a collection that is not coming, so every
   time a person says "split it" the turn would end at the same place. It is a single lookup with a
   person right in front of you, so it is separate from keeping startup to one block (the same
@@ -3218,13 +3263,26 @@ Put both of these in the report:
    to in progress, and without it started subtasks are listed under "next candidates" (when finished,
    the above takes precedence).
    Fill what is missing with `-`, and **never drop a key.**
+   **A lookup that failed is `"?"`, never `"-"`** (for `status`, `item`, `branch`, `pr`, `prState`,
+   or `worktree`). `-` means "looked, and there is none"; `?` means "the lookup failed, so it cannot
+   be told". If `adj worktree-path` fails for a child, write `"branch": "?"` (and that row's `pr`,
+   `prState` and `worktree` are `"?"` too). If the worktree listing fails, write `"worktree": "?"`
+   on every row. If `nodes(ids:)` fails, write `"status": "?"` and `"item": "?"` on the rows it
+   covered (a finished subtask still gets its finished category, which comes from the subtask list).
+   If a PR lookup fails (a non-zero exit or error from `gh`), write `"pr": "?"` and `"prState": "?"`
+   without falling back to `--search`; when `--head` found nothing and `--search` fails, `"?"` as
+   well. Name every row carrying a `?` in the report's part for people, on one line together:
+   `Lookups that failed: {key} ({which lookup}: {the error, one line})`, ... If fetching the parent
+   itself, fetching the subtasks (any page) or the lookup of who you are fails, stop the collection
+   and report the error instead of writing rows or writing "none".
 
 Issues left out for having no key configured also go in the report, with the count and repo (do not
 drop them silently).
 `sub_issues` returns children in other repos too, and for a child of a repo not in `issueKeys` neither
 a key nor a branch can be made.
 
-If there are no subtasks at all, write "none" and return. **Do not work out how to split it instead.**
+If the list was read and holds no subtasks, write "none" and return. **Do not work out how to split
+it instead.**
 ```
 
 ## Appendix — Brief for the Jules planning agent

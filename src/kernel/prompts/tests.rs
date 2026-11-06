@@ -3843,3 +3843,147 @@ fn an_answer_and_the_cleanup_request_name_the_worker_s_own_task() {
         "§9 cleanup template still refers to \"Parent task\": {s9}"
     );
 }
+
+/// A failed lookup in the parent task collection must not read as "none".
+///
+/// Looking up a subtask's PR, branch, worktree, or board status can fail due to network errors,
+/// missing authentication, or rate limits. Filling missing fields with `-` on failure makes
+/// "could not read" look like "looked, and there is none" (`pr: "-"`). The hub would then sort
+/// a subtask whose PR is open and in review under "Next candidates" and hand it out a second time.
+/// Similarly, whole-list lookup failures must stop the collection rather than reporting "none".
+///
+/// This test pins:
+/// 1. The collection brief appendix records failed lookups as `"?"`, reports them under
+///    `Lookups that failed:`, stops on whole-list failures, and qualifies the "none" report.
+/// 2. "### Fetching what sits under the parent" states the `?` rule and distinguishes a failed
+///    lookup from an empty list from a call that succeeded.
+/// 3. "### Read at startup" sorts `?` rows under "**Could not be read**" (never a next candidate)
+///    and requires "Next candidates" to have nothing unknown (`?`).
+/// 4. "When handing on to start" re-fetches a named `?` row and stops if the fresh lookup fails.
+#[test]
+fn a_failed_lookup_in_the_parent_task_collection_must_not_read_as_none() {
+    let raw = find("adj-hub").unwrap().raw_content;
+
+    // 1. The collection brief appendix records failed lookups as "?", never "-",
+    // reports them under "Lookups that failed:", and stops the collection on whole-list errors.
+    let brief = section(
+        raw,
+        "## Appendix — Brief for the parent task collection agent",
+    );
+    let brief_flowed = flow(&brief);
+    assert!(
+        brief_flowed.contains("A lookup that failed is `\"?\"`, never `\"-\"`"),
+        "the brief does not state that a failed lookup is `\"?\"`, never `\"-\"`: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("Lookups that failed:"),
+        "the brief does not instruct reporting `Lookups that failed:`: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("stop the collection and report the error"),
+        "the brief does not instruct to stop the collection and report the error on whole-list failure: {brief}"
+    );
+    before(
+        &brief,
+        "Fill what is missing with `-`",
+        "A lookup that failed is `\"?\"`, never `\"-\"`",
+    );
+
+    // The "none" sentence is qualified and no bare old sentence remains.
+    assert!(
+        !brief.contains("If there are no subtasks at all, write \"none\" and return."),
+        "the brief still contains the unqualified old sentence: {brief}"
+    );
+    assert!(
+        brief_flowed
+            .contains("If the list was read and holds no subtasks, write \"none\" and return."),
+        "the brief does not qualify the empty list condition before writing \"none\": {brief}"
+    );
+
+    // 2. "### Fetching what sits under the parent" states the rule for per-row failures vs empty lists.
+    let fetching = step(raw, "### Fetching what sits under the parent");
+    let fetching_flowed = flow(&fetching);
+    assert!(
+        fetching_flowed.contains("a lookup that fails is `?`, not `-`"),
+        "the fetching step does not state that a lookup that fails is `?`, not `-`: {fetching}"
+    );
+    assert!(
+        fetching_flowed.contains("an empty list from a call that succeeded is none"),
+        "the fetching step does not distinguish an empty list from a failed call: {fetching}"
+    );
+
+    // 3. "### Read at startup" sorts "?" rows under "**Could not be read**", never offers them as next candidates,
+    // and handles whole-list failures.
+    let startup = step(raw, "### Read at startup");
+    let startup_flowed = flow(&startup);
+    assert!(
+        startup_flowed.contains("**Could not be read**"),
+        "the startup sorting list does not contain **Could not be read**: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("never a next candidate"),
+        "the startup sorting list does not mark unreadable rows as never a next candidate: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("with nothing unknown (`?`)"),
+        "the Next candidates bullet does not restrict to rows with nothing unknown (`?`): {startup}"
+    );
+    assert!(
+        startup_flowed.contains(
+            "If the collection stopped (whole-list failure), say so with the error and list nothing"
+        ),
+        "the startup step does not handle a whole-list failure: {startup}"
+    );
+
+    // 4. Start path ("When handing on to start" inside "### Read at startup") re-fetches a "?" row
+    // and stops if the fresh lookup fails.
+    assert!(
+        startup_flowed
+            .contains("if the fresh lookup still fails, say which lookup failed and stop"),
+        "the start path does not fail closed when a fresh lookup still fails: {startup}"
+    );
+    // A `?` carried over from the old row would reach the claim as the item id or
+    // `git worktree add -b` as the branch, so the re-fetch takes those columns too.
+    assert!(
+        startup_flowed.contains("A column the old row carried as `?` is not carried"),
+        "the start path carries a `?` item or branch from the old row: {startup}"
+    );
+    assert!(
+        startup_flowed.contains("This is decided before \"held by others\""),
+        "a `?` row assigned to someone else has no single place in the list: {startup}"
+    );
+    // A `?` row can sort as in progress (started on the board) and still be named;
+    // the re-fetch applies wherever the row is listed, not only under "Could not be read".
+    assert!(
+        startup_flowed.contains("A row with `?` in any column, wherever it is listed"),
+        "only rows under \"Could not be read\" are re-fetched before starting: {startup}"
+    );
+
+    // Without who you are, others' children read as yours and are numbered.
+    let fetching = step(raw, "### Fetching what sits under the parent");
+    assert!(
+        flow(&fetching).contains("The same goes for the lookup of who you are above"),
+        "a failed lookup of who you are does not stop the collection: {fetching}"
+    );
+}
+
+/// A parent collection that stopped on a failed lookup is not an empty list.
+///
+/// The collection stops with an error and no rows when the parent, the subtask list or the
+/// lookup of who you are fails. The split route uses a fresh collection "as it is" to avoid
+/// filing children that already exist; read as a list with no rows, a stopped collection
+/// makes every existing child look missing, and the split files them all again.
+#[test]
+fn a_stopped_parent_collection_is_not_read_as_an_empty_list_when_splitting() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let split = step(raw, "### When asked to split it");
+    before(
+        &split,
+        "if it stopped on a failed lookup (an error and no rows",
+        "use that list as it is",
+    );
+    assert!(
+        flow(&split).contains("file nothing from it"),
+        "the split route may file from a collection that stopped: {split}"
+    );
+}
