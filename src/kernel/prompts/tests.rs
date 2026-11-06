@@ -64,25 +64,40 @@ fn the_pr_step_takes_its_base_from_the_brief() {
     // across two lines — and re-wrapping a paragraph must not decide whether this guard
     // holds.
     let flowed: String = flow(&worker);
-    assert!(
-        worker.contains("--base"),
-        "the PR step never passes a base: {worker}"
+    // Each place `--base` appears is pinned on its own: the create command, the reason,
+    // and the repair.
+    assert_once_in(
+        &worker,
+        "gh pr create --base '<the branch name from step 2>'",
+        "the PR step opens the PR without passing a base",
+    );
+    assert_once_in(
+        &worker,
+        "without `--base` the PR targets the default branch",
+        "the PR step does not say a PR opened without a base targets the default branch",
+    );
+    assert_once_in(
+        &worker,
+        "gh pr edit <n> -R <codeRepo> --base",
+        "the PR step never moves a PR opened on the wrong base",
     );
     // The label as the brief spells it, not the bare noun: the step after this one says
     // "the base branch from step 2", so a check for the words alone was satisfied by that
     // sentence — and renaming the label the step goes looking for passed the guard while
     // leaving the worker hunting for a line the hub does not write.
-    assert!(
-        flowed.contains("the brief's \"Base branch\" line"),
-        "the PR step does not say where the base comes from: {worker}"
+    assert_once_in(
+        &worker,
+        "the brief's \"Base branch\" line",
+        "the PR step does not say where the base comes from",
     );
     // The hub writes a commit-ish (`origin/release/1.2`), which is not a branch name
     // GitHub will accept — so the step has to say to strip the remote. Asserting on
     // `origin/` alone was satisfied by the examples that illustrate the stripping, so
     // the instruction itself could go while the guard stayed green.
-    assert!(
-        flowed.contains("with `origin/` stripped"),
-        "the PR step does not say to strip the remote from the brief's value: {worker}"
+    assert_once_in(
+        &worker,
+        "with `origin/` stripped",
+        "the PR step does not say to strip the remote from the brief's value",
     );
 
     // The base is checked before anyone is asked to review, not after. A bot asked to
@@ -269,58 +284,65 @@ fn no_procedure_opens_a_pull_request_without_saying_what_to_base_it_on() {
 #[test]
 fn the_worktree_step_takes_a_base_meant_for_one_dispatch() {
     let create = step(find("adj-hub").unwrap().raw_content, "### 3. ");
-    // Matched against the step with its whitespace squeezed, for the reason the
-    // base-branch guard above gives: the procedures are hard-wrapped, so re-wrapping a
-    // paragraph must not decide whether this holds.
-    let flowed: String = flow(&create);
     // Which of the two wins. Without this the step can describe a per-dispatch base and
     // still leave the reader to guess whether the config overrides it.
-    assert!(
-        flowed.contains("A branching point given for this dispatch takes precedence over the config's `baseBranch`"),
-        "the worktree step does not say the per-dispatch base wins: {create}"
+    assert_once_in(
+        &create,
+        "A branching point given for this dispatch takes precedence over the config's `baseBranch`",
+        "the worktree step does not say the per-dispatch base wins",
     );
-    assert!(
-        flowed.contains("rewriting the config's `baseBranch` is wrong"),
-        "the worktree step does not say to leave the repository-wide default alone: {create}"
+    assert_once_in(
+        &create,
+        "rewriting the config's `baseBranch` is wrong",
+        "the worktree step does not say to leave the repository-wide default alone",
     );
     // The value has to be turned into the remote-tracking form. `git worktree add` takes
     // a commit-ish, and a bare `feature/x` resolves to nothing in a worktree with no
     // local branch of that name — and the brief would then carry a spelling the base
     // line is not otherwise written in.
-    assert!(
-        flowed.contains("Normalise the value to a commit-ish with `origin/`"),
-        "the worktree step does not normalise the base it was handed: {create}"
+    assert_once_in(
+        &create,
+        "Normalise the value to a commit-ish with `origin/`",
+        "the worktree step does not normalise the base it was handed",
     );
     // A base that does not resolve has to stop the dispatch. Falling through to the
     // default puts the worktree — and the pull request that follows it — on a branch
     // nobody asked for, and the brief then records that answer as though it were chosen.
-    assert!(
-        flowed.contains("git rev-parse --verify"),
-        "the worktree step never checks that the base it was handed exists: {create}"
+    assert_once_in(
+        &create,
+        "git rev-parse --verify",
+        "the worktree step never checks that the base it was handed exists",
     );
     // …against refs that were refreshed. A fetch that does not prune leaves the
     // remote-tracking ref of a branch deleted upstream in place, so the check above
     // answers "it exists" for a base that is gone and the failure surfaces later, at
-    // `gh pr create`. Written as a ban on the bare form because the step fetches twice —
-    // once for a base it was handed, once for the newest release branch — and both reads
-    // are wrong in the same way.
+    // `gh pr create`. Written as a ban on the bare form while each fetch is pinned on
+    // its own together with the command that follows it.
     assert!(
-        !create.contains("git fetch origin"),
+        !flow(&create).contains("git fetch origin"),
         "the worktree step fetches without pruning, so a deleted base still resolves: {create}"
     );
-    assert!(
-        flowed.contains("git fetch --prune origin"),
-        "the worktree step does not refresh the remote before resolving a base: {create}"
+    assert_once_in(
+        &create,
+        "git fetch --prune origin git rev-parse --verify",
+        "the worktree step does not refresh the remote before resolving a base",
     );
-    assert!(
-        flowed.contains("do not fall back to the default; ask the user"),
-        "the worktree step falls back to the default base in silence: {create}"
+    assert_once_in(
+        &create,
+        "git fetch --prune origin git branch -r --list",
+        "the worktree step does not refresh the remote before listing release branches",
+    );
+    assert_once_in(
+        &create,
+        "do not fall back to the default; ask the user",
+        "the worktree step falls back to the default base in silence",
     );
     // Only the base moves. A per-dispatch base that also renamed the branch would break
     // the lookup "When asked to work on an existing worktree" does by key.
-    assert!(
-        flowed.contains("Only the branching point changes"),
-        "the worktree step does not say the branch and worktree names stay put: {create}"
+    assert_once_in(
+        &create,
+        "Only the branching point changes",
+        "the worktree step does not say the branch and worktree names stay put",
     );
 }
 
@@ -638,35 +660,36 @@ fn a_parent_s_children_are_fetched_by_the_tracker_that_holds_them() {
         find("adj-hub").unwrap().raw_content,
         "### Fetching what sits under the parent",
     );
-    let flowed: String = flow(&fetch);
-    assert!(
-        flowed.contains("/sub_issues"),
-        "no recipe for GitHub sub-issues: {fetch}"
-    );
+    assert_once_in(&fetch, "/sub_issues", "no recipe for GitHub sub-issues");
     // The board holds statuses, not the parent-child relation, so the same sub-issue
     // call serves both GitHub types and only the status lookup is board-specific.
-    assert!(
-        flowed.contains("Parenthood is an attribute of the issue"),
-        "the board is treated as the owner of the parent-child relation: {fetch}"
+    assert_once_in(
+        &fetch,
+        "Parenthood is an attribute of the issue",
+        "the board is treated as the owner of the parent-child relation",
     );
-    assert!(
-        flowed.contains("`parent = {parent key}`"),
-        "no recipe for Jira subtasks: {fetch}"
+    assert_once_in(
+        &fetch,
+        "`parent = {parent key}`",
+        "no recipe for Jira subtasks",
     );
     // The concrete form of "Do not invent an order": a sorted list read as a running order.
-    assert!(
-        flowed.contains("Do not add `ORDER BY`"),
-        "the Jira query sorts the children, which reads as a running order: {fetch}"
+    assert_once_in(
+        &fetch,
+        "Do not add `ORDER BY`",
+        "the Jira query sorts the children, which reads as a running order",
     );
-    assert!(
-        flowed.contains("mcp__linear__list_issues"),
-        "no recipe for Linear sub-issues: {fetch}"
+    assert_once_in(
+        &fetch,
+        "pass the parent's id to `mcp__linear__list_issues`",
+        "no recipe for Linear sub-issues",
     );
     // Pull requests are the exception: they land in the code repository whichever
     // tracker the tasks live in, so branching there would be four copies of one answer.
-    assert!(
-        flowed.contains("PRs are looked for in the one code repository, whatever the type"),
-        "the PR lookup branches by tracker as well: {fetch}"
+    assert_once_in(
+        &fetch,
+        "PRs are looked for in the one code repository, whatever the type",
+        "the PR lookup branches by tracker as well",
     );
 }
 
@@ -1747,9 +1770,10 @@ fn the_parent_route_keeps_the_selection_step_s_rules_when_it_skips_the_fetch() {
         flowed.contains("**not numbered**"),
         "a child someone else holds is offered as a candidate to start: {startup}"
     );
-    assert!(
-        flowed.contains("confirm once before starting"),
-        "the route claims a child someone else holds without asking: {startup}"
+    assert_once_in(
+        &startup,
+        "(or a numbered row the fresh lookup above found assigned to someone else), **confirm once before starting**",
+        "the route claims a child someone else holds without asking",
     );
     // The cost of going ahead is not symmetric across trackers, and the confirmation is
     // worth nothing if it does not say so: `--add-assignee` adds, the other two replace.
@@ -1950,9 +1974,10 @@ fn a_branch_with_several_prs_collapses_to_one_the_readers_agree_on() {
 
     let startup = step(raw, "### Read at startup");
     let startup_flowed = flow(&startup);
-    assert!(
-        startup_flowed.contains("`prState` is `MERGED`"),
-        "Done does not check that prState is MERGED: {startup}"
+    assert_once_in(
+        &startup,
+        "or those whose `prState` is `MERGED`",
+        "Done does not check that prState is MERGED",
     );
     assert!(
         startup_flowed.contains("those with a worktree, a `prState` of `OPEN`"),
@@ -2734,6 +2759,28 @@ fn before(text: &str, condition: &str, imperative: &str) {
         at(condition) < at(imperative),
         "`{imperative}` is reached before `{condition}` qualifies it:\n{text}"
     );
+}
+
+/// Assert that a needle appears exactly once in the section's text.
+///
+/// A needle that appears more than once in its section pins nothing: deleting the
+/// occurrence the guard is about leaves it green. Both sides are flowed first, so a line
+/// break in the procedure does not decide the count, and overlapping matches are counted
+/// too: a needle that repeats into itself is still two places, not one.
+fn assert_once_in(text: &str, needle: &str, what: &str) {
+    let flowed_text = flow(text);
+    let flowed_needle = flow(needle);
+    let count = flowed_text
+        .char_indices()
+        .filter(|(at, _)| flowed_text[*at..].starts_with(&flowed_needle))
+        .count();
+    match count {
+        1 => {}
+        0 => panic!("{what}: `{flowed_needle}` is missing from:\n{text}"),
+        n => panic!(
+            "{what}: `{flowed_needle}` appears {n} times, so it pins no single occurrence in:\n{text}"
+        ),
+    }
 }
 
 #[test]
