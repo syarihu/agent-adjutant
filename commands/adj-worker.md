@@ -449,8 +449,9 @@ just noted; no reply and no discussion.
 
 A hub started before its procedures were in English writes `[質問 {id}]` instead; treat that the same.
 
-Answer with `adjutant_send` (`kind` `answer`, with the identifier from the hub's `[question {id}]` at the
-start of `subject`; if there was none, one line with the parent task number and what it answers).
+Answer with `adjutant_send` (`kind` `answer`, with the identifier from the hub's `[question {id}]`
+at the start of `subject`; if there was none, one line with this task's number (the brief's Task
+line) and what it answers).
 **You need not care whether the hub is running** — if it is not, the answer waits in its inbox, and
 the hub looks there on startup and right before going back to waiting. No route loses it, so there
 is no need to check who is there before sending.
@@ -536,9 +537,7 @@ ask the hub.**
   ## Task                   {task_id} {task_url}
   ```
 
-  The last line is **this worktree's task**, not the brief's "Parent task" line. What the hub needs
-  for cleanup is what work the worktree it removes was for, not that work's parent. In a brief with
-  a parent task the two differ, so do not copy it from the brief as it stands.
+  `## Task` is the brief's Task line: the work the worktree the hub removes was for.
 
 - **Do not wait for a reply.** Once the hub starts cleaning up, this tab is closed, so do not plan on
   coming back to `adjutant_outbox`. Tell the user "I asked the hub to clean up, so the hub will close

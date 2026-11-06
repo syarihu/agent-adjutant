@@ -3811,3 +3811,35 @@ fn a_superseded_reader_is_told_to_stop_and_replies_are_not_entries() {
     assert!(reader.contains("write nothing more"));
     assert!(reader.contains("replies are context for judging a comment, not entries"));
 }
+
+/// The worker's answer to a hub question and the cleanup request name its own task.
+///
+/// In a brief with a parent task the two differ: an answer whose subject carries the
+/// parent's number tells the hub it is about a different task, and a cleanup request naming
+/// the parent says the worktree being removed was for the parent's work. Both must name the
+/// worker's own task, the brief's Task line.
+#[test]
+fn an_answer_and_the_cleanup_request_name_the_worker_s_own_task() {
+    let raw = find("adj-worker").unwrap().raw_content;
+    let s7 = section(raw, "## 7. ");
+    let s7_flowed = flow(&s7);
+    assert!(
+        s7_flowed.contains("this task's number (the brief's Task line)"),
+        "§7 answer fallback does not name this task's number (the brief's Task line): {s7}"
+    );
+    assert!(
+        !s7_flowed.contains("parent task number"),
+        "§7 answer fallback still names the parent task number: {s7}"
+    );
+
+    let s9 = between(raw, "## 9. ", "## Appendix — Show a person and wait (gate)");
+    let s9_flowed = flow(&s9);
+    assert!(
+        s9_flowed.contains("`## Task` is the brief's Task line"),
+        "§9 cleanup template does not identify `## Task` as the brief's Task line: {s9}"
+    );
+    assert!(
+        !s9_flowed.contains("\"Parent task\""),
+        "§9 cleanup template still refers to \"Parent task\": {s9}"
+    );
+}
