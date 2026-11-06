@@ -15,7 +15,9 @@ fn accepted_shape(key: &str) -> &'static [&'static str] {
         // fell through to the string default below, and every `true` anybody wrote was
         // reported as the wrong shape and dropped — a setting that warns when used correctly.
         "startupDashboard" | "hubServe" => &["true", "false"],
-        "hubAutoResumeHours" | "maxWorkers" | "stuckAfterMinutes" => &["a number"],
+        "hubAutoResumeHours" | "maxWorkers" | "stuckAfterMinutes" | "readerIdleMinutes" => {
+            &["a number"]
+        }
         _ => &["a string"],
     }
 }
@@ -392,6 +394,7 @@ fn resolve_settings(
         hub_auto_resume_hours: auto_resume_hours(pick("hubAutoResumeHours").as_ref(), warnings),
         max_workers: max_workers(pick("maxWorkers").as_ref(), warnings),
         stuck_after_minutes: stuck_after_minutes(pick("stuckAfterMinutes").as_ref(), warnings),
+        reader_idle_minutes: reader_idle_minutes(pick("readerIdleMinutes").as_ref(), warnings),
         jules_key: Hook::read(pick("julesKey")),
         // Trimmed, so a value of spaces is as unset as an empty one.
         language: pick("language")
@@ -451,23 +454,50 @@ fn auto_resume_hours(configured: Option<&Value>, warnings: &mut Vec<String>) -> 
     }
 }
 
-/// The stuck threshold, in minutes. Negative or not finite is said and replaced by the
-/// default, as `hubAutoResumeHours` does; `0` is the way to turn it off.
-fn stuck_after_minutes(configured: Option<&Value>, warnings: &mut Vec<String>) -> f64 {
+/// Minutes for a threshold setting that must be 0 or more (`0` turns it off).
+/// Negative or not finite is warned about and replaced by the default.
+fn non_negative_minutes(
+    configured: Option<&Value>,
+    key: &str,
+    default: f64,
+    warnings: &mut Vec<String>,
+) -> f64 {
     let Some(value) = configured else {
-        return DEFAULT_STUCK_AFTER_MINUTES;
+        return default;
     };
     match value.as_f64() {
         Some(minutes) if minutes.is_finite() && minutes >= 0.0 => minutes,
         // A non-number was already reported by `check_shapes`.
         Some(_) => {
             warnings.push(format!(
-                "stuckAfterMinutes is {value} but has to be 0 or more: using {DEFAULT_STUCK_AFTER_MINUTES}"
+                "{key} is {value} but has to be 0 or more: using {default}"
             ));
-            DEFAULT_STUCK_AFTER_MINUTES
+            default
         }
-        None => DEFAULT_STUCK_AFTER_MINUTES,
+        None => default,
     }
+}
+
+/// The stuck threshold, in minutes. Negative or not finite is said and replaced by the
+/// default, as `hubAutoResumeHours` does; `0` is the way to turn it off.
+fn stuck_after_minutes(configured: Option<&Value>, warnings: &mut Vec<String>) -> f64 {
+    non_negative_minutes(
+        configured,
+        "stuckAfterMinutes",
+        DEFAULT_STUCK_AFTER_MINUTES,
+        warnings,
+    )
+}
+
+/// The reader idle threshold, in minutes. Negative or not finite is said and replaced by the
+/// default; `0` is the way to turn it off.
+fn reader_idle_minutes(configured: Option<&Value>, warnings: &mut Vec<String>) -> f64 {
+    non_negative_minutes(
+        configured,
+        "readerIdleMinutes",
+        DEFAULT_READER_IDLE_MINUTES,
+        warnings,
+    )
 }
 
 /// The worker limit. Anything but a whole number of 1 or more is said and dropped, and dropped

@@ -186,6 +186,7 @@ Configuration lives at `~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and 
 | `maxWorkers` | no limit | Maximum concurrent workers allowed per checkout |
 | `hubAutoResumeHours` | `3` | Hours within which `adj hub` automatically resumes the previous conversation |
 | `stuckAfterMinutes` | `120` | Flags task cards red if a worker stays in one phase without progress |
+| `readerIdleMinutes` | `60` | Closes a PR reader (AI 下読み) that has handed in and that nobody has talked to for this many minutes. `0` turns it off |
 | `language` | none | Output language for gates, notes, and task summaries (e.g. `"ja"`) |
 
 For tmux integration, custom runner templates, and environment resolution, see [Configuration & Runtime Reference](docs/configuration.md).

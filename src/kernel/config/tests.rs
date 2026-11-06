@@ -176,7 +176,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         json!({"hubWake": "poke", "workerWake": "poke2", "agentRunner": "run {prompt}",
                "hubRunner": "start {name}", "reviewerRunner": "read {name}", "worktreePattern": ".wt/{name}",
                "agentResumeRunner": "again {sessionId}", "hubAutoResumeHours": 1,
-               "maxWorkers": 3, "stuckAfterMinutes": 30, "julesKey": "print-key", "language": "ja",
+               "maxWorkers": 3, "stuckAfterMinutes": 30, "readerIdleMinutes": 15, "julesKey": "print-key", "language": "ja",
                "hubResumeRunner": "again {name} {sessionId}",
                "agentEnv": {"K": "v"}, "ide": "code", "startupDashboard": false, "hubServe": false,
                "terminal": {"spawn": "s", "focus": "f", "close": "c", "title": "t"},
@@ -199,6 +199,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         "hubAutoResumeHours",
         "maxWorkers",
         "stuckAfterMinutes",
+        "readerIdleMinutes",
         "julesKey",
         "language",
     ] {
@@ -219,6 +220,7 @@ fn the_resolved_settings_are_spelled_the_way_the_config_file_spells_them() {
         "hub_serve",
         "max_workers",
         "stuck_after_minutes",
+        "reader_idle_minutes",
         "jules_key",
     ] {
         assert!(
@@ -738,6 +740,17 @@ fn the_stuck_threshold_is_minutes_and_falls_back_when_it_cannot_be_one() {
     let (_, settings, warnings) = resolve(a_repo(json!({"stuckAfterMinutes": -5})), "acme/app");
     assert_eq!(settings.stuck_after_minutes, DEFAULT_STUCK_AFTER_MINUTES);
     assert!(warning_about(&warnings, "stuckAfterMinutes").contains("0 or more"));
+}
+
+#[test]
+fn the_reader_idle_threshold_is_minutes_and_falls_back_when_it_cannot_be_one() {
+    let (_, settings, _) = resolve(a_repo(json!({})), "acme/app");
+    assert_eq!(settings.reader_idle_minutes, DEFAULT_READER_IDLE_MINUTES);
+    let (_, settings, _) = resolve(a_repo(json!({"readerIdleMinutes": 0})), "acme/app");
+    assert_eq!(settings.reader_idle_minutes, 0.0);
+    let (_, settings, warnings) = resolve(a_repo(json!({"readerIdleMinutes": -5})), "acme/app");
+    assert_eq!(settings.reader_idle_minutes, DEFAULT_READER_IDLE_MINUTES);
+    assert!(warning_about(&warnings, "readerIdleMinutes").contains("0 or more"));
 }
 
 #[test]

@@ -115,7 +115,7 @@ fixtures.
   hubs and workers; plan and exec a launch, claim slots, register launches and link workers to
   tasks. `lifecycle::review` starts the readers of the code-review hub: `request`, `dispatch` (reap
   the dead, claim the next in line, open a window for each, outside every lock), `launch_reader`,
-  `request_for_task` (the same for a task's PR), `run_reader` (what a reader's window runs), `settle_reader` and `submit`; `close_reader` stops one reader and marks its read closed, `close_readers` does so for the readers of merged or closed PRs after a sync (`close_finished_readers`) or when the PR poll reads one so (`close_ended_pr_readers`), and `close_task_readers` does so for the readers of tasks that are finished (not of a PR also requested of you). `run_reader` starts a
+  `request_for_task` (the same for a task's PR), `run_reader` (what a reader's window runs), `settle_reader` and `submit`; `close_reader` stops one reader and marks its read closed, `close_readers` does so for the readers of merged or closed PRs after a sync (`close_finished_readers`) or when the PR poll reads one so (`close_ended_pr_readers`), `close_task_readers` does so for the readers of tasks that are finished (not of a PR also requested of you), and `close_idle_readers` for the readers that have handed in and that nobody has talked to for `readerIdleMinutes`, told by the `updatedAt` of the reader's agent-session row. `run_reader` starts a
   detached watcher (`settle_reader`) before the agent takes over: it answers the agent's
   folder-trust prompt for the reader's own directory and no other. It fails the read, and closes
   the reader's pane, when the agent asks to trust another directory, when the dialog is still up

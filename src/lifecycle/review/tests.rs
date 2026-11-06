@@ -1,4 +1,5 @@
 use super::close_ended_pr_readers::close_ended_pr_readers_with;
+use super::close_idle_readers::{close_idle_readers_with, has_ready_reader};
 use super::close_reader::close_reader_with;
 use super::close_readers::{close_finished_readers_with, frees_a_place, has_finished_reader};
 use super::close_task_readers::{close_task_readers_with, has_task_reader};
@@ -9,11 +10,11 @@ use super::request_for_task::request_for_task_with;
 use super::*;
 use crate::infra::terminal::Performed;
 use crate::others::{self, Claim, ReadMode, Requested};
-use crate::registry::{self, Context, Liveness};
+use crate::registry::{self, Context, Liveness, Recorded};
 use crate::testing::Sandbox;
 
 use serde_json::{Value, json};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1438,4 +1439,332 @@ fn the_poll_stops_a_live_reader_of_an_ended_pr_once_and_closes_it() {
     assert!(failures.is_empty());
     assert_eq!(stopped.get(), 1);
     assert!(closed_at(&root, 1).is_some());
+}
+
+fn idle_row(
+    status: Option<registry::AgentStatus>,
+    updated_at: Option<i64>,
+) -> registry::AgentSession {
+    registry::AgentSession {
+        session_id: "sid-old".to_string(),
+        status,
+        updated_at,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_ready_reader_idle_for_the_threshold_is_closed_and_its_read_kept() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    assert!(has_ready_reader(&root));
+    let stopped = Cell::new(false);
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|_: &str| {
+            Recorded::Found(idle_row(
+                Some(registry::AgentStatus::Done),
+                Some(NOW - 3600),
+            ))
+        },
+        &|_, _| Liveness::Alive,
+        &|_| {
+            stopped.set(true);
+            Ok(())
+        },
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_some());
+    assert_eq!(status_of(&root, 1), "ready");
+    assert!(kept(&root, 1));
+    assert!(stopped.get());
+}
+
+#[test]
+fn a_ready_reader_just_under_the_idle_threshold_is_left_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|_: &str| {
+            Recorded::Found(idle_row(
+                Some(registry::AgentStatus::Done),
+                Some(NOW - 3600 + 1),
+            ))
+        },
+        &|_, _| Liveness::Alive,
+        &|_| panic!("should not stop"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+    assert_eq!(status_of(&root, 1), "ready");
+}
+
+#[test]
+fn a_reader_whose_row_is_running_or_waiting_is_left_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    open_reader(&root, 2, "ready", "open");
+    let path = root.join("others/acme~widget~2.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["ai"]["sessionId"] = json!("sid-2");
+    std::fs::write(&path, v.to_string()).unwrap();
+
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|id: &str| {
+            if id == "sid-old" {
+                Recorded::Found(idle_row(
+                    Some(registry::AgentStatus::Running),
+                    Some(NOW - 10_000),
+                ))
+            } else {
+                Recorded::Found(idle_row(
+                    Some(registry::AgentStatus::Waiting),
+                    Some(NOW - 10_000),
+                ))
+            }
+        },
+        &|_, _| Liveness::Alive,
+        &|_| panic!("should not stop running or waiting reader"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+    assert!(closed_at(&root, 2).is_none());
+}
+
+#[test]
+fn a_reader_with_no_row_or_no_updated_at_is_left_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    open_reader(&root, 2, "ready", "open");
+    open_reader(&root, 3, "ready", "open");
+    for (n, sid) in [(2, "sid-2"), (3, "sid-3")] {
+        let path = root.join(format!("others/acme~widget~{n}.json"));
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["ai"]["sessionId"] = json!(sid);
+        std::fs::write(&path, v.to_string()).unwrap();
+    }
+
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|id: &str| match id {
+            "sid-old" => Recorded::Absent,
+            "sid-2" => Recorded::Unreadable,
+            _ => Recorded::Found(idle_row(Some(registry::AgentStatus::Done), None)),
+        },
+        &|_, _| Liveness::Alive,
+        &|_| panic!("should not stop reader with absent, unreadable or no updated_at row"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+    assert!(closed_at(&root, 2).is_none());
+    assert!(closed_at(&root, 3).is_none());
+}
+
+#[test]
+fn a_running_read_with_an_old_idle_row_is_left_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "running", "open");
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|_: &str| {
+            Recorded::Found(idle_row(
+                Some(registry::AgentStatus::Done),
+                Some(NOW - 10_000),
+            ))
+        },
+        &|_, _| Liveness::Alive,
+        &|_| panic!("should not stop running read"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+    assert_eq!(status_of(&root, 1), "running");
+}
+
+#[test]
+fn an_idle_reader_that_cannot_be_stopped_is_reported_and_others_are_closed() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    open_reader(&root, 2, "ready", "open");
+    let path = root.join("others/acme~widget~2.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["ai"]["sessionId"] = json!("sid-2");
+    std::fs::write(&path, v.to_string()).unwrap();
+
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|_: &str| {
+            Recorded::Found(idle_row(
+                Some(registry::AgentStatus::Done),
+                Some(NOW - 3600),
+            ))
+        },
+        &|_, _| Liveness::Alive,
+        &|reader| {
+            if reader.session_id == "sid-old" {
+                Err("tmux refused to kill pane".to_string())
+            } else {
+                Ok(())
+            }
+        },
+    );
+    assert_eq!(
+        failures,
+        [(
+            "acme/widget#1".to_string(),
+            "tmux refused to kill pane".to_string()
+        )]
+    );
+    assert!(closed_at(&root, 1).is_none());
+    assert!(closed_at(&root, 2).is_some());
+}
+
+#[test]
+fn the_row_turning_running_between_the_first_look_and_close_keeps_the_reader_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let count = Cell::new(0usize);
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|_: &str| {
+            let n = count.get();
+            count.set(n + 1);
+            if n == 0 {
+                Recorded::Found(idle_row(
+                    Some(registry::AgentStatus::Done),
+                    Some(NOW - 3600),
+                ))
+            } else {
+                Recorded::Found(idle_row(
+                    Some(registry::AgentStatus::Running),
+                    Some(NOW - 3600),
+                ))
+            }
+        },
+        &|_, _| Liveness::Alive,
+        &|_| panic!("should not stop when row turned running"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+    assert_eq!(count.get(), 2);
+}
+
+#[test]
+fn a_reader_with_running_subagents_is_left_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let mut session = idle_row(Some(registry::AgentStatus::Done), Some(NOW - 3600));
+    session.subagents.push(registry::Subagent {
+        id: "sub-1".to_string(),
+        ..Default::default()
+    });
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|_: &str| Recorded::Found(session.clone()),
+        &|_, _| Liveness::Alive,
+        &|_| panic!("should not stop reader with subagents"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+}
+
+#[test]
+fn a_reader_whose_row_has_no_status_or_one_this_binary_does_not_know_is_left_open() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    for status in [
+        None,
+        Some(registry::AgentStatus::Other("compacting".to_string())),
+    ] {
+        open_reader(&root, 1, "ready", "open");
+        let failures = close_idle_readers_with(
+            &root,
+            NOW,
+            3600,
+            &|_: &str| Recorded::Found(idle_row(status.clone(), Some(NOW - 10_000))),
+            &|_, _| Liveness::Alive,
+            &|_| panic!("should not stop a reader whose turn is not known to have ended"),
+        );
+        assert!(failures.is_empty());
+        assert!(closed_at(&root, 1).is_none());
+    }
+}
+
+#[test]
+fn a_read_asked_for_again_after_the_list_is_not_closed_as_idle() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let path = root.join("others/acme~widget~1.json");
+    let asked_again = Cell::new(false);
+    let failures = close_idle_readers_with(
+        &root,
+        NOW,
+        3600,
+        &|id: &str| {
+            // The first look finds the handed-in reader idle; the read is then asked for again,
+            // and a new reader runs under another session.
+            if !asked_again.replace(true) {
+                let mut v: Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                v["ai"]["status"] = json!("running");
+                v["ai"]["sessionId"] = json!("sid-new");
+                std::fs::write(&path, v.to_string()).unwrap();
+            }
+            assert!(id == "sid-old" || id == "sid-new");
+            Recorded::Found(idle_row(
+                Some(registry::AgentStatus::Done),
+                Some(NOW - 10_000),
+            ))
+        },
+        &|_, _| Liveness::Alive,
+        &|_| panic!("the new reader must not be stopped"),
+    );
+    assert!(failures.is_empty());
+    assert!(closed_at(&root, 1).is_none());
+    assert_eq!(status_of(&root, 1), "running");
+}
+
+#[test]
+fn closing_a_named_session_leaves_another_sessions_reader_alone() {
+    let sandbox = Sandbox::empty();
+    let root = sandbox.state();
+    open_reader(&root, 1, "ready", "open");
+    let pr = others::pr_of("acme/widget#1").unwrap();
+    let closed = close_reader_of_with(
+        &root,
+        &pr,
+        Some("sid-other"),
+        NOW,
+        "x",
+        &|_, _| Liveness::Alive,
+        &|_| panic!("another session's reader must not be stopped"),
+    );
+    assert_eq!(closed, Err(CloseError::NoReader));
+    assert!(closed_at(&root, 1).is_none());
 }
