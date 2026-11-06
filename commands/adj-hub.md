@@ -566,7 +566,19 @@ it, or create a worktree. Say so in one line (for example "{key} is not under {p
 handed it to the repository's hub") and hand the request to the repository's own hub. Write what
 the person asked, in their own words (when all they said was the key: `Start {key}`), to
 `{main}/.claude/task-request-{key}.md` with a file-writing tool, never onto the command line or into
-a heredoc ("Keep task text off the shell"), then:
+a heredoc ("Keep task text off the shell"). **Before adding, check two things from the main
+checkout, and stop with one line if either fails:**
+
+- `(cd '{main}' && env -u ADJUTANT_HUB adjutant config)` prints `"hub": null`: that is the address
+  the command below writes to. A worker record left in the main checkout would name another hub, and
+  the request would land there instead.
+- `(cd '{main}' && env -u ADJUTANT_HUB adj task list --json)` has no record whose `body` is the
+  same request and whose `status` is neither `done` nor `cancelled` (whatever else it is: the
+  repository's hub may have started it already). One that has it was already handed over (by an
+  earlier attempt, or by a re-read of the same board request): do not add it again, tell the person
+  in one line that it is already with the repository's hub, and skip `handed.present` below.
+
+Then:
 
 ```bash
 (cd '{main}' && env -u ADJUTANT_HUB adj task add --needs-reading --queue --json --body - < '{main}/.claude/task-request-{key}.md') && rm '{main}/.claude/task-request-{key}.md'
@@ -588,8 +600,10 @@ ask on its board. `false`: the repository's hub is not running; the request wait
 read when that hub next starts (`adj hub --tab`). Say so to the person, so they know nothing happens
 until then. **If the command fails**, say so in one line, leave the file, and stop; do not tell the
 person it went to the repository's hub. The record is saved before it is handed over, so it may
-already be there: look at `(cd '{main}' && env -u ADJUTANT_HUB adj task list)` before sending it
-again, so the repository's hub is not handed the same request twice.
+already be there, and there is no command that hands a saved record over again: a later attempt
+starts from the two checks above, and a record found there is left as it is. It stays queued on
+the repository hub's board (「待ち」), and is read when that hub next runs `adj task next` (a freed
+slot with `settings.maxWorkers`, or a person asking it for the next one).
 
 A number is never checked this way. It was read against the list this hub printed, and every row
 there is a child.

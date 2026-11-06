@@ -1655,6 +1655,31 @@ fn a_foreign_key_is_forwarded_to_the_repository_hub() {
         "forward command puts the person's words on the shell instead of reading a file: {cmd_block}"
     );
 
+    // The address and the duplicate are checked before the record is written: a worker record
+    // in the main checkout would send it elsewhere, and a request handed over once (an earlier
+    // attempt, a re-read board request) must not be added twice.
+    before(
+        &step_text,
+        "env -u ADJUTANT_HUB adjutant config)` prints `\"hub\": null`",
+        "env -u ADJUTANT_HUB adj task add --needs-reading",
+    );
+    before(
+        &step_text,
+        "has no record whose `body` is the same request",
+        "env -u ADJUTANT_HUB adj task add --needs-reading",
+    );
+    // Every status but the finished ones: a request the repository's hub has already started
+    // is no longer queued, and is still the same request.
+    assert!(
+        flowed.contains("env -u ADJUTANT_HUB adj task list --json)`")
+            && flowed.contains("whose `status` is neither `done` nor `cancelled`"),
+        "the duplicate check looks at queued records only: {step_text}"
+    );
+    assert!(
+        flowed.contains("there is no command that hands a saved record over again"),
+        "a failed forward is followed by adding the same request again: {step_text}"
+    );
+
     // Not running case: handed.present and waits in its inbox
     assert!(
         flowed.contains("handed.present") && flowed.contains("waits in its inbox"),
