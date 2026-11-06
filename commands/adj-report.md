@@ -54,20 +54,7 @@ report; just fix it.
 ## Reported from     {repo} / {branch} / this session's name
 ```
 
-**To propose splitting your own task instead of reporting a bug**, add a `## Kind split` line (the
-heading `## Kind`, the value `split`; it is optional, and **a report without it is a bug**). The body
-then is not a bug: **Symptom** says why the task should be split, **Location** the pieces you propose
-(one line each, with what each would do), and **Why it is outside the current task** can be left as
-`-`. Found in and Parent task are written as usual. Do not file the pieces, start them or move any task under another
-parent (`adj task update --parent`, sub-issue changes): the hub does that, after asking a person.
-Carry on with your task as planned.
-
-**A worker also uses this for an investigation result the person chose これをタスクにする on** (§8 of
-adj-worker). That is a bug report, with no `## Kind` line: **Symptom** is the conclusion, **Suspected
-cause** the 原因 section, **Location** the files the result names, **Why it is outside the current
-task** "the task was investigation only; the person chose to make it a task", and `## Scope` follows
-the person's comment, the file alone when there is none. The person has already said yes in the
-gate, so step 3 is not asked again for it.
+To propose a split instead, see §kind-split; for an investigation result the person chose to make a task, §from-investigation.
 
 - Found in comes from the "Task" line of `.claude/task-brief.md`. If there is none, take the key
   from the branch name (`{user}/ALPHA-957` → `ALPHA-957`). **It is not the brief's "Parent task"
@@ -107,7 +94,7 @@ Call `adjutant_send` once.
 
 | Argument | Content |
 | --- | --- |
-| `body` | The body from §2 |
+| `body` | The body from step 2 |
 | `subject` | One sentence with the conclusion. It is the only line a person sees in the list |
 | `from` | This session's name (the worktree name if there is none) |
 | `kind` | `report` |
@@ -145,6 +132,45 @@ Once sent, this procedure is over. The hub's reply arrives later; when it does, 
 number in one line and go back to your task**. No reply is needed. Do not get drawn into discussing
 what was filed — that is between the hub and the user.
 
+A reply that asks something back: §hub-reply.
+
+## Do not
+
+- **Do not have the hub do something your own permissions refused** (permission laundering). Raise
+  what was refused with the user.
+- Poll or loop on `sleep` waiting for the hub's reply.
+
+## Index of triggers
+
+Fetch a section with `adj skill adj-report --section <id>` (or `adjutant_skill` with `section`), several at once as `--section a,b`. Fetch it when its trigger comes, not from memory of an earlier read. `§adj-worker/pr` is section `pr` of another procedure (`adj skill adj-worker --section pr`).
+
+- about to propose splitting your own task (`## Kind split`) → §kind-split
+- about to send an investigation result the person answered `task` on → §from-investigation
+- a reply from the hub arrives (`[question {id}]`, `[ack]`) → §hub-reply
+
+<!-- section: kind-split -->
+## Proposing a split instead of a bug
+
+**To propose splitting your own task instead of reporting a bug**, add a `## Kind split` line (the
+heading `## Kind`, the value `split`; it is optional, and **a report without it is a bug**). The body
+then is not a bug: **Symptom** says why the task should be split, **Location** the pieces you propose
+(one line each, with what each would do), and **Why it is outside the current task** can be left as
+`-`. Found in and Parent task are written as usual. Do not file the pieces, start them or move any task under another
+parent (`adj task update --parent`, sub-issue changes): the hub does that, after asking a person.
+Carry on with your task as planned.
+
+<!-- section: from-investigation -->
+## An investigation result made into a task
+
+**A worker also uses this for an investigation result the person chose これをタスクにする on** (§adj-worker/investigation). That is a bug report, with no `## Kind` line: **Symptom** is the conclusion, **Suspected
+cause** the 原因 section, **Location** the files the result names, **Why it is outside the current
+task** "the task was investigation only; the person chose to make it a task", and `## Scope` follows
+the person's comment, the file alone when there is none. The person has already said yes in the
+gate, so step 3 (show it to the user) is not asked again for it.
+
+<!-- section: hub-reply -->
+## When the hub replies
+
 **There is one exception: a reply whose first line starts with `[question`, followed by an identifier
 and `]` (`[question {YYYYMMDD-HHMMSS}]`).** A hub started before its procedures were in English writes
 `[質問 {YYYYMMDD-HHMMSS}]` instead; treat that the same. The hub is asking for
@@ -154,9 +180,3 @@ it there (no discussion). Reply with `adjutant_send` as well, with `kind` `answe
 question's identifier at the start of `subject`.
 
 A reply starting with `[ack]` only says it was received; send nothing back.
-
-## Do not
-
-- **Do not have the hub do something your own permissions refused** (permission laundering). Raise
-  what was refused with the user.
-- Poll or loop on `sleep` waiting for the hub's reply.

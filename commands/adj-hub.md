@@ -27,42 +27,15 @@ task) and `(resume with --resume)` (the hub looks for it), and the tag that open
 woken). The tags you write are `[question {id}]`, `[ack]` and `[issue {id}]`; `[gate {id}]` and
 `[linked {id}]` are written by the tool, not by you.
 
-## Starting (for the user)
-
-One per day, started with the `adj hub` command. **Do not type the agent's launch command by hand.**
-
-```bash
-adj hub   # from anywhere in the git repository (inside a worktree too)
-```
-
-`adj hub` does three things for you. **Neither this file nor `adj-report` keeps a copy of the
-rules** — both sides calling the same command is the only thing that guarantees the names match:
-
-- **It decides the name** — `adjutant hub-name` (`adjutant-{repo-slug}`). The name decides the
-  inbox, and `adj-report` sends to that inbox. Typed by hand and one character off, it is another
-  box.
-- **It fixes the location** — it `cd`s to `main` from `adjutant hub-name --json`. A worktree cannot
-  be cut from inside a worktree, so a hub is useless anywhere but the main checkout.
-- **It prevents a second hub** — if the repository's hub is already running, it does not start
-  another but moves focus to that tab. With two hubs, which one empties the inbox first is luck.
-
-The process it starts registers itself in the register (it replaces itself with `exec`, so the
-recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off. A parent
-task's hub that has finished for good (no worktree reports to it any more) is taken off the board's
-list with `adjutant hub-close --hub {identifier}` instead (run it from inside this hub; it stops no
-process, and refuses to close a hub that is still running when run from outside); the saved
-conversation stays for `--resume`.
-
 **A hub that went down, for an agent update or the like, comes back into the same conversation with
 a plain `adj hub` within a few hours of ending (`hubAutoResumeHours`).** A conversation that ended
 earlier than that comes back with `adj hub --resume` (add `--hub` for a parent task's hub). A resumed
-hub is told only "check the inbox and go back to waiting", so it starts from `adjutant_pending`
-without fetching the procedure again.
+hub is told to read this core again and then check the inbox, so it starts from the core and
+`adjutant_pending`, fetching sections as their triggers come.
 
 **There is not always just one.** While a parent task is in hand, a hub for that parent can be
 started in another tab (`adj hub --tab --hub ALPHA-233`). Its inbox and records are separate from the
-repository's own hub, so they do not mix when side by side. How it behaves once up is "A hub for a
-parent task", and when to suggest starting one is "Offering a hub for a parent task" under "When a
+repository's own hub, so they do not mix when side by side. How it behaves once up is §parent-hub, and when to suggest starting one is §offer-parent-hub under "When a
 person talks to you".
 
 ## General rules
@@ -98,43 +71,6 @@ has already read it. If a tracker is named there, make it the candidate before g
 GitHub board. For Jira, confirm it exists with `getAccessibleAtlassianResources` (cloudId) and
 `getVisibleJiraProjects` (project key) before proposing it.
 
-### Several task sources in one repository
-
-A code repo usually takes work from more than one tracker: an app repo whose feature work
-lives in `example/team-app` under the key `ALPHA`, and whose seasonal work lives in
-`example/team-seasonal` under `BETA`, on a different board with different statuses. So a repo
-entry holds **`taskSources`, an array**, and every task carries the source it came from.
-
-**The output of `adjutant config` always has `taskSources` as an array.** Even when the flat form
-(a top-level `taskSource` and its companion keys) is written, it is expanded into a one-element
-array, so **readers need only look at the array**. A source written in `defaults` is ignored (it
-shows up in `warnings`): merged into an entry that already has sources, it would add a ghost source
-with no `issueRepo`, and the `github` recipe would come back empty.
-If the array is empty, the repository has no source — treat it like being unregistered above (ask;
-do not guess).
-
-**A Project v2 board is not one repository.** One board routinely holds issues from several
-repos, and one issue routinely sits on several boards. So a source says only *where to look*;
-what identifies a task is the issue's own repo. The repo→key mapping therefore lives **once,
-at the repo-entry level**, in `issueKeys`:
-
-```jsonc
-"issueKeys": {
-  "example/team-app":      "ALPHA",
-  "example/team-seasonal": "BETA",
-  "example/team":          "GAMMA"
-}
-```
-
-| | Keys |
-| --- | --- |
-| **Directly on the repository entry** | `issueKeys`, `issueCreate` (for `adj-hub`), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr`, `copilotReview` |
-| **Per source** | `type` (`taskSource` in the flat form), `projectOwner`, `projectNumber`, `projectFields`, `issueRepo` (`github` type only), `branchPattern`, `worktreeName`, `linear`, `jira` |
-| **This machine's settings** | `ide`, `terminal`, `notification`, `wake` / `hubWake` / `workerWake`, `agentRunner`, `hubRunner`, `agentEnv`, `worktreePattern`, `startupDashboard` |
-
-**Machine settings may be written directly on an entry** (the most specific place wins), but they
-come back only under `settings`, not under `config`. Not being in `config` does not mean unset.
-
 Four rules the rest of this file leans on:
 
 - **`issueKeys` lives in one place only.** Sources do not carry keys. The same repo turns up on
@@ -152,29 +88,6 @@ Four rules the rest of this file leans on:
 - **`adjutant config` always fills in `worktreeName`** (default `{issuekey-lowercase}-{issue}` =
   `alpha-233`, `beta-233`). Trackers number independently, so `ALPHA-233` and `BETA-233` can both
   exist. Worktree names without the key collide.
-
-### Where proctor ends
-
-Worktree conventions (`worktreeBase`, `branchPattern`, `copyFiles`) belong to proctor, and
-the `proctor-worktree` skill is what says where they live and how to write them. **Do not
-name that location here or assume it** — it has already moved once, and a copy of the answer
-in this file is how adjutant starts contradicting proctor. Ask the skill. On a machine without
-proctor, this whole section does not apply (`adjutant worktree-path` answers instead).
-
-adjutant sets `branchPattern` / `worktreeName` itself only where proctor has no usable
-convention — and a multi-source repo is exactly where that happens. proctor's pattern
-placeholders are `{name}` / `{user}` / `{issue}`; **there is no key placeholder**, so a
-proctor pattern that bakes one key in (`{user}/ALPHA-{issue}`) cannot serve a second source.
-
-**The split is settled: the shape is proctor's, the key is adjutant's.** Leave proctor's pattern as
-the generic `{user}/{name}`, and adjutant passes `{issueKey}-{issue}` (`ALPHA-233` / `BETA-233`) as
-`{name}`. The branch names from the single-source days come out exactly the same, so **even in a
-multi-source repository adjutant normally needs no `branchPattern`**.
-
-Write a per-source `branchPattern` into adjutant only when proctor has no convention for the
-repository, or its convention bakes in one of the keys and **the user said they do not want to
-change proctor's**. Even then, do not overwrite it silently. Other agents reading `proctor skill
-worktree` would carry on trusting a convention that no longer holds.
 
 ## Context — gather in the first block after starting
 
@@ -216,8 +129,7 @@ heavy collection to a sub-agent.
    If `warnings` is not empty, **mention it in the one line you write on starting to wait** (do not
    open a question).
 3. **Decide first, from `adjutant_config`'s `settings.startupDashboard`, whether to send collection
-   to a sub-agent.** If `true` (default), send out the Dashboard collection (Appendix — Brief for
-   the dashboard collection agent) and **do not wait for the result**.
+   to a sub-agent.** If `true` (default), send out the Dashboard collection (§brief-dashboard) and **do not wait for the result**.
    If `settings.startupDashboard` is `false`, do not send the collection agent.
    **This is exactly what made startup slow**: with the hub itself running the board search, GraphQL
    and PR listing, its hands are full for those tens of seconds and nobody can talk to it. Sent out,
@@ -230,7 +142,7 @@ heavy collection to a sub-agent.
    Name the tab (`adjutant title`) even when not sending the collection — that is not collection,
    it shows a person what this tab is.
    **If `adjutant_config`'s `hub` holds an identifier and it matches a source, what goes out here is
-   not the Dashboard but the parent task collection** ("A hub for a parent task"). The repository-wide
+   not the Dashboard but the parent task collection** (§parent-hub). The repository-wide
    list is not that hub's business. If it does not match, it stays the Dashboard. Whether to send is
    decided the same way for both, and both take this one slot at startup.
 4. **Empty the inbox.** Sort what is waiting in Context's `adjutant_pending` by `kind`. When one is
@@ -239,16 +151,16 @@ heavy collection to a sub-agent.
 
    | `kind` | Written by | What the hub does |
    | --- | --- | --- |
-   | `report` | a worker | Run "When a request arrives" from Step 0 |
-   | `request` | a person (the dashboard, or a session through `adjutant_request`) | Run "A request from the dashboard" (it says where to start) |
-   | `session` | a person (the dashboard's session start) | "A session request from the dashboard" |
-   | `file-issue` | a person (the dashboard, linking a running session to a new task) | "A linked task that needs an issue" |
-   | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 |
+   | `report` | a worker | Run §request-read from Step 0 |
+   | `request` | a person (the dashboard, or a session through `adjutant_request`) | Run §board-request (it says where to start) |
+   | `session` | a person (the dashboard's session start) | §session-request |
+   | `file-issue` | a person (the dashboard, linking a running session to a new task) | §file-issue |
+   | `answer` | a worker (answering the hub's question) | Find the matching `question` by the identifier at the start of `subject`, and resume from Step 2 (§request-file) |
    | `question` | the hub itself (its copy of a report it asked back about and is waiting on) | If the matching `answer` has come, resume. If not, leave it without ack |
    | `needs-user` | the hub itself (waiting on the user's judgement) | Show its content and ask when a person is at this tab |
-   | `done` | a worker (the task is over; please clean up) | "Cleaning up one worktree" under Step 1 of the Dashboard |
-   | `next` | a person (the dashboard's 「次を流す」) | "When a worker slot frees up, start the next" |
-   | `gate` | a person (answering a gate the hub opened) | "The answer to a gate the hub opened" |
+   | `done` | a worker (the task is over; please clean up) | §cleanup-one under §cleanup-offer |
+   | `next` | a person (the dashboard's 「次を流す」) | §next-slot |
+   | `gate` | a person (answering a gate the hub opened) | §gate-answer |
 
    **Pairs are matched by the identifier at the start of `subject`.** When the hub asks back, it
    shapes `subject` as `[question {YYYYMMDD-HHMMSS}] …` and writes the same string into the
@@ -258,8 +170,7 @@ heavy collection to a sub-agent.
    Read bodies one at a time with `adjutant_pending` `action: read` (the list only goes as far as
    `subject`).
 
-   When `settings.maxWorkers` is set, once the inbox is empty run "When a worker slot frees up,
-   start the next" once. Requests for tasks queued waiting for a slot are already acked, so reading
+   When `settings.maxWorkers` is set, once the inbox is empty run §next-slot once. Requests for tasks queued waiting for a slot are already acked, so reading
    the inbox alone does not start them (without `maxWorkers` there is no waiting for a slot, so skip
    it).
 5. **Start waiting.** If the inbox is empty, write one line right after the block from step 3 and
@@ -286,10 +197,303 @@ heavy collection to a sub-agent.
    Only one tool block should have been used so far, and that is the ceiling on how fast startup is.
    Only if something turned up, deal with it and then go back to waiting.
    **Do not open `AskUserQuestion` on startup** — the hub would stop until a person came.
-   Do not ask even if there are worktrees that could be cleaned up (do not run Dashboard Step 1).
+   Do not ask even if there are worktrees that could be cleaned up (do not run §cleanup-offer).
    If the collection was sent, just add one line to the summary when it comes back. If it was not,
    no cleanup offer comes up at all, so cleaning worktrees from this hub also goes through "list".
 
+## Waiting
+
+- **No polling.** Set up neither `Monitor` nor a `sleep` loop. Just waiting costs no tokens at all.
+- **Do not wait on sub-agents you sent out.** Do not go and look; end the turn and start waiting.
+  Completion arrives as a notification.
+- **When a job is done, always go back to waiting.** Do not walk away with a question open. Ask the
+  user only when "a person is at this tab now". If a request from a worker needs a question, send the
+  requester an ack first and then ask (§request-read).
+- **When a report arrives, you are woken.** A worker's report goes into the inbox as a file, and then
+  `adjutant send` runs `settings.hubWake` to nudge this tab (by default it types into the terminal a
+  line telling you to check the inbox). That this one line is all that arrives, with the report's body
+  out of sight, is deliberate: the body is in the inbox, and copying it into the prompt would put the
+  same thing in two places and ack only one of them.
+  **When woken, start by looking at `adjutant_pending`.** On tmux the wake is typed only at an empty
+  prompt: while this tab shows a question or someone's own typing (or a screen it does not
+  recognise), nothing is typed and the person is notified instead. On any terminal, a session with a
+  row in `adj agent-sessions` is not woken while the row is `running` or `waiting`.
+
+- **Even so, do not count on being woken.** Some setups turn `hubWake` off, and waking can fail
+  (delivery succeeded, so the sender gets no error). That is why when to look at `adjutant_pending`
+  is fixed:
+  - on startup
+  - **right before going back to waiting** (every time; each time a job is finished)
+  - when a person talks to you, in the first block along with everything else
+
+  Keep to these three and nothing is lost even without being woken. Skip it on "probably nothing
+  came" and the report stays in the inbox forever.
+
+- The hub moves on three occasions only: **when woken**, **when a person talks to it**, and **when a
+  completion notification for a sub-agent it sent out arrives**. The third is usually the dashboard's
+  collection; when it arrives, show a summary and go back to waiting (it is neither a nudge nor
+  anything wrong) — except a parent collection re-sent for a split in hand, which carries on with
+  that split (§parent-split). The other is a Jules plan: open its gate (step 3 of §jules-plan).
+
+**To send to a worker, call `adjutant_tell`.** Its arguments are `worktree` (absolute path) /
+`subject` / `body`. Direct messages between agents are not used — only some coding agents have them,
+and what a worker runs on is not the hub's to decide. **The address is a worktree, not a session**,
+so it arrives whatever that tab is running.
+
+`adjutant_tell` does three things together:
+
+- Appends one entry to that worktree's `.claude/adjutant-outbox.md` (**the shape of the heading is
+  kept by the tool. Do not `cat >>` it yourself** — write the shape into a prompt and it always
+  drifts)
+- Wakes the worker if it is running and the message needs action (`[question …]` or a gate answer).
+  Plain notices and `[ack]` are delivered to the outbox without waking, so an open question in the
+  worker's tab is not answered by the wake line. `present` / `woken` come back
+- Notifies a person only when waking was needed but could not reach the worker (a worker that woke
+  reads it itself, and notices that do not wake need no human interrupt either). On tmux the wake
+  is typed only at the worker's empty prompt: while its screen shows a question or someone's own
+  typing (or one it does not recognise), nothing is typed, `woken` is false and the reply's
+  `wakeNote` says why. On any terminal, a worker whose row is `running` or `waiting` is held too
+
+**The first line of `subject` is the signal.** `[question {YYYYMMDD-HHMMSS}]` / `[ack]` / anything
+else (a notice). Always give `[question]` an identifier — the worker's answer comes back to the inbox
+through `adjutant_send`, and this identifier at the start of `subject` is the only thing that pairs
+them.
+
+## When a person talks to you
+
+Narrow it to one thing, and go back to waiting when done. When it comes in plain words, fit it to one
+of these six:
+
+```
+  1. List                 - the state of tasks, PRs and worktrees (§dashboard)
+  2. Start a task         - pick a task, create a worktree and hand it to a worker
+  3. File and start       - file what has no issue yet, then pass it to 2 (the same procedure as §request-read)
+  4. Investigate only     - a request that ends in a report, issue or not ("look into how this works now")
+  5. Work on a worktree   - start a worker in an existing worktree / open it in the IDE / open the PR
+  6. Clean up             - remove finished worktrees (§cleanup-offer)
+```
+
+Ask with `AskUserQuestion` only when you cannot tell which.
+
+**Before passing to 2, look at §offer-parent-hub.** When what was named is a parent
+task itself, or the request is to split something, go through there before starting it.
+**In a parent task's hub, a key named to be started goes through §parent-foreign-key first**
+(in §parent-hub), whether it comes as 2 or as A of 5, and whether or
+not the listing has come back: only a child goes on, and any other key is handed to the repository's
+hub as that step says.
+**In a parent task's hub, "1. List" is the list under the parent** (not the whole repository;
+§parent-list in §parent-hub).
+**When a parent task's hub is told "split it", go to §parent-split, not 3.**
+That route files several under the parent and then asks whether to start one of them,
+which is different from 3's filing one and running on to starting it (when told "file this and start
+it", it stays 3).
+
+**A request that involves starting may bring "a branching point" and "a parent task" with it.**
+Things like "branch it off `feature/x`" or "this is a subtask of ALPHA-233", and both apply **to that
+one dispatch only**. Pass the former to Base branch in §worktree, and the latter to
+`adj task add --parent` (or `adj task brief --parent`) in §start-worker. **The same for 2, 3 and §request-start** — every route that starts a worker carries these two. **Do not ask for them every time**
+(without them the defaults, `baseBranch` and `-`, apply). **Do not infer them from sub-issue links
+either** — having a parent-child relation and wanting to branch from the parent's branch are different
+things, and connecting them picks a branching point nobody asked for.
+**Write the parent task as a URL.** If given as a key (`ALPHA-233`), find the source that has that key
+and turn it into the issue's URL before passing it as `--parent` (the lookup is the same as step 3 of
+§existing-worktree). The worker decides the tracker and repo from the URL, so it
+cannot fetch from a bare key.
+
+### When the user needs to be asked
+
+**Before opening `AskUserQuestion`, send the requester a one-line ack.** While the hub is stopped on a
+question, from the requester's side it looks no different from no response (it stops until the user
+comes to this tab). Something like:
+
+```
+[ack] Got the report. Checking with the user on a point that needs judgement.
+```
+
+### When several arrive at once
+
+The queue is drained in order of arrival. Do each **one at a time, to the end**. Leave a processing
+log in the tab, one line per item handled:
+
+```
+14:32  alpha-957-34 → filed ALPHA-1234 / started on {user}/ALPHA-1234
+14:51  alpha-700-a6 → added to ALPHA-1180 (duplicate)
+15:20  abc-819-c1 → filed ABC-921 (not started yet)
+15:34  alpha-957 → cleanup requested (PR #1234): closed the tab, removed the worktree and branch
+```
+
+Keep it so that when the user looks at this tab, what was handled is plain.
+
+## Keep task text off the shell
+
+Text from an issue, a report or the board (titles, summaries, the reasons for errors, people's
+comments) **never goes on a command line.** Wrapped in single quotes, a `'` inside closes it; put in a
+heredoc, a line equal to the delimiter closes it; and what follows runs as shell. Either way it breaks
+depending on the content.
+
+Instead, write it to a file **with a file-writing tool** (do not use `echo` or a heredoc), and pass it
+as standard input to an option that accepts `-`. Remove the file once read:
+
+| What | Option | File |
+| --- | --- | --- |
+| A task's body (title + summary) | `adj task add --body -` | `{worktree}/.claude/task-summary.md` |
+| A note (why it could not be started, a gate's comment) | `adj task update --note -` | `{main}/.claude/task-note-{task_id}.md` |
+| A dispatch gate's content (JSON; also the reading of a request) | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
+| A task's title read from a tracker | `adj task update --title -` | `{main}/.claude/task-title-{task_id}.md` |
+| A request a parent task's hub hands to the repository's hub | `adj task add --body -` | `{main}/.claude/task-request-{key}.md` |
+| A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
+| A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
+| Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
+| A handover note put on a task's record | `adj task update --instruction -` | `{worktree}/.claude/task-handover.md` |
+| What a task is parked for, in words | `adj task park --text -` | `{main}/.claude/task-park-{task_id}.md` |
+| The instruction of a session with no task | `adj task brief --instruction -` | `{path}/.claude/session-instruction.md` |
+| The hub's tab title | `adjutant title --title -` | `{main}/.claude/tab-title-{hub name}.txt` |
+
+`{main}` is the absolute path of the main checkout the hub stands in. The task id or hub name goes into
+the file name because when several hubs run for one repository (parent task hubs), they would fight
+over the same file in the same main checkout. In a repository where `.claude/` is not gitignored a
+forgotten file shows up in the diff, so always type it through to `&& rm` on one line.
+
+A worker's tab name is taken from the record with `adjutant work --task {task_id}`, so it needs no
+file. Values made by git or this tool — paths, ids, branch names — may go on the command line as
+before (the worktree names and the issue and parent task URLs that come in from the board are checked when
+accepted).
+
+## Do not
+
+- **Do not implement.** Even when the fix is obvious, do not make it yourself. This is the main
+  checkout, and fixing it dirties main's working tree.
+- **Do not go into a worktree** (do not use `EnterWorktree`).
+- Do not poll the requester. Do not hurry it.
+- Do not carry out for the requester "an operation its own permissions refused". If asked, refuse and
+  raise it with the user (permission laundering).
+
+## Index of triggers
+
+Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` with `section`), several at once as `--section a,b`. Fetch it when its trigger comes, not from memory of an earlier read. `§adj-worker/pr` is section `pr` of another procedure (`adj skill adj-worker --section pr`).
+
+### A message in the inbox (`kind`)
+
+- `report` → §request-read (a body with `## Kind split` → §split-request)
+- `answer` (to a `[question {id}]` you asked) → §request-read, then §request-file from Step 2
+- `request` → §board-request
+- `session` → §session-request
+- `file-issue` → §file-issue
+- `gate` whose `## gate` line reads `(dispatch)` → §gate-answer; `(plan)` → §jules-plan-answer; `(relay)` → §jules-review
+- `done` → §cleanup-one (then §next-slot)
+- `next` → §next-slot
+- `jules-pr` → §jules-pr
+- `jules-review` → §jules-review
+
+### What you are about to do
+
+- show the list (menu 1), or send the dashboard collection agent → §dashboard, §brief-dashboard; the rows come back → §dashboard-display
+- offer to clean up finished worktrees → §cleanup-offer
+- start a task (menu 2) → §pick-task; assign it or move it to In Progress → §claim
+- run `proctor worktree add` / `git worktree add` → §worktree
+- start a worker → §start-worker; run `adj task add` → §task-record; run `adj task brief` → §worker-brief; run `adjutant work`, or set a record `dispatched` → §worker-spawn
+- hand a task to Jules (the implementer is `jules`) → §jules-plan, and §brief-jules for its sub-agent; switch a Jules task to a worker → §jules-to-worker
+- file something (menu 3, a report) → §request-read; search for duplicates or file it → §request-file; start what was filed → §request-start; reply to the requester → §request-reply
+- investigate only (menu 4) → §investigate-only; work on an existing worktree (menu 5) → §existing-worktree
+- a person names a parent task or asks to split one, in a repository hub → §offer-parent-hub
+- run `adj task park` → §park
+- list the PRs you were asked to review → §review-prs
+- tell a person how to start, resume or close a hub, or run `adj hub-close` → §hub-lifecycle
+- start as a hub for a parent task (`adjutant_config` `hub` is not null) → §parent-hub; then show its list → §parent-list, §listing-rules; start a row or a key → §parent-pick, §parent-foreign-key; split it → §parent-split; dispatch anything → §parent-dispatch; create or re-parent a child, or pass `--after` → §parent-structure; send the parent collection agent → §brief-parent
+- write the config (also when `registered` is false or `warnings` names `issueKeys`) → §config-sources; write `branchPattern` / `worktreeName` → §proctor
+- fetch tasks from a source → §task-sources
+- set this hub's tab title → §tab-title
+
+<!-- section: hub-lifecycle -->
+## Starting (for the user)
+
+One per day, started with the `adj hub` command. **Do not type the agent's launch command by hand.**
+
+```bash
+adj hub   # from anywhere in the git repository (inside a worktree too)
+```
+
+`adj hub` does three things for you. **Neither this file nor `adj-report` keeps a copy of the
+rules** — both sides calling the same command is the only thing that guarantees the names match:
+
+- **It decides the name** — `adjutant hub-name` (`adjutant-{repo-slug}`). The name decides the
+  inbox, and `adj-report` sends to that inbox. Typed by hand and one character off, it is another
+  box.
+- **It fixes the location** — it `cd`s to `main` from `adjutant hub-name --json`. A worktree cannot
+  be cut from inside a worktree, so a hub is useless anywhere but the main checkout.
+- **It prevents a second hub** — if the repository's hub is already running, it does not start
+  another but moves focus to that tab. With two hubs, which one empties the inbox first is luck.
+
+The process it starts registers itself in the register (it replaces itself with `exec`, so the
+recorded PID is this session itself). When it ends, `adjutant hub-stop` takes it off. A parent
+task's hub that has finished for good (no worktree reports to it any more) is taken off the board's
+list with `adjutant hub-close --hub {identifier}` instead (run it from inside this hub; it stops no
+process, and refuses to close a hub that is still running when run from outside); the saved
+conversation stays for `--resume`.
+
+<!-- section: config-sources -->
+### Several task sources in one repository
+
+A code repo usually takes work from more than one tracker: an app repo whose feature work
+lives in `example/team-app` under the key `ALPHA`, and whose seasonal work lives in
+`example/team-seasonal` under `BETA`, on a different board with different statuses. So a repo
+entry holds **`taskSources`, an array**, and every task carries the source it came from.
+
+**The output of `adjutant config` always has `taskSources` as an array.** Even when the flat form
+(a top-level `taskSource` and its companion keys) is written, it is expanded into a one-element
+array, so **readers need only look at the array**. A source written in `defaults` is ignored (it
+shows up in `warnings`): merged into an entry that already has sources, it would add a ghost source
+with no `issueRepo`, and the `github` recipe would come back empty.
+If the array is empty, the repository has no source — treat it like being unregistered above (ask;
+do not guess).
+
+**A Project v2 board is not one repository.** One board routinely holds issues from several
+repos, and one issue routinely sits on several boards. So a source says only *where to look*;
+what identifies a task is the issue's own repo. The repo→key mapping therefore lives **once,
+at the repo-entry level**, in `issueKeys`:
+
+```jsonc
+"issueKeys": {
+  "example/team-app":      "ALPHA",
+  "example/team-seasonal": "BETA",
+  "example/team":          "GAMMA"
+}
+```
+
+| | Keys |
+| --- | --- |
+| **Directly on the repository entry** | `issueKeys`, `issueCreate` (for `adj-hub`), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr`, `copilotReview` |
+| **Per source** | `type` (`taskSource` in the flat form), `projectOwner`, `projectNumber`, `projectFields`, `issueRepo` (`github` type only), `branchPattern`, `worktreeName`, `linear`, `jira` |
+| **This machine's settings** | `ide`, `terminal`, `notification`, `wake` / `hubWake` / `workerWake`, `agentRunner`, `hubRunner`, `agentEnv`, `worktreePattern`, `startupDashboard` |
+
+**Machine settings may be written directly on an entry** (the most specific place wins), but they
+come back only under `settings`, not under `config`. Not being in `config` does not mean unset.
+
+<!-- section: proctor -->
+### Where proctor ends
+
+Worktree conventions (`worktreeBase`, `branchPattern`, `copyFiles`) belong to proctor, and
+the `proctor-worktree` skill is what says where they live and how to write them. **Do not
+name that location here or assume it** — it has already moved once, and a copy of the answer
+in this file is how adjutant starts contradicting proctor. Ask the skill. On a machine without
+proctor, this whole section does not apply (`adjutant worktree-path` answers instead).
+
+adjutant sets `branchPattern` / `worktreeName` itself only where proctor has no usable
+convention — and a multi-source repo is exactly where that happens. proctor's pattern
+placeholders are `{name}` / `{user}` / `{issue}`; **there is no key placeholder**, so a
+proctor pattern that bakes one key in (`{user}/ALPHA-{issue}`) cannot serve a second source.
+
+**The split is settled: the shape is proctor's, the key is adjutant's.** Leave proctor's pattern as
+the generic `{user}/{name}`, and adjutant passes `{issueKey}-{issue}` (`ALPHA-233` / `BETA-233`) as
+`{name}`. The branch names from the single-source days come out exactly the same, so **even in a
+multi-source repository adjutant normally needs no `branchPattern`**.
+
+Write a per-source `branchPattern` into adjutant only when proctor has no convention for the
+repository, or its convention bakes in one of the keys and **the user said they do not want to
+change proctor's**. Even then, do not overwrite it silently. Other agents reading `proctor skill
+worktree` would carry on trusting a convention that no longer holds.
+
+<!-- section: parent-hub -->
 ## A hub for a parent task
 
 A hub whose `adjutant_config` `hub` holds an identifier is **the hub for the parent task that
@@ -302,7 +506,7 @@ and nothing arrives in the inbox for it.
 
 **The identifier is the parent task's key itself** (`ALPHA-233` / `ABC-819`). So what to read needs
 no place in the config or the state — reverse the identifier and the tracker and repo fall out. The
-lookup is the same as 3 in "When asked to work on an existing worktree": for the `github` family,
+lookup is the same as step 3 of §existing-worktree: for the `github` family,
 reverse the key part (`ALPHA`) through `issueKeys` to decide the issue's repo; for `jira` / `linear`,
 find the source whose project key / team name matches.
 
@@ -325,9 +529,9 @@ that entry to use:
 
 - If one source matched, that one.
 - **If there are several `github-project` sources, use the one that has `projectFields`.** That is the
-  board adjutant can actually move, and the Dedupe in "1. Pick the task" decides where status comes
-  from by the same rule. It is also the board `nodes(ids:)` is run against, and what "2. Claim it"
-  and "3. Create the worktree" call "the selected task's own source" (the machine rows have no
+  board adjutant can actually move, and the Dedupe in §pick-task decides where status comes
+  from by the same rule. It is also the board `nodes(ids:)` is run against, and what §claim
+  and §worktree call "the selected task's own source" (the machine rows have no
   source column).
 - **Otherwise, do not decide.** Two or more sources have `projectFields`, several have none, or
   sources of different `type`s matched (including a mix of `github` and `github-project`). The lookup
@@ -346,12 +550,12 @@ this hub can be closed (from the board, or with `adj hub-close --hub {identifier
 it on your own** while sub-issues of the parent task may still be dispatched: closing it ends this
 hub for the board, and a person is the one who knows the parent task is finished.
 
+<!-- section: parent-list -->
 ### Read at startup
 
 This replaces Step 3 of "On startup". **Only what is collected changes; whether to send it is still
 decided in Step 3.** If `settings.startupDashboard` is `true` (default), send the **parent task
-collection**, not the Dashboard, to a sub-agent (Appendix — Brief for the parent task collection
-agent). Once sent, **do not wait for the result**. **If `settings.startupDashboard` is `false`, do
+collection**, not the Dashboard, to a sub-agent (§brief-parent). Once sent, **do not wait for the result**. **If `settings.startupDashboard` is `false`, do
 not send it here either.**
 What the setting stops is "running a heavy collection at startup", and that is the same whether it
 fetches a parent task or scans the whole repository.
@@ -360,13 +564,13 @@ The reasons for sending it out are the Dashboard's: the hub lives all day, so ra
 makes every later turn heavy, and the hub's hands are full for the tens of seconds it takes to
 collect. **Whether or not it is sent**, name the tab after the parent's key (`adjutant title --title
 '🗂 {parent key} hub'`). However many hubs are side by side, which is which parent is plain at a
-glance. The waiting line is as in Step 5, with "ask and it collects" when it was not sent.
+glance. The waiting line is as in Step 5 of "On startup", with "ask and it collects" when it was not sent.
 
 **The hub hands over only the identifier and the source information the reverse lookup found**
 (`type` and where the issue lives). The parent task itself — its title and URL, and for `linear` the
 internal id — **is fetched by the collection agent.** The hub's startup gets to waiting in one block
 first, and no one-off lookup is added for it. How to fetch it is "Fetching the parent itself" in
-"Fetching what sits under the parent".
+§parent-fetch.
 
 **What is read is three levels: parent task → the subtasks under it → the PRs those subtasks
 opened.** If the collection stopped (whole-list failure), say so with the error and list nothing;
@@ -374,7 +578,7 @@ do not read it as "no subtasks". Once collected, show them sorted like this:
 
 - **Done** — **subtasks the tracker says are finished**, or those whose `prState` is `MERGED`.
   Finished is read per type: for the `github` family the issue's `state` is `closed`; for `jira` the
-  `statusCategory` is `Done` (the same test by which the default jira query in "Task sources" drops
+  `statusCategory` is `Done` (the same test by which the default jira query in §task-sources drops
   them with `statusCategory != Done` — **not judging in-progress by `statusCategory`** is another
   matter, about mistaking `indeterminate`); for `linear` a state treated as completed or cancelled.
   **The parent collection does not filter by state** — showing what is done is this hub's job, so
@@ -382,22 +586,21 @@ do not read it as "no subtasks". Once collected, show them sorted like this:
   candidates" and are handed out again
 - **In progress** — those with a worktree, a `prState` of `OPEN`, or started on the board. **A
   `CLOSED` PR alone does not make a row in progress** (a closed PR is work that was dropped or
-  moved, and the collapse rule in "Fetching what sits under the parent" already put an open or
+  moved, and the collapse rule in §parent-fetch already put an open or
   merged PR in its place when there is one). **On a plain `github` source with no board, those with
   the in-progress label are in progress too** (that source's mark of being started is a label or a
-  PR, and "on the board" finds nothing; "Task sources" `github`). **For `jira`, a state matching
+  PR, and "on the board" finds nothing; §task-sources `github`). **For `jira`, a state matching
   `inProgressStatus`, and for `linear` one matching `inProgressState`, is in progress too** — as
   with reading Done per type, only `github-project` has a board, so stopping at "on the board" lines
-  up Jira and Linear children that are moving on another machine as "next candidates" (step 2 of "1.
-  Pick the task" does the same matching for the whole repository; not judging by `statusCategory` is
+  up Jira and Linear children that are moving on another machine as "next candidates" (step 2 of §pick-task does the same matching for the whole repository; not judging by `statusCategory` is
   the same as there)
 - **Next candidates** — of the rest, with nothing unknown (`?`), those assigned to you or unassigned.
   **In the order the tracker returned them**, numbered
 - **Held by others** — of the rest, those **assigned to someone other than you**. Listed as `{key}
-  ({login})`, but **not numbered**. The repository-wide route ("1. Pick the task") fetches only yours
+  ({login})`, but **not numbered**. The repository-wide route (§pick-task) fetches only yours
   and unassigned ones, so this line appears only in this hub. **Do not drop them silently** — showing
   what is going on underneath is this hub's job; they are not numbered because starting one steps on
-  someone else's assignment ("When handing on to start" below)
+  someone else's assignment (§parent-pick)
 - **Could not be read** — a row with `?` in `status`, `item`, `branch`, `pr`, `prState` or
   `worktree` that is not Done by the tracker. This is decided before "held by others": a row
   assigned to someone else that has a `?` is listed here, as `{key} ({login}; {which lookup
@@ -405,59 +608,55 @@ do not read it as "no subtasks". Once collected, show them sorted like this:
   so offering it hands the same work out twice). Listed as `{key} ({which lookup failed})`, and show
   the collection's "Lookups that failed" line as it is. Done still wins: a subtask the tracker says
   is finished stays under Done. A row that is In progress for a reason that was read (a worktree, an
-  `OPEN` PR, the board) stays In progress, and is still not started from that row ("When handing on
-  to start" below)
+  `OPEN` PR, the board) stays In progress, and is still not started from that row (§parent-pick)
 - **No key configured, left out: `<repo>` ×N** — `sub_issues` returns children in other repos too,
   so children of repos missing from `issueKeys` get mixed in. **Do not list them as candidates;
-  show the count and the repo** and offer to add it to `issueKeys` (the same as 3 in "1. Pick the
-  task"). Without a key no branch name can be made, so numbering them gets stuck at "3. Create the
-  worktree"
+  show the count and the repo** and offer to add it to `issueKeys` (the same as 3 in §pick-task). Without a key no branch name can be made, so numbering them gets stuck at §worktree
 - **Worktrees that matched no subtask** — the collection returns them together in one line. **Show
   that line as it is** (a sign the conventions have drifted; "Resolve the branch per child" in
-  "Fetching what sits under the parent"). Drop it silently and that child is listed in "next
+  §parent-fetch). Drop it silently and that child is listed in "next
   candidates" even though it has a worktree
 
 Then **list the candidates and start waiting**. **Do not open `AskUserQuestion`** — a hub that stops
 on a question right after starting is a hub that does not read its inbox (Step 5 of "On startup").
-Go back to waiting with the numbers assigned. When a person names a key, first go through "A key
-that is not one of your children", and only a key found to be a child goes on to "2. Start a task";
+Go back to waiting with the numbers assigned. When a person names a key, first go through §parent-foreign-key, and only a key found to be a child goes on to "2. Start a task";
 when a person names a number, pass it on to "2. Start a task".
 
-**The numbers refer to the rows of this list.** Go on to "2. Claim it" holding the chosen key and
-**that row of the collection's machine rows, whole**, and **do not rebuild the list in "1. Pick the
-task"** — that one fetches from the repository's whole `taskSources` only what is assigned to you and
+<!-- section: parent-pick -->
+**The numbers refer to the rows of this list.** Go on to §claim holding the chosen key and
+**that row of the collection's machine rows, whole**, and **do not rebuild the list in §pick-task** — that one fetches from the repository's whole `taskSources` only what is assigned to you and
 what is unassigned, so **subtasks assigned to others and children of repos not in `taskSources` are
 dropped** (the parent collection does not look at assignment). The numbers are reassigned too, and
 drift from the ones just shown.
 
-**Carry the machine row whole.** Rows are read as JSON by key, as Step 3 of the Dashboard says.
+**Carry the machine row whole.** Rows are read as JSON by key, as §dashboard-display says.
 Pick some keys and either later steps fetch the dropped ones again or they reach the worker as `-`.
 This route skips that step's fetch, so **everything later steps describe as "the earlier step has
 it" comes from this row here**:
 
-- **repo and item id** (`item`) — used for the assignment and the board update in "2. Claim it"
+- **repo and item id** (`item`) — used for the assignment and the board update in §claim
   (which says "for a selected task the item id is at hand" and "do not fetch it twice").
-- **title and URL** (`title` and `url`) — the task record's title and `--issue-url` in Step 2
+- **title and URL** (`title` and `url`) — the task record's title and `--issue-url` in Step 2 (§task-record)
   (`adj task brief` writes the brief's Task line from the record); that title is also what
   `adjutant work` names the tab from through `--task`, so the title is never written on a command
-  line. Step 1 of "4. Start the worker" saying "the title is held by '1. Pick the task'" is about
+  line. step 1 of §start-worker saying "the title is held by §pick-task" is about
   that route, and **this route does not pass through it**.
 - **The resolved branch** (`branch`) — this value is what goes to `git worktree add -b`, and **it is
-  not fetched again in "3. Create the worktree"**. That step builds it from `branchPattern`, but a
-  `linear` branch is `gitBranchName` and does not come from a pattern ("Task sources" `linear`). The
-  path for its location may come from the conventions (proctor or `adj worktree-path`) — only the
+  not fetched again in §worktree**. That step builds it from `branchPattern`, but a
+  `linear` branch is `gitBranchName` and does not come from a pattern (§task-sources `linear`). The
+  path for its location may come from the conventions (§proctor or `adj worktree-path`) — only the
   branch is not fetched again.
 - **Worktree path, PR number and PR state** (`worktree`, `pr` and `prState`) — a worktree or an
   `OPEN` PR means that child has already started. "When handing on to start" below.
 
 **When handing on to start — only the list is not rebuilt.** What is skipped is the fetch and
-numbering of "1. Pick the task"; **the later processing attached to it still happens**. The parent
+numbering of §pick-task; **the later processing attached to it still happens**. The parent
 collection lists every child without looking at assignment or key, so what that fetch took care of
 has to be done here yourself:
 
-- **If the listing is older than 10 minutes** (the age set out after "Keep no state" below), **fetch
-  that one row again on the spot** ("Fetching what sits under the parent", for one item — the same
-  single lookup "Fetch that one" in "When asked to split it" makes for a key just filed) and do the
+- **If the listing is older than 10 minutes** (the age set out in §listing-rules), **fetch
+  that one row again on the spot** (§parent-fetch, for one item — the same
+  single lookup "Fetch that one" in §parent-split makes for a key just filed) and do the
   matching below on the fresh row: its assignment, status, PR and worktree replace the old row's,
   and the other columns (`item`, `title`, `url`, `branch`) are carried as they were (except a `?`,
   which is taken from the fresh row; the `?` bullet below). Only that row
@@ -473,12 +672,12 @@ has to be done here yourself:
   **confirm once before starting**. The `github` family's `--add-assignee @me` adds, but `jira`'s
   `editJiraIssue` and `linear`'s `save_issue` **replace — someone else's assignment really does
   disappear**. Say that in the line that asks. If the answer is to go ahead, from there it is the
-  same as "2. Claim it".
+  same as §claim.
 - **Do not create a worktree for a row that has already started.** When a row under "in progress" or
   "held by others" is named, look at the machine row's `worktree` path and `prState`. **If the path
   is filled in, do not run `git worktree add -b`** — it fails on a branch that already exists. Use
-  that worktree as it is and hand it to 4 of "When asked to work on an existing worktree" (start a
-  worker, or open it in the IDE). With proctor installed, the start of "3. Create the worktree"
+  that worktree as it is and hand it to step 4 of §existing-worktree (start a
+  worker, or open it in the IDE). With proctor installed, the start of §worktree
   notices, but **on a machine without it nobody is looking**. **For a row whose `prState` is `OPEN`
   but which has no worktree**, growing one with `-b` makes something other than that PR's branch, so
   say so and stop.
@@ -497,29 +696,28 @@ has to be done here yourself:
   work will open a new PR.
 - **Rows with no key configured have no number.** The list above says so, so when one is named by
   key, give the same answer and stop (ask whether to add it to `issueKeys`). Do not send it on to
-  "3. Create the worktree" without a branch name.
+  §worktree without a branch name.
 - **A row with `?` in any column, wherever it is listed** (under "Could not be read", which has no
   number, or under "in progress" for a reason that was read, such as the board), is not started from
-  that row. A person may name one by key. **Fetch that one row again on the spot** ("Fetching what
-  sits under the parent", for one item, as above); if the fresh lookup still fails, say which lookup
+  that row. A person may name one by key. **Fetch that one row again on the spot** (§parent-fetch, for one item, as above); if the fresh lookup still fails, say which lookup
   failed and stop: do not start it; the person can name it again once the lookup works (fail closed,
-  the same as the parent lookup in "A key that is not one of your children"). A column the old row
+  the same as the parent lookup in §parent-foreign-key). A column the old row
   carried as `?` is not carried: `item` and `branch` are taken from the fresh row too, since a `?`
-  there would reach "2. Claim it" as the item id or `git worktree add -b` as the branch. The same
+  there would reach §claim as the item id or `git worktree add -b` as the branch. The same
   holds for the fresh row a stale listing is re-fetched into: a fresh row with `?` left in any
   column stops here too. A fresh row that does read is matched as usual against the bullets here.
 - **Ask which route.** Ask "leave it to a worker / worktree only" with `AskUserQuestion` — the end of
-  "3. Create the worktree" needs this answer. **Not opening questions is about startup** ("list the
+  §worktree needs this answer. **Not opening questions is about startup** ("list the
   candidates and start waiting" above), and asking after a person has named a number is not that.
-  Step 4 of "When a request arrives" can skip this because on that route starting a worker is
+  §request-start can skip this because on that route starting a worker is
   settled; here a person is right in front of you.
 - Only step 4 of that step (dropping what is already started) is not needed. The sorting above
   already does the same.
 
+<!-- section: listing-rules -->
 **Do not invent an order.** A person decides "this one next"; what the hub does stops at listing the
 candidates. Say nothing about dependencies or priority beyond the order the tracker returns (the one
-exception is a dependency the parent's body or the person states, which "Keeping the structure"
-records with `--after`). Even an
+exception is a dependency the parent's body or the person states, which §parent-structure records with `--after`). Even an
 order with no basis, shown with numbers, is read by people as having one.
 
 **Keep no state.** Re-read this on every start, and do not have the hub remember how far things have
@@ -531,32 +729,31 @@ parent, not the whole repository).
 The listing is a snapshot taken at its `Taken at` time, not the current state of the parent. **A
 reader that is about to file or start from it takes a fresh one when it is older than 10 minutes**
 (compare `Taken at` with the current time, `date -u`; for a start, re-fetching the one row it starts
-is the fresh one, "When handing on to start"). Re-collecting costs one sub-agent run of tens
+is the fresh one, §parent-pick). Re-collecting costs one sub-agent run of tens
 of seconds and the hub is not blocked while it runs, while acting on a stale listing costs a
 duplicate issue or a start on a child someone else just took, and nobody is told. People sharing a
 parent file and start things throughout the day, so the bound is about the length of one exchange
 with a person, not a work session. **A `Taken at` line that is missing, cannot be read, or lies in
 the future counts as older than 10 minutes** (fail closed: an unreadable age is not a fresh one).
-Showing the list ("Read at startup", "1. List") is not acting on it; the rule applies at the two
-points that act: starting a row and filing a split. The parent's own row (its URL, used by "Put your
-own parent task on every dispatch") is not what goes stale and needs no re-collection.
+Showing the list (§parent-list, "1. List") is not acting on it; the rule applies at the two
+points that act: starting a row (§parent-pick) and filing a split (§parent-split). The parent's own row (its URL, used by §parent-dispatch) is not what goes stale and needs no re-collection.
 
 **Local knowledge is "use it if it is there".** If something like `lk` is on this machine, the
 collection agent may read it, but the tracker alone is enough. Do not stop because it is absent.
 
+<!-- section: parent-foreign-key -->
 ### A key that is not one of your children
 
 A number is read against the list that was printed; a key is not, and whatever this hub starts
-carries this hub's parent ("Put your own parent task on every dispatch"), so a key that is not a
+carries this hub's parent (§parent-dispatch), so a key that is not a
 child would reach a worker with a parent it does not hang off. So before a key named to this hub goes
 on to "2. Start a task", check that it is a child.
 
 **In a fresh listing it is a child.** A listing whose `Taken at` is within 10 minutes (the age rule
-after "Keep no state" in "Read at startup"; a missing, unreadable or future `Taken at` is not fresh)
+in §listing-rules; a missing, unreadable or future `Taken at` is not fresh)
 that has a `"kind": "subtask"` machine row whose `key` is the one named (the parent's own `"kind":
 "parent"` row is never a child), in any section (next candidates, in progress,
-held by others, could not be read, done): it is a child; go on with that row ("When handing on to
-start").
+held by others, could not be read, done): it is a child; go on with that row (§parent-pick).
 
 An issue named by its URL is the same: its repo and number come from the URL, and `{key}` below is
 the key that repo's `issueKeys` gives it.
@@ -567,16 +764,15 @@ listing has no row for the key (a child filed after it was taken). Per source ty
 
 - `github` / `github-project`: `gh api repos/{repo}/issues/{number}/parent --jq '.html_url'`. It is a
   child when this prints this hub's parent URL (the `html_url` from "Fetching the parent itself" in
-  "Fetching what sits under the parent"). `No parent issue found` (HTTP 404) means the issue has no
+  §parent-fetch). `No parent issue found` (HTTP 404) means the issue has no
   parent: not a child. `{repo}` is the repo the key resolves to through `issueKeys`.
 - `jira`: `getJiraIssue` with `fields: ["parent"]`; a child when `parent.key` is this hub's key.
 - `linear`: `mcp__linear__get_issue`; a child when the parent it names is the parent's id taken in
-  "Fetching the parent itself".
+  "Fetching the parent itself" in §parent-fetch.
 
-A child found this way goes on as before: with a stale listing, "When handing on to start" fetches
+A child found this way goes on as before: with a stale listing, §parent-pick fetches
 that one row again; for a key the listing has no row for, there is no machine row, so fetch that one
-the way "Fetch that one" in "When asked to split it" does, and do the matching of "When handing on
-to start".
+the way "Fetch that one" in §parent-split does, and do the matching of §parent-pick.
 
 **When the lookup fails** (any error other than "no parent"), it cannot be told: say so in one line
 and stop. Do not start it and do not forward it; the person can name it again. (Fail closed, the same
@@ -609,12 +805,12 @@ Then:
 Why `env -u ADJUTANT_HUB` and the main checkout: `adj task add` addresses `$ADJUTANT_HUB`, which in
 this hub is this hub; without it, and standing in the main checkout (which has no worker record), it
 addresses the repository's own hub. Why `--needs-reading`: it writes the same record the board's
-依頼 form writes, so the repository's hub runs "A request from the dashboard": it reads the words,
+依頼 form writes, so the repository's hub runs §board-request: it reads the words,
 resolves the key and asks the person on a gate before anything starts. That gate is where the
 person confirms; they do not retype the request in another tab. The body is the person's words, not
 a plan or a reading. **No `--parent`**: the parent of that task is the repository hub's to read, not
 this hub's. Not `adjutant_send` with `kind: request`: that delivers a message with no task record,
-and "A request from the dashboard" starts by reading the record (`adj task show --id {task_id}`), so
+and §board-request starts by reading the record (`adj task show --id {task_id}`), so
 it would have nothing to read.
 
 **Read `handed.present` in the answer.** `true`: tell the person the repository's hub has it and will
@@ -630,6 +826,7 @@ slot with `settings.maxWorkers`, or a person asking it for the next one).
 A number is never checked this way. It was read against the list this hub printed, and every row
 there is a child.
 
+<!-- section: parent-fetch -->
 ### Fetching what sits under the parent
 
 How to fetch differs per source `type`. **Only fetching the parent itself and its subtasks branches**;
@@ -642,7 +839,7 @@ URL are **fetched here** (the brief's "Parent task" line needs that URL):
   `gh api repos/{parent repo}/issues/{parent number} --jq '{title, html_url, node_id}'`. Use
   `html_url` as the URL as it is.
 - **`jira`** — `getJiraIssue` with `fields: ["summary","status","issuetype"]`. **Do not build the
-  URL** — use the `webUrl` that comes back as it is ("Task sources" `jira`).
+  URL** — use the `webUrl` that comes back as it is (§task-sources `jira`).
 - **`linear`** — pass the key to `mcp__linear__get_issue`. **Also take the parent's id here, which is
   needed to fetch what is under it** — the hub holds only the key, not the id.
 
@@ -660,21 +857,21 @@ URL are **fetched here** (the brief's "Parent task" line needs that URL):
   `nodes(ids:)` by `github-project` below. The repo taken from `repository_url` is needed so as not
   to apply your own repo's key to a child in another repo (`issueKeys` is per repo, and a board is
   not a repo). Labels are the only clue for telling started ones apart on a plain `github` source
-  with no board ("Task sources" `github`). **`assignees` is needed to sort out "held by others"** —
+  with no board (§task-sources `github`). **`assignees` is needed to sort out "held by others"** —
   the parent collection does not filter by assignment, so without this field others' tasks are
   listed, numbered, under "next candidates".
   **Do not drop `--paginate` either** — a list cut off halfway cannot be told from a short list.
 - **`github-project`** — sub-issues are fetched the same way as `github`. Parenthood is an attribute
   of the issue, not something the board owns. **On top of that, run one `nodes(ids:)` from
-  `github-project` in "Task sources"** — not only the status but the **project item id** comes only
-  from there, the machine rows need it, and "2. Claim it" says not to fetch it twice. Pass the
+  `github-project` in §task-sources** — not only the status but the **project item id** comes only
+  from there, the machine rows need it, and §claim says not to fetch it twice. Pass the
   `node_id` from above.
   **Do not copy it here.** The board it runs against is **the one the hub handed over**; even if the
   entry has two `github-project` sources, do not choose again (how it is chosen is at the start of
-  "A hub for a parent task").
+  §parent-hub).
 - **`jira`** — `searchJiraIssuesUsingJql` with `parent = {parent key}`. **Do not add `ORDER BY`** — a
   sorted order is read as "the order to do them in". Narrow `fields` to
-  `["summary","status","issuetype","updated","assignee"]` ("Task sources" `jira`).
+  `["summary","status","issuetype","updated","assignee"]` (§task-sources `jira`).
   `assignee` serves the same purpose as `assignees` above. **The `statusCategory` that comes inside
   `status` is the test for "done"** (the sorting above; `Done` is done), so do not keep only the
   status name and throw it away.
@@ -689,7 +886,7 @@ URL are **fetched here** (the brief's "Parent task" line needs that URL):
 is yours: for the `github` family, Context's `gh api user -q '.login'`; for `jira`, the `account_id`
 from `atlassianUserInfo`; for `linear`, **run `mcp__linear__list_issues` once more with the parent's
 id plus `assignee: "me"`, and match against the set of children that comes back as "yours"**
-(`assignee: "me"` is what "Task sources" `linear` passes to its list; no need to fetch your own id
+(`assignee: "me"` is what §task-sources `linear` passes to its list; no need to fetch your own id
 separately). Do not compare display names.
 
 **Resolve the branch per child.** Both the PR lookup and the worktree matching below take the branch
@@ -702,15 +899,15 @@ adj worktree-path --name '{worktreeName}' --user '{user}' [--pattern '{the sourc
 
 The `branch` that comes back is that subtask's expected value (`worktreeName` defaults to
 `{issuekey-lowercase}-{issue}`, and `{user}` is `gh api user -q '.login'`. **Only on a machine
-without proctor does "3. Create the worktree" dig with the same call, so the expected value and the
+without proctor does §worktree dig with the same call, so the expected value and the
 real one come from the same conventions** — on a machine with it, the authority is proctor; see the
 paragraph below). **Run it in the code repository's checkout** — the conventions come from that
 repository's config, so where it is run does not change even when the parent task is in another repo
 (another host for `jira`). **Do not run it for `linear`** — its branch is `gitBranchName` as it is
-("Task sources" `linear`). Once per child, and a local call that only reads config, so nothing is
+(§task-sources `linear`). Once per child, and a local call that only reads config, so nothing is
 waited on.
 
-**With proctor installed, the authority for the conventions is proctor** ("Where proctor ends"). The
+**With proctor installed, the authority for the conventions is proctor** (§proctor). The
 branch resolved here is still what is used for matching, but **a worktree that matches no subtask is a
 sign the two conventions have drifted**, so leave one line about it in the report below.
 
@@ -758,55 +955,54 @@ stop the collection and report the failure and its error: no rows are written, a
 "none". The same goes for the lookup of who you are above: without it "held by others" cannot be
 told from yours, and others' children would be numbered as next candidates.
 
+<!-- section: parent-split -->
 ### When asked to split it
 
 **The entry point is a person saying "split it".** The same holds for a hub started on the
 repository hub's suggestion: the suggestion only opened a tab and did not carry any instruction
-("Offering a hub for a parent task"). What is done is **filing, and starting one after asking**, and
+(§offer-parent-hub). What is done is **filing, and starting one after asking**, and
 **whether to start is asked once filing is done** ("Once filed, ask whether to start one" below).
 
-**A worker can ask for a split too** (`adj-report` with `## Kind split`): that is "When a worker asks to
-split its task" below, and the same approval comes first.
+**A worker can ask for a split too** (`adj-report` with `## Kind split`): that is §split-request below, and the same approval comes first.
 
 **It is an addition.** The parent may already have subtasks. The existing ones are the very list shown
-in "Read at startup", so **do not create the same ones again**. Whether that list is at hand splits it
+in §parent-list, so **do not create the same ones again**. Whether that list is at hand splits it
 three ways:
 
 - **The collection was sent and has come back** → if it stopped on a failed lookup (an error and no
-  rows; "Fetching what sits under the parent"), it is not a list and not an empty one: say so, send
+  rows; §parent-fetch), it is not a list and not an empty one: say so, send
   the same collection again once and wait for it, and file nothing from it; if that one stops too,
   say the error and stop, so the person can fix what fails. Otherwise check its age by its `Taken
-  at` line: when that is within 10 minutes (the age in "Read at startup"), use that list as it is;
+  at` line: when that is within 10 minutes (the age in §listing-rules), use that list as it is;
   when it is older (or the line is missing or cannot be read), send the same collection again and
   wait for it as in the next bullet ("Waiting").
 - **The collection was sent and has not come back yet** → wait for it first (say it is still being
   collected and end the turn; "Waiting").
-- **The collection was never sent** (`settings.startupDashboard` is `false`; "Read at startup")
-  → **do not wait. Fetch what is under the parent on the spot** ("Fetching what sits under the
-  parent"; the parent's own row comes out there too). If that stops on a failed lookup, say the
+- **The collection was never sent** (`settings.startupDashboard` is `false`; §parent-list)
+  → **do not wait. Fetch what is under the parent on the spot** (§parent-fetch; the parent's own row comes out there too). If that stops on a failed lookup, say the
   error and file nothing.
   **Waiting would wait forever** — it would be waiting on a collection that is not coming, so every
   time a person says "split it" the turn would end at the same place. It is a single lookup with a
   person right in front of you, so it is separate from keeping startup to one block (the same
-  reasoning as when "Put your own parent task on every dispatch" fetches a URL).
+  reasoning as when §parent-dispatch fetches a URL).
 
 **Fetch the parent task's body here.** The collection returns only the title and URL, and what to
 split is in the body: for the `github` family `gh issue view {parent number} -R {parent repo} --json
 body`, for `jira` `getJiraIssue` with `fields: ["description"]`, for `linear` `mcp__linear__get_issue`.
 **A single lookup with a person right in front of you**, so it is separate from keeping startup to one
-block (the same as "Put your own parent task on every dispatch").
+block (the same as §parent-dispatch).
 
 **Propose.**
 
 - **Do not invent how many pieces.** Keep no rule like "split into 3–5". Propose as many as come out
   of the difference between the parent's body and the existing subtasks.
-- **Do not invent an order** (the same as "Read at startup"). The order they are filed in is not the
+- **Do not invent an order** (the same as §listing-rules). The order they are filed in is not the
   order to do them in, and no priorities are written. The one thing the hub does write is a stated
   dependency: when the parent's body or the person says one subtask has to be reviewed after another,
   the dependent one carries `--after '{the other subtask's issue url}'` once it has a task record
-  ("Keeping the structure"; filing alone makes none). Never infer one
+  (§parent-structure; filing alone makes none). Never infer one
   from overlapping files or a guess.
-- **The hub writes the body, and the filing command holds the template** (Step 3 below). Do not swap
+- **The hub writes the body, and the filing command holds the template** (Step 3, §request-file). Do not swap
   the roles.
 
 **Get approval in one go.** Show the whole proposal and open `AskUserQuestion`. The options are "file
@@ -814,7 +1010,7 @@ as is / change it / stop". **"One go" is about the count, not the number of time
 change it, open the same question again on the changed proposal, and **do not go on to filing until
 approval comes back**. The moment the content changed, the earlier approval is no longer for that
 proposal. If the approval comes back when the listing used for the proposal is older than 10
-minutes (the age in "Read at startup"), collect again and wait for it before filing; if the fresh
+minutes (the age in §listing-rules), collect again and wait for it before filing; if the fresh
 listing shows a child that overlaps a proposed piece, the proposal changed, so show it again and
 re-ask, and if nothing overlaps, file as approved. **The same check comes before each piece**, since
 filing goes one at a time: when the listing passes the age part-way, collect again, wait for it,
@@ -824,31 +1020,31 @@ on here when it arrives** (the proposal, or the filing it was approved for) rath
 summary as other collections do ("Waiting"); the person already asked, and stopping at the summary
 leaves an approved split unfiled with nobody told.
 **Do not ask N times** — a hub that takes approval one at a time is useless. **Not opening questions
-is about startup** ("Read at startup"); here a person is right in front of you.
+is about startup** (§parent-list); here a person is right in front of you.
 
-**Filing uses Step 3 of "When a request arrives" as it is. Do not copy it here.** Calling
+**Filing uses §request-file as it is. Do not copy it here.** Calling
 `issueCreate.command` with `Skill`, reading `notes` before calling it, and the branch for a `type`
 with no filing command are all the same. **All that differs on this route**:
 
 - **File into the repo the parent issue is in.** That step's default is the report's Found in, but
   there is no report here. **The repo, not the entry** — one entry may list several repos in
-  `issueKeys` ("Task sources" `github-project`), so stopping at the source lands in another repo.
+  `issueKeys` (§task-sources `github-project`), so stopping at the source lands in another repo.
 - **The parent is the parent task's URL the collection returned** (for `jira` the key is fine,
-  because that is what is passed to `parent`; Step 3). If the filing command asks for a parent,
+  because that is what is passed to `parent`; Step 3, §request-file). If the filing command asks for a parent,
   give that. It is not passed as a key because this hub's identifier alone does not decide which
   repo's issue it is, and **a parent handed on elsewhere is a URL** is the same as further down this
-  section ("Put your own parent task on every dispatch"). That step's "stand-alone issue or
+  section (§parent-dispatch). That step's "stand-alone issue or
   sub-issue" is not decided — once told to split, everything goes under this parent. **So for
-  `jira` the type is decided here too** — only a subtask-like type can take `parent` (also Step 3),
+  `jira` the type is decided here too** — only a subtask-like type can take `parent` (also Step 3, §request-file),
   and falling back to that step's "ask the user if there is none" would have `parent` refused and
   what belongs under the parent become a stand-alone issue.
-- **Step 2 (look for duplicates) was done while making the proposal.** What it is checked against is
+- **Step 2 (look for duplicates, §request-file) was done while making the proposal.** What it is checked against is
   the list under the parent matched above; no repository-wide search is run. **Do not open it again
   here** — that step's per-match "add to the existing one / file a new one" was already answered by
   the proposal, not something to re-ask per item after approval. Whether something similar exists
   outside the parent was not checked, so if you suspect something, add a line when showing the
   proposal.
-- **Step 5 (reply) is not needed.** The requester is the person at this tab, and the result is given
+- **Step 5 (reply, §request-reply) is not needed.** The requester is the person at this tab, and the result is given
   on the spot.
 - **What fills the questionnaire is the approved proposal** (that step uses the report). Approval was
   taken above, so do not re-ask what the proposal says.
@@ -862,12 +1058,12 @@ no key to choose, the only answer would be "do not start". Say so in one line an
 
 - **List them in the order filed, with no recommendation** ("Do not invent an order" above). The
   order filed is the order filed, not the order to do them in. Options are limited to four, so
-  **at most three keys**, and add the count of the rest in a line (the same as "1. Pick the task"
+  **at most three keys**, and add the count of the rest in a line (the same as §pick-task
   stopping at four and saying how many remain).
-- **Do not extend the list by hand.** The numbers refer to the collection's rows ("Read at startup").
+- **Do not extend the list by hand.** The numbers refer to the collection's rows (§parent-list).
   What was filed is named by key — the options of this question are that.
 
-**The chosen one is handed to Step 4 of "When a request arrives". Do not copy it here.** That is the
+**The chosen one is handed to §request-start. Do not copy it here.** That is the
 very route that **starts an issue just filed, without a machine row**; how the key is made (for the
 `github` family, pass the repo it was filed into through `issueKeys`; for `jira`, the issue key the
 filing returned), how to fetch the item id that is not at hand exactly once, and what to do when board
@@ -877,54 +1073,55 @@ registration has not caught up right after filing are all there. **All that diff
   requests that explicitly ask to start come here", but what the person said was "split it", so the
   explicit request is taken here (the trigger for a dispatch stays with the person).
 - **Ask which route.** Ask "leave it to a worker / worktree only" with `AskUserQuestion` (the same as
-  "When handing on to start"; the end of "3. Create the worktree" needs this answer). That step gets
+  §parent-pick; the end of §worktree needs this answer). That step gets
   away without asking because starting a worker is settled on its route; here a person is right in
   front of you. **"Worktree only" ends there**, and does not go on to that step's fourth move
   (starting the worker).
-- **The parent task is your own parent** ("Put your own parent task on every dispatch" below). That
+- **The parent task is your own parent** (§parent-dispatch). That
   step's "the report's parent task → otherwise Found in" does not apply to this route, which has no
   report.
 - **Fetch that one.** There is no machine row, so take its assignment, status, PR and worktree
-  yourself and **do the matching of "When handing on to start"**. **How is exactly "Fetching what
-  sits under the parent", for one item** — that status lives in different places per source
+  yourself and **do the matching of §parent-pick**. **How is exactly §parent-fetch, for one item** — that status lives in different places per source
   (`github-project` in the board item, `github` in labels), that PRs are looked up by branch
   (`--head`) with `--search` kept for what is missed, and that the branch comes from the conventions
   are all written there. Right after filing all of them come up empty, but **coming up empty costs one
   read** — someone may take it while this question is open, and `jira` and `linear` assignment
   replaces, so skipping it erases someone else's assignment.
-- **Do not go on from Step 4 to Step 5.** That reply is addressed to the worktree named in a report,
+- **Do not go on from Step 4 to Step 5** (§request-start, §request-reply). That reply is addressed to the worktree named in a report,
   and this route has no report (the same as filing above; the result is given in this tab on the
   spot).
 - **It never becomes a row with no key configured.** For the `github` family it is filed into the
   repo the parent issue is in, and this hub stands on reversing its identifier through that
-  repo's `issueKeys` (the start of "A hub for a parent task"). `jira` / `linear` carry their own keys,
-  so they never fall there at all (3 of "1. Pick the task").
+  repo's `issueKeys` (the start of §parent-hub). `jira` / `linear` carry their own keys,
+  so they never fall there at all (3 of §pick-task).
 - **Hand over one.** Leave the rest filed. Tabs for all of them would be more than a person can
-  handle, and which comes first is not the hub's to decide (again "Do not invent an order").
+  handle, and which comes first is not the hub's to decide (again §listing-rules).
 
 **When a key is named after the question is closed, the route is the same.** A key that is not one
-of the keys this split just filed goes through "A key that is not one of your children" first. Do
-not wait for the collection (the same as "1. Pick the task" saying to go ahead by "fetching just that
+of the keys this split just filed goes through §parent-foreign-key first. Do
+not wait for the collection (the same as §pick-task saying to go ahead by "fetching just that
 one directly"). **The longer it has been, the less the matching above comes up empty** — nothing
 else changes about what is fetched or where it goes. **If the title and URL from filing are no
 longer at hand, use those of the fetched issue** — the hub keeps no state, so across turns all that
-remains is the key the person said (where Step 4's title comes from).
+remains is the key the person said (where the title of Step 4, §request-start, comes from).
 
+<!-- section: split-request -->
 ### When a worker asks to split its task
 
 A worker whose task turned out too big does not split it, file anything or start a sibling: it sends
 an `adj-report` with `## Kind split` (the body says the pieces it proposes and why) and carries on with
 the task as planned. Such a report arrives as a `report` whose Kind is `split`, and it is not a bug
-report: do not run it through "When a request arrives" as one.
+report: do not run it through §request-read as one.
 
 **The person approves before anything is filed.** Read the proposal, put it to the person at this tab
 as one question (`AskUserQuestion`; the proposed pieces as they are, with the reason), and file only
 what they approve, **under the task the worker is working on** (that task's issue is the parent) with
-"When asked to split it" Step by step as it is written there: filing under a parent, one at a time,
+§parent-split step by step as it is written there: filing under a parent, one at a time,
 then asking whether to start one. A hub that cannot ask now (no person at the tab) puts it on hold with
-`adjutant_send` `kind: needs-user`, as "3. File" in "When a request arrives" does. Tell the worker
+`adjutant_send` `kind: needs-user`, as §request-file does. Tell the worker
 in one line (`adjutant_tell`) that the proposal was taken and that it should go on.
 
+<!-- section: parent-dispatch -->
 ### Put your own parent task on every dispatch
 
 When this hub starts a worker, **write your own parent task's URL into the brief's "Parent task"
@@ -932,38 +1129,37 @@ line** — pass it to `adj task add` as `--parent '{url}'` when the record is ma
 `adj task brief` as `--parent '{url}'` on every brief. **`adj task brief --parent` is a one-brief
 override** (it changes that brief and not the record), so a record made without a parent is fixed
 **once, on the record**: `adj task update --id {task_id} --parent '{url}'`. After that no brief needs
-the flag. Not `-`. "4. Start the worker" saying "do not guess a parent task that was not handed over" is
+the flag. Not `-`. §start-worker saying "do not guess a parent task that was not handed over" is
 about linking through sub-issues; **this is not a guess** — that one item is this hub's identifier
 itself.
 
-- **This applies only to a child.** A task filed under this parent, or a key that "A key that is not
-  one of your children" found to be a child; a key it did not is never started by this hub, so this
+- **This applies only to a child.** A task filed under this parent, or a key that §parent-foreign-key found to be a child; a key it did not is never started by this hub, so this
   hub's parent never goes on it (it is forwarded as that step says).
-- **The same for "2. Start a task", "3. File and start", Step 4 of "When a request arrives" and A of
-  "When asked to work on an existing worktree".** Every route that starts a worker carries this line.
+- **The same for "2. Start a task", "3. File and start", Step 4 (§request-start) and A of
+  §existing-worktree.** Every route that starts a worker carries this line.
 - **Take the URL from the parent task row the collection's report returned.** It is the `url` of
-  the `"kind": "parent"` row (read by key as Step 3 of the Dashboard says). The hub holds only the
+  the `"kind": "parent"` row (read by key as §dashboard-display says). The hub holds only the
   key. Only when a dispatch comes before the report has returned, fetch the parent once on the spot
-  ("Fetching the parent itself" in "Fetching what sits under the parent"). It is a single thing with a
+  ("Fetching the parent itself" in §parent-fetch). It is a single thing with a
   person right in front of you, separate from keeping startup to one block.
 - **If the report names a parent task, that wins.** What this fills is only what would otherwise have
-  been `-`; it does not override Step 4's decision (the report's parent task → Found in).
+  been `-`; it does not override the decision of Step 4 (§request-start) (the report's parent task → Found in).
 - **Do not move the branching point.** Having a parent task and wanting to branch from the parent's
   branch are different things ("When a person talks to you").
 
+<!-- section: parent-structure -->
 ### Keeping the structure
 
 **This hub alone makes, splits, adds and re-parents the children of its parent task.** A worker never
 files an issue or moves one under another parent; the board's 子タスクを足す button and a person's
 words come to this hub too. What the board shows of the structure is what this hub keeps true:
 
-- **Making and adding a child**: pass `--parent '{url}'` to `adj task add` ("Put your own parent task
-  on every dispatch"). A child filed as a new issue is filed under the parent by the repository's
-  filing command ("3. File" in "When a request arrives", whose `issueCreate.notes` say how it links
+- **Making and adding a child**: pass `--parent '{url}'` to `adj task add` (§parent-dispatch). A child filed as a new issue is filed under the parent by the repository's
+  filing command (§request-file, whose `issueCreate.notes` say how it links
   a sub-issue).
 - **Re-parenting a child**: change the sub-issue relation on the tracker, if the tracker has one, and
   then run `adj task update --id {task_id} --parent '{new url}'` for **each task** that was affected
-  (`''` clears it; the plain-URL rule in "4. Start the worker" holds). Do both: the tracker's
+  (`''` clears it; the plain-URL rule in §start-worker holds). Do both: the tracker's
   relation and the record are two places that can disagree, and the board shows the tracker's first.
 - **What the board does with them**: it takes the parent from the tracker (the GitHub sub-issue
   relation) when the task's issue has one there, and from the record's `parent` when the tracker has
@@ -973,120 +1169,19 @@ words come to this hub too. What the board shows of the structure is what this h
   subtask depends on another of the same parent (the API reviewed before the screen that uses it),
   record it with `--after '{the sibling's issue url}'` on `adj task add` when starting the dependent
   one, or with `adj task update --id {task_id} --after '{url}'` later. `--after` takes the sibling's
-  issue URL or key, the same form as `--parent` (the plain-URL rule in "4. Start the worker" holds),
+  issue URL or key, the same form as `--parent` (the plain-URL rule in §start-worker holds),
   and is repeated for several siblings; the list given replaces the old one, and `--after ''` clears
   it. **Only a stated dependency is written**: never one inferred from overlapping files or from
   guesswork, and the order the children were filed in is still not an order to do them in. It is not
   a stack: the branching point stays as it is ("Do not move the branching point"), and the board only
   shows the dependency.
-- **Splitting**: a person's "split it" is "When asked to split it". A worker that thinks its own task
-  should be split says so with `adj-report` (`## Kind split`), and it is handled as "When a worker asks
-  to split its task" there.
+- **Splitting**: a person's "split it" is §parent-split. A worker that thinks its own task
+  should be split says so with `adj-report` (`## Kind split`), and it is handled as §split-request there.
 
-## Waiting
+<!-- section: investigate-only -->
+**4 does only moves 3 and 4 of "Starting a task"** (create the worktree → start the worker: §worktree, §start-worker).
 
-- **No polling.** Set up neither `Monitor` nor a `sleep` loop. Just waiting costs no tokens at all.
-- **Do not wait on sub-agents you sent out.** Do not go and look; end the turn and start waiting.
-  Completion arrives as a notification.
-- **When a job is done, always go back to waiting.** Do not walk away with a question open. Ask the
-  user only when "a person is at this tab now". If a request from a worker needs a question, send the
-  requester an ack first and then ask (see "When a request arrives").
-- **When a report arrives, you are woken.** A worker's report goes into the inbox as a file, and then
-  `adjutant send` runs `settings.hubWake` to nudge this tab (by default it types into the terminal a
-  line telling you to check the inbox). That this one line is all that arrives, with the report's body
-  out of sight, is deliberate: the body is in the inbox, and copying it into the prompt would put the
-  same thing in two places and ack only one of them.
-  **When woken, start by looking at `adjutant_pending`.** On tmux the wake is typed only at an empty
-  prompt: while this tab shows a question or someone's own typing (or a screen it does not
-  recognise), nothing is typed and the person is notified instead. On any terminal, a session with a
-  row in `adj agent-sessions` is not woken while the row is `running` or `waiting`.
-
-- **Even so, do not count on being woken.** Some setups turn `hubWake` off, and waking can fail
-  (delivery succeeded, so the sender gets no error). That is why when to look at `adjutant_pending`
-  is fixed:
-  - on startup
-  - **right before going back to waiting** (every time; each time a job is finished)
-  - when a person talks to you, in the first block along with everything else
-
-  Keep to these three and nothing is lost even without being woken. Skip it on "probably nothing
-  came" and the report stays in the inbox forever.
-
-- The hub moves on three occasions only: **when woken**, **when a person talks to it**, and **when a
-  completion notification for a sub-agent it sent out arrives**. The third is usually the dashboard's
-  collection; when it arrives, show a summary and go back to waiting (it is neither a nudge nor
-  anything wrong) — except a parent collection re-sent for a split in hand, which carries on with
-  that split ("When asked to split it"). The other is a Jules plan: open its gate (Step 3 of "5.
-  Hand it to Jules").
-
-**To send to a worker, call `adjutant_tell`.** Its arguments are `worktree` (absolute path) /
-`subject` / `body`. Direct messages between agents are not used — only some coding agents have them,
-and what a worker runs on is not the hub's to decide. **The address is a worktree, not a session**,
-so it arrives whatever that tab is running.
-
-`adjutant_tell` does three things together:
-
-- Appends one entry to that worktree's `.claude/adjutant-outbox.md` (**the shape of the heading is
-  kept by the tool. Do not `cat >>` it yourself** — write the shape into a prompt and it always
-  drifts)
-- Wakes the worker if it is running and the message needs action (`[question …]` or a gate answer).
-  Plain notices and `[ack]` are delivered to the outbox without waking, so an open question in the
-  worker's tab is not answered by the wake line. `present` / `woken` come back
-- Notifies a person only when waking was needed but could not reach the worker (a worker that woke
-  reads it itself, and notices that do not wake need no human interrupt either). On tmux the wake
-  is typed only at the worker's empty prompt: while its screen shows a question or someone's own
-  typing (or one it does not recognise), nothing is typed, `woken` is false and the reply's
-  `wakeNote` says why. On any terminal, a worker whose row is `running` or `waiting` is held too
-
-**The first line of `subject` is the signal.** `[question {YYYYMMDD-HHMMSS}]` / `[ack]` / anything
-else (a notice). Always give `[question]` an identifier — the worker's answer comes back to the inbox
-through `adjutant_send`, and this identifier at the start of `subject` is the only thing that pairs
-them.
-
-## When a person talks to you
-
-Narrow it to one thing, and go back to waiting when done. When it comes in plain words, fit it to one
-of these six:
-
-```
-  1. List                 - the state of tasks, PRs and worktrees (Dashboard)
-  2. Start a task         - pick a task, create a worktree and hand it to a worker
-  3. File and start       - file what has no issue yet, then pass it to 2 (the same procedure as "When a request arrives")
-  4. Investigate only     - a request that ends in a report, issue or not ("look into how this works now")
-  5. Work on a worktree   - start a worker in an existing worktree / open it in the IDE / open the PR
-  6. Clean up             - remove finished worktrees (Step 1 of the Dashboard)
-```
-
-Ask with `AskUserQuestion` only when you cannot tell which.
-
-**Before passing to 2, look at "Offering a hub for a parent task".** When what was named is a parent
-task itself, or the request is to split something, go through there before starting it.
-**In a parent task's hub, a key named to be started goes through "A key that is not one of your
-children" first** (in "A hub for a parent task"), whether it comes as 2 or as A of 5, and whether or
-not the listing has come back: only a child goes on, and any other key is handed to the repository's
-hub as that step says.
-**In a parent task's hub, "1. List" is the list under the parent** (not the whole repository; "Read at
-startup" in "A hub for a parent task").
-**When a parent task's hub is told "split it", go to "When asked to split it" in "A hub for a parent
-task", not 3.** That route files several under the parent and then asks whether to start one of them,
-which is different from 3's filing one and running on to starting it (when told "file this and start
-it", it stays 3).
-
-**A request that involves starting may bring "a branching point" and "a parent task" with it.**
-Things like "branch it off `feature/x`" or "this is a subtask of ALPHA-233", and both apply **to that
-one dispatch only**. Pass the former to Base branch in "3. Create the worktree", and the latter to
-`adj task add --parent` (or `adj task brief --parent`) in "4. Start the worker". **The same for 2, 3 and Step 4 of "When a request
-arrives"** — every route that starts a worker carries these two. **Do not ask for them every time**
-(without them the defaults, `baseBranch` and `-`, apply). **Do not infer them from sub-issue links
-either** — having a parent-child relation and wanting to branch from the parent's branch are different
-things, and connecting them picks a branching point nobody asked for.
-**Write the parent task as a URL.** If given as a key (`ALPHA-233`), find the source that has that key
-and turn it into the issue's URL before passing it as `--parent` (the lookup is the same as 3 in "When
-asked to work on an existing worktree"). The worker decides the tracker and repo from the URL, so it
-cannot fetch from a bare key.
-
-**4 does only moves 3 and 4 of "Starting a task"** (create the worktree → start the worker).
-
-- **Skip "2. Claim it".** Do not move the assignment or In Progress. A request that ends in a report
+- **Skip §claim.** Do not move the assignment or In Progress. A request that ends in a report
   is not "someone has started" on the board, and nobody would move it back.
 - **Do not file for a request that has no issue.** Filing is 3's job, and whether to file as a result
   of the investigation is up to the user. The record has no issue URL, so `adj task brief` writes `-` for the key
@@ -1098,9 +1193,10 @@ cannot fetch from a bare key.
   `## Kind`) and is filed like any report.
 - **Without an issue there is nothing to make a worktree name from.** It cannot come from a key, so
   propose a short lowercase slug of the request (like `login-crash`) with `AskUserQuestion`, settle
-  it, and pass it to "3. Create the worktree" as `{worktreeName}` (the branch is `{user}/{name}` as
+  it, and pass it to §worktree as `{worktreeName}` (the branch is `{user}/{name}` as
   usual). Do not improvise it silently.
 
+<!-- section: offer-parent-hub -->
 ### Offering a hub for a parent task
 
 **Only the repository's own hub offers this** (`adjutant_config`'s `hub` is `null`). A hub with an
@@ -1114,7 +1210,7 @@ identifier is already inside that parent, so there is nobody to recommend anothe
 **Do not offer it when a subtask is named.** That person has already decided what to do, and it is
 not a matter of adding a hub. Ask every time an issue with subtasks comes up and it becomes noise that
 gets ignored — more tabs are not the kind of side effect to produce on your own where nobody asked
-(the flip side of Step 1 of "When a request arrives"). **But offer it when told "I want to split this
+(the flip side of step 1 of §request-read). **But offer it when told "I want to split this
 subtask"** — the moment it is to be split, that one becomes a parent, which is the second condition
 above. The exclusion applies when told to **start** that subtask.
 
@@ -1127,7 +1223,7 @@ Check for subtasks in one call, per source `type`:
 - `linear` — pass the key to `mcp__linear__get_issue` to get the parent's id, then pass that id to
   `mcp__linear__list_issues` and look at the count. **Here too, start by getting the id from the
   key** — the hub holds only the key, not the id (the same as "Fetching the parent itself" in
-  "Fetching what sits under the parent")
+  §parent-fetch)
 
 Once approved, **just open a tab**:
 
@@ -1139,14 +1235,14 @@ adj hub --tab --hub '{parent key}'
   records are decided after folding the identifier, so starting it as `alpha-233` lands on the same
   hub. The variation matters to readers: the hub that starts names itself, puts into briefs and
   reverses exactly this string. Pass the tracker's spelling and what people see matches the tracker
-  (that the reverse lookup ignores case is in "A hub for a parent task").
+  (that the reverse lookup ignores case is in §parent-hub).
 - **If it is already running, focus just moves there**, so no need to check first whether it runs.
-- **Once it is open, do nothing more from here.** The new hub reads the parent task itself ("A hub for
-  a parent task"). The trigger for a dispatch stays with the person — offering is as far as the
+- **Once it is open, do nothing more from here.** The new hub reads the parent task itself (§parent-hub). The trigger for a dispatch stays with the person — offering is as far as the
   repository hub goes, and **that hub also starts no worker until a person tells it to** (the same
-  after being told to split; "When asked to split it").
+  after being told to split; §parent-split).
 - If declined, handle the named task with 2 above as it is.
 
+<!-- section: park -->
 ### Parking a task on request
 
 When the person says a task is waiting on someone on purpose (the PdM's or the designer's answer, an
@@ -1169,12 +1265,11 @@ adj task unpark --id {task_id}
 - Take it back with `adj task unpark` when they say the wait is over. A parked task's gates stay open
   and are answered as usual.
 
----
-
+<!-- section: dashboard -->
 ## Dashboard — listing and cleanup
 
-**Collection (Step 2) goes to a sub-agent.** The same at startup and when a person says "list"
-(Appendix — Brief for the dashboard collection agent). But **only the startup one can be turned off
+**Collection (§dashboard-collect) goes to a sub-agent.** The same at startup and when a person says "list"
+(§brief-dashboard). But **only the startup one can be turned off
 in the config** (`settings.startupDashboard` is `false`, or `adj hub --no-dashboard`; Step 3 of "On
 startup"). **When a person says "list", it is not turned off** — what is turned off is "collecting on
 every start when nobody asked", not the list itself. Two reasons:
@@ -1186,14 +1281,15 @@ every start when nobody asked", not the list itself. Two reasons:
   later turn heavy. The agent returns only the table and the machine rows.
 
 **A worktree of a session started with no task is cleaned up only when a person asks.** Nothing marks
-it as finished, so Step 1 does not offer it.
+it as finished, so Step 1 (§cleanup-offer) does not offer it.
 
-**Cleanup (Step 1) is done by the hub.** It is one proctor call and a confirmation from the user, and
-a sub-agent cannot ask for that. **The order is: send out Step 2's agent, then Step 1.** The proctor
+**Cleanup (§cleanup-offer) is done by the hub.** It is one proctor call and a confirmation from the user, and
+a sub-agent cannot ask for that. **The order is: send out §dashboard-collect's agent, then §cleanup-offer.** The proctor
 call and the user's answer overlap with the collection, so by the time the answer comes back the table
 is back too. The other way round, not a second of collection happens while the cleanup question is
 waiting.
 
+<!-- section: cleanup-offer -->
 ### Step 1: Offer to clean up finished worktrees
 
 ```bash
@@ -1239,7 +1335,7 @@ git branch -D <branch>
 
 Before removing each one, look up its task (`adj task list --worktree <path> --json`, the
 records whose `status` is `dispatched` or `pr`), and after it is gone set them `done` with
-`adj task update --id {id} --status done` — the same as "Cleaning up one worktree", or the card
+`adj task update --id {id} --status done` — the same as §cleanup-one, or the card
 stays on the board as in progress.
 
 Then run the repo's `onWorktreeRemove` commands from the config, substituting `{worktree}`
@@ -1247,6 +1343,7 @@ Then run the repo's `onWorktreeRemove` commands from the config, substituting `{
 (e.g. dropping the entry from Android Studio's `recentProjects.xml`) — adjutant itself knows
 nothing about any editor.
 
+<!-- section: cleanup-one -->
 #### Cleaning up one worktree (asked by a worker)
 
 When `kind: done` arrives in the inbox, clean up just that one here. The material for a person to
@@ -1315,12 +1412,13 @@ independently:
    nobody at the hub's tab. Instead, leave one line in the processing log of "When several arrive at
    once".
 7. When done, `adjutant_pending` `action: ack`.
-8. **When `settings.maxWorkers` is set, finally run "When a worker slot frees up, start the next"
+8. **When `settings.maxWorkers` is set, finally run §next-slot
    once.** One worker fewer, so a task waiting for a slot is picked up here. If it was not removed in
    4, the worker is still there, so it can be skipped.
 9. **If this is a hub for a parent task and that was its last worktree**, say in one line that it can
-   be closed (see "A hub for a parent task"). Do not close it yourself.
+   be closed (see §parent-hub). Do not close it yourself.
 
+<!-- section: next-slot -->
 #### When a worker slot frees up, start the next
 
 Done at the end of a `done` cleanup, on startup, and when `kind: next` arrives. All only when
@@ -1335,31 +1433,30 @@ when it finishes.
      "Could not start:" (not taken until a person has looked at the reason and fixed it), so one
      sitting at the head does not keep everything behind it from starting.
    - `needsDispatchGate` lists the `autoStart: false` tasks with no `dispatch` gate open. Open one
-     for each here (how to open is in "A request from the dashboard"; a record whose `needsReading` is
-     true is read first — "Reading a request"). Skip a task that already has an open dispatch gate:
+     for each here (how to open is in §board-request; a record whose `needsReading` is
+     true is read first — §board-request). Skip a task that already has an open dispatch gate:
      `adj task next` leaves those out of the list. Each is started once that answer arrives.
 
    If `task` is `null`, do nothing more.
-2. Run that record as "A request from the dashboard" (including the `adj task show` check). **A
-   record whose `executor` is `jules` never gets `adjutant work`**: run "5. Hand it to Jules" for it
-   (reusing its worktree if it still exists, otherwise creating it detached in "3. Create the
-   worktree"). It takes no slot, so it does not count as the one taken here; go back to 1 for the
-   next. Otherwise, if `worktree` is written and that worktree **still exists**, only Step 3. If not
-   written, or gone (not in `git worktree list`), start again from creating the worktree in "4. Start
-   the worker". If `note`
+2. Run that record as §board-request-run (including the `adj task show` check). **A
+   record whose `executor` is `jules` never gets `adjutant work`**: run §jules-plan for it
+   (reusing its worktree if it still exists, otherwise creating it detached in §worktree). It takes no slot, so it does not count as the one taken here; go back to 1 for the
+   next. Otherwise, if `worktree` is written and that worktree **still exists**, only Step 3 (§worker-spawn). If not
+   written, or gone (not in `git worktree list`), start again from creating the worktree in §start-worker. If `note`
    says "resume with --resume", start it with `adjutant work --resume` (starting it with a plain
    `adjutant work` loses the saved conversation).
 3. If `adjutant work` returns 3 again, the slots are still full. Leave the record as it is, and
    **do not take the next one**. For a worker that went down without sending `done`, a person wakes
    this with 「次を流す」 on the board.
 
+<!-- section: dashboard-collect -->
 ### Step 2: Collect
 
 **This is the agent's procedure** (the brief points to this section). The hub runs it itself only when
 the agent failed and came back.
 
 Fetch tasks from **every** entry in this repo's `taskSources`, each with the recipe for its
-`type` (see **Task sources** below), then key and dedupe as in "1. Pick the task" (for the `github`
+`type` (see §task-sources), then key and dedupe as in §pick-task (for the `github`
 family, make the key from the issue's repo through `issueKeys`; for `jira` / `linear`, use the issue
 key as it is). Plus:
 
@@ -1367,8 +1464,9 @@ key as it is). Plus:
 gh pr list -R <codeRepo> --author @me --state open --json number,title,url,isDraft,statusCheckRollup
 ```
 
-The PRs others asked you to review are not collected here: they are on the board (see "Open PRs you were asked to review").
+The PRs others asked you to review are not collected here: they are on the board (see §review-prs).
 
+<!-- section: dashboard-display -->
 ### Step 3: Display
 
 Cross-reference worktrees against tasks by issue key so the user can see which tasks are
@@ -1378,16 +1476,16 @@ already started.
 with `isMain: true`, `git worktree list` as its first line. Drop that row before
 cross-referencing — left in while the hub sits on a task branch, it lists the hub's own
 checkout under `[Worktrees]` and marks that task as started. Go by the marker, not by comparing
-paths with `adjutant_config`'s `main`, as in Step 1.
+paths with `adjutant_config`'s `main`, as in Step 1 (§cleanup-offer).
 
 **Do not show the Project item id in this table** (it means nothing to a person). Pick it up from the
-machine rows that come with the agent's report, and use it in "2. Claim it". **The machine rows are
-JSON Lines** (one JSON object per line; the collection briefs in the appendices). Read each line as
+machine rows that come with the agent's report, and use it in §claim. **The machine rows are
+JSON Lines** (one JSON object per line; the collection briefs §brief-dashboard and §brief-parent). Read each line as
 JSON and take values by key (`item`, `title`, `url` ...); the repo is the `owner/repo` before `#` in
 `identifier`. **Never split a row on `|` or any other character** — a title may contain it, and
 every later value then lands in the wrong field. `kind` says what a row is (`task`, `worktree`,
 `pr`, `review`, `parent`, `subtask`); read the other keys as that kind's. A line that does not
-parse is not repaired by guessing: for a task, fetch that one directly, as "1. Pick the task" says
+parse is not repaired by guessing: for a task, fetch that one directly, as §pick-task says
 for a task asked for before the report returns; for anything else, say in one line that it could
 not be read.
 
@@ -1406,15 +1504,14 @@ not be read.
   #n | title | draft/open | CI
 
 [Review Requested]
-  on the board: 「レビュー」 (see "Open PRs you were asked to review")
+  on the board: 「レビュー」 (see §review-prs)
 ```
 
----
-
+<!-- section: pick-task -->
 ## Starting a task
 
 These moves are all the hub does for one task. It does not touch the implementation. A task
-handed to Jules takes "5. Hand it to Jules" in place of "4. Start the worker".
+handed to Jules takes §jules-plan in place of §start-worker.
 
 ### 1. Pick the task
 
@@ -1423,7 +1520,7 @@ sets:
 
 - the ones assigned to the user, and
 - the **unassigned** ones, so a task can be picked up off the board. Mark those `unassigned`
-  in the list — "2. Claim it" is what assigns them.
+  in the list — §claim is what assigns them.
 
 Then, over the merged list:
 
@@ -1441,13 +1538,13 @@ Then, over the merged list:
    **`jira` / `linear` tasks never fall here** (they carry their own keys). If they do, the type was
    judged wrongly.
 4. **Filter out what is already in progress**, for sources whose board models it. A board
-   with no in-progress state (see "2. Claim it") filters nothing here — those tasks are told
+   with no in-progress state (see §claim) filters nothing here — those tasks are told
    apart by whether a worktree already exists, which Dashboard already cross-references.
    For `jira`, drop those whose status name matches `inProgressStatus` (do not judge by
-   `statusCategory`; the reason is in "Task sources" `jira`).
+   `statusCategory`; the reason is in §task-sources `jira`).
 
 This list normally comes from the Dashboard collection agent's report (the machine rows carry the
-repo, key, item id and status; read by key as Step 3 of the Dashboard says). **If told "start
+repo, key, item id and status; read by key as §dashboard-display says). **If told "start
 ALPHA-233" before that has come back, do not wait.** Go ahead by fetching just that one directly
 (for the `github` family `gh issue view`, plus one `nodes(ids:)` if the item id is needed; for
 `jira` one `getJiraIssue`). The collection can be shown when it arrives.
@@ -1458,17 +1555,18 @@ are. Group by key when more than one is in play.
 Then ask how far to go:
 
 - **Leave it to a worker (Recommended)** — create the worktree and hand it to an agent session in a
-  tab of its own ("4. Start the worker"). The hub does not implement, so it can go straight on to the
+  tab of its own (§start-worker). The hub does not implement, so it can go straight on to the
   next task.
 - **Worktree only** — create it, open the IDE, and the user does the rest
 
+<!-- section: claim -->
 ### 2. Claim it
 
-Claim it before any work starts, so the board shows who has it and "When asked to work on an
-existing worktree" can find it again. Every step here is idempotent, and **none of them is fatal**:
+Claim it before any work starts, so the board shows who has it and §existing-worktree
+can find it again. Every step here is idempotent, and **none of them is fatal**:
 if one cannot complete, say so and continue to the worktree step rather than aborting.
 
-**For an investigation-only request, skip this whole section** (4 of "When a person talks to you").
+**For an investigation-only request, skip this whole section** (§investigate-only).
 
 Everything here uses **the selected task's own source**, not the repo's first one.
 
@@ -1481,7 +1579,7 @@ Everything here uses **the selected task's own source**, not the repo's first on
   ```
 
   `-R` is the repo the issue lives in, which on a multi-repo board is **not** a property of the
-  source. Take it from the task row ("1. Pick the task" kept it).
+  source. Take it from the task row (§pick-task kept it).
 - `jira` — `editJiraIssue` with `fields: {"assignee": {"accountId": "<your accountId>"}}`. The
   accountId is `account_id` from `atlassianUserInfo`. **Do not write `currentUser()`** — that is a
   JQL-only function and does not work as a field value.
@@ -1491,7 +1589,7 @@ Everything here uses **the selected task's own source**, not the repo's first on
 
 - `github` — set the in-progress label, if the repo uses one.
 - `github-project` — the status lives on the board, not on the issue, so it takes two calls.
-  **For a selected task the item id is already at hand** — the fetch in "1. Pick the task" returns
+  **For a selected task the item id is already at hand** — the fetch in §pick-task returns
   `projectItems.nodes.id`. Do not fetch it twice. **Only for a new issue the hub filed** is it not at
   hand, so fetch it once there, by asking the issue for its items — addressed by the repo it was
   filed into and its number:
@@ -1550,6 +1648,7 @@ Everything here uses **the selected task's own source**, not the repo's first on
   awaiting completion**. If no transition matches, skip it, carry on, and tell the user in one line.
   **Add no comment.**
 
+<!-- section: worktree -->
 ### 3. Create the worktree
 
 **If proctor is installed, follow its conventions.** The `proctor-worktree` skill resolves
@@ -1581,13 +1680,13 @@ except for `linear`, below — and `worktreeName` defaulting to `{issuekey-lower
 issue the hub filed has no source, so pass that issue's repo through `issueKeys` to make the key
 (`example/team-app` → `ALPHA` → `ALPHA-1234`). For `jira` the issue key is the key as it is, so no
 conversion is needed (`ABC-819` → branch `{user}/ABC-819`, worktree `abc-819`). **For `linear` the
-branch is the issue's `gitBranchName`, used as it is** ("Task sources" `linear`), read from the
+branch is the issue's `gitBranchName`, used as it is** (§task-sources `linear`), read from the
 issue the tracker returned; it is not built from `branchPattern`. Only the worktree's location comes
 from the conventions (its name and its path): the worktree name is still the key (`ABC-819` →
 worktree `abc-819`) and the path comes from proctor or `adj worktree-path`, but the `branch` they
 return is not used — the branch is `gitBranchName` (example: `ABC-819` → branch
 `alice/abc-819-fix-login-redirect`, worktree `abc-819`). If proctor's pattern for this repo bakes in
-one source's key, stop and settle it with the user — "Where proctor ends" in Config says how that is
+one source's key, stop and settle it with the user — §proctor says how that is
 normally resolved.
 
 **Base branch** — the branching point is decided in two levels. **A branching point given for this
@@ -1655,17 +1754,17 @@ name and the branching point are decided as above, the same as for any task:
 git -C '{main}' worktree add --detach '{path}' '{base}'
 ```
 
-A branch and `postCreate` come only if the task is switched to a worker ("Switching to a worker" in
-"5. Hand it to Jules").
+A branch and `postCreate` come only if the task is switched to a worker (§jules-to-worker).
 
 Then, whichever the user chose:
 
 - **Worktree only** — run `adj ide --worktree <worktree>`, print the path, and stop here. **Do not
   go into the worktree.**
-- **Leave it to a worker** — on to "4. Start the worker". Do not touch this tab's name (it only
+- **Leave it to a worker** — on to §start-worker. Do not touch this tab's name (it only
   affects your own tab and never reaches the worker's). The worker names itself.
-- **The implementer is `jules`** — on to "5. Hand it to Jules". No worker is started.
+- **The implementer is `jules`** — on to §jules-plan. No worker is started.
 
+<!-- section: start-worker -->
 ### 4. Start the worker
 
 The hub is the dispatcher: it picks, claims, creates the worktree, hands over and cleans up.
@@ -1683,7 +1782,7 @@ investigation either, so there is nothing to carry over. Always start the worker
 context it needs into the brief.
 
 **Step 1 — do not fetch the task body or comments here.** The brief needs only the identifier
-and the title, and "1. Pick the task" already has the title; the worker reads the task itself
+and the title, and §pick-task already has the title; the worker reads the task itself
 (the brief tells it to start there). Pulling the whole issue into the hub just to copy the title out
 inflates the hub transcript for every task it dispatches.
 
@@ -1694,6 +1793,8 @@ card on the board. The worker starts clean, so that file is everything it knows.
 - Hand off through a **file**, not a long initial prompt. The brief runs to dozens of lines
   and is full of backticks and quotes; pushing that through AppleScript *and* zsh quoting is
   fragile.
+
+<!-- section: task-record -->
 - **Have the task record first.** The brief is written from it, so it has to exist and say what
   the brief should say. For a request from the dashboard, the id on the `## task` line is the
   record already. Otherwise (a worker's report of something else, something asked in the tab), create
@@ -1726,7 +1827,7 @@ card on the board. The worker starts clean, so that file is everything it knows.
   starts with `https://`, no whitespace, and none of `'` `"` `` ` `` `$` `\` `;` `&` `|` `<` `>` `(`
   `)` `{` `}`. Otherwise do not pass `--parent`; put the URL in the handover note instead (the file and
   `adj task update --instruction -` below). **`--after '{sibling url}'` is held to the same rule**, and
-  is passed only for a dependency the parent's body or the person stated ("Keeping the structure").
+  is passed only for a dependency the parent's body or the person stated (§parent-structure).
   **The same rule holds for `adj task update --parent`**,
   which puts the URL on a command line the same way. The hub's own parent URL is the one the parent collection returned
   for this hub's parent (from `gh` or the tracker), so it is made by a tool and is fine as it is.
@@ -1740,7 +1841,7 @@ card on the board. The worker starts clean, so that file is everything it knows.
   `--done-when` is the record's Done when, which the brief renders ("up to a PR" → `pr`, "up to
   handing over for verification" → `verify`, "investigation only" → `report-only`). Fill it from what
   the user actually asked for. The worker has no other way to know, and `adj-worker` decides its route
-  by that line (§5 whether to open a PR, §8 whether to skip implementation and end with a report).
+  by that line (§adj-worker/pr whether to open a PR, §adj-worker/investigation whether to skip implementation and end with a report).
   Left out it is recorded as `pr`, and the board shows an investigation-only task as "one that goes as
   far as a PR".
   `--stop-at` is the record's Stop at (`plan` / `diff` / `all`), which the brief renders: which gates
@@ -1751,8 +1852,8 @@ card on the board. The worker starts clean, so that file is everything it knows.
   nothing was said, `plan`. The worker decides by it whether the diff and verification wait on a
   person, so do not raise it to `all` on a guess (raised, tasks nobody will look at pile up as needing
   attention).
-  `--executor` is the implementer (`worker` / `jules`): `worker` on this route, `jules` when "5. Hand
-  it to Jules" creates the record. Left out it is `worker`, and a task handed to Jules is recorded as
+  `--executor` is the implementer (`worker` / `jules`): `worker` on this route, `jules` when §jules-plan
+  creates the record. Left out it is `worker`, and a task handed to Jules is recorded as
   the worker's: the board then waits on a worker that is never started, and `adj jules start` refuses
   the task. **The record and the route taken must match.**
 
@@ -1772,6 +1873,7 @@ card on the board. The worker starts clean, so that file is everything it knows.
 
   With none, leave it: the brief writes `-`.
 
+<!-- section: worker-brief -->
 Then write the brief:
 
 ```bash
@@ -1800,7 +1902,7 @@ comes from:
   `--language '{language}'` with the language the person uses with you, as one word (a language name
   or tag); when you do not know it, pass nothing and the brief writes `-`.
 - **Workspace**: the branch the worktree is on.
-- **Base branch**: `--base`, the commit-ish given to `git worktree add` in "3. Create the worktree"
+- **Base branch**: `--base`, the commit-ish given to `git worktree add` in §worktree
   (with its `origin/`). Pass `-` only when handing over an existing worktree whose base is not known;
   the worker then asks.
 - **Parent task**: the `adj task brief --parent` flag wins; without it the record's own (`adj task
@@ -1815,13 +1917,12 @@ comes from:
   of another task, is such a case. The worker knows only its task, so without this line it cannot
   reach the design context its sibling subtasks share.
   **But in a parent task's hub this is always filled for a child** (a task that is not one is never
-  started there: "A key that is not one of your children") — its identifier is that parent, so do not
-  treat it as not handed over ("Put your own parent task on every dispatch" in "A hub for a parent
-  task").
+  started there: §parent-foreign-key) — its identifier is that parent, so do not
+  treat it as not handed over (§parent-dispatch in §parent-hub).
   **Being a subtask does not change the branching point** — that is another line, and moves only when
   given.
 - **Only a task its worker implements comes here.** Whether the implementer is `worker` or `jules`
-  is decided as "5. Hand it to Jules" says; `adj task brief` refuses a `jules` record, which starts no
+  is decided as §jules-plan says; `adj task brief` refuses a `jules` record, which starts no
   worker and has no brief, so the brief has no Implementer line. The task record carries the
   implementer (`--executor` above).
 - **For "investigation only", no PR and no issue updates.** Have the results given to the user at
@@ -1829,7 +1930,7 @@ comes from:
   doubled (the one exception is a result the person chose to make a task: it arrives as an
   `adj-report` with no `## Kind`, and is filed like any report). With no issue the record has no URL, and the brief puts the request text on the Task line.
 - `.claude/` is gitignored in most repos, so the brief never shows up in the diff. Check that
-  it is; if it is not, pass `--out '<a path outside the worktree>'` and **change the path in Step 3's
+  it is; if it is not, pass `--out '<a path outside the worktree>'` and **change the path in the Step 3 (§worker-spawn)
   prompt to match**, because that prompt names `.claude/task-brief.md` literally.
 
 The brief does not copy the procedure; it points to `adj-worker` by name. That keeps one authority,
@@ -1841,10 +1942,11 @@ applies to this file itself** — when one procedure mentions another, it writes
 (Even in Claude Code, `/adj-worker` does not resolve. Procedures served over MCP are named
 `/mcp__adjutant__adj-worker`.)
 
+<!-- section: worker-spawn -->
 **Step 3 — spawn the worker tab.** One command completes the handover. There is nothing to poll
 afterwards.
 
-**Set the record to `dispatched` before starting it** (`{task_id}` is the id of the record made in Step 2).
+**Set the record to `dispatched` before starting it** (`{task_id}` is the id of the record made in §task-record).
 `--note ''` clears any note left from waiting for a slot:
 
 ```bash
@@ -1883,8 +1985,8 @@ adjutant work --worktree '{worktree}' --task {task_id}
   adj task update --id {task_id} --status queued --no-hand-over --note 'Waiting for a worker slot (worktree ready)'
   ```
 
-  **The task record is the only place it waits.** The record was created in Step 2, so when a slot
-  frees up, "When a worker slot frees up, start the next" picks it up. Tell the person in one line
+  **The task record is the only place it waits.** The record was created in §task-record, so when a slot
+  frees up, §next-slot picks it up. Tell the person in one line
   that it was queued waiting for a slot.
 
   **Run `adjutant work` one at a time.** Running several together does not break the slot count (it
@@ -1948,9 +2050,10 @@ The hub's job for this task is over. Do not poll the worker: the tab name and it
 `adj agent-sessions` (the board's 「いまの仕事」, or its session cards on a board served alone) show progress, and reading the screen is a waste
 of context.
 
+<!-- section: jules-plan -->
 ### 5. Hand it to Jules
 
-In place of "4. Start the worker", when the implementer is `jules`. **The implementer** is the
+In place of §start-worker, when the implementer is `jules`. **The implementer** is the
 record's `executor` when a record already exists — a task taken from the queue or confirmed through a
 dispatch gate is started from its record, with no request message in hand. Otherwise, for a request
 from the dashboard, the leading value of the `## Implementer` line when there is one, and `worker`
@@ -1960,13 +2063,13 @@ only when the user said to have Jules implement it, and `worker` otherwise.
 Why no worker: everything after the plan is Jules's. A worker session would start (a tab, the whole
 procedure, its own investigation) only to write a plan, and then ask for a worktree nobody wrote to
 be removed. Instead the hub has a **sub-agent** write the plan, and keeps the worktree (created
-detached in "3. Create the worktree") only as a place to read from.
+detached in §worktree) only as a place to read from.
 
 A sub-agent cannot ask a person anything. A task that needs a decision partway through planning is not
-a good fit for Jules in the first place; it goes to a worker ("Switching to a worker" below).
+a good fit for Jules in the first place; it goes to a worker (§jules-to-worker).
 
 **Step 1 — the record.** For a request from the dashboard, the id on the `## task` line. Otherwise
-create it with the `adj task add` command in Step 2 of "4. Start the worker" (the summary file as
+create it with the `adj task add` command in §task-record (the summary file as
 written there), with `--executor jules`, `--done-when pr` and `--stop-at plan` — nothing after the
 plan waits here, and Jules opens the PR. Then mark it in progress with the worktree and the base:
 
@@ -1974,14 +2077,14 @@ plan waits here, and Jules opens the PR. Then mark it in progress with the workt
 adj task update --id {task_id} --status dispatched --worktree '{worktree}' --base '{base}' --note ''
 ```
 
-`{base}` is the branching point decided in "3. Create the worktree". It goes on the record because the
+`{base}` is the branching point decided in §worktree. It goes on the record because the
 plan is answered on a later wake, perhaps after the hub restarted, and `adj jules start` reads it from
 there. `adj jules start` also refuses a task that is not `dispatched`, and the card shows it in
 progress while the plan is written. **No worker slot is taken** — `maxWorkers` counts worker sessions, and none is
 started — so there is no waiting for a slot on this route.
 
 **Step 2 — the planning sub-agent.** Run `mkdir -p '{worktree}/.claude'`, then start a sub-agent with
-"Appendix — Brief for the Jules planning agent", **in the background**, and go back to waiting. Its
+§brief-jules, **in the background**, and go back to waiting. Its
 completion arrives as a notification. **Keep its agent id**: a `changes` answer goes back to the same
 one. It writes two files, and reports only their paths and one line, so the plan does not pile up in
 this transcript:
@@ -2016,13 +2119,14 @@ restarted while the sub-agent ran, the gate was closed without an answer, or `ad
 The board shows 「計画が止まっています」 on its card after `stuckAfterMinutes`. When a person points at
 one, or asks to try a failed hand-over again:
 
-- If the record's `worktree` is gone, create it again detached ("3. Create the worktree"), write the
+- If the record's `worktree` is gone, create it again detached (§worktree), write the
   new path and base onto the record with the `adj task update` of Step 1 (the answer and `adj jules
   start` read both from there), and start from Step 2.
 - If `{worktree}/.claude/jules-gate.json` and `jules-plan.md` are there, open the gate again (Step 3);
   the approval that comes back runs the hand-over again.
 - Otherwise start the planning sub-agent again (Step 2).
 
+<!-- section: jules-to-worker -->
 #### Switching to a worker
 
 When the answer asks for a worker to implement it (the plan shows it needs a local check, or is too
@@ -2031,9 +2135,9 @@ from that plan instead of planning again:
 
 1. `git -C '{worktree}' switch -c '{branch}'` — the branch name from the conventions in "3. Create
    the worktree" (decide it again the same way; the same conventions give the same name).
-2. Run the config's `postCreate`, as "3. Create the worktree" says.
+2. Run the config's `postCreate`, as §worktree says.
 3. `adj task update --id {task_id} --executor worker`.
-4. Put the handover note on the record, then write the brief as Step 2 of "4. Start the worker" says.
+4. Put the handover note on the record, then write the brief as §worker-brief says.
    For the note, **after `approve`** write "The plan was approved on the board: `.claude/jules-plan.md`. Implement from it; do not plan
    again."; **after `changes`** the plan was not approved, so write "A plan written for Jules is at
    `.claude/jules-plan.md`; it was not approved. Plan from it, and have the plan approved as usual."
@@ -2051,31 +2155,30 @@ from that plan instead of planning again:
    The brief writes it as the Handover note. Delete
    `{worktree}/.claude/jules-gate.json` (only the gate needed it). In a repository where `.claude/` is not gitignored, move the plan to where the brief
    goes (outside the worktree) and name that path instead, or it rides along in the worker's diff.
-5. Step 3 of "4. Start the worker" (`adjutant work`, including waiting for a slot on exit code 3).
+5. §worker-spawn (`adjutant work`, including waiting for a slot on exit code 3).
 
 If a Jules PR later needs a fix by hand, a worktree is created again from the PR's branch ("When asked
 to work on an existing worktree").
 
----
-
+<!-- section: request-read -->
 ## When a request arrives
 
 From a worker it arrives as a file in the inbox (`adjutant_pending`, `kind: report`). A person may also
 say directly "file this and start it", and the procedure is the same (Step 0 is skipped, and Step 1's
-asking back and Step 5's reply are done with the user on the spot). **One at a time**: finish filing →
+asking back and the reply of Step 5 (§request-reply) are done with the user on the spot). **One at a time**: finish filing →
 starting → replying before moving on to the next. Once the reply is done, clear that one with
 `adjutant_pending` `action: ack`.
 
 **A report whose `## Kind` is `split` is not a bug report** (Kind is optional; a report without it is
 a bug, as before). It is a worker proposing to split its own task: do not run it through Steps 1 to 5.
-Go to "When a worker asks to split its task" (in "A hub for a parent task", which applies the same on
+Go to §split-request (in the parent task part, which applies the same on
 the repository's own hub — the task the worker is on is the parent either way): a person approves,
 and only then is anything filed.
 
 ### Step 0 — Turn away what is not addressed here
 
 If the report's `repo` is not this hub's repository, do not file it. Reply "this is the hub for
-{repo}; please send it again from a checkout of {that repo}" (by the same route as Step 5), and stop.
+{repo}; please send it again from a checkout of {that repo}" (by the same route as Step 5, §request-reply), and stop.
 
 ### Step 1 — Read. Ask the requester back if something is missing
 
@@ -2086,7 +2189,7 @@ about it.
 **The heading missing altogether is a gap**, so ask back about it like any other field. **Do not treat
 it the same as `-`** — treated that way, the placement decision below falls to Found in, and a bug
 that belongs beside the others as a sibling sinks silently under one subtask.
-Ask back **the requester, not the user**, about what is missing (by the same route as Step 5). The
+Ask back **the requester, not the user**, about what is missing (by the same route as Step 5, §request-reply). The
 requester is still standing in that worktree and can read that branch's code. **The hub cannot** — it
 is looking at a different branch.
 
@@ -2115,7 +2218,7 @@ on hold does not hold up the next request**.
 worker's answer only comes back to the inbox as `kind: answer`, and this identifier is the only thing
 that says what it answers.
 
-- When the answer comes back, resume from Step 2 on the basis of the matching `question`, and once
+- When the answer comes back, resume from Step 2 (§request-file) on the basis of the matching `question`, and once
   handled, clear both with `adjutant_pending` `action: ack`.
 - If the answer is still not enough, **do not ask again**. Send it again as `kind: needs-user` to
   drop it into "waiting on the user's judgement" (ack the original `question`), and tell the
@@ -2134,12 +2237,13 @@ with the wrong number, it can no longer be followed on the board.
 **Found in may have no URL.** A report from a worktree with no brief carries only the key from the
 branch name, and a worker started on a request with no issue (investigation only) has the request
 text, not a URL, in "Task". If there is a key, find the source that has it and decide the repo — the
-same lookup "When asked to work on an existing worktree" does for a branch name. If there is no key
-either, there is no number to check, so skip this check. **The same for Step 2's tracker and Step 4's
+same lookup §existing-worktree does for a branch name. If there is no key
+either, there is no number to check, so skip this check. **The same for the tracker of Step 2 (§request-file) and the one of Step 4 (§request-start)
 "Parent task"**: ask the user for whatever Found in cannot decide. Do not fill it by building a number
 into the shape of a URL — invent a URL that does not exist and the worker goes to fetch it and comes
 back empty.
 
+<!-- section: request-file -->
 ### Step 2 — Look for duplicates (required)
 
 It is "file if there is no issue", so do not create without looking. Search the same tracker as Found
@@ -2177,11 +2281,11 @@ project = {project} AND text ~ "{word}" AND text ~ "{word}" ORDER BY updated DES
   is back, the closed ticket holds the cause and where it was fixed.
 - To see only the count first, `searchResultMode: "count"` (light, as it returns no `nodes`). When
   reading the content, narrow `fields` to about `["summary","status","updated"]` (otherwise a huge
-  JSON comes back; see "Task sources" `jira`).
+  JSON comes back; see `jira` in §task-sources).
 
 If something similar turns up, `AskUserQuestion`:
 
-- **Add a comment to the existing #N** — the same bug. Add to it and go to Step 5 (starting, if asked,
+- **Add a comment to the existing #N** — the same bug. Add to it and go to Step 5 (§request-reply; starting, if asked,
   is done on the existing issue)
 - **File a new one** — something else
 
@@ -2265,26 +2369,27 @@ untested; do not count on it). So split by where the request came from:
 - **A request from the dashboard whose `## Parent task` is set and whose kind is `file-and-start`
   (the board's 子タスクを足す) is filed as a sub-issue of that parent, with no stand-alone-or-sub-issue
   decision at all**: the person chose the parent on the form. (How the sub-issue link is made is the
-  filing command's business: "Step 3 — File" above.)
+  filing command's business: "Step 3 — File" in §request-file.)
 - **Otherwise, whether it becomes a stand-alone issue or a sub-issue is decided against the report's "Parent
   task".** If the relation is no more than "another bug on the same screen", a stand-alone issue. A
   sub-issue only when that parent task's acceptance criteria need the fix. **Only when the report's
   Parent task is `-`, make the same decision against Found in.** Applied to Found in when it is a
   subtask, a bug that belongs beside it under the parent sinks under that one subtask.
 
-**Two cases go from here to Step 5 (reply).** When the request is "file only", and **when `Scope` says
-nothing** (the default is file only). Go on to Step 4 only when starting is **explicitly asked for**.
+**Two cases go from here to Step 5 (reply, §request-reply).** When the request is "file only", and **when `Scope` says
+nothing** (the default is file only). Go on to Step 4 (§request-start) only when starting is **explicitly asked for**.
 
+<!-- section: request-start -->
 ### Step 4 — Start it
 
 **Only requests that explicitly ask to start come here.** Do not send a request whose `Scope` is empty
-here. **The explicit request is brought by the caller**; "When asked to split it" comes here after
+here. **The explicit request is brought by the caller**; §parent-split comes here after
 getting it for that one item with a question.
 The record's `--done-when` has a default ("up to a PR" when not given), but that is the default for **how
 far to go once starting is decided**, **not a default for whether to start**. Mixing the two up grows a
 tab and a worktree for a report that only asked for filing.
 
-Run the moves of "Starting a task" above as they are. **Do not copy them here.**
+Run the moves of "Starting a task" (§pick-task, §claim, §worktree, §start-worker) as they are. **Do not copy them here.**
 
 - **Skip 1. Pick the task.** What is started is the issue just filed.
 - **2. Claim it** — assignment and In Progress. For `github-project`, the new issue's item id is not at
@@ -2294,15 +2399,16 @@ Run the moves of "Starting a task" above as they are. **Do not copy them here.**
   `jira` has no item id. Assign and transition directly with the key of the ticket filed.
 - **3. Create the worktree** — make the key by passing the repo it was filed into through
   `issueKeys`. For `jira`, the issue key returned at filing is the key as it is.
-- **4. Start the worker** (or **5. Hand it to Jules**, when the requester asked for Jules) — `adj task add --done-when …` is the scope the requester gave; if none, `pr` ("up to a
+- **4. Start the worker** (§start-worker; or **5. Hand it to Jules**, §jules-plan, when the requester asked for Jules) — `adj task add --done-when …` is the scope the requester gave; if none, `pr` ("up to a
   PR"). `--issue-url` is the issue just filed, and **its title is the one used for filing** (Step 1
-  of "4. Start the worker" saying "the title is held by '1. Pick the task'" is about that route).
+  of §start-worker saying "the title is held by §pick-task" is about that route).
   **`--parent` is the report's "Parent task" as it is, or, if that is `-`, the Found in task's**
-  URL (a plain URL only: "Step 2" of "4. Start the worker" says what to do with one that is not) —
+  URL (a plain URL only: §task-record says what to do with one that is not) —
   the worker does not know the context it was found in, so that URL is its only clue. The
   report's parent task is copied as it is because the filed issue is a sibling under that parent.
   Fill it with Found in and the next worker cannot reach the design context its siblings share.
 
+<!-- section: request-reply -->
 ### Step 5 — Reply
 
 Reply with `adjutant_tell` to the worktree named in the report (see "Waiting").
@@ -2321,6 +2427,7 @@ No reply needed. Please carry on with your own task.
 **Do not keep quiet about falling back to the default.** The requester (and their person) may believe
 they asked for it to be started. Reply in one line with what was not done and how to have it started.
 
+<!-- section: board-request -->
 ### A request from the dashboard (`kind: request`)
 
 What a person handed over from the board. **It goes through the same procedure as a worker's
@@ -2331,9 +2438,9 @@ board, and the board shows how far the request got from the record.
 
 **Read the `## Read first` line.** When it says `yes`, the person wrote what they want done in their
 own words and chose nothing else: the lines from `## Kind` to `## Start` are the record's defaults,
-not answers. Run "Reading a request" first. Without it, the request was answered when it was made
+not answers. Run §board-request first. Without it, the request was answered when it was made
 (handed over before the board's form changed, or added with its conditions): Step 1 is done; go to
-"Running a request".
+§board-request-run.
 
 #### Reading a request
 
@@ -2345,7 +2452,7 @@ not answers. Run "Reading a request" first. Without it, the request was answered
    on without reading again. The body is the request; a `## Handover note` belongs to it; a `## Parent task` that is
    set came from the board's 子タスクを足す and is the parent.
 2. **What can be read is read, not guessed.** An issue URL, number or key (`WID-123`) in the text is
-   resolved through the configured task sources ("Task sources"): the issue to work on, or the parent
+   resolved through the configured task sources (§task-sources): the issue to work on, or the parent
    when the text names it as one ("under WID-200"; write it as a URL — "Write the parent task as a
    URL"). A branch the text says to branch from is the base. **Test the name first**, before any command
    exists: it must match `^[A-Za-z0-9._/-]+$` and not start with `-`. Only a name that matches is
@@ -2432,13 +2539,14 @@ not answers. Run "Reading a request" first. Without it, the request was answered
    to a gate the hub opened"). If `down`, close the gate at once (`adj gate close --id {gate id}`), then
    ask the same with `AskUserQuestion` only when a person is at this tab (on a go-ahead, `adj task
    update --id {task_id} --read --auto-start true` — in one call, as in "The answer to a gate the
-   hub opened" — and go on to "Running a request"); otherwise write
+   hub opened" — and go on to §board-request-run); otherwise write
    "Waiting for confirmation to start" in `--note` and leave it queued.
 
+<!-- section: board-request-run -->
 #### Running a request
 
-- **Step 1 is done:** the record holds the answers — read on the gate, or given when the request was made.
-  **For a record that went through "Reading a request", take the kind, parent, issue URL, base,
+- **Step 1 (§request-read) is done:** the record holds the answers — read on the gate, or given when the request was made.
+  **For a record that went through §board-request, take the kind, parent, issue URL, base,
   worktree name, executor, Done when and Stop at from `adj task show --id {task_id}`, not from the
   request message's `##` lines**: after a gate answer or on the slot-refill route they may be gone or
   stale (the parent below is the record's `parent`).
@@ -2447,19 +2555,19 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   record's `parent` is a key, also put the URL on the record** with `adj task update --id {task_id}
   --parent '{url}'`, so the board shows the parent it belongs to.
   **When the `## Parent task` is set and the kind is `file-and-start`, file the issue as a sub-issue of
-  that parent** (Step 3's first item): the form's 子タスクを足す button is how a person adds a child.
+  that parent** (the first item of Step 3, §request-file): the form's 子タスクを足す button is how a person adds a child.
   A `## Handover note` is already the record's `instruction`, and `adj task brief` writes it as the
   brief's Handover note (`{worktree}/.claude/task-brief.md`): do not copy it by hand. For a request
-  whose issue is filed here, run `adj task update --id {task_id} --issue '{issue url}'` before Step 2 of
-  "4. Start the worker", so the brief's Task line has its URL. If the record's `executor` is `jules` (the body's
-  `## Implementer` line says so too), take "5. Hand it to Jules" in place of "4. Start the worker": no
+  whose issue is filed here, run `adj task update --id {task_id} --issue '{issue url}'` before
+  §worker-brief, so the brief's Task line has its URL. If the record's `executor` is `jules` (the body's
+  `## Implementer` line says so too), take §jules-plan in place of §start-worker: no
   brief is written, and the handover note goes into the planning sub-agent's brief instead.
   **There is nobody to ask back either** — the board has no address
-  `adjutant_tell` could use; the record is the reply. If something is missing, write it in Step 5's `--note` and leave it.
+  `adjutant_tell` could use; the record is the reply. If something is missing, write it in the `--note` of Step 5 (§request-reply) and leave it.
 - **If the request says the title is not read yet (`## Title`), run `adj task fetch-issue --id
   {task_id}` before `adj task brief`**: the issue could not be read when it was handed over, and
   the read puts the issue's title on the record, which the brief's Task line is written from.
-- **If `## Start` says "ask before starting" and the request was not read under "Reading a request",
+- **If `## Start` says "ask before starting" and the request was not read under §board-request,
   open a `dispatch` gate before starting the worker** (one that was read has had its gate). The
   one who asked is someone in front of the board, so ask on the board too:
 
@@ -2494,21 +2602,21 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   once (left open, a confirmation nobody needs to answer lines up under needs attention when the
   board is started later). Then ask with `AskUserQuestion` only when a person is at this tab. When
   the answer says to go ahead, run `adj task update --id {task_id} --auto-start true` (for a request
-  read under "Reading a request", `--read --auto-start true` in one call) before starting
+  read under §board-request, `--read --auto-start true` in one call) before starting
   (the same reason as when it is `approve`d on the board — so it is not asked again if it ends up
   waiting for a slot). When nobody is there, write "Waiting for confirmation to start" in `--note`
   and leave it queued (do not ask right after starting — 5 of "On startup").
-- **Step 5 (reply) is addressed to the record.** There is nobody to `adjutant_tell`, so write back to
+- **Step 5 (reply, §request-reply) is addressed to the record.** There is nobody to `adjutant_tell`, so write back to
   the task record with `adj task update` instead. That is what shows on the board:
 
   ```bash
-  adj task update --id {task_id} --issue '{issue url}'   # unless already done before Step 2 of 4
+  adj task update --id {task_id} --issue '{issue url}'   # unless already done before §worker-brief
   adj task update --id {task_id} --note - < '{main}/.claude/task-note-{task_id}.md' \
     && rm '{main}/.claude/task-note-{task_id}.md'   # when it could not be started
   ```
 
   "Could not start: {reason}", for when it could not be started, is written to a file and read in, as
-  in Step 3. Keep `Could not start:` in English (`adj task next` matches it); the reason is in the
+  in §worker-spawn. Keep `Could not start:` in English (`adj task next` matches it); the reason is in the
   person's language.
 
   The value of the `## task` line is `{task_id}`. **Drop it and, to the person who handed it over, it
@@ -2519,12 +2627,13 @@ not answers. Run "Reading a request" first. Without it, the request was answered
   board it is `backlog`, and if it was already started through 「次を流す」 it is `dispatched`. Messages
   in the inbox and operations on the board are separate routes, so **the record's `status` is the
   referee**.
-- **A record with `worktree` written was queued waiting for a slot** (Step 3's exit code 3). If the
-  worktree and the brief are still there, run only Step 3's `adjutant work`. If the worktree is gone,
+- **A record with `worktree` written was queued waiting for a slot** (exit code 3 in §worker-spawn). If the
+  worktree and the brief are still there, run only the `adjutant work` of §worker-spawn. If the worktree is gone,
   create it again.
 
 - Ack the inbox message after writing back to the record.
 
+<!-- section: session-request -->
 ### A session request from the dashboard (`kind: session`)
 
 A person asked the board for a session with **no task**: a worker to talk to in its own tab, with
@@ -2532,11 +2641,11 @@ nothing filed and no card yet. The body's `##` lines are the answers (`## Agent`
 and `## Instruction` is what the person wants done, verbatim to the end of the body. **A `-` there
 means no instruction**: the person wants a session to talk to and has nothing to say yet.
 
-**No task record is made.** Do not run Steps 2 to 5 of "When a request arrives", and do not
+**No task record is made.** Do not run Steps 2 to 5 of §request-read (§request-file, §request-start, §request-reply), and do not
 `adj task add` for it. If the person later links the session to a task on the board, the record is
 made or picked there and the session is told; that is not the hub's step.
 
-1. **Create the worktree as in "3. Create the worktree"**, with one difference: the name is a
+1. **Create the worktree as in §worktree**, with one difference: the name is a
    *request*, not a fact. Choose the final name with
 
    ```bash
@@ -2570,7 +2679,7 @@ made or picked there and the session is told; that is not the hub's step.
    ```
 
    `--title` rather than `--task`, since there is no record to take a title from. Run it one at a time,
-   as in Step 3 of "4. Start the worker".
+   as in §worker-spawn.
    - **Exit code 3 is "no free worker slot".** There is no record to wait in, so nothing will pick this
      up later. Leave the worktree and the brief, and say in one line that the session was not started
      and that `adjutant work --worktree '{path}' --title '{final name}'` on that path starts it when a
@@ -2581,6 +2690,7 @@ made or picked there and the session is told; that is not the hub's step.
 4. **Ack the inbox message** (`adjutant_pending` `action: ack`) once the worker is started or the
    failure is said. Tell the person in one line which worktree and tab it is, then go back to waiting.
 
+<!-- section: file-issue -->
 ### A linked task that needs an issue (`kind: file-issue`)
 
 A person linked a session that is already running to a **new task** and asked for an issue to be
@@ -2590,9 +2700,9 @@ body is the task's request lines, and `## Worker running in {worktree}` names th
 
 1. **Read `adj task show --id {task id}` once.** If it is finished, cancelled or not found, ack and
    say so in one line. If it already has an `issue`, skip to 4 with that URL.
-2. **Run only Step 2 (look for duplicates) and Step 3 (file) of "When a request arrives"**, with the
+2. **Run only Step 2 (look for duplicates) and Step 3 (file) (§request-file)**, with the
    title and body of the record and the worker's worktree as where it came from. There is nobody to
-   ask back: if a similar issue turns up and a person is at this tab, ask as Step 2 says; if nobody
+   ask back: if a similar issue turns up and a person is at this tab, ask as Step 2 (§request-file) says; if nobody
    is, do not file — go to 5 with the similar issue's number as the reason.
 3. **Record it:** `adj task update --id {task id} --issue {url}`.
 4. **Tell the worker** with `adjutant_tell` to the worktree from `## Worker running in`, with subject
@@ -2603,6 +2713,7 @@ body is the task's request lines, and `## Worker running in {worktree}` names th
    tells them), and tell the worker with `[issue {task id}] not filed: {reason}`.
 6. **Ack the inbox message.**
 
+<!-- section: gate-answer -->
 ### The answer to a gate the hub opened (`kind: gate`)
 
 When a person answers a gate the hub opened (`dispatch` / `relay`, or a `plan` for Jules) on the board, the answer arrives in
@@ -2622,7 +2733,7 @@ decision:
 - **`approve`** — first run `adj task update --id {task_id} --read --auto-start true` (one call:
   `--read` means the person confirmed the reading on this gate, and is refused unless the record can
   start — what it needs is checked under the lock; for a request that was never unread it changes
-  nothing), then run "Running a request" in "A request from the dashboard". It has been confirmed, so
+  nothing), then run §board-request-run. It has been confirmed, so
   do not open the gate again. **If that update is refused, the record stays unread: do not start.**
   Open the gate again, naming what is still missing (the refusal says which) as the open point in
   `unsure`. The same goes for `choice` and for `changes` once its corrections are written.
@@ -2630,11 +2741,11 @@ decision:
   same thing is not asked again when it is taken next.
 - **`choice`** — the person picked one of the gate's `choices` (`## Chosen`). The id is one you wrote
   into this gate's `choices` and encodes the value (`base:origin/release-1.2`), so it is enough to
-  write it back as "Reading a request" step 4 does (the value still passes step 2's tests), then go on as with `approve`
+  write it back as step 4 of §board-request does (the value still passes step 2's tests), then go on as with `approve`
   (`--read --auto-start true` in one call).
 - **`changes`** — read the comment. If only the conditions for starting change, like the branching
   point or the worktree name, apply them and start as with `approve`. Values taken from a
-  person's comment (base, worktree name, issue or parent URL) are tested as in "Reading a request"
+  person's comment (base, worktree name, issue or parent URL) are tested as in §board-request
   step 2 before any command is built; a value that fails is an open point and the gate is opened
   again. **A comment that changes the issue, the kind or the parent: write the corrected reading as
   in steps 2–4 and open the gate again with it, instead of starting directly**; only a corrected
@@ -2648,14 +2759,15 @@ decision:
 - **`reject`** — `adj task update --id {task_id} --status cancelled`.
 - Ack when done.
 
+<!-- section: jules-plan-answer -->
 #### The answer to a plan for Jules
 
-The answer to the gate "5. Hand it to Jules" opened. **First read `adj task show --id {task_id}`.** If
+The answer to the gate §jules-plan opened. **First read `adj task show --id {task_id}`.** If
 `status` is not `dispatched`, or `julesSession` is already written, do nothing (a person moved it on the
 board meanwhile, or it was handed over already). `{worktree}` is the record's `worktree`. Then, by the
 decision:
 
-- **`approve`** — if the comment asks for a worker to implement it, go to "Switching to a worker".
+- **`approve`** — if the comment asks for a worker to implement it, go to §jules-to-worker.
   Otherwise:
   1. Hand it to Jules with the approved plan:
 
@@ -2663,13 +2775,13 @@ decision:
      adj jules start --id {task_id} --prompt-file '{worktree}/.claude/jules-plan.md'
      ```
 
-     No `--base`: it reads the base Step 1 wrote onto the record, and turns `origin/release/1.2`
-     into the `release/1.2` Jules wants. If it says the base is missing (a record from before Step 1
+     No `--base`: it reads the base Step 1 of §jules-plan wrote onto the record, and turns `origin/release/1.2`
+     into the `release/1.2` Jules wants. If it says the base is missing (a record from before Step 1 of §jules-plan
      wrote it), write it with `adj task update --id {task_id} --base '{base}'` — the worktree's
-     branching point, as "3. Create the worktree" decides it — and run it again.
+     branching point, as §worktree decides it — and run it again.
      **If it fails otherwise, tell the user why and stop**, keeping the worktree and the plan; write
      "Could not hand to Jules: {reason}" in `--note` through a file ("Keep task text off the shell").
-     Trying again is "When a plan stopped". Do not start a worker in its place — who implements was
+     Trying again is "When a plan stopped" in §jules-plan. Do not start a worker in its place — who implements was
      decided when the task was created.
      If told there is no `julesKey`, or no item in the keychain, have the user register it as the
      message says. **Do not ask for the key or have it pasted into the conversation.**
@@ -2685,16 +2797,16 @@ decision:
      git -C '{main}' worktree remove '{worktree}' && adj task update --id {task_id} --worktree ''
      ```
 
-     Then the config's `onWorktreeRemove`, as in "Cleaning up one worktree".
+     Then the config's `onWorktreeRemove`, as in §cleanup-one.
   3. Tell the user the session's URL, and that the board moves the card to in review once Jules opens
      a PR.
 - **`changes`** — pass the comment to **the same sub-agent** to revise the plan (in Claude Code,
-  `SendMessage` to the id kept in Step 2), telling it to rewrite both files and add one to `rounds` in
+  `SendMessage` to the id kept in Step 2 of §jules-plan), telling it to rewrite both files and add one to `rounds` in
   the gate's payload. Where it cannot be continued (the hub was restarted, or its agent has no way to
   continue one), start a new one with the Appendix brief, adding "a plan is already written at
   `{worktree}/.claude/jules-plan.md`; revise it as this comment says" and the comment. Then open the
-  gate again as Step 3 of "5. Hand it to Jules" says. If the comment asks for a worker rather than a
-  revision, go to "Switching to a worker" instead.
+  gate again as step 3 of §jules-plan says. If the comment asks for a worker rather than a
+  revision, go to §jules-to-worker instead.
 - **`reject`** — remove the worktree and the plan with it, in the same way as step 2 of `approve`
   (delete the plan files, check, `git worktree remove`, then `onWorktreeRemove`), then put the task
   back in the person's court:
@@ -2702,6 +2814,7 @@ decision:
   to the queue it would be planned again the same way.
 - Ack when done.
 
+<!-- section: jules-pr -->
 ### Jules opened a PR (`kind: jules-pr`)
 
 The board sends this when the PR for a task handed to Jules is created. The body has `## task` /
@@ -2748,6 +2861,7 @@ Do not change the title. The report is the updated body as it is.
 - Ack when done. **There is no worktree to clean up here** — the hub removed it right after `adj
   jules start` ("The answer to a plan for Jules").
 
+<!-- section: jules-review -->
 ### Jules's PR got a review (`kind: jules-review`)
 
 The board sends this when review comments from anyone other than Jules and the person land on the PR
@@ -2844,32 +2958,7 @@ The answer to a `relay` gate (`kind: gate`, with the `## gate` line reading `({i
 - **`reject`** — do not pass them on. Remove the file.
 - Ack when done.
 
-### When the user needs to be asked
-
-**Before opening `AskUserQuestion`, send the requester a one-line ack.** While the hub is stopped on a
-question, from the requester's side it looks no different from no response (it stops until the user
-comes to this tab). Something like:
-
-```
-[ack] Got the report. Checking with the user on a point that needs judgement.
-```
-
-### When several arrive at once
-
-The queue is drained in order of arrival. Do each **one at a time, to the end**. Leave a processing
-log in the tab, one line per item handled:
-
-```
-14:32  alpha-957-34 → filed ALPHA-1234 / started on {user}/ALPHA-1234
-14:51  alpha-700-a6 → added to ALPHA-1180 (duplicate)
-15:20  abc-819-c1 → filed ABC-921 (not started yet)
-15:34  alpha-957 → cleanup requested (PR #1234): closed the tab, removed the worktree and branch
-```
-
-Keep it so that when the user looks at this tab, what was handled is plain.
-
----
-
+<!-- section: existing-worktree -->
 ## When asked to work on an existing worktree
 
 The hub does not go into worktrees, so all that can be done here is **handing over**.
@@ -2886,31 +2975,30 @@ The hub does not go into worktrees, so all that can be done here is **handing ov
    `ABC-819`) and find the source that has that key — for the `github` family by reversing
    `issueKeys`, for `jira` / `linear` the source whose project key / team name matches. Ask the wrong
    one and a different task under the same number comes back **without any error**.
-   **In a parent task's hub, check that key as "A key that is not one of your children" says before
-   step 4** (in "A hub for a parent task"): a worktree of a task that is not a child gets neither A
+   **In a parent task's hub, check that key as §parent-foreign-key says before
+   step 4** (§parent-hub): a worktree of a task that is not a child gets neither A
    nor this hub's parent, and is handed to the repository's hub as that step says.
 4. What to do, with `AskUserQuestion`:
    - **A) Start a worker and hand over the work (Recommended)** — the same procedure as "4. Start the
      worker". A record is made for that worktree's task (`adj task add --issue-url` of that task,
      `--done-when` from the user's instruction), and `adj task brief --base -` (or the base, when it is
-     known, and `--language` as in "4. Start the worker") follows. A detached worktree is refused by
+     known, and `--language` as in §worker-brief) follows. A detached worktree is refused by
      `adj task brief` (the brief names a branch): switch to or create its branch first, or tell the person. Build the issue URL from the key and
      the source found in step 3, and pass `--issue-url '{url}'` only when it can be built; without it
      the brief's Task line carries no ticket.
      If there is already a tab with a worker running, **do not start another**; send the extra
-     instructions with `adjutant_tell` (the same as Step 5). Whether it is running is told by the
+     instructions with `adjutant_tell` (the same as Step 5, §request-reply). Whether it is running is told by the
      `present` that comes back.
    - **B) Open it in the IDE** — `adj ide --worktree <worktree>`
    - **C) Open the PR in the browser** —
      `gh pr list -R <codeRepo> --head <branch> --json url`, then `open <url>`
-   - **D) Clean up** — to the Dashboard's cleanup procedure
+   - **D) Clean up** — to the Dashboard's cleanup procedure (§cleanup-offer)
 
 Handling review comments, self-review and opening a PR are **all on the worker's side** (`adj-worker`).
 If the hub did them it would be touching things from outside the worktree with `git -C`, carrying two
 sets of conventions.
 
----
-
+<!-- section: review-prs -->
 ## Open PRs you were asked to review
 
 They are on the board, not in this terminal: 「レビュー」 in the rail, on the resident server. Do not run
@@ -2923,8 +3011,7 @@ Tell the user to open it. Its address is the resident server's `?view=review` pa
 `/b/<slug>/` path with `/`, and add `view=review` to the query (keep `token`). When `board.resident` is `false`, the list
 is not there: say it needs the resident server (`adj server`), and do not fall back to `gh pr list`.
 
----
-
+<!-- section: task-sources -->
 ## Task sources
 
 Pick the recipe matching each source's `type`. A repo with several `taskSources` runs the
@@ -2984,7 +3071,7 @@ Carry two things forward on every row, because neither is recoverable later with
 round trip:
 
 - `repository.nameWithOwner` — `issueKeys` turns it into the task id and the branch name.
-- the **project item id** (`projectItems.nodes[].id`) — "2. Claim it" edits that, and does not
+- the **project item id** (`projectItems.nodes[].id`) — §claim edits that, and does not
   need to look it up again.
 
 Task id: `<issueKeys[repo]>-<number>`.
@@ -3059,43 +3146,7 @@ those real names too.
 on a ticket, and corrections are made by fixing the body with `editJiraIssue`, not by piling up
 comments. Add a comment only when the user explicitly says to (once drafted, show it and stop).
 
----
-
-## Keep task text off the shell
-
-Text from an issue, a report or the board (titles, summaries, the reasons for errors, people's
-comments) **never goes on a command line.** Wrapped in single quotes, a `'` inside closes it; put in a
-heredoc, a line equal to the delimiter closes it; and what follows runs as shell. Either way it breaks
-depending on the content.
-
-Instead, write it to a file **with a file-writing tool** (do not use `echo` or a heredoc), and pass it
-as standard input to an option that accepts `-`. Remove the file once read:
-
-| What | Option | File |
-| --- | --- | --- |
-| A task's body (title + summary) | `adj task add --body -` | `{worktree}/.claude/task-summary.md` |
-| A note (why it could not be started, a gate's comment) | `adj task update --note -` | `{main}/.claude/task-note-{task_id}.md` |
-| A dispatch gate's content (JSON; also the reading of a request) | `adj gate open --file` | `{main}/.claude/gate-{task_id}.json` |
-| A task's title read from a tracker | `adj task update --title -` | `{main}/.claude/task-title-{task_id}.md` |
-| A request a parent task's hub hands to the repository's hub | `adj task add --body -` | `{main}/.claude/task-request-{key}.md` |
-| A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
-| A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
-| Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
-| A handover note put on a task's record | `adj task update --instruction -` | `{worktree}/.claude/task-handover.md` |
-| What a task is parked for, in words | `adj task park --text -` | `{main}/.claude/task-park-{task_id}.md` |
-| The instruction of a session with no task | `adj task brief --instruction -` | `{path}/.claude/session-instruction.md` |
-| The hub's tab title | `adjutant title --title -` | `{main}/.claude/tab-title-{hub name}.txt` |
-
-`{main}` is the absolute path of the main checkout the hub stands in. The task id or hub name goes into
-the file name because when several hubs run for one repository (parent task hubs), they would fight
-over the same file in the same main checkout. In a repository where `.claude/` is not gitignored a
-forgotten file shows up in the diff, so always type it through to `&& rm` on one line.
-
-A worker's tab name is taken from the record with `adjutant work --task {task_id}`, so it needs no
-file. Values made by git or this tool — paths, ids, branch names — may go on the command line as
-before (the worktree names and the issue and parent task URLs that come in from the board are checked when
-accepted).
-
+<!-- section: tab-title -->
 ## Appendix — tab title
 
 Two lines: what the work is, and where it is.
@@ -3120,6 +3171,7 @@ alone keeps the old way when the config changes.
 
 **Work goes on even without a title.** Do not stop if it fails.
 
+<!-- section: brief-dashboard -->
 ## Appendix — Brief for the dashboard collection agent
 
 The prompt passed to `Agent`. `subagent_type` is `general-purpose`, and **always specify
@@ -3141,20 +3193,20 @@ Collect the data for the task hub's dashboard. **Read only. Change nothing.**
 - Config: take the resolved one from `adjutant_config` (or `adj config --repo {owner/repo}` without
   it). Do not read the config file yourself — finding the entry and merging `defaults` are done inside
   it
-- Procedure: collect as "Task sources" (the recipe for each `taskSources` entry's `type`) and Steps
-  2–3 of "Dashboard" in the `adj-hub` procedure say, and output it in the shape of the table in
-  Step 3. How ids are made, how duplicates are collapsed and what to do without a key follow 1–4 of
-  "1. Pick the task" in "Starting a task".
+- Procedure: collect as §task-sources (the recipe for each `taskSources` entry's `type`) and Steps
+  2–3 of the Dashboard in the `adj-hub` procedure say (§dashboard-collect, §dashboard-display; fetch them with `adj skill adj-hub --section task-sources,dashboard-collect,dashboard-display,pick-task`), and output it in the shape of the table in
+  Step 3 (§dashboard-display). How ids are made, how duplicates are collapsed and what to do without a key follow 1–4 of
+  §pick-task.
 
 Do not:
 - Create or remove worktrees, assign issues, update board status, post comments on or transition Jira
   issues, or write anything else
-- Step 1 of the Dashboard (asking about cleanup). Cleanup is the hub's (or the board's) job
+- §cleanup-offer (asking about cleanup). Cleanup is the hub's (or the board's) job
 - Ask the user anything. A sub-agent cannot. Put what needs judgement in the report
 
 Put both of these in the report:
 
-1. A table for people — exactly the shape of Step 3 of the Dashboard
+1. A table for people — exactly the shape of §dashboard-display
 2. Rows for machines — JSON Lines: one JSON object per line, no line breaks inside an object.
    Write each object with a JSON encoder (for example `jq -c`, or `gh --jq` printing an object),
    never by pasting values between quotes by hand: a title can hold `|`, `"` or a newline, and only
@@ -3177,6 +3229,7 @@ Issues left out for having no key configured also go in the report, with the cou
 drop them silently).
 ```
 
+<!-- section: brief-parent -->
 ## Appendix — Brief for the parent task collection agent
 
 The prompt passed to `Agent`. Sent under the same conditions as the dashboard collection —
@@ -3193,7 +3246,7 @@ Collect how things stand under {parent key}.
   cloudId / team}). **For the `github` family, "the parent's repo" is the issue's repo found by
   reversing `issueKeys`** — the board's `project` is used only when fetching status
 - **The parent task's title and URL are not handed over. Fetch them yourself too** — as "Fetching the
-  parent itself" in "Fetching what sits under the parent" says (for `linear`, also take there the
+  parent itself" in §parent-fetch says (for `linear`, also take there the
   parent's id needed to fetch what is under it)
 - Config: take the resolved one from `adjutant_config` (or `adj config --repo {owner/repo}` without
   it). Do not read the config file yourself
@@ -3202,11 +3255,11 @@ Collect how things stand under {parent key}.
   `Taken at: {that time}` (a line in the report, outside the machine rows). Take it before the
   fetches, not after: the listing is only as fresh as its first read, so the earlier time is the
   honest one
-- Procedure: as "Fetching what sits under the parent" in "A hub for a parent task" in the `adj-hub`
-  procedure says, fetch in the order parent task → subtasks → their PRs. How the parent and the
+- Procedure: as §parent-fetch in the `adj-hub`
+  procedure says (fetch it with `adj skill adj-hub --section parent-fetch`), fetch in the order parent task → subtasks → their PRs. How the parent and the
   subtasks are fetched changes with the source's `type`, so follow the branches written there
-- Resolve the branch per child — as "Resolve the branch per child" in "Fetching what sits under the
-  parent" says, it is the `branch` `adj worktree-path` returns (`gitBranchName` for `linear` alone).
+- Resolve the branch per child — as "Resolve the branch per child" in §parent-fetch
+  says, it is the `branch` `adj worktree-path` returns (`gitBranchName` for `linear` alone).
   **Do not build the shape yourself**
 - Worktrees go one JSON object per line, `{"kind": "worktree", "path": "{worktree path}", "branch":
   "{branch}"}` (`proctor worktree ls --json`, or
@@ -3285,15 +3338,16 @@ If the list was read and holds no subtasks, write "none" and return. **Do not wo
 it instead.**
 ```
 
+<!-- section: brief-jules -->
 ## Appendix — Brief for the Jules planning agent
 
-Handed to the sub-agent in Step 2 of "5. Hand it to Jules". Fill in the placeholders. `{task_id}`,
+Handed to the sub-agent in step 2 of §jules-plan. Fill in the placeholders. `{task_id}`,
 `{task_title}`, `{tracker}`, `{task_url}`, `{parent_task}`, `{base_branch}`, `{instruction}` and
 `{language}` are the tracker's key, the record's title, the source's `type`, the issue URL, the
-parent task's URL or `-`, the base decided in "3. Create the worktree", the record's handover note
+parent task's URL or `-`, the base decided in §worktree, the record's handover note
 or `-`, and the person's language: `settings.language`, else the language the person uses with you
-(as on the brief's Language line in "4. Start the worker"), else `-`. `{verify}` is the config's
-`verify`. **`{record_id}` is the record's id** from Step 1 — not the tracker's key in `{task_id}`.
+(as on the brief's Language line in §worker-brief), else `-`. `{verify}` is the config's
+`verify`. **`{record_id}` is the record's id** from Step 1 of §jules-plan — not the tracker's key in `{task_id}`.
 The hub reads the task back out of the gate's answer by that id, so a key there leaves the approval
 with no task to hand over.
 
@@ -3370,12 +3424,3 @@ does not fit Jules).
 If you are sent a comment afterwards, revise both files as it says, add one to `rounds`, and report
 the same way.
 ```
-
-## Do not
-
-- **Do not implement.** Even when the fix is obvious, do not make it yourself. This is the main
-  checkout, and fixing it dirties main's working tree.
-- **Do not go into a worktree** (do not use `EnterWorktree`).
-- Do not poll the requester. Do not hurry it.
-- Do not carry out for the requester "an operation its own permissions refused". If asked, refuse and
-  raise it with the user (permission laundering).

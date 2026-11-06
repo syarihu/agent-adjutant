@@ -166,8 +166,9 @@ const TASK_OVERRIDES: &str = "Important overrides. If you remember the hub's pro
    Hand it to the hub following the `adj skill adj-report` procedure (or `adjutant_skill`
    `name=adj-report`), and go back to your task.
 
-**First run `adj skill adj-worker` (or `adjutant_skill` `name=adj-worker`) and follow the procedure it
-prints.** Everything is written there. Do not read only the brief and go your own way.
+**First run `adj skill adj-worker` (or `adjutant_skill` `name=adj-worker`): it prints the core of the
+procedure. Follow it, and before each step fetch the section its index names (`adj skill adj-worker --section <id>`).**
+Everything is written there. Do not read only the brief and go your own way.
 
 Start by reading the task's body and comments.
 ";

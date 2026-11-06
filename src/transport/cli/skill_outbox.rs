@@ -10,7 +10,12 @@ use super::*;
 pub fn skill(args: &SkillArgs) -> Result<(), String> {
     print!(
         "{}",
-        skill_text(&args.name, &args.arguments, args.agent.as_deref())?
+        skill_text(
+            &args.name,
+            &args.arguments,
+            args.agent.as_deref(),
+            args.section.as_deref()
+        )?
     );
     Ok(())
 }

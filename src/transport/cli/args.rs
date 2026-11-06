@@ -437,6 +437,9 @@ pub(crate) struct SkillArgs {
     /// Free text substituted into the procedure where it asks for it
     #[arg(long, default_value = "")]
     pub(crate) arguments: String,
+    /// Which part to print: core (default), all, or section ids separated by commas
+    #[arg(long)]
+    pub(crate) section: Option<String>,
     /// Target agent format: claude | agy | generic (default: auto-detect)
     #[arg(long, value_parser = ["claude", "claude-code", "agy", "antigravity", "generic", "codex"])]
     pub(crate) agent: Option<String>,

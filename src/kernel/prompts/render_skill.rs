@@ -3,12 +3,13 @@
 use std::fmt;
 use std::path::Path;
 
-use super::{Agent, PROMPTS, description, find, render_for, resolve_agent};
+use super::{Agent, PROMPTS, Selection, description, find, parts, render_selection, resolve_agent};
 use crate::kernel::runner::{agent_from_runner, resolve_runner_for};
 
 pub struct SkillRequest<'a> {
     pub name: &'a str,
     pub arguments: &'a str,
+    pub section: Option<&'a str>,
     /// As asked for; must be a name `Agent::parse` takes.
     pub agent: Option<&'a str>,
     /// The MCP client's name, when there is one.
@@ -21,6 +22,7 @@ pub struct RenderedSkill {
     pub name: &'static str,
     pub description: String,
     pub agent: Agent,
+    pub sections: Vec<&'static str>,
     pub text: String,
 }
 
@@ -28,6 +30,11 @@ pub struct RenderedSkill {
 pub enum SkillError {
     NoSuchProcedure {
         name: String,
+        known: Vec<&'static str>,
+    },
+    NoSuchSection {
+        name: String,
+        section: String,
         known: Vec<&'static str>,
     },
     UnknownAgent(String),
@@ -38,6 +45,21 @@ impl fmt::Display for SkillError {
         match self {
             SkillError::NoSuchProcedure { name, known } => {
                 write!(f, "no such procedure: {name} ({})", known.join(" / "))
+            }
+            SkillError::NoSuchSection {
+                name,
+                section,
+                known,
+            } => {
+                if known.is_empty() {
+                    write!(f, "{name} has no sections: use core or all")
+                } else {
+                    write!(
+                        f,
+                        "no such section of {name}: {section} (core / all / {})",
+                        known.join(" / ")
+                    )
+                }
             }
             SkillError::UnknownAgent(value) => {
                 write!(f, "agent must be claude, agy, or generic: {value}")
@@ -64,10 +86,15 @@ pub fn render_skill(req: &SkillRequest) -> Result<RenderedSkill, SkillError> {
             .map(agent_from_runner),
     };
     let agent = resolve_agent(req.agent, req.client_name, runner_agent.as_deref());
+    let selection = Selection::parse(req.section);
+    let (_, sections) = parts(prompt);
+    let section_ids = sections.into_iter().map(|s| s.id).collect();
+    let text = render_selection(prompt, req.arguments, agent, &selection)?;
     Ok(RenderedSkill {
         name: prompt.name,
         description: description(prompt),
         agent,
-        text: render_for(prompt, req.arguments, agent),
+        sections: section_ids,
+        text,
     })
 }

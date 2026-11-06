@@ -120,12 +120,11 @@ pub const REVIEW_HUB_STARTUP_PROMPT: &str = "Fetch the adj-review-hub procedure 
 /// unrecognised `/…` sits there doing nothing, which looks exactly like a hub that is up and
 /// idle. Both a tool and a command are named because neither is universal: an MCP tool may
 /// be deferred or absent, and a command needs the binary on PATH.
-pub const HUB_STARTUP_PROMPT: &str = "Fetch the adj-hub procedure with adjutant_skill name=adj-hub (or `adj skill adj-hub` if that is not available), and start the resident hub as it says.";
+pub const HUB_STARTUP_PROMPT: &str = "Fetch the core of the adj-hub procedure with adjutant_skill name=adj-hub (or `adj skill adj-hub` if that is not available), start the resident hub as it says, and fetch each section its index names when its trigger comes.";
 
-/// What a resumed hub is told. The conversation is all there, procedure included, so this
-/// only has to cover what happened while it was gone: reports that landed with nobody to be
-/// woken by them.
-pub const HUB_RESUME_PROMPT: &str = "The session has been resumed. Something may have arrived while it was down, so check the inbox with adjutant_pending, sort out anything waiting as on startup, and then go back to waiting.";
+/// What a resumed hub is told. The conversation may have been compacted while it was gone,
+/// so it reads the core again before working its inbox.
+pub const HUB_RESUME_PROMPT: &str = "The session has been resumed. First read the core again (adjutant_skill name=adj-hub, or `adj skill adj-hub`) since the conversation may have been compacted, then check the inbox with adjutant_pending, sort out anything waiting as on startup, and then go back to waiting.";
 
 /// What a worker is told on startup, when the hub says nothing else.
 pub const WORKER_STARTUP_PROMPT: &str = "Read .claude/task-brief.md and start working as it says.";
@@ -850,8 +849,18 @@ mod tests {
         // doing nothing, which looks exactly like a hub that is up and idle.
         assert!(!HUB_STARTUP_PROMPT.trim_start().starts_with('/'));
         // Two ways in, because neither is universal.
-        assert!(HUB_STARTUP_PROMPT.contains("adjutant_skill"));
-        assert!(HUB_STARTUP_PROMPT.contains("adj skill"));
+        assert!(HUB_STARTUP_PROMPT.contains("adjutant_skill name=adj-hub"));
+        assert!(HUB_STARTUP_PROMPT.contains("`adj skill adj-hub`"));
+        assert!(HUB_STARTUP_PROMPT.contains("core"));
+    }
+
+    #[test]
+    fn the_hub_resume_prompt_reads_the_core_again_first() {
+        assert!(!HUB_RESUME_PROMPT.trim_start().starts_with('/'));
+        assert!(HUB_RESUME_PROMPT.contains("adjutant_skill name=adj-hub"));
+        assert!(HUB_RESUME_PROMPT.contains("`adj skill adj-hub`"));
+        assert!(HUB_RESUME_PROMPT.contains("compacted"));
+        assert!(HUB_RESUME_PROMPT.contains("adjutant_pending"));
     }
 
     #[test]

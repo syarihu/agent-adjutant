@@ -251,3 +251,79 @@ fn every_flag_in_the_parent_hub_forward_command_exists() {
         );
     }
 }
+
+#[test]
+fn skill_section_cli_and_mcp() {
+    let fixture = Fixture::new(QUIET);
+    let core = fixture.ok(&["skill", "adj-worker"]);
+    assert!(core.contains("## Index of triggers"));
+    assert!(!core.contains("## 5. Open a PR"));
+
+    let pr = fixture.ok(&["skill", "adj-worker", "--section", "pr"]);
+    assert!(pr.contains("## 5. Open a PR"));
+    assert!(!pr.contains("## 1. Plan"));
+
+    let both = fixture.ok(&["skill", "adj-worker", "--section", "pr,done"]);
+    assert!(both.contains("## 5. Open a PR"));
+    assert!(both.contains("## 9. Done: ask for cleanup"));
+    let pr_idx = both.find("## 5. Open a PR").unwrap();
+    let done_idx = both.find("## 9. Done: ask for cleanup").unwrap();
+    assert!(pr_idx < done_idx);
+
+    let all = fixture.ok(&["skill", "adj-worker", "--section", "all"]);
+    assert!(all.contains("## Index of triggers"));
+    assert!(all.contains("## 5. Open a PR"));
+    assert!(all.contains("## 9. Done: ask for cleanup"));
+
+    let err = fixture
+        .command(["skill", "adj-worker", "--section", "nope"])
+        .output()
+        .unwrap();
+    assert!(!err.status.success());
+    let stderr = String::from_utf8_lossy(&err.stderr);
+    assert!(stderr.contains("no such section of adj-worker: nope"));
+    assert!(stderr.contains("core / all / plan / tools / implement"));
+
+    let replies = mcp(
+        &fixture,
+        &[
+            request(
+                1,
+                "tools/call",
+                serde_json::json!({
+                    "name": "adjutant_skill",
+                    "arguments": {
+                        "name": "adj-worker",
+                        "section": "pr",
+                    }
+                }),
+            ),
+            request(
+                2,
+                "prompts/get",
+                serde_json::json!({
+                    "name": "adj-worker",
+                    "arguments": {
+                        "section": "pr",
+                    }
+                }),
+            ),
+        ],
+    );
+    assert_eq!(replies.len(), 2, "{replies:#?}");
+
+    let tool_call_res: serde_json::Value =
+        serde_json::from_str(replies[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let tool_text = tool_call_res["content"].as_str().unwrap();
+    assert!(tool_text.contains("## 5. Open a PR"));
+    assert!(!tool_text.contains("## 1. Plan"));
+    let sections = tool_call_res["sections"].as_array().unwrap();
+    assert!(sections.contains(&serde_json::json!("pr")));
+
+    let prompt_get_res = &replies[1]["result"];
+    let prompt_text = prompt_get_res["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(prompt_text.contains("## 5. Open a PR"));
+    assert!(!prompt_text.contains("## 1. Plan"));
+}

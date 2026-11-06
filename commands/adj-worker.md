@@ -49,16 +49,15 @@ what to tell them, not the words to use.
   yourself, and **give that report to the user at this tab**. The hub only hands work out; results
   sent to it have nowhere to go (and the same report shows up in two places). You send the hub
   only three things on your own: a bug **outside this task**, through the `adj-report` procedure
-  (§7), a request to clean up (§9), and an investigation result the person answered `task` on,
-  which goes through `adj-report` too (§8). **Answering the hub with `kind: answer` when it asks with
-  `[question {id}]` is a different matter** and is fine to do (§7; the one who asked is waiting, and
+  (§outside-bug), a request to clean up (§done), and an investigation result the person answered `task` on,
+  which goes through `adj-report` too (§investigation). **Answering the hub with `kind: answer` when it asks with
+  `[question {id}]` is a different matter** and is fine to do (§outside-bug; the one who asked is waiting, and
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
-  holds the results, and removal goes through the hub's cleanup alone (§9 says how to ask).
+  holds the results, and removal goes through the hub's cleanup alone (§done says how to ask).
 - The task, the parent task, the base branch, Done when, Stop at, the Language and the `verify`
   commands are in `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all`) is one
-  of the rules that decides whether the diff and the verification wait on a person ("Appendix —
-  Wait or record"). A brief without that line is read as `plan`.
+  of the rules that decides whether the diff and the verification wait on a person (§wait-or-record). A brief without that line is read as `plan`.
 - **Do not miss what the hub sends you.** Messages from the hub are read with `adjutant_outbox`
   (they pile up in this worktree's `.claude/adjutant-outbox.md`, one `##` heading each). Direct
   messages between agents are not used because only some coding agents have them; a file stays
@@ -77,7 +76,7 @@ what to tell them, not the words to use.
   running or waiting, so there the wake line should not land in an answer. Keep the guard anyway.
   When you have dealt with them, clear them with `adjutant_outbox` `action: clear` (the file is
   append-only, so anything not cleared is read again every time). If the first line is
-  `[question {id}]`, answer it (§7).
+  `[question {id}]`, answer it (§outside-bug).
 - **A message headed `[linked {id}]` in the outbox (you are woken for it) changes who you report for.** From then on `{id}`
   is your Task record (the brief may say `-`, if you were started with no task) and the hub it names is
   your hub. Read this procedure again from the section that matches where the work stands, and set
@@ -95,6 +94,38 @@ what to tell them, not the words to use.
   `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
   output. The schema is the distributed `config.example.json`.
 
+## Appendix — Which agent does what
+
+| Role | Who | Why there |
+| --- | --- | --- |
+| Research | A research agent (or the built-in `Explore` / `general-purpose`) | Dozens of files of exploration stay out of your context. Read-only |
+| Implementation plan | The built-in `Plan` | Read-only. A person approves the plan, so it has to come back to this session |
+| Implementation | **You** | You are already where the work belongs. Sub-agents only for mechanical bulk replacements and investigations whose tool output you do not want in your context |
+| Self-review | A review agent (or `general-purpose`) / codex | Only an agent that does not know the implementation's reasoning avoids endorsing it. No `fork` |
+| Handling review | A triage agent (or `general-purpose`) → you | Collecting and classifying is routine; deciding what to address needs a person |
+| Talking to the user, reporting results | **This session** | Sub-agents cannot ask questions. Reports go to the user at this tab ("Where you stand") |
+| Cleaning up the worktree | The hub (asked in §done) | You cannot remove the worktree you stand in |
+
+## Index of triggers
+
+Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` with `section`), several at once as `--section a,b`. Fetch it when its trigger comes, not from memory of an earlier read.
+
+- read the brief and the task, `adj phase --set plan` → §plan (launching a research or Plan agent → §tools)
+- read a brief whose Done when is investigation only → §investigation
+- the plan is approved, `adj phase --set implement` → §implement
+- `adj phase --set self-review` → §self-review and §review-loop
+- about to open a gate or a record (`adj gate open`) → §gate; attaching an HTML `report` → §gate-html
+- woken with the wake line, or an answer in `adjutant_outbox` with a `## gate` line → §gate-answer
+- about to decide whether a diff or verify gate waits (`stoppedBy`) → §wait-or-record
+- `adj phase --set verify` → §verify
+- about to open a PR (`adj phase --set pr`) → §pr
+- `adj phase --set pr-bots` / `review`, or a review comment arrives on the PR → §review-comments
+- found a bug outside the task, or about to hand over for verification (the stock-take) → §outside-bug
+- outbox first line `[question {id}]` or `[ack]` after a report → §outside-bug
+- about to send `kind: done` / asked whether to clean up → §done
+- outbox `[linked {id}]` → this index again: the section matching where the work stands
+
+<!-- section: plan -->
 ## 1. Plan
 
 `adj phase --set plan`
@@ -124,18 +155,18 @@ what to tell them, not the words to use.
    The hub does no investigation, so all that is handed over is what the brief says. Read from
    there yourself.
 
-   **If the brief's Done when is "investigation only", move to §8 here.** Steps 2–3 below are for an
+   **If the brief's Done when is "investigation only", move to §investigation here.** Steps 2–3 below are for an
    implementation task and do not apply to a request that ends in a report. Some requests have no
    URL in Task (it reads `-`); then do not fetch a ticket, and read the request text in the brief as
    the thing to work on.
    **If the brief's Handover note says the plan was already approved and names its file** (a task
    first planned for Jules and switched to a worker), read that file as the plan: do not plan again
-   and do not open another plan gate — skip steps 2 and 3 and go on to §2. It was approved on the
+   and do not open another plan gate — skip steps 2 and 3 and go on to §implement. It was approved on the
    board as it is written.
 2. Read the code and make an ordered implementation plan.
 3. Show the plan and get it approved before implementing. If asked to change it, change it and
    confirm again.
-   **Show it as `kind: "plan"` following "Appendix — Show a person and wait (gate)".**
+   **Show it as `kind: "plan"` following §gate.**
    **The approval is taken by this session**; sub-agents cannot talk to the user.
    **The plan always waits, whatever Stop at says.** Write "what is wrong now" in `problem` and
    "what things look like when this is done" in `goal`, one to three sentences each, from the
@@ -147,6 +178,7 @@ what to tell them, not the words to use.
    belongs with the plan, such as a fix), and in `decided` only what is already settled, not the
    steps. `focus` is the one question to answer before you implement.
 
+<!-- section: tools -->
 ### Tools you may use
 
 - **A research agent (or the built-in `Explore` / `general-purpose`)** — Check the description of
@@ -162,8 +194,7 @@ what to tell them, not the words to use.
   comes back:
   1. Show `## Requirements` and `## Acceptance criteria` to the user in a few lines.
   2. If `## Open questions` is not empty, **ask a person here**. The agent cannot ask. Do not carry
-     them into the plan unresolved. Ask as `kind: "question"` following "Appendix — Show a person and wait
-     (gate)": put **only what needs deciding** in `focus` (required: a gate that waits is refused
+     them into the plan unresolved. Ask as `kind: "question"` following §gate: put **only what needs deciding** in `focus` (required: a gate that waits is refused
      without it), and list the options in `choices` if there are any. **This is the question asked most often.** Buried in a tab, it stalls for hours
      while the board shows the task as in progress.
   3. Save `## Knowledge to Save`:
@@ -176,6 +207,7 @@ what to tell them, not the words to use.
 
 Whichever you use, **the approval is taken by this session**. Agents cannot talk to the user.
 
+<!-- section: implement -->
 ## 2. Implement
 
 `adj phase --set implement`
@@ -197,11 +229,12 @@ a summary and the `verify` output as it is).
 - **Keep the agent id.** Every correction goes back **to the same id**. Starting a new agent loses
   the history of what it was asked to fix.
 
+<!-- section: self-review -->
 ## 3. Self-review
 
 `adj phase --set self-review`
 
-Run **"Appendix — The self-review loop"** below until it converges. Report a summary of each round
+Run §review-loop until it converges. Report a summary of each round
 before moving on.
 
 There are two reasons the reviewer is a separate agent, and without both the point is lost:
@@ -217,37 +250,35 @@ the procedure in `skills.commit` in the config if there is one (if not, as Conve
 without a prefix; match the language of the message to the repository's recent commits).
 
 **Once committed, put the diff on the board as `kind: "diff"`.** Whether it waits on a person or is
-kept as a record and you carry on is decided by the rules in "Appendix — Wait or record". **Always
+kept as a record and you carry on is decided by the rules in §wait-or-record. **Always
 open one or the other** — carry on without opening a record and nothing says what was reviewed.
 Either way, put the number of rounds, the `verify` result and the lines changed in `facts`,
 `git diff {base ref}...HEAD` in `diff`, the breakdown per round in `reviewRounds`, and the findings
-and what became of them in `findings` (how to write them is in "Appendix — Show a person and wait
-(gate)").
+and what became of them in `findings` (how to write them is in §gate).
 
 - **When it waits**, put every rule that applied in `stoppedBy`, and write **the two or three points
-  that needed judgement** in `focus`. Do not retell the diff (it is attached). Follow
-  "Appendix — Show a person and wait (gate)".
-- **When it is a record**, open it with `"wait": false` and go straight on to §4. Follow
-  "Appendix — Show a person and wait (gate)".
+  that needed judgement** in `focus`. Do not retell the diff (it is attached). Follow §gate.
+- **When it is a record**, open it with `"wait": false` and go straight on to §verify. Follow §gate.
 
+<!-- section: verify -->
 ## 4. Hand over for verification
 
 `adj phase --set verify`
 
-**Before handing over, take the stock in §7 once.** Anything unrelated you passed on the way is
+**Before handing over, take the stock in §outside-bug once.** Anything unrelated you passed on the way is
 reported here.
 
-Put the verification on the board as `kind: "verify"`. As in §3, whether it waits on a person or is
-kept as a record is decided by the rules in "Appendix — Wait or record", and **one or the other is
+Put the verification on the board as `kind: "verify"`. As in §self-review, whether it waits on a person or is
+kept as a record is decided by the rules in §wait-or-record, and **one or the other is
 always opened**.
 
 - Put each `verify` command in `commands`, with its result, how long it took and its output (the
-  tail if long). The result of the run after §3 converged can be used as it is. If you touched the
+  tail if long). The result of the run after §self-review converged can be used as it is. If you touched the
   code after that, run it again. If something fails, fix it and run again; leave what you could not
   fix as `fail`. For what passed after a fix, put in `attempts` how many runs it took (leave it out
   if it passed first time). The board marks it as "passed on the 2nd run".
-  **If you change code here, go back to §3** — redo the self-review, the commit, and the diff gate
-  or record, then start §4 again. Otherwise the diff that was reviewed and the diff you hand over
+  **If you change code here, go back to §self-review** — redo the self-review, the commit, and the diff gate
+  or record, then start §verify again. Otherwise the diff that was reviewed and the diff you hand over
   differ.
 - Put in `manual` **what only a person can check** (a change on screen, operating a real device, an
   exchange with an external service and the like), one per line. Leave out what a command checked.
@@ -259,15 +290,15 @@ always opened**.
 **When it waits**, put every rule that applied in `stoppedBy`, and list **what to look at** in
 `focus`. This gate alone has a long piece of work before the decision. The board shows `IDE で開く`
 prominently, and the person presses OK / NG after coming back. So do not leave out `run` — if a
-person gets stuck there, that one card sits on the board for hours. Follow
-"Appendix — Show a person and wait (gate)". (To open it in the editor, `adj ide --worktree .`).
+person gets stuck there, that one card sits on the board for hours. Follow §gate. (To open it in the editor, `adj ide --worktree .`).
 
-**When it is a record**, open it with `"wait": false` and go straight on (§5 if Done when is "up to
+**When it is a record**, open it with `"wait": false` and go straight on (§pr if Done when is "up to
 a PR", or the final report here if it is "up to handing over for verification").
 
 **Afterwards**: once verification is done and this worktree is no longer needed, ask for cleanup
-with §9.
+with §done.
 
+<!-- section: pr -->
 ## 5. Open a PR (only when asked)
 
 `adj phase --set pr`
@@ -298,7 +329,7 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    external skill that promises nothing about how it decides the base — if it quietly targets the
    default branch, this is the only way an auto-mode worker notices. **If it cannot be fixed, stop
    here and tell the user** (do not go on to step 5). Ask for a review with the wrong base and the
-   bot reads a huge wrong diff; fixing the base afterwards does not re-run the review, so §6 ends
+   bot reads a huge wrong diff; fixing the base afterwards does not re-run the review, so §review-comments ends
    up triaging that wrong review.
 5. **Move the board's card to "in review".** If the brief's Task record line is not `-`:
    ```bash
@@ -308,7 +339,7 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    cannot tell whether it is waiting for review or still being worked on.
 6. **Whether to ask Copilot for a review is decided by the brief's "Copilot review" line.** The hub
    writes it from the config's `copilotReview`:
-   - `ask` — open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
+   - `ask` — open a `kind: "question"` gate following §gate:
      `title: "Request a review from Copilot?"`, `focus: "Should Copilot be asked to review this PR?"`,
      `facts`: what you read of the PR (lines changed, files, the state of CI),
      `choices`: `[{"id": "request", "label": "Request it", "recommended": true}, {"id": "skip", "label": "Do not request it"}]`,
@@ -327,7 +358,7 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    'reviewers[]=Copilot'`
 8. Print the PR's URL. If a bot is going to review it (Copilot was requested, or `reviewBots`
    names a bot the repository runs by itself — Copilot listed there counts only when it was
-   requested), run `adj phase --set pr-bots` and go straight on to §6's wait for it: with the PR
+   requested), run `adj phase --set pr-bots` and go straight on to the wait for it in §review-comments: with the PR
    recorded, a card in `pr` waits on a person, and until review bots have had their say there is
    nothing for a person to do. If no bot is going to review it, the PR is
    people's to review now: `adj phase --set pr`. **If you stop here instead of waiting, set
@@ -338,9 +369,10 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    `inReviewOptionId`** — on a board that updates Status from the PR automatically, moving it by
    hand does harm, and leaving the key out is how that is said.
 
-**Afterwards**: once review (§6) is done too and this worktree is no longer needed, ask for cleanup
-with §9.
+**Afterwards**: once review (§review-comments) is done too and this worktree is no longer needed, ask for cleanup
+with §done.
 
+<!-- section: review-comments -->
 ## 6. Handle review comments
 
 `adj phase --set review` — except while waiting for a bot's review below, which stays `pr-bots`.
@@ -350,7 +382,7 @@ more reviewer; the only difference is how replies are handled (step 6).
 
 ### If a bot is going to review, wait for it
 
-If a bot is going to review the PR (as in §5 step 8: you asked Copilot for a review, or
+If a bot is going to review the PR (as in step 8 of §pr: you asked Copilot for a review, or
 `reviewBots` names a bot the repository runs by itself), it takes a few minutes, so poll rather
 than have the user come back later:
 
@@ -380,7 +412,7 @@ review is in (or you gave up) and you start working through the comments.
    them against the local code." The target is `owner/repo`, the PR number and the working
    directory `.`. Have it fetch every comment, check each against the current code, fold
    duplicates together, and return them classified as unresolved / fixed / declined / outdated.
-3. Show the unresolved list and ask which to address following "Appendix — Show a person and wait (gate)":
+3. Show the unresolved list and ask which to address following §gate:
    open a `kind: "question"` gate (`title: "Review findings to address"`,
    `focus: "Which unresolved review comments should be addressed?"`,
    `facts`: how many are unresolved must / want / suspected false positives, and which bots wrote
@@ -411,6 +443,7 @@ review is in (or you gave up) and you start working through the comments.
    once your tab is closed. Left behind, a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
    bots, set `pr`.
 
+<!-- section: outside-bug -->
 ## 7. When you find a bug outside the task
 
 If you run into a bug unrelated to the current task, **do not fix it**. Hand it to the hub with the
@@ -421,7 +454,7 @@ deciding whether to start are the hub's.
 **When to remember this is fixed. It is not "the moment you notice".** Measured in practice, the
 "do not fix it" half holds, but the "hand it over" half never fires on its own — the more focused on
 the task, the more a bug passed on the way ends as "not my job" and disappears unreported. So **take
-stock once, right before handing over (§4)**:
+stock once, right before handing over (§verify)**:
 
 > Among the files read for this task, was there one broken in a way **unrelated to this task**?
 
@@ -456,30 +489,31 @@ line) and what it answers).
 the hub looks there on startup and right before going back to waiting. No route loses it, so there
 is no need to check who is there before sending.
 
+<!-- section: investigation -->
 ## 8. When asked for an investigation only
 
 `adj phase --set report`
 
 This applies when the brief's Done when is "investigation only (report and stop)". The steps of an
-implementation task (§2 implement / §3 self-review / §5 PR) are **skipped**. There is nothing to
+implementation task (§implement / §self-review / §pr) are **skipped**. There is nothing to
 fix, so there is no diff to review and no PR to open.
 
-1. Up to step 1 of §1 (read the task) is the same. If Task has no URL, the request text in the brief
+1. Up to step 1 of §plan (read the task) is the same. If Task has no URL, the request text in the brief
    is what to work on.
-2. Investigate. The tools are the same as §1's "Tools you may use" (a research agent; keep dozens
+2. Investigate. The tools are the same as §tools (a research agent; keep dozens
    of files of exploration out of your context). **Do not change the code** — even if you find
    something you could fix, do not. Fixing it is for the user to decide after reading the report.
 3. **Deliver the result.** Do not send it to the hub ("Where you stand"), unless the person answers
    `task` (then through `adj-report`, as below). Open neither an issue nor a PR. Whether to file one is the user's call. **These three moves come in this order**:
 
-   1. **Run `adj gate open`** (`kind: "result"` in "Appendix — Show a person and wait (gate)"). Put
+   1. **Run `adj gate open`** (`kind: "result"` in §gate). Put
       the report in `sections`, each under a heading: for a problem, 結論 · 原因 · 対応策; for an
       analysis, 結論 · 内訳 · 根拠. What you are not sure of goes in `unsure`, not in a section
       (do not write a section headed 懸念点, 迷っていること or 分からなかったこと). `body` is only for
       attaching a long report as it is. `focus` is the question the person answers, for example
       "Does this answer what you wanted to know?".
       **Run this before writing the report in the tab.** Write it first and it feels finished the
-      moment it is written, and you move on to §9 without opening the gate.
+      moment it is written, and you move on to §done without opening the gate.
    2. Look at the `server` that comes back. If `up`, say in one line that it is on the board and
       **end the turn**. If `down`, there is no board, so close the gate with `adjutant_gate_close`
       (or `adj gate close`) and write the report in this tab as usual.
@@ -498,11 +532,12 @@ fix, so there is no diff to review and no PR to open.
    **This is something to be read, not approved**, so the only decisions are `ack`, `ask` and `task`
    (and `choice`, when the result offered `choices`).
 4. If there is knowledge worth saving in `lk` (reusable understanding of the structure, where an
-   existing implementation lives), save it the same way as `## Knowledge to Save` in §1. Whether it
+   existing implementation lives), save it the same way as `## Knowledge to Save` in §plan. Whether it
    is kept here is what an investigation is worth.
-5. If you saw a bug **unrelated to this task** on the way, §7. Do not mix it into the report.
-6. When done, ask for cleanup with §9.
+5. If you saw a bug **unrelated to this task** on the way, §outside-bug. Do not mix it into the report.
+6. When done, ask for cleanup with §done.
 
+<!-- section: done -->
 ## 9. Done: ask for cleanup
 
 Only the hub can remove a worktree (you cannot remove the ground you stand on). **This is how you
@@ -514,7 +549,7 @@ ask the hub.**
   `git log --branches --not --remotes` (unpushed commits), plus where the results live (a PR, or a
   report only). **If anything is uncommitted or unpushed, deal with it first. If you cannot, do not
   ask.**
-- **Do not send it on your own judgement.** Ask the user following "Appendix — Show a person and wait (gate)":
+- **Do not send it on your own judgement.** Ask the user following §gate:
   open a `kind: "question"` gate (`title: "Work done: clean up worktree?"`,
   `focus: "The work is done. Ask the hub to remove this worktree, or keep it for now?"`,
   `facts`: what you just checked, such as "uncommitted 0", "unpushed 0" and "PR #N merged" or
@@ -545,8 +580,7 @@ ask the hub.**
 - If the tab is not closed and the hub's `adjutant_tell` wakes you instead, something tripped its
   safety checks and the worktree was kept. Fix what it says and send again from the top.
 
----
-
+<!-- section: gate -->
 ## Appendix — Show a person and wait (gate)
 
 **A gate is not "a question" but "something presented + handing the ball over".** Put what you
@@ -595,22 +629,6 @@ JSON
 | `quick` | `true` for a fixed confirmation answered with one press. It needs `choices`, and carries no `body`, `diff`, `run`, `steps`, `sections`, `findings`, `commands`, `manual` or `report` |
 | `report` | A self-contained HTML file, relative to the worktree (or absolute): the detail behind the conclusion in `sections`, opened from the card with 「レポートを開く」. It is **copied when the gate opens**, so it outlives the worktree. Up to 5 MiB, as UTF8 text. One per gate; not on a `quick` gate |
 
-### Attaching an HTML report
-
-Use `report` when the detail reads badly as markdown: tables, charts, a long analysis. The gate's
-`sections` still carry the conclusion, because that is what is read first; the report is the detail
-behind 「レポートを開く」.
-
-Write it as one `.html` file in the worktree (for example under `.claude/`) that is self-contained:
-inline `<style>` and `<script>`, images and fonts as `data:` URLs, and inline SVG for charts. Start it
-with `<!doctype html>`, with nothing before it (not even a comment), so it is drawn in standards mode.
-Anything loaded from elsewhere is blocked and simply does not appear. The board shows it in a
-sandbox: its scripts run with no network and no access to the board.
-
-```json
-{ "kind": "result", "title": "...", "focus": "...", "sections": [ ... ], "report": ".claude/report.html" }
-```
-
 **`focus` is required on every gate that waits; `adj gate open` refuses one without it.** The question
 card (in the TODO, and over the terminal in 「いまの仕事」) shows it as the question, so a gate with no
 `focus` would reach the person with nothing asked. A record (`"wait": false`) needs none. Do not put a 懸念点, 迷っていること or
@@ -626,7 +644,7 @@ card (in the TODO, and over the terminal in 「いまの仕事」) shows it as t
   as one of the choices** (for example `{"id": "drop", "label": "C. 直さずに終わる"}`).
 - Extra fields per `kind`: `diff` (the diff as a string) / `run` (how to run it) / `body` (a long
   report kept as it is; prefer `sections`).
-- `plan` has `problem`, `goal` and `steps` (step 3 of §1).
+- `plan` has `problem`, `goal` and `steps` (step 3 of §plan).
 - `result` has `sections`. Its default headings are 結論 · 原因 · 対応策 for a problem and
   結論 · 内訳 · 根拠 for an analysis.
 - **Do not skimp on `title` and `focus`.** On the board they are all that gets read.
@@ -674,7 +692,7 @@ JSON
 
 `diff` and `verify` carry structured fields apart from the text slots. The board builds its tables
 from them. To keep it as a record, `"wait": false`; to wait, put the rules that stopped it in
-`stoppedBy` (which one is decided by "Appendix — Wait or record").
+`stoppedBy` (which one is decided by §wait-or-record).
 
 ```bash
 adj gate open --json <<'JSON'
@@ -745,6 +763,24 @@ JSON
   - **`up` without `wakeLine`** (terminal waking disabled) — say in one line that it is on the board and waiting for a decision, and **end the turn**. Do not poll. Do not enter `AskUserQuestion` (because answering on the board cannot wake the tab).
   - **`down`** — the dashboard is not running. **Nobody will see it on the board.** Close the gate with `adjutant_gate_close` (or `adj gate close --id {gate id}`) so it does not linger, and ask with `AskUserQuestion` in this tab as usual. Proceed with the terminal answer.
 
+<!-- section: gate-html -->
+### Attaching an HTML report
+
+Use `report` when the detail reads badly as markdown: tables, charts, a long analysis. The gate's
+`sections` still carry the conclusion, because that is what is read first; the report is the detail
+behind 「レポートを開く」.
+
+Write it as one `.html` file in the worktree (for example under `.claude/`) that is self-contained:
+inline `<style>` and `<script>`, images and fonts as `data:` URLs, and inline SVG for charts. Start it
+with `<!doctype html>`, with nothing before it (not even a comment), so it is drawn in standards mode.
+Anything loaded from elsewhere is blocked and simply does not appear. The board shows it in a
+sandbox: its scripts run with no network and no access to the board.
+
+```json
+{ "kind": "result", "title": "...", "focus": "...", "sections": [ ... ], "report": ".claude/report.html" }
+```
+
+<!-- section: gate-answer -->
 ### When woken
 
 **Start by reading `adj outbox`.** It is the only place answers arrive, and a decision comes in
@@ -764,16 +800,16 @@ this shape:
 - `changes` / `ask`: fix it as the comment says, and **if it is the same point, add one to
   `rounds`** and open it again. The board looks at that number and suggests to the person that
   talking in the tab would be faster.
-- `task` (result): hand it over with `adj-report`, as §8 says.
-- `choice` whose option drops the work means stop: do not implement, report, and go to §9. A `reject`
+- `task` (result): hand it over with `adj-report`, as §investigation says.
+- `choice` whose option drops the work means stop: do not implement, report, and go to §done. A `reject`
   (from an older board, or `adj gate answer`) means the same.
 - `choice`: implement the chosen option. **Do not reopen the question by bringing up the merits of
   the option not chosen.**
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
   moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
-  through §3 again (opening a new gate or record). The record that was sent back stays as it is.
+  through §self-review again (opening a new gate or record). The record that was sent back stays as it is.
 - A `changes` that carries a `## From       AI 下読み …` line is **the person's instruction, chosen from a second reader's notes**: a separate, read-only reader read your PR, and the person kept the points that follow
-  (`(AI)` marks a point the reader wrote; the rest the person wrote) and sent them to you. Fix them as you would a record that was sent back, and put the fixed diff through §3 again.
+  (`(AI)` marks a point the reader wrote; the rest the person wrote) and sent them to you. Fix them as you would a record that was sent back, and put the fixed diff through §self-review again.
   The line numbers are of the sha named on that line: if you have pushed since, find the place again before editing. If an `(AI)` point looks wrong, do not skip it silently: say so in `unsure` of the next gate you open.
 - **Do not close a gate yourself when answered on the board.** Answering on the board archives it automatically. Close it with `adjutant_gate_close` (or `adj gate close --id {gate id}`) only when the person answered in the terminal tab instead (`terminal: true`), or when `server` was `down` (a plain close).
 
@@ -784,9 +820,10 @@ this shape:
 - **Do not wait on `down`** (as above).
 - **Do not pack two decisions into one gate.** People go through them one at a time from the top.
 
+<!-- section: wait-or-record -->
 ## Appendix — Wait or record (diff and verify)
 
-`plan` **always waits**, whatever Stop at says. `diff` (§3) and `verify` (§4) wait if even one of
+`plan` **always waits**, whatever Stop at says. `diff` (§self-review) and `verify` (§verify) wait if even one of
 the rules below applies, and are kept as a `"wait": false` record and carried on past if none
 does. **Either way, one of a gate or a record is always opened.** Carrying on without opening one
 is not allowed.
@@ -809,25 +846,12 @@ is not allowed.
 - **Do not stop for a reason that is not a rule.** "Just to be safe" is not a rule. Whether a person
   wants to look was decided by whoever handed the task over, in Stop at. Conversely, do not make a
   record when a rule applies.
-- A record can still be read on the board and sent back with `changes` ("When woken").
+- A record can still be read on the board and sent back with `changes` (§gate-answer).
 
-## Appendix — Which agent does what
-
-| Role | Who | Why there |
-| --- | --- | --- |
-| Research | A research agent (or the built-in `Explore` / `general-purpose`) | Dozens of files of exploration stay out of your context. Read-only |
-| Implementation plan | The built-in `Plan` | Read-only. A person approves the plan, so it has to come back to this session |
-| Implementation | **You** | You are already where the work belongs. Sub-agents only for mechanical bulk replacements and investigations whose tool output you do not want in your context |
-| Self-review | A review agent (or `general-purpose`) / codex | Only an agent that does not know the implementation's reasoning avoids endorsing it. No `fork` |
-| Handling review | A triage agent (or `general-purpose`) → you | Collecting and classifying is routine; deciding what to address needs a person |
-| Talking to the user, reporting results | **This session** | Sub-agents cannot ask questions. Reports go to the user at this tab ("Where you stand") |
-| Cleaning up the worktree | The hub (asked in §9) | You cannot remove the worktree you stand in |
-
----
-
+<!-- section: review-loop -->
 ## Appendix — The self-review loop (run until it converges)
 
-Called from §3. One round = review → triage → sweep → fix. Run it **until it converges**. Do not stop
+Called from §self-review. One round = review → triage → sweep → fix. Run it **until it converges**. Do not stop
 after one re-review.
 
 ### Severity vocabulary (shared by both engines)
@@ -864,7 +888,7 @@ reviewer who reads only the diff.
 Run round 1 first, show the results in order of severity (High → Medium → Low), then:
 
 - No valid must survived triage → already converged. Report and move on.
-- Otherwise open a `kind: "question"` gate following "Appendix — Show a person and wait (gate)":
+- Otherwise open a `kind: "question"` gate following §gate:
   `title: "Self-review: continue until convergence?"`,
   `focus: "Self-review round 1 found must-level issues. Should I continue reviewing and fixing until convergence?"`,
   `facts`: round 1's must and want counts and the engine, `"quick": true`,
@@ -874,8 +898,8 @@ Run round 1 first, show the results in order of severity (High → Medium → Lo
   - **Keep going (Recommended)** (choice: `continue`) → from then on, run to convergence **without asking each round**.
   - **Fix once** (choice: `once`) → fix once, re-review once, and stop.
   - **Do not fix** (choice: `skip`) → skip and move on.
-  - In either of the last two, if a valid must is left, stop the diff gate in §3 on `unsure`
-    ("Appendix — Wait or record").
+  - In either of the last two, if a valid must is left, stop the diff gate in §self-review on `unsure`
+    (§wait-or-record).
 
 ### One round
 
@@ -910,11 +934,11 @@ Stop when any one holds:
   to false positive / want / scope in triage. This is the goal (valid findings have run out and
   only wrong ones come back). "No findings" is merely the easy case.
 - **Round limit**: `selfReviewRounds` (default 5). Report "stopped after N rounds" and what remains.
-  If a valid must remains, stop the diff gate in §3 on `round-limit` and ask there whether to go on
+  If a valid must remains, stop the diff gate in §self-review on `round-limit` and ask there whether to go on
   (put the remaining must in `findings` as `open`).
 - **No progress**: a valid finding survived your own fix round untouched, or two findings started
   going back and forth (fixing A brings B back, and vice versa). Another round will not help. Write
-  the remaining must in `unsure`, and stop the diff gate in §3 on `unsure` to hand it to the user.
+  the remaining must in `unsure`, and stop the diff gate in §self-review on `unsure` to hand it to the user.
 
 ### Final report
 
