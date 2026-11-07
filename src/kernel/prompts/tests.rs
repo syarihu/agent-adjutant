@@ -4422,3 +4422,155 @@ real section text
         ["real-one"]
     );
 }
+
+/// A failed lookup in the dashboard collection must be recorded as `?` so that the hub can
+/// tell it apart from a lookup that found nothing.
+///
+/// Without this rule, a failed board item lookup or task source search is written as `"-"`,
+/// causing the hub to misread an in-progress or assigned task as not started without an item id,
+/// or to treat a failed PR or worktree listing as empty ("no open PRs", "no worktrees").
+#[test]
+fn a_failed_lookup_in_the_dashboard_collection_must_not_read_as_none() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let brief = section(
+        raw,
+        "## Appendix — Brief for the dashboard collection agent",
+    );
+    let brief_flowed = flow(&brief);
+    assert!(
+        brief_flowed.contains("A lookup that failed is `\"?\"`, never `\"-\"`"),
+        "the brief does not state that a failed lookup is `\"?\"`, never `\"-\"`: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("Lookups that failed:"),
+        "the brief does not instruct reporting `Lookups that failed:`: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("`nodes(ids:)`")
+            && brief_flowed.contains("\"status\": \"?\"")
+            && brief_flowed.contains("\"item\": \"?\""),
+        "the brief does not specify the nodes(ids:) rule: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("own open PR list")
+            && brief_flowed.contains("never \"no open PRs\"")
+            && brief_flowed.contains("worktree listing")
+            && brief_flowed.contains("never \"no worktrees\""),
+        "the brief does not specify the own PR and worktree listing rules: {brief}"
+    );
+    before(
+        &brief,
+        "Fill what is missing with `\"-\"`",
+        "A lookup that failed is `\"?\"`, never `\"-\"`",
+    );
+}
+
+/// The dashboard collect step must state the `?` rule so that a failed source is not
+/// mistaken for an empty task list.
+///
+/// Without this, a collector running the procedure directly or understanding the collection
+/// contracts might treat an API error as finding zero tasks, discarding open work.
+#[test]
+fn the_dashboard_collect_step_tells_a_failed_lookup_from_none() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let collect = step(raw, "### Step 2: Collect");
+    let collect_flowed = flow(&collect);
+    assert!(
+        collect_flowed.contains("a lookup that fails is `?`, not `-`"),
+        "the collect step does not state that a lookup that fails is `?`, not `-`: {collect}"
+    );
+    assert!(
+        collect_flowed.contains("an empty list from a call that succeeded is none"),
+        "the collect step does not distinguish an empty list from a failed lookup: {collect}"
+    );
+}
+
+/// The dashboard display step must show sections whose lookup failed as unreadable
+/// rather than empty.
+///
+/// Without this, failed lookups for worktrees or open PRs would be presented to the user
+/// as if there are none, and tasks with unknown statuses would be displayed as not started.
+#[test]
+fn the_dashboard_display_shows_a_failed_lookup_as_could_not_be_read() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let display = step(raw, "### Step 3: Display");
+    let display_flowed = flow(&display);
+    assert!(
+        display_flowed.contains(
+            "Show a section whose lookup failed as \"could not be read\" with the error, never as empty"
+        ),
+        "the display step does not show failed lookups as could not be read: {display}"
+    );
+    assert!(
+        display_flowed.contains("Lookups that failed"),
+        "the display step does not preserve the Lookups that failed line: {display}"
+    );
+}
+
+/// Tasks with unknown status or item id from failed lookups must not be offered as candidates,
+/// and directly named tasks must fail closed if fresh lookups fail.
+///
+/// Without this, offering a task whose board status failed to load could hand out a task
+/// that is already in progress, starting conflicting work.
+#[test]
+fn picking_a_task_never_offers_a_row_whose_lookup_failed() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let pick = step(raw, "### 1. Pick the task");
+    let pick_flowed = flow(&pick);
+    assert!(
+        pick_flowed.contains("not offered as a candidate"),
+        "the pick step does not exclude rows with unknown status or item: {pick}"
+    );
+    assert!(
+        pick_flowed.contains("say which lookup failed and stop"),
+        "the pick step does not fail closed when a direct lookup fails: {pick}"
+    );
+    // The same issue can sit on two boards: with one board's list failed, the row kept
+    // from the other may show it as not started while the failed board has it in progress.
+    assert!(
+        pick_flowed.contains(
+            "before §claim always fetch the chosen task directly, and stop if that fails"
+        ),
+        "a candidate is claimed while a source that may hold it failed: {pick}"
+    );
+    assert!(
+        pick_flowed.contains(
+            "Which lookups failed is read from the collection's \"Lookups that failed\" line"
+        ),
+        "the pick step does not say where it learns of a failed list: {pick}"
+    );
+    assert!(
+        pick_flowed.contains("Read its status on every board it is on")
+            && pick_flowed.contains("whether or not the item id is needed")
+            && pick_flowed.contains("and `[0]`, so that every board's item comes back")
+            && pick_flowed.contains("or a `nodes(ids:)` call for one board"),
+        "the direct fetch reads only the board the kept row came from: {pick}"
+    );
+    assert!(
+        pick_flowed.contains("When the hub fetches these itself, a lookup that fails is read as §dashboard-collect says"),
+        "a list the hub fetches itself has no failure rule: {pick}"
+    );
+}
+
+/// Worktree cleanup must not treat a failed merged PR check as not merged or removable.
+///
+/// Without this, if `gh pr list --state merged` fails with a network or auth error,
+/// the worktree could be misclassified or left in an ambiguous state instead of being reported.
+#[test]
+fn cleanup_does_not_read_a_failed_merged_lookup_as_not_merged() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let cleanup = step(raw, "### Step 1: Offer to clean up finished worktrees");
+    let cleanup_flowed = flow(&cleanup);
+    assert!(
+        cleanup_flowed.contains("that worktree is not removable: list it as \"could not check\""),
+        "the cleanup step does not show failed lookups as could not check: {cleanup}"
+    );
+    assert!(
+        cleanup_flowed.contains("If `git worktree list` fails too, offer nothing"),
+        "a failed worktree listing reads as nothing to clean up: {cleanup}"
+    );
+    assert!(
+        cleanup_flowed.contains("If proctor is installed but the call fails (a non-zero exit or an error), offer nothing"),
+        "a failed proctor call falls back to a listing that cannot see who is working there: {cleanup}"
+    );
+}
