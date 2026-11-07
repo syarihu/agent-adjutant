@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{board_context, text_param};
+use super::{board_context, string_key, text_param};
 use crate::gate::{DecideError, Decided, Gate, Offered};
 
 const DECISIONS: [&str; 9] = [
@@ -23,14 +23,6 @@ pub(super) fn definition() -> Value {
             "required": ["board", "id", "decision"],
         },
     })
-}
-
-/// A string key that is present must be a string: `choice: 1` is not "no choice".
-fn string_key(args: &Value, key: &str) -> Result<(), String> {
-    match &args[key] {
-        Value::Null | Value::String(_) => Ok(()),
-        _ => Err(format!("`{key}` must be a string")),
-    }
 }
 
 /// What the answer carried as its comment: the gate's, or the last the record was sent back with.

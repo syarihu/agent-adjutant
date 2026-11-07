@@ -95,7 +95,8 @@ While you are working a task, a bug you find OUTSIDE that task is not yours to f
 yours to file: an unrelated fix pollutes this task's diff, and a diff nobody can review is a
 diff nobody can revert. Hand it over instead — `adj skill adj-report` (or adjutant_skill,
 name=adj-report), follow it, go back to your task. Hub: `adj hub`. Worker: adj-worker.
-Procedures come as a core and sections: read the core, and fetch the section its index names before the step it covers (adj skill <name> --section <id>, or adjutant_skill section).";
+Procedures come as a core and sections: read the core, and fetch the section its index names before the step it covers (adj skill <name> --section <id>, or adjutant_skill section).
+After opening a PR from a worktree, before asking for a review: adj pr check-base --pr <n> (or adjutant_pr_check_base); if it fails, tell the user.";
 
 pub fn find(name: &str) -> Option<&'static PromptDef> {
     PROMPTS.iter().find(|p| p.name == name)

@@ -155,6 +155,7 @@ You can answer gates on the web board, in the worker's terminal (`adj gate close
 | `adj phase [--set …]` | View or update the worker's current progress phase |
 | `adj gate open\|list\|show\|answer\|close` | Manage structured human review gates |
 | `adj task add\|list\|show\|update\|refresh\|park\|unpark` | Manage task records and synchronize state with GitHub Issues/PRs |
+| `adj pr check-base --pr <n>` | Move a worker's PR to the brief's Base branch when its base differs; exits 1 with the reason when it cannot |
 | `adj agent-sessions [--json]` | Inspect active agent states, tools, and token context from the session ledger |
 | `adj send --subject … --body …` | Send a message to the repository hub's inbox |
 | `adj tell --worktree … --subject …` | Send a message to a specific worker's outbox |
@@ -166,7 +167,7 @@ You can answer gates on the web board, in the worker's terminal (`adj gate close
 When running inside an agent session (`adjutant mcp`), adjutant exposes tools and prompts:
 
 - **Prompts**: `adj-hub` (hub orchestration), `adj-worker` (task execution), `adj-report` (bug reporting to hub), `adj-review-hub`, `adj-reviewer`.
-- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_request`, `adjutant_gate_answer`.
+- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_request`, `adjutant_gate_answer`, `adjutant_pr_check_base`.
 
 ---
 

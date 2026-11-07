@@ -24,6 +24,7 @@ mod hook;
 mod hub;
 mod ide_title_notify;
 mod jules;
+mod pr;
 mod review;
 mod review_engine;
 mod run;

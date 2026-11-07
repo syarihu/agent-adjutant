@@ -383,6 +383,19 @@ pub fn render_session(brief: &SessionBrief) -> String {
     out
 }
 
+/// The value of the "Base branch" line of a rendered brief, trimmed (`-` when the hub had none).
+///
+/// Only a line of its own counts: the lines under a label are indented by `line`, so a
+/// handover note that quotes `- Base branch: x` cannot pass for the real one. `None` when the
+/// brief has no such line.
+pub fn parse_base_branch(brief: &str) -> Option<&str> {
+    let prefix = format!("- {}:", label::BASE_BRANCH);
+    brief
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix.as_str()))
+        .map(str::trim)
+}
+
 /// The tracker and the key of the task an issue URL names, from the config alone.
 ///
 /// A GitHub issue has no key of its own: the key is the repository's `issueKeys` entry and
@@ -711,5 +724,41 @@ mod tests {
         for bad in ["MY--12", "-1", "A-", "A-1x", "A", "A-1; id"] {
             assert!(!is_key(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn base_branch_round_trip() {
+        let mut brief = sample();
+        brief.base = "origin/release/1.2".to_string();
+        let rendered = render_task(&brief);
+        assert_eq!(parse_base_branch(&rendered), Some("origin/release/1.2"));
+
+        brief.base = "main".to_string();
+        let rendered = render_task(&brief);
+        assert_eq!(parse_base_branch(&rendered), Some("main"));
+
+        let session = SessionBrief {
+            branch: "feature".to_string(),
+            base: "origin/feat".to_string(),
+            language: "ja".to_string(),
+            instruction: "do it".to_string(),
+        };
+        let rendered_session = render_session(&session);
+        assert_eq!(parse_base_branch(&rendered_session), Some("origin/feat"));
+
+        brief.base = "-".to_string();
+        let rendered_dash = render_task(&brief);
+        assert_eq!(parse_base_branch(&rendered_dash), Some("-"));
+
+        brief.base = "".to_string();
+        let rendered_empty = render_task(&brief);
+        assert_eq!(parse_base_branch(&rendered_empty), Some("-"));
+
+        assert_eq!(parse_base_branch("no base branch here"), None);
+
+        // A note that quotes the line sits indented under its own label and is not read.
+        let quoted =
+            "- Handover note:\n  - Base branch: origin/elsewhere\n- Base branch: origin/main\n";
+        assert_eq!(parse_base_branch(quoted), Some("origin/main"));
     }
 }

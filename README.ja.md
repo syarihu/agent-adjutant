@@ -155,6 +155,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 | `adj phase [--set …]` | worker の現在の進捗フェーズの確認・更新 |
 | `adj gate open\|list\|show\|answer\|close` | 人間への判断待ち（gate）の作成・一覧・回答・クローズ |
 | `adj task add\|list\|show\|update\|refresh\|park\|unpark` | タスクレコードの管理、GitHub Issue / PR との状態同期 |
+| `adj pr check-base --pr <n>` | worker の PR の base が brief の Base branch と違うときに付け替える。できないときは理由を出して exit 1 |
 | `adj agent-sessions [--json]` | 各エージェントセッションの稼働状態、ツール実行、トークン使用量を一覧表示 |
 | `adj send --subject … --body …` | リポジトリ hub の受信箱へメッセージを送信 |
 | `adj tell --worktree … --subject …` | 特定 worker の outbox へメッセージを送信 |
@@ -166,7 +167,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 エージェント環境（`adjutant mcp`）内では、以下のプロンプトとツールが提供されます。
 
 - **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスク着手〜完了）、`adj-report`（作業中のバグ報告）、`adj-review-hub`、`adj-reviewer`。
-- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_request`、`adjutant_gate_answer`。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_request`、`adjutant_gate_answer`、`adjutant_pr_check_base`。
 
 ---
 

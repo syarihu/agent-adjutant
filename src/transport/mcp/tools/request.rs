@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{board_context, text_param};
+use super::{board_context, string_key, text_param};
 use crate::task::{Kind, NewTask, Status};
 
 pub(super) fn definition() -> Value {
@@ -19,13 +19,6 @@ pub(super) fn definition() -> Value {
             "required": ["repo", "board", "body"],
         },
     })
-}
-
-fn string_key(args: &Value, key: &str) -> Result<(), String> {
-    match &args[key] {
-        Value::Null | Value::String(_) => Ok(()),
-        _ => Err(format!("`{key}` must be a string")),
-    }
 }
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {

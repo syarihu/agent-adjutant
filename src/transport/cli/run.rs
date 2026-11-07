@@ -3,7 +3,8 @@
 use clap::Parser;
 
 use super::args::{
-    Cli, Commands, GateAction, JulesAction, ReviewAction, ServerAction, TaskAction, TmuxAction,
+    Cli, Commands, GateAction, JulesAction, PrAction, ReviewAction, ServerAction, TaskAction,
+    TmuxAction,
 };
 use super::outbox;
 use crate::transport::cli;
@@ -57,6 +58,7 @@ pub fn run() -> ! {
         Commands::InstallMcp(args) => crate::transport::mcp::install(&args.target).map(|_| 0),
         Commands::UninstallMcp(args) => crate::transport::mcp::uninstall(&args.target).map(|_| 0),
         Commands::Tmux { action } => run_tmux(action).map(|_| 0),
+        Commands::Pr { action } => run_pr(action).map(|_| 0),
     };
     match result {
         Ok(code) => std::process::exit(code),
@@ -126,5 +128,12 @@ fn run_tmux(action: &TmuxAction) -> Result<(), String> {
         TmuxAction::Focus(args) => super::tmux::focus(args),
         TmuxAction::Close(args) => super::tmux::close(args),
         TmuxAction::Spawn(args) => super::tmux::spawn(args),
+    }
+}
+
+/// The `adj pr` verbs.
+fn run_pr(action: &PrAction) -> Result<(), String> {
+    match action {
+        PrAction::CheckBase(args) => super::pr::check_base(args),
     }
 }
