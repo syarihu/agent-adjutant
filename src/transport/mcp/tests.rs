@@ -125,12 +125,15 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
         // addresses no hub. `adjutant_request` names its hub by `board` (a slug), and `repo` is
         // what the slug must agree with.
         // `adjutant_pr_check_base` acts on the PR of the worktree in `cwd`, which names no hub.
+        // `adjutant_collect` reads trackers for the repository of cwd; it addresses no hub's inbox,
+        // and a parent hub's identifier is passed as parent.
         if properties.get("repo").is_none()
             || [
                 "adjutant_work",
                 "adjutant_reviews",
                 "adjutant_request",
                 "adjutant_pr_check_base",
+                "adjutant_collect",
             ]
             .contains(&tool["name"].as_str().unwrap_or(""))
         {
@@ -1035,4 +1038,53 @@ fn tell_refuses_a_worktree_that_is_not_a_string() {
     let _sandbox = crate::testing::Sandbox::empty();
     let err = call_tool("adjutant_tell", &json!({ "worktree": 1 })).unwrap_err();
     assert!(err.contains("`worktree` must be a string"), "{err}");
+}
+
+#[test]
+fn collect_tool_advertised_and_checks_inputs() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let listed = call("tools/list", json!({}));
+    let collect_tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "adjutant_collect")
+        .expect("adjutant_collect is advertised");
+    let desc = collect_tool["description"].as_str().unwrap();
+    assert!(desc.contains("startup"), "{desc}");
+    assert!(desc.contains("instead of sending"), "{desc}");
+
+    for (key, val) in [
+        ("cwd", json!(1)),
+        ("repo", json!(["a/b"])),
+        ("parent", json!(1)),
+    ] {
+        let err = call_tool("adjutant_collect", &json!({ key: val })).unwrap_err();
+        assert!(
+            err.contains(&format!("`{key}` must be a string")),
+            "collect with {key}: {err}"
+        );
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["remote", "add", "origin", "git@github.com:acme/widget.git"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success(),
+            "git {args:?}"
+        );
+    }
+    let cwd = dir.path().to_string_lossy();
+    let err = call_tool("adjutant_collect", &json!({ "cwd": cwd })).unwrap_err();
+    assert!(
+        err.contains("no task sources"),
+        "expected 'no task sources', got: {err}"
+    );
 }

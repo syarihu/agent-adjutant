@@ -2806,13 +2806,17 @@ fn the_always_on_instructions_carry_the_rule_and_its_reason() {
 #[test]
 fn the_always_on_instructions_stay_short_enough_to_always_be_on() {
     assert!(
-        INSTRUCTIONS.lines().count() <= 7,
+        INSTRUCTIONS.lines().count() <= 8,
         "instructions are {} lines",
         INSTRUCTIONS.lines().count()
     );
     assert!(
         INSTRUCTIONS.contains("adjutant_pr_check_base"),
         "instructions do not name adjutant_pr_check_base: {INSTRUCTIONS}"
+    );
+    assert!(
+        INSTRUCTIONS.contains("adjutant_collect"),
+        "instructions do not name adjutant_collect: {INSTRUCTIONS}"
     );
 }
 

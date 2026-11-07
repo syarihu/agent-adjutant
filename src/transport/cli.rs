@@ -17,6 +17,7 @@ use crate::transport::wording::wake_note_sentence;
 mod agent_sessions;
 mod args;
 mod close;
+mod collect;
 mod config;
 mod delivery;
 mod gate;

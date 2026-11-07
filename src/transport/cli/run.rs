@@ -59,6 +59,7 @@ pub fn run() -> ! {
         Commands::UninstallMcp(args) => crate::transport::mcp::uninstall(&args.target).map(|_| 0),
         Commands::Tmux { action } => run_tmux(action).map(|_| 0),
         Commands::Pr { action } => run_pr(action).map(|_| 0),
+        Commands::Collect(args) => super::collect::run(args).map(|_| 0),
     };
     match result {
         Ok(code) => std::process::exit(code),
