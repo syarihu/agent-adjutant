@@ -27,6 +27,15 @@ pub(super) fn cwd_param(args: &Value) -> Option<PathBuf> {
         .map(crate::infra::paths::expand_home)
 }
 
+/// A string key that is present must be a string: `choice: 1` is not "no choice", and a
+/// `cwd: 1` must not fall back to the server's own directory.
+pub(super) fn string_key(args: &Value, key: &str) -> Result<(), String> {
+    match &args[key] {
+        Value::Null | Value::String(_) => Ok(()),
+        _ => Err(format!("`{key}` must be a string")),
+    }
+}
+
 /// A string argument, with blank the same as absent.
 pub(super) fn text_param<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args[key].as_str().map(str::trim).filter(|s| !s.is_empty())

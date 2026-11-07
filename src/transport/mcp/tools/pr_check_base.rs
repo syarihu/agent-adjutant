@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{cwd_param, cwd_property, repo_property, text_param};
+use super::{cwd_param, cwd_property, repo_property, string_key, text_param};
 use crate::task::check_pr_base;
 
 pub(super) fn definition() -> Value {
@@ -28,6 +28,9 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
         Some(_) => return Err("`pr` must be an integer".to_string()),
         None => return Err("pass `pr`: the pull request number".to_string()),
     };
+    for key in ["cwd", "repo"] {
+        string_key(args, key)?;
+    }
     let cwd = cwd_param(args);
     let repo = text_param(args, "repo");
     let result = check_pr_base(cwd.as_deref(), pr, repo)?;

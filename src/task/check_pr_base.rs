@@ -549,6 +549,37 @@ mod tests {
     }
 
     #[test]
+    fn without_a_repo_the_worktree_s_origin_names_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/acme/from-origin.git",
+            ][..],
+        ] {
+            let out = crate::infra::git::git(args, Some(dir)).unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        }
+        make_brief(dir, "main");
+        let gh = |args: &[&str], _deadline: Instant| -> Result<GhRun, String> {
+            assert_eq!(&args[3..5], ["-R", "acme/from-origin"], "{args:?}");
+            Ok(GhRun {
+                ok: true,
+                stdout: r#"{"headRefName": "syarihu/x", "baseRefName": "main", "url": "u"}"#
+                    .to_string(),
+                stderr: String::new(),
+            })
+        };
+        let result = check_pr_base_with(Some(dir), 12, None, &head, &gh).unwrap();
+        assert_eq!(result.repo, "acme/from-origin");
+        assert!(!result.changed);
+    }
+
+    #[test]
     fn a_bare_remote_names_no_branch() {
         let temp = tempfile::tempdir().unwrap();
         make_brief(temp.path(), "origin/");

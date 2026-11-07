@@ -916,3 +916,14 @@ fn pr_check_base_tool_errors_in_directory_with_no_brief() {
     .unwrap_err();
     assert!(err.contains("brief") && err.contains("not found"), "{err}");
 }
+
+#[test]
+fn pr_check_base_tool_refuses_a_cwd_or_repo_that_is_not_a_string() {
+    for args in [
+        json!({"pr": 1, "cwd": 1}),
+        json!({"pr": 1, "repo": ["a/b"]}),
+    ] {
+        let err = call_tool("adjutant_pr_check_base", &args).unwrap_err();
+        assert!(err.contains("must be a string"), "{args}: {err}");
+    }
+}
