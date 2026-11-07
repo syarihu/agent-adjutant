@@ -186,20 +186,25 @@ pub fn parts(prompt: &PromptDef) -> (&'static str, Vec<Section>) {
 
 /// Parse a markdown body into its core and sections, ignoring markers inside fenced code blocks.
 pub fn parts_from_body(body: &'static str) -> (&'static str, Vec<Section>) {
-    let mut fence_len = 0;
+    // The open fence's character and length: a ``` block is not closed by ~~~, nor the reverse.
+    let mut fence: Option<(char, usize)> = None;
     let mut markers: Vec<(&'static str, usize)> = Vec::new();
     let mut byte_offset = 0;
 
     for line in body.split_inclusive('\n') {
         let trimmed_start = line.trim_start();
-        if trimmed_start.starts_with("```") {
-            let count = trimmed_start.chars().take_while(|&c| c == '`').count();
-            if fence_len == 0 {
-                fence_len = count;
-            } else if count >= fence_len {
-                fence_len = 0;
+        let fence_char = trimmed_start
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '`' | '~'));
+        let count = fence_char.map_or(0, |c| trimmed_start.chars().take_while(|&d| d == c).count());
+        if let (Some(c), true) = (fence_char, count >= 3) {
+            match fence {
+                None => fence = Some((c, count)),
+                Some((open, len)) if open == c && count >= len => fence = None,
+                Some(_) => {}
             }
-        } else if fence_len == 0 {
+        } else if fence.is_none() {
             let stripped = line.trim_end_matches(['\r', '\n']);
             if let Some(id) = stripped
                 .strip_prefix("<!-- section: ")

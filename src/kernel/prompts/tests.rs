@@ -4403,3 +4403,22 @@ real section text
         "<!-- section: real-one -->\nreal section text\n"
     );
 }
+
+/// A `~~~` fence is a fence too, and a ``` line inside it does not close it.
+#[test]
+fn markers_inside_tilde_fences_are_not_section_starts() {
+    let sample = "\
+core start
+~~~
+```
+<!-- section: fenced-fake -->
+~~~
+<!-- section: real-one -->
+real section text
+";
+    let (_, sections) = parts_from_body(sample);
+    assert_eq!(
+        sections.iter().map(|s| s.id).collect::<Vec<_>>(),
+        ["real-one"]
+    );
+}

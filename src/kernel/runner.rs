@@ -126,6 +126,10 @@ pub const HUB_STARTUP_PROMPT: &str = "Fetch the core of the adj-hub procedure wi
 /// so it reads the core again before working its inbox.
 pub const HUB_RESUME_PROMPT: &str = "The session has been resumed. First read the core again (adjutant_skill name=adj-hub, or `adj skill adj-hub`) since the conversation may have been compacted, then check the inbox with adjutant_pending, sort out anything waiting as on startup, and then go back to waiting.";
 
+/// What a resumed code-review hub is told, in the shape of `HUB_RESUME_PROMPT`: it reads its
+/// own procedure again, not the repository hub's.
+pub const REVIEW_HUB_RESUME_PROMPT: &str = "The session has been resumed. First read the adj-review-hub procedure again (adjutant_skill name=adj-review-hub, or `adj skill adj-review-hub`) since the conversation may have been compacted, then check the inbox with adjutant_pending, sort out anything waiting as on startup, and then go back to waiting.";
+
 /// What a worker is told on startup, when the hub says nothing else.
 pub const WORKER_STARTUP_PROMPT: &str = "Read .claude/task-brief.md and start working as it says.";
 
@@ -861,6 +865,25 @@ mod tests {
         assert!(HUB_RESUME_PROMPT.contains("`adj skill adj-hub`"));
         assert!(HUB_RESUME_PROMPT.contains("compacted"));
         assert!(HUB_RESUME_PROMPT.contains("adjutant_pending"));
+        // The core comes first: a prompt that sends the hub to its inbox before it has read
+        // how to deal with what is there would pass the checks above.
+        let inbox = HUB_RESUME_PROMPT.find("adjutant_pending").unwrap();
+        assert!(
+            HUB_RESUME_PROMPT
+                .find("adjutant_skill name=adj-hub")
+                .unwrap()
+                < inbox
+        );
+        assert!(HUB_RESUME_PROMPT.find("`adj skill adj-hub`").unwrap() < inbox);
+    }
+
+    #[test]
+    fn the_review_hub_resumes_by_reading_its_own_procedure() {
+        assert!(REVIEW_HUB_RESUME_PROMPT.contains("adjutant_skill name=adj-review-hub"));
+        assert!(REVIEW_HUB_RESUME_PROMPT.contains("`adj skill adj-review-hub`"));
+        assert!(!REVIEW_HUB_RESUME_PROMPT.contains("name=adj-hub"));
+        let inbox = REVIEW_HUB_RESUME_PROMPT.find("adjutant_pending").unwrap();
+        assert!(REVIEW_HUB_RESUME_PROMPT.find("adj-review-hub").unwrap() < inbox);
     }
 
     #[test]

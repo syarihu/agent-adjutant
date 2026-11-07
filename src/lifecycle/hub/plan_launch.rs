@@ -120,9 +120,12 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
     let hooks = agent_hooks_for(&ctx.state, template.unwrap_or(default));
     let settings = hooks.path().map(|path| path.to_string_lossy());
     let settings = settings.as_deref();
-    let startup_prompt = match ctx.repo.is_review() {
-        true => runner::REVIEW_HUB_STARTUP_PROMPT,
-        false => runner::HUB_STARTUP_PROMPT,
+    let (startup_prompt, resume_prompt) = match ctx.repo.is_review() {
+        true => (
+            runner::REVIEW_HUB_STARTUP_PROMPT,
+            runner::REVIEW_HUB_RESUME_PROMPT,
+        ),
+        false => (runner::HUB_STARTUP_PROMPT, runner::HUB_RESUME_PROMPT),
     };
     let mut command = match &resumed {
         Some(_) => runner::hub_resume_command(
@@ -130,7 +133,7 @@ pub fn plan_launch(ctx: &Context, request: &HubRequest) -> Result<Planned, Strin
             &env,
             &ctx.repo.hub_name,
             &session,
-            runner::HUB_RESUME_PROMPT,
+            resume_prompt,
             settings,
         ),
         None => runner::hub_command(

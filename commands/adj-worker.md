@@ -113,7 +113,7 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
 - read the brief and the task, `adj phase --set plan` → §plan (launching a research or Plan agent → §tools)
 - read a brief whose Done when is investigation only → §investigation
 - the plan is approved, `adj phase --set implement` → §implement
-- `adj phase --set self-review` → §self-review and §review-loop
+- the implementation is done, `adj phase --set self-review` → §self-review and §review-loop
 - about to open a gate or a record (`adj gate open`) → §gate; attaching an HTML `report` → §gate-html
 - woken with the wake line, or an answer in `adjutant_outbox` with a `## gate` line → §gate-answer
 - about to decide whether a diff or verify gate waits (`stoppedBy`) → §wait-or-record
@@ -122,6 +122,7 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
 - `adj phase --set pr-bots` / `review`, or a review comment arrives on the PR → §review-comments
 - found a bug outside the task, or about to hand over for verification (the stock-take) → §outside-bug
 - outbox first line `[question {id}]` or `[ack]` after a report → §outside-bug
+- about to propose splitting this task into several → §outside-bug
 - about to send `kind: done` / asked whether to clean up → §done
 - outbox `[linked {id}]` → this index again: the section matching where the work stands
 
@@ -532,7 +533,7 @@ fix, so there is no diff to review and no PR to open.
    **This is something to be read, not approved**, so the only decisions are `ack`, `ask` and `task`
    (and `choice`, when the result offered `choices`).
 4. If there is knowledge worth saving in `lk` (reusable understanding of the structure, where an
-   existing implementation lives), save it the same way as `## Knowledge to Save` in §plan. Whether it
+   existing implementation lives), save it the same way as `## Knowledge to Save` in §tools. Whether it
    is kept here is what an investigation is worth.
 5. If you saw a bug **unrelated to this task** on the way, §outside-bug. Do not mix it into the report.
 6. When done, ask for cleanup with §done.
