@@ -4591,3 +4591,125 @@ fn cleanup_does_not_read_a_failed_merged_lookup_as_not_merged() {
         "a failed proctor call falls back to a listing that cannot see who is working there: {cleanup}"
     );
 }
+
+/// The hub runs `adj collect --json` for github sources before sending any collection agent,
+/// and handles a failed collection without reporting "no tasks".
+///
+/// The github-family collection is `adj collect`, run in the hub itself.
+/// An agent is only sent for `agentSources` (jira / linear), and a failure of the call must
+/// be reported as an error rather than mistaking it for finding zero tasks.
+#[test]
+fn the_hub_collects_github_sources_with_adj_collect_before_any_agent() {
+    let collect = part("adj-hub", "dashboard-collect");
+    let flowed = flow(&collect);
+
+    assert!(
+        flowed.contains("adj collect --json"),
+        "dashboard-collect does not name `adj collect --json`: {collect}"
+    );
+    assert!(
+        flowed.contains("adjutant_collect"),
+        "dashboard-collect does not name `adjutant_collect`: {collect}"
+    );
+    assert!(
+        flowed.contains("agentSources"),
+        "dashboard-collect does not name `agentSources`: {collect}"
+    );
+    before(&collect, "adj collect", "§brief-dashboard");
+    assert!(
+        flowed.contains("never as \"no tasks\""),
+        "dashboard-collect does not say a failed call is not \"no tasks\": {collect}"
+    );
+}
+
+/// Startup runs `adj collect` for github sources and sends the collection agent only for jira/linear.
+///
+/// When startupDashboard is true, the hub runs `adj collect` itself and only sends an agent
+/// if `agentSources` is not empty. When false, nothing is collected at startup.
+#[test]
+fn startup_runs_adj_collect_and_sends_the_agent_only_for_jira_and_linear() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let startup = between(
+        raw,
+        "## On startup (once, before any request arrives)",
+        "## Waiting",
+    );
+    let flowed = flow(&startup);
+
+    assert!(
+        flowed.contains("adj collect"),
+        "startup step 3 does not name `adj collect`: {startup}"
+    );
+    assert!(
+        flowed.contains("agentSources"),
+        "startup step 3 does not name `agentSources`: {startup}"
+    );
+    assert!(
+        flowed.contains("with `startupDashboard` `false` nothing is collected"),
+        "startup does not say nothing is collected when startupDashboard is false: {startup}"
+    );
+}
+
+/// A parent hub collects a github parent task with `adj collect --parent` and keeps the agent for jira / linear.
+///
+/// GitHub parent tasks are collected directly with `adj collect --parent {parent key} --json` in the hub.
+/// A failed call stops the collection and reports the error. For jira and linear parents, the parent
+/// collection agent (§brief-parent) is still used.
+#[test]
+fn a_parent_hub_collects_a_github_parent_with_adj_collect() {
+    let list = part("adj-hub", "parent-list");
+    let flowed = flow(&list);
+
+    assert!(
+        flowed.contains("adj collect --parent"),
+        "parent-list does not name `adj collect --parent`: {list}"
+    );
+    assert!(
+        flowed.contains("the collection stopped: say so with its error and list nothing"),
+        "parent-list does not say a failed call stopped the collection: {list}"
+    );
+    assert!(
+        flowed.contains("§brief-parent") && flowed.contains("jira") && flowed.contains("linear"),
+        "parent-list does not keep §brief-parent for jira / linear: {list}"
+    );
+}
+
+/// The trigger index points to `adj collect` for dashboard collection and `adj collect --parent` for parent hubs.
+#[test]
+fn the_index_of_triggers_names_adj_collect() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let triggers = section(raw, "## Index of triggers");
+    let flowed = flow(&triggers);
+
+    assert!(
+        flowed.contains("run `adj collect` → §dashboard-collect"),
+        "trigger index does not name `adj collect` with §dashboard-collect: {triggers}"
+    );
+    assert!(
+        flowed.contains("run `adj collect --parent` → §parent-list"),
+        "trigger index does not name `adj collect --parent` with §parent-list: {triggers}"
+    );
+}
+
+/// The collection briefs cover only the sources that `adj collect` does not handle.
+///
+/// The dashboard brief specifies that only jira and linear sources should be collected,
+/// noting that github sources, PRs, and worktrees are already covered by `adj collect`.
+/// The parent brief specifies that it is only sent for jira / linear parents.
+#[test]
+fn the_collection_briefs_are_for_the_sources_adj_collect_does_not_cover() {
+    let dash_brief = part("adj-hub", "brief-dashboard");
+    let dash_flowed = flow(&dash_brief);
+    assert!(
+        dash_flowed.contains("- Sources: collect only these taskSources entries:")
+            && dash_flowed.contains("were collected by adj collect: do not collect them"),
+        "dashboard brief lacks the Sources line naming adj collect: {dash_brief}"
+    );
+
+    let parent_brief = part("adj-hub", "brief-parent");
+    let parent_flowed = flow(&parent_brief);
+    assert!(
+        parent_flowed.contains("sent only for a `jira` / `linear` parent"),
+        "parent brief intro does not say it is sent only for jira / linear: {parent_brief}"
+    );
+}
