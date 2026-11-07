@@ -65,7 +65,7 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
         !procedure.starts_with("---"),
         "frontmatter leaked into the procedure"
     );
-    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 18);
+    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 19);
     let tool_names: Vec<&str> = replies[3]["result"]["tools"]
         .as_array()
         .unwrap()

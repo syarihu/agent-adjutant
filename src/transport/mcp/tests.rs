@@ -125,12 +125,15 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
         // addresses no hub. `adjutant_request` names its hub by `board` (a slug), and `repo` is
         // what the slug must agree with.
         // `adjutant_pr_check_base` acts on the PR of the worktree in `cwd`, which names no hub.
+        // `adjutant_collect` reads trackers for the repository of cwd; it addresses no hub's inbox,
+        // and a parent hub's identifier is passed as parent.
         if properties.get("repo").is_none()
             || [
                 "adjutant_work",
                 "adjutant_reviews",
                 "adjutant_request",
                 "adjutant_pr_check_base",
+                "adjutant_collect",
             ]
             .contains(&tool["name"].as_str().unwrap_or(""))
         {
@@ -974,4 +977,162 @@ fn pr_check_base_tool_refuses_a_cwd_or_repo_that_is_not_a_string() {
         let err = call_tool("adjutant_pr_check_base", &args).unwrap_err();
         assert!(err.contains("must be a string"), "{args}: {err}");
     }
+}
+
+#[test]
+fn tools_refuse_a_cwd_repo_or_hub_that_is_not_a_string() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let tools = [
+        "adjutant_config",
+        "adjutant_hub_status",
+        "adjutant_send",
+        "adjutant_pending",
+        "adjutant_tell",
+        "adjutant_gate_open",
+        "adjutant_gate_close",
+        "adjutant_refresh",
+    ];
+    let cases = [
+        ("cwd", json!(1)),
+        ("repo", json!(["a/b"])),
+        ("hub", json!(true)),
+    ];
+    for name in tools {
+        for (key, val) in &cases {
+            let mut args = serde_json::Map::new();
+            args.insert((*key).to_string(), (*val).clone());
+            if name == "adjutant_gate_close" {
+                args.insert("id".to_string(), json!("g1"));
+            }
+            let err = call_tool(name, &Value::Object(args)).unwrap_err();
+            assert!(
+                err.contains(&format!("`{key}` must be a string")),
+                "{name} with {key}: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn gate_open_refuses_a_worktree_that_is_not_a_string() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["remote", "add", "origin", "git@github.com:acme/widget.git"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success(),
+            "git {args:?}"
+        );
+    }
+    let cwd = dir.path().to_string_lossy();
+    let err = call_tool(
+        "adjutant_gate_open",
+        &json!({
+            "cwd": cwd,
+            "kind": "plan",
+            "title": "t",
+            "worktree": 1,
+        }),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("`worktree` must be a string"),
+        "expected worktree error, got: {err}"
+    );
+}
+
+#[test]
+fn outbox_and_skill_refuse_a_worktree_or_cwd_that_is_not_a_string() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    for (key, val) in [("worktree", json!(1)), ("cwd", json!(true))] {
+        let err = call_tool("adjutant_outbox", &json!({ key: val.clone() })).unwrap_err();
+        assert!(
+            err.contains(&format!("`{key}` must be a string")),
+            "outbox with {key}: {err}"
+        );
+
+        let err =
+            call_tool("adjutant_skill", &json!({ "name": "adj-worker", key: val })).unwrap_err();
+        assert!(
+            err.contains(&format!("`{key}` must be a string")),
+            "skill with {key}: {err}"
+        );
+    }
+}
+
+#[test]
+fn work_and_reviews_refuse_a_repo_that_is_not_a_string() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    for name in ["adjutant_work", "adjutant_reviews"] {
+        for val in [json!(1), json!(["a/b"])] {
+            let err = call_tool(name, &json!({ "repo": val })).unwrap_err();
+            assert!(
+                err.contains("`repo` must be a string"),
+                "{name} with {val}: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tell_refuses_a_worktree_that_is_not_a_string() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let err = call_tool("adjutant_tell", &json!({ "worktree": 1 })).unwrap_err();
+    assert!(err.contains("`worktree` must be a string"), "{err}");
+}
+
+#[test]
+fn collect_tool_advertised_and_checks_inputs() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let listed = call("tools/list", json!({}));
+    let collect_tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "adjutant_collect")
+        .expect("adjutant_collect is advertised");
+    let desc = collect_tool["description"].as_str().unwrap();
+    assert!(desc.contains("startup"), "{desc}");
+    assert!(desc.contains("instead of sending"), "{desc}");
+
+    for (key, val) in [
+        ("cwd", json!(1)),
+        ("repo", json!(["a/b"])),
+        ("parent", json!(1)),
+    ] {
+        let err = call_tool("adjutant_collect", &json!({ key: val })).unwrap_err();
+        assert!(
+            err.contains(&format!("`{key}` must be a string")),
+            "collect with {key}: {err}"
+        );
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["remote", "add", "origin", "git@github.com:acme/widget.git"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success(),
+            "git {args:?}"
+        );
+    }
+    let cwd = dir.path().to_string_lossy();
+    let err = call_tool("adjutant_collect", &json!({ "cwd": cwd })).unwrap_err();
+    assert!(
+        err.contains("no task sources"),
+        "expected 'no task sources', got: {err}"
+    );
 }

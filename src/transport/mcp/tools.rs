@@ -3,6 +3,7 @@ use crate::registry;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+pub(super) mod collect;
 pub(super) mod config;
 pub(super) mod gate_answer;
 pub(super) mod gate_close;
@@ -50,7 +51,14 @@ pub(super) fn board_context(args: &Value) -> Result<registry::Context, String> {
     registry::context_of_board(&registry::state_root(None), board)
 }
 
+/// Resolve the repository for an MCP tool call from its `cwd`, `hub` and `repo` arguments.
+///
+/// A present argument that is not a string is refused rather than read as absent, so a
+/// malformed value does not fall back to the server's own working directory.
 pub(super) fn resolve_repo(args: &Value) -> Result<identity::RepoInfo, String> {
+    for key in ["cwd", "hub", "repo"] {
+        string_key(args, key)?;
+    }
     let cwd = cwd_param(args);
     // `cwd` and not the server's own directory, for the same reason the repository is
     // resolved from it: a worker's answer is written in the worktree it is standing in, and
@@ -152,6 +160,11 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_pr_check_base",
         definition: pr_check_base::definition,
         call: pr_check_base::call,
+    },
+    Tool {
+        name: "adjutant_collect",
+        definition: collect::definition,
+        call: collect::call,
     },
     Tool {
         name: "adjutant_jules_prepare",

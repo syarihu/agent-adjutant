@@ -112,6 +112,21 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: PrAction,
     },
+    /// Collect the Dashboard's rows, or a parent task's, from the github and github-project task sources
+    Collect(CollectArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct CollectArgs {
+    /// The parent task's key (ALPHA-233): collect what sits under it instead of the Dashboard
+    #[arg(long)]
+    pub(crate) parent: Option<String>,
+    /// Repository owner/name (default: this checkout's origin)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Print the whole result as one JSON object
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Subcommand)]

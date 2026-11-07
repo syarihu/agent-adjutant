@@ -22,6 +22,19 @@ pub fn utc_stamp(epoch_secs: i64) -> String {
     )
 }
 
+/// `YYYY-MM-DDTHH:MM:SSZ`. Built like `utc_stamp` from `civil_from_days`.
+pub fn utc_iso(epoch_secs: i64) -> String {
+    let days = epoch_secs.div_euclid(86_400);
+    let secs = epoch_secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
 /// An adj stamp out of the time GitHub writes, `YYYY-MM-DDTHH:MM:SSZ` (a fractional second
 /// allowed), so every time a record holds is one format and compares as a string. Any other
 /// shape, an offset other than `Z` included, is `None`: guessing a zone would be wrong for

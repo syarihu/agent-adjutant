@@ -97,6 +97,7 @@ diff nobody can revert. Hand it over instead — `adj skill adj-report` (or adju
 name=adj-report), follow it, go back to your task. Hub: `adj hub`. Worker: adj-worker.
 Procedures come as a core and sections: read the core, and fetch the section its index names before the step it covers (adj skill <name> --section <id>, or adjutant_skill section).
 After opening a PR from a worktree, before asking for a review: adj pr check-base --pr <n> (or adjutant_pr_check_base); if it fails, tell the user.
+For the hub's Dashboard or a parent task's listing: adj collect [--parent <key>] --json (or adjutant_collect) collects the github/github-project sources instead of a collection sub-agent.
 Handing tasks to Jules: adjutant_jules_prepare (adj jules prepare) assigns, cuts the worktree and writes the record before planning; adjutant_jules_hand_over (adj jules hand-over) once the plan is approved.";
 
 pub fn find(name: &str) -> Option<&'static PromptDef> {
