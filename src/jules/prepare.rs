@@ -536,44 +536,49 @@ fn prepare_one(
                 },
             };
 
-            let wt_head_out = git(&["rev-parse", "HEAD"], Some(Path::new(&wt)))?;
-            if !wt_head_out.status.success() {
-                let stderr = String::from_utf8_lossy(&wt_head_out.stderr)
+            // Only a base given for this dispatch has to match the worktree: the record's own
+            // base is what the worktree was cut from, and origin moving on since then is not a
+            // reason to refuse it.
+            if request_base.is_some() {
+                let wt_head_out = git(&["rev-parse", "HEAD"], Some(Path::new(&wt)))?;
+                if !wt_head_out.status.success() {
+                    let stderr = String::from_utf8_lossy(&wt_head_out.stderr)
+                        .trim()
+                        .to_string();
+                    return Err(format!("git rev-parse HEAD in {wt} failed: {stderr}"));
+                }
+                let wt_head = String::from_utf8_lossy(&wt_head_out.stdout)
                     .trim()
                     .to_string();
-                return Err(format!("git rev-parse HEAD in {wt} failed: {stderr}"));
-            }
-            let wt_head = String::from_utf8_lossy(&wt_head_out.stdout)
-                .trim()
-                .to_string();
 
-            let base_commit_out = git(
-                &[
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    &format!("{base}^{{commit}}"),
-                ],
-                Some(Path::new(&ctx.repo.main)),
-            )?;
-            if !base_commit_out.status.success() {
-                return Err(format!(
-                    "base {base} does not exist on origin; ask which branch to use"
-                ));
-            }
-            let base_commit = String::from_utf8_lossy(&base_commit_out.stdout)
-                .trim()
-                .to_string();
+                let base_commit_out = git(
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        &format!("{base}^{{commit}}"),
+                    ],
+                    Some(Path::new(&ctx.repo.main)),
+                )?;
+                if !base_commit_out.status.success() {
+                    return Err(format!(
+                        "base {base} does not exist on origin; ask which branch to use"
+                    ));
+                }
+                let base_commit = String::from_utf8_lossy(&base_commit_out.stdout)
+                    .trim()
+                    .to_string();
 
-            if wt_head != base_commit {
-                let short_head = git(&["rev-parse", "--short", "HEAD"], Some(Path::new(&wt)))
-                    .ok()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| wt_head.chars().take(7).collect());
-                return Err(format!(
-                    "{wt} is at {short_head}, not {base}: remove it, or prepare without --base"
-                ));
+                if wt_head != base_commit {
+                    let short_head = git(&["rev-parse", "--short", "HEAD"], Some(Path::new(&wt)))
+                        .ok()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| wt_head.chars().take(7).collect());
+                    return Err(format!(
+                        "{wt} is at {short_head}, not {base}: remove it, or prepare without --base"
+                    ));
+                }
             }
 
             // The planning agent writes into it; a reused worktree may have lost it.

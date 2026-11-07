@@ -127,6 +127,19 @@ pub fn hand_over(ctx: &Context, id: &str, discard: bool) -> Result<HandedOver, S
         ));
     }
 
+    // Only a worktree of this repository's own list: the main checkout, detached and clean, would
+    // pass the checks below and start a session that `git worktree remove` then cannot follow.
+    let listed = crate::kernel::identity::linked_worktrees(&ctx.repo.main)?;
+    if !listed
+        .iter()
+        .any(|w| crate::infra::paths::same_path(w, &worktree))
+    {
+        return Err(format!(
+            "{worktree} is not a linked worktree of {}; nothing was started",
+            ctx.repo.main
+        ));
+    }
+
     // 2. Check the worktree before anything is started
     check_worktree(&worktree, true)?;
 
