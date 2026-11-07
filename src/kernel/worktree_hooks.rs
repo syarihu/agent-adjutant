@@ -58,15 +58,11 @@ impl<'de> serde::Deserialize<'de> for HookRun {
     }
 }
 
-/// The repository's `onWorktreeRemove` commands, run in the main checkout after the removal
-/// with `{worktree}` and `{name}` filled in, as the hub does. Read from the config now, not
-/// from the settings the server started with. A hook that fails is reported and does not
-/// undo anything.
-pub fn run_remove_hooks(nwo: &str, main: &str, worktree: &str, name: &str) -> Vec<HookRun> {
+fn run_hooks_for_key(key: &str, nwo: &str, main: &str, worktree: &str, name: &str) -> Vec<HookRun> {
     let hooks = crate::kernel::config::resolve_config(nwo)
         .ok()
         .and_then(|resolved| resolved.config)
-        .and_then(|config| config.get("onWorktreeRemove").cloned())
+        .and_then(|config| config.get(key).cloned())
         .and_then(|hooks| hooks.as_array().cloned())
         .unwrap_or_default();
     hooks
@@ -108,6 +104,22 @@ pub fn run_remove_hooks(nwo: &str, main: &str, worktree: &str, name: &str) -> Ve
             }
         })
         .collect()
+}
+
+/// The repository's `onWorktreeRemove` commands, run in the main checkout after the removal
+/// with `{worktree}` and `{name}` filled in, as the hub does. Read from the config now, not
+/// from the settings the server started with. A hook that fails is reported and does not
+/// undo anything.
+pub fn run_remove_hooks(nwo: &str, main: &str, worktree: &str, name: &str) -> Vec<HookRun> {
+    run_hooks_for_key("onWorktreeRemove", nwo, main, worktree, name)
+}
+
+/// The repository's `postCreate` commands, run in the main checkout after creating the
+/// worktree with `{worktree}` and `{name}` filled in. Read from the config now, not from
+/// the settings the server started with. A hook that fails is reported and does not undo
+/// anything.
+pub fn run_create_hooks(nwo: &str, main: &str, worktree: &str, name: &str) -> Vec<HookRun> {
+    run_hooks_for_key("postCreate", nwo, main, worktree, name)
 }
 
 #[cfg(test)]

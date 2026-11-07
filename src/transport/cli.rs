@@ -38,6 +38,7 @@ mod task;
 mod tell;
 pub mod tmux;
 mod worker;
+pub mod worktree;
 
 pub use agent_sessions::run as agent_sessions;
 pub use close::close;

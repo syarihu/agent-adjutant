@@ -59,8 +59,8 @@ is one example. The solid chain shows the order, not who calls whom: `lifecycle`
 `jules` or `gate`, for instance. Inside `transport` the arrows drawn are the only ones that exist:
 `mcp` never names `cli`, and `board_http` names only `wording` (convention, no check).
 
-`board` has five public submodules: `board::hub` and `board::session` (what a person runs from the
-page), `board::review` (asking for a read of a PR, closing its reader, the sync that closes finished readers, and starting the code-review hub), `board::view`
+`board` has six public submodules: `board::hub` and `board::session` (what a person runs from the
+page), `board::worktree` (adding, listing and removing linked worktrees), `board::review` (asking for a read of a PR, closing its reader, the sync that closes finished readers, and starting the code-review hub), `board::view`
 (the read model) and `board::jobs` (background work). The rest of `board`
 (`daemon`, `resident`, `server`, `dedicated`, `check_machine`, `token`, `url`, `last_lines`, `model`) is private and
 re-exported from `src/board.rs`.

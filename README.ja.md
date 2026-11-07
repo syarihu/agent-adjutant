@@ -156,6 +156,9 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 | `adj gate open\|list\|show\|answer\|close` | 人間への判断待ち（gate）の作成・一覧・回答・クローズ |
 | `adj task add\|list\|show\|update\|refresh\|park\|unpark` | タスクレコードの管理、GitHub Issue / PR との状態同期 |
 | `adj pr check-base --pr <n>` | worker の PR の base が brief の Base branch と違うときに付け替える。できないときは理由を出して exit 1 |
+| `adj worktree add [--repo …] [--name …] [--branch …]` | 解決された base から worktree とブランチを作成（`git worktree` の代わりに使用） |
+| `adj worktree ls [--repo …] [--json]` | リンクされた worktree（メインチェックアウトを除く）をタスクや削除可能状態とともに一覧表示 |
+| `adj worktree rm --path <p> [--branch <b>]` | worktree を安全に削除し実行中セッションを終了。未コミット・未追跡・未プッシュの変更がある場合は削除を拒否 |
 | `adj jules prepare --issue <n> \| --id <task>` | Jules に渡すタスクの計画前に、issue のアサイン・detached worktree の作成・record の作成をして、計画用エージェントに必要な情報を出す(複数まとめて可) |
 | `adj jules hand-over --id <task> [--discard]` | 計画の承認後に、計画用 worktree が clean かつ detached かを確かめて Jules のセッションを始め、worktree を消す(`--discard` はセッションなしで消す) |
 | `adj collect [--parent <key>] [--repo <owner/name>] [--json]` | github / github-project のタスクソースから Dashboard（または親タスク配下）の行を集める。jira / linear のソースは収集エージェントに回す分として返す |
@@ -170,7 +173,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 エージェント環境（`adjutant mcp`）内では、以下のプロンプトとツールが提供されます。
 
 - **プロンプト**: `adj-hub`（hub 実行）、`adj-worker`（タスク着手〜完了）、`adj-report`（作業中のバグ報告）、`adj-review-hub`、`adj-reviewer`。
-- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_request`、`adjutant_gate_answer`、`adjutant_pr_check_base`、`adjutant_collect`、`adjutant_jules_prepare`、`adjutant_jules_hand_over`。
+- **ツール**: `adjutant_config`、`adjutant_hub_status`、`adjutant_send`、`adjutant_pending`、`adjutant_tell`、`adjutant_outbox`、`adjutant_gate_open`、`adjutant_gate_close`、`adjutant_refresh`、`adjutant_skill`、`adjutant_work`、`adjutant_gate_read`、`adjutant_reviews`、`adjutant_request`、`adjutant_gate_answer`、`adjutant_pr_check_base`、`adjutant_collect`、`adjutant_jules_prepare`、`adjutant_jules_hand_over`、`adjutant_worktree`。
 
 ---
 

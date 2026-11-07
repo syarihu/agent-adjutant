@@ -21,6 +21,7 @@ pub mod jobs;
 pub mod review;
 pub mod session;
 pub mod view;
+pub mod worktree;
 
 mod ask_resident;
 mod check_machine;

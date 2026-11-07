@@ -190,7 +190,7 @@ fn parse_github_issue_url(url: &str) -> Option<(String, String)> {
 }
 
 /// Decide the base commit-ish on origin for a target.
-fn decide_base(main: &str, nwo: &str, candidate: &str) -> Result<String, String> {
+pub fn decide_base(main: &str, nwo: &str, candidate: &str) -> Result<String, String> {
     if candidate == "auto" {
         // 1. Try newest origin/release/*
         let out = git(
