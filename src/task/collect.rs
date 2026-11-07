@@ -38,7 +38,7 @@ const NODES_PER_CALL: usize = 100;
 /// GraphQL query for batch status and item resolution.
 const NODES_QUERY: &str = "query($ids: [ID!]!) { nodes(ids: $ids) { ... on Issue { id number title url state \
 repository { nameWithOwner } \
-projectItems(first: 10) { nodes { id project { number } \
+projectItems(first: 50) { pageInfo { hasNextPage } nodes { id project { number owner { ... on User { login } ... on Organization { login } } } \
 fieldValueByName(name: \"Status\") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }";
 
 /// Runs `gh` with these arguments, and this on stdin when given, by this deadline:
@@ -216,25 +216,8 @@ pub fn collect_with(
 fn list_worktrees(main: &str) -> WorktreeListing {
     let proctor = on_path("proctor");
     if proctor {
-        let mut command = std::process::Command::new("proctor");
-        command
-            .args(["worktree", "ls", "--json"])
-            .current_dir(main)
-            .stdin(std::process::Stdio::null());
-        for name in crate::infra::git::REPOSITORY_LOCATION_ENV {
-            command.env_remove(name);
-        }
-        let res = command.output();
-        let worktrees = match res {
-            Ok(out) if out.status.success() => {
-                parse_proctor_worktrees(&String::from_utf8_lossy(&out.stdout))
-            }
-            Ok(out) => Err(format!(
-                "proctor worktree ls --json failed: {}",
-                single_line(&String::from_utf8_lossy(&out.stderr))
-            )),
-            Err(e) => Err(format!("proctor worktree ls --json failed: {e}")),
-        };
+        let worktrees = run_proctor_worktree_ls(main, Instant::now() + deadline(TIMEOUT))
+            .and_then(|stdout| parse_proctor_worktrees(main, &stdout));
         WorktreeListing { proctor, worktrees }
     } else {
         let worktrees = identity::worktrees(main).map(|wts| wts.into_iter().skip(1).collect());
@@ -242,36 +225,131 @@ fn list_worktrees(main: &str) -> WorktreeListing {
     }
 }
 
-pub(crate) fn parse_proctor_worktrees(stdout: &str) -> Result<Vec<Worktree>, String> {
+fn run_proctor_worktree_ls(main: &str, deadline: Instant) -> Result<String, String> {
+    let mut command = std::process::Command::new("proctor");
+    command
+        .args(["worktree", "ls", "--json"])
+        .current_dir(main)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for name in crate::infra::git::REPOSITORY_LOCATION_ENV {
+        command.env_remove(name);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("proctor worktree ls --json failed: {e}"))?;
+
+    fn drain(
+        pipe: Option<impl std::io::Read + Send + 'static>,
+    ) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
+            }
+            let _ = tx.send(bytes);
+        });
+        rx
+    }
+
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("proctor worktree ls --json did not finish in time".to_string());
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("cannot wait for proctor: {e}"));
+            }
+        }
+    };
+
+    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| match rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    {
+        Ok(bytes) => Ok(bytes),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err("proctor worktree ls --json did not finish in time".to_string())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("cannot read proctor: the reader panicked".to_string())
+        }
+    };
+    let out = collect(out)?;
+    let err = collect(err)?;
+
+    if status.success() {
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    } else {
+        Err(format!(
+            "proctor worktree ls --json failed: {}",
+            single_line(&String::from_utf8_lossy(&err))
+        ))
+    }
+}
+
+pub(crate) fn parse_proctor_worktrees(main: &str, stdout: &str) -> Result<Vec<Worktree>, String> {
     let val: Value =
         serde_json::from_str(stdout).map_err(|e| format!("cannot read proctor's answer: {e}"))?;
     let repos = val
         .as_array()
         .ok_or_else(|| "cannot read proctor's answer: expected array".to_string())?;
-    let mut result = Vec::new();
-    for repo_val in repos {
-        let wts = repo_val
-            .get("worktrees")
-            .and_then(Value::as_array)
-            .ok_or_else(|| "cannot read proctor's answer: missing worktrees".to_string())?;
-        for wt in wts {
-            let is_main = wt.get("isMain").and_then(Value::as_bool).unwrap_or(false);
-            if is_main {
-                continue;
+
+    let canon_main = std::fs::canonicalize(main).unwrap_or_else(|_| std::path::PathBuf::from(main));
+    let matched_group = if repos.len() == 1 {
+        Some(&repos[0])
+    } else {
+        repos.iter().find(|repo_val| {
+            let repo_str = repo_val
+                .get("repo")
+                .or_else(|| repo_val.get("repository"))
+                .and_then(Value::as_str);
+            if let Some(r) = repo_str {
+                let canon_r =
+                    std::fs::canonicalize(r).unwrap_or_else(|_| std::path::PathBuf::from(r));
+                canon_r == canon_main || r == main
+            } else {
+                false
             }
-            let path = wt
-                .get("path")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "cannot read proctor's answer: missing path".to_string())?
-                .to_string();
-            let branch = wt
-                .get("branch")
-                .and_then(Value::as_str)
-                .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b).trim())
-                .filter(|b| !b.is_empty())
-                .map(str::to_string);
-            result.push(Worktree { path, branch });
+        })
+    };
+    let repo_val =
+        matched_group.ok_or_else(|| format!("proctor's answer has no group for {main}"))?;
+
+    let wts = repo_val
+        .get("worktrees")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cannot read proctor's answer: missing worktrees".to_string())?;
+    let mut result = Vec::new();
+    for wt in wts {
+        let is_main = wt.get("isMain").and_then(Value::as_bool).unwrap_or(false);
+        if is_main {
+            continue;
         }
+        let path = wt
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "cannot read proctor's answer: missing path".to_string())?
+            .to_string();
+        let branch = wt
+            .get("branch")
+            .and_then(Value::as_str)
+            .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b).trim())
+            .filter(|b| !b.is_empty())
+            .map(str::to_string);
+        result.push(Worktree { path, branch });
     }
     Ok(result)
 }
@@ -531,6 +609,7 @@ fn collect_dashboard(
                     gh,
                     &label,
                     project_num_val,
+                    owner,
                     has_pf,
                     project_items,
                     &mut raw_tasks,
@@ -913,10 +992,12 @@ fn read_project_issues(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_project_nodes(
     gh: &CollectGh<'_>,
     label: &str,
     project_num_val: &Value,
+    project_owner: &str,
     has_pf: bool,
     project_items: Vec<ProjectIssue>,
     raw_tasks: &mut Vec<RawDashboardTask>,
@@ -990,11 +1071,21 @@ fn resolve_project_nodes(
 
         match parsed_nodes {
             Ok((nodes_arr, stdout)) => {
+                let first_err = first_error(&stdout);
                 for (idx, &id) in chunk.iter().enumerate() {
                     let node_opt = nodes_arr.get(idx);
                     if let Some(node) = node_opt.filter(|n| !n.is_null()) {
-                        let (item, status) = extract_project_item_and_status(node, project_num_val);
-                        id_status_item.insert(id.to_string(), Ok((item, status)));
+                        let (item, status, err_opt) = extract_project_item_and_status(
+                            node,
+                            project_num_val,
+                            project_owner,
+                            first_err.as_deref(),
+                        );
+                        if let Some(err) = err_opt {
+                            id_status_item.insert(id.to_string(), Err(Some(err)));
+                        } else {
+                            id_status_item.insert(id.to_string(), Ok((item, status)));
+                        }
                     } else {
                         let err = first_error(&stdout).unwrap_or_else(|| "not found".to_string());
                         id_status_item.insert(id.to_string(), Err(Some(err)));
@@ -1050,17 +1141,37 @@ pub(super) fn matches_project_number(project_num: Option<&Value>, target: &Value
     }
 }
 
+pub(super) fn matches_project_owner(owner_val: Option<&Value>, target_owner: &str) -> bool {
+    let login = owner_val.and_then(|o| match o {
+        Value::Object(_) => o.get("login").and_then(Value::as_str),
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    });
+    login.is_some_and(|l| l.eq_ignore_ascii_case(target_owner))
+}
+
 pub(super) fn extract_project_item_and_status(
     node: &Value,
     project_num_val: &Value,
-) -> (String, String) {
+    project_owner: &str,
+    stdout_err: Option<&str>,
+) -> (String, String, Option<String>) {
+    let project_items = node.get("projectItems");
+    if project_items.is_none() || project_items.is_some_and(Value::is_null) {
+        if let Some(err) = stdout_err {
+            return ("?".to_string(), "?".to_string(), Some(err.to_string()));
+        } else {
+            return ("no-item".to_string(), "N/A".to_string(), None);
+        }
+    }
+
     let items = node
         .pointer("/projectItems/nodes")
         .and_then(Value::as_array);
-    let matched_item = items
-        .into_iter()
-        .flatten()
-        .find(|it| matches_project_number(it.pointer("/project/number"), project_num_val));
+    let matched_item = items.into_iter().flatten().find(|it| {
+        matches_project_number(it.pointer("/project/number"), project_num_val)
+            && matches_project_owner(it.pointer("/project/owner"), project_owner)
+    });
     match matched_item {
         Some(item) => {
             let item_id = item
@@ -1073,9 +1184,23 @@ pub(super) fn extract_project_item_and_status(
                 .and_then(Value::as_str)
                 .unwrap_or("N/A")
                 .to_string();
-            (item_id, status)
+            (item_id, status, None)
         }
-        None => ("no-item".to_string(), "N/A".to_string()),
+        None => {
+            let has_next_page = node
+                .pointer("/projectItems/pageInfo/hasNextPage")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if has_next_page {
+                (
+                    "?".to_string(),
+                    "?".to_string(),
+                    Some("projectItems has more than 50 items".to_string()),
+                )
+            } else {
+                ("no-item".to_string(), "N/A".to_string(), None)
+            }
+        }
     }
 }
 

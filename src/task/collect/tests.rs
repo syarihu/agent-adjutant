@@ -186,7 +186,7 @@ fn test_02_dashboard_github_project_source() {
                         "nodes": [
                             {
                                 "id": "item-1",
-                                "project": { "number": 1 },
+                                "project": { "number": 1, "owner": { "login": "example" } },
                                 "fieldValueByName": { "name": "In Progress" }
                             }
                         ]
@@ -197,7 +197,7 @@ fn test_02_dashboard_github_project_source() {
                         "nodes": [
                             {
                                 "id": "item-other",
-                                "project": { "number": 99 },
+                                "project": { "number": 99, "owner": { "login": "example" } },
                                 "fieldValueByName": { "name": "Done" }
                             }
                         ]
@@ -208,7 +208,7 @@ fn test_02_dashboard_github_project_source() {
                         "nodes": [
                             {
                                 "id": "item-3",
-                                "project": { "number": 1 },
+                                "project": { "number": 1, "owner": { "login": "example" } },
                                 "fieldValueByName": null
                             }
                         ]
@@ -352,7 +352,7 @@ fn test_03_dashboard_nodes_failure_and_null_node() {
                         "nodes": [
                             {
                                 "id": "item-1",
-                                "project": { "number": 1 },
+                                "project": { "number": 1, "owner": { "login": "example" } },
                                 "fieldValueByName": { "name": "Todo" }
                             }
                         ]
@@ -521,7 +521,7 @@ fn test_07_dashboard_dedupe_project_fields_precedence() {
             "nodes": [
                 {
                     "projectItems": {
-                        "nodes": [{ "id": "item-board-1", "project": { "number": 1 }, "fieldValueByName": { "name": "Status 1" } }]
+                        "nodes": [{ "id": "item-board-1", "project": { "number": 1, "owner": { "login": "example" } }, "fieldValueByName": { "name": "Status 1" } }]
                     }
                 }
             ]
@@ -533,7 +533,7 @@ fn test_07_dashboard_dedupe_project_fields_precedence() {
             "nodes": [
                 {
                     "projectItems": {
-                        "nodes": [{ "id": "item-board-2", "project": { "number": 2 }, "fieldValueByName": { "name": "Status 2" } }]
+                        "nodes": [{ "id": "item-board-2", "project": { "number": 2, "owner": { "login": "example" } }, "fieldValueByName": { "name": "Status 2" } }]
                     }
                 }
             ]
@@ -905,7 +905,7 @@ fn test_14_parent_happy_path_github_source() {
         ),
         (p5_2, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-12 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-12 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -968,7 +968,7 @@ fn test_14_parent_happy_path_github_source() {
     let mut expected_pr_calls = vec![
         p5_1.to_string(),
         p5_2.to_string(),
-        "pr list -R example/android-app --search ALPHA-12 --state all --json number,title,url,state,isDraft,body,headRefName".to_string(),
+        "pr list -R example/android-app --search ALPHA-12 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName".to_string(),
     ];
     expected_pr_calls.sort();
     assert_eq!(pr_calls, expected_pr_calls);
@@ -1006,12 +1006,12 @@ fn test_15_parent_github_project_nodes_failure() {
         (nodes_call, gh_err("nodes error")),
         (p5_1, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-11 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-11 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
         (p5_2, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-12 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-12 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -1179,7 +1179,7 @@ fn test_18_parent_branch_resolution_and_matching() {
         (&p3, gh_ok(p3_lines)),
         (p5, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-7 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-7 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -1217,7 +1217,7 @@ fn test_18_parent_branch_resolution_and_matching() {
         (&p3, gh_ok(p3_lines_b)),
         (p5_b, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-1 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -1249,7 +1249,7 @@ fn test_18_parent_branch_resolution_and_matching() {
         ),
         (p5_c, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-7 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-7 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -1292,7 +1292,7 @@ fn test_19_parent_worktree_listing_failure() {
         ),
         (p5, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-1 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -1348,7 +1348,7 @@ fn test_20_parent_unmatched_worktrees() {
         ),
         (p5, gh_ok("[]")),
         (
-            "pr list -R example/android-app --search ALPHA-1 --state all --json number,title,url,state,isDraft,body,headRefName",
+            "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName",
             gh_ok("[]"),
         ),
     ]);
@@ -1476,7 +1476,7 @@ fn test_22_parent_p5_and_p6_fallback() {
     );
     let open_state = "OPEN";
     let p5 = "pr list -R example/android-app --head alice/ALPHA-1 --state all --limit 50 --json number,title,url,state,isDraft";
-    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --json number,title,url,state,isDraft,body,headRefName";
+    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName";
 
     let sources = vec![serde_json::json!({
         "type": "github",
@@ -1793,7 +1793,7 @@ fn test_25_parse_proctor_worktrees() {
             ]
         }
     ]);
-    let wts = parse_proctor_worktrees(&json_sample.to_string()).unwrap();
+    let wts = parse_proctor_worktrees("/path/main", &json_sample.to_string()).unwrap();
     assert_eq!(wts.len(), 3);
     assert_eq!(wts[0].path, "/path/wt1");
     assert_eq!(wts[0].branch.as_deref(), Some("feature-1"));
@@ -1805,9 +1805,11 @@ fn test_25_parse_proctor_worktrees() {
     assert_eq!(wts[2].branch.as_deref(), Some("direct-branch"));
 
     // Garbage -> Err
-    assert!(parse_proctor_worktrees("not-json").is_err());
-    assert!(parse_proctor_worktrees(r#"{"not":"array"}"#).is_err());
-    assert!(parse_proctor_worktrees(r#"[{"worktrees":[{"no_path":true}]}]"#).is_err());
+    assert!(parse_proctor_worktrees("/path/main", "not-json").is_err());
+    assert!(parse_proctor_worktrees("/path/main", r#"{"not":"array"}"#).is_err());
+    assert!(
+        parse_proctor_worktrees("/path/main", r#"[{"worktrees":[{"no_path":true}]}]"#).is_err()
+    );
 }
 
 // Parent search fallback key token matching:
@@ -1825,7 +1827,7 @@ fn test_parent_search_pr_token_matching_unrelated_ignored() {
     let open_state = "OPEN";
     let merged_state = "MERGED";
     let p5 = "pr list -R example/android-app --head alice/ALPHA-1 --state all --limit 50 --json number,title,url,state,isDraft";
-    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --json number,title,url,state,isDraft,body,headRefName";
+    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName";
 
     // (a) Search returned an unrelated PR (e.g. #498 on branch syarihu/ALPHA-496 that never mentions ALPHA-1)
     let fake_search = format!(
@@ -1877,7 +1879,7 @@ fn test_parent_search_pr_token_matching_body_match() {
     );
     let open_state = "OPEN";
     let p5 = "pr list -R example/android-app --head alice/ALPHA-7 --state all --limit 50 --json number,title,url,state,isDraft";
-    let p6 = "pr list -R example/android-app --search ALPHA-7 --state all --json number,title,url,state,isDraft,body,headRefName";
+    let p6 = "pr list -R example/android-app --search ALPHA-7 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName";
 
     // (b) Search returns one naming the key in the body ("Closes ALPHA-7" style)
     let fake_search = format!(
@@ -1929,7 +1931,7 @@ fn test_parent_search_pr_token_matching_digit_boundary() {
     );
     let open_state = "OPEN";
     let p5 = "pr list -R example/android-app --head alice/ALPHA-1 --state all --limit 50 --json number,title,url,state,isDraft";
-    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --json number,title,url,state,isDraft,body,headRefName";
+    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName";
 
     // (c) ALPHA-1 does not match a PR mentioning only ALPHA-10
     let fake_search = format!(
@@ -2036,4 +2038,360 @@ fn test_ci_of_unrecognised_item_and_precedence() {
         { "__typename": "CheckRun", "status": completed, "conclusion": success }
     ]);
     assert_eq!(ci_of(Some(&passing_and_unknown)), "?");
+}
+
+// Item 6: Parent branch resolution when proctor is absent -> alice/alpha-7 primary, worktree "-"
+#[test]
+fn test_parent_branch_and_worktree_without_proctor() {
+    let p1 = "api repos/example/team-app/issues/10 --jq {title, html_url, node_id}";
+    let p2 = "api user --jq .login";
+    let p3 = format!(
+        "api --paginate repos/example/team-app/issues/10/sub_issues --jq {}",
+        SUB_ISSUES_JQ
+    );
+    let open_state = "OPEN";
+    let p3_lines = format!(
+        r#"{{"number":7,"title":"Child 7","state":"{open_state}","html_url":"https://example.com/7","node_id":"n7","repo":"example/team-app","labels":[],"assignees":[]}}"#
+    );
+    let p5 = "pr list -R example/android-app --head alice/alpha-7 --state all --limit 50 --json number,title,url,state,isDraft";
+    let p6 = "pr list -R example/android-app --search ALPHA-7 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName";
+
+    let fake = FakeGh::new(vec![
+        (
+            p1,
+            gh_ok(r#"{"title":"Parent","html_url":"u","node_id":"nid"}"#),
+        ),
+        (p2, gh_ok("alice")),
+        (&p3, gh_ok(p3_lines)),
+        (p5, gh_ok("[]")),
+        (p6, gh_ok("[]")),
+    ]);
+    let sources = vec![serde_json::json!({
+        "type": "github",
+        "issueRepo": "example/team-app"
+    })];
+    let keys = sample_keys();
+    let input = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &sources,
+        parent: Some("ALPHA-10"),
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+
+    let col = collect_with(&input, &fake.runner(), &fake_worktrees(false, vec![])).unwrap();
+    match &col.rows[1] {
+        Row::Subtask(s) => {
+            assert_eq!(s.branch, "alice/alpha-7");
+            assert_eq!(s.worktree, "-");
+        }
+        _ => panic!("expected subtask row"),
+    }
+}
+
+// Item 1: Proctor timeout handling
+#[test]
+fn test_proctor_worktree_ls_timeout_recorded_as_failed() {
+    let keys = sample_keys();
+    let input = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &[],
+        parent: None,
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+    let d6 = "pr list -R example/android-app --author @me --state open --json number,title,url,isDraft,statusCheckRollup --limit 50";
+    let fake = FakeGh::new(vec![(d6, gh_ok("[]"))]);
+    let col = collect_with(
+        &input,
+        &fake.runner(),
+        &fake_worktrees_fail(true, "proctor worktree ls --json did not finish in time"),
+    )
+    .unwrap();
+    assert_eq!(col.failed.len(), 1);
+    assert_eq!(col.failed[0].what, "worktrees");
+    assert_eq!(col.failed[0].lookup, "worktree listing");
+    assert_eq!(
+        col.failed[0].error,
+        "proctor worktree ls --json did not finish in time"
+    );
+}
+
+// Item 2: parse_proctor_worktrees matching groups
+#[test]
+fn test_parse_proctor_worktrees_group_matching() {
+    let json_multiple = serde_json::json!([
+        {
+            "repo": "/repo/one",
+            "worktrees": [
+                { "path": "/repo/one/wt", "branch": "refs/heads/branch-1", "isMain": false },
+                { "path": "/repo/one/main", "branch": "refs/heads/main", "isMain": true }
+            ]
+        },
+        {
+            "repo": "/repo/two",
+            "worktrees": [
+                { "path": "/repo/two/wt", "branch": "refs/heads/branch-2", "isMain": false }
+            ]
+        }
+    ]);
+
+    // Matching repo 1
+    let wts_one = parse_proctor_worktrees("/repo/one", &json_multiple.to_string()).unwrap();
+    assert_eq!(wts_one.len(), 1);
+    assert_eq!(wts_one[0].path, "/repo/one/wt");
+    assert_eq!(wts_one[0].branch.as_deref(), Some("branch-1"));
+
+    // Matching repo 2
+    let wts_two = parse_proctor_worktrees("/repo/two", &json_multiple.to_string()).unwrap();
+    assert_eq!(wts_two.len(), 1);
+    assert_eq!(wts_two[0].path, "/repo/two/wt");
+    assert_eq!(wts_two[0].branch.as_deref(), Some("branch-2"));
+
+    // No matching group
+    let err = parse_proctor_worktrees("/repo/three", &json_multiple.to_string()).unwrap_err();
+    assert_eq!(err, "proctor's answer has no group for /repo/three");
+
+    // Empty array
+    let err_empty = parse_proctor_worktrees("/repo/any", "[]").unwrap_err();
+    assert_eq!(err_empty, "proctor's answer has no group for /repo/any");
+}
+
+// Item 3a & 3b: Node project item requires matching both number and owner
+#[test]
+fn test_project_items_requires_matching_owner_and_number() {
+    let node_sample = serde_json::json!({
+        "projectItems": {
+            "pageInfo": { "hasNextPage": false },
+            "nodes": [
+                {
+                    "id": "item-diff-owner",
+                    "project": { "number": 1, "owner": { "login": "wrong-owner" } },
+                    "fieldValueByName": { "name": "Todo" }
+                },
+                {
+                    "id": "item-match",
+                    "project": { "number": 1, "owner": { "login": "example" } },
+                    "fieldValueByName": { "name": "In Progress" }
+                }
+            ]
+        }
+    });
+
+    let (item_id, status, err) =
+        extract_project_item_and_status(&node_sample, &serde_json::json!(1), "example", None);
+    assert_eq!(item_id, "item-match");
+    assert_eq!(status, "In Progress");
+    assert!(err.is_none());
+
+    // When owner does not match any item
+    let (item_id, status, err) =
+        extract_project_item_and_status(&node_sample, &serde_json::json!(1), "other", None);
+    assert_eq!(item_id, "no-item");
+    assert_eq!(status, "N/A");
+    assert!(err.is_none());
+}
+
+// Item 3b: Parent mode requires non-empty projectOwner in config
+#[test]
+fn test_parent_github_project_source_without_project_owner_returns_err() {
+    let fake = FakeGh::new(vec![]);
+    let sources = vec![serde_json::json!({
+        "type": "github-project",
+        "projectNumber": 1
+        // missing projectOwner
+    })];
+    let keys = sample_keys();
+    let input = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &sources,
+        parent: Some("ALPHA-10"),
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+
+    let res = collect_with(&input, &fake.runner(), &fake_worktrees(true, vec![]));
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err(),
+        "ALPHA-10's task source (github-project) has no projectOwner in the config"
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+// Item 3c: projectItems hasNextPage returns ? and Failed
+#[test]
+fn test_project_items_has_next_page_returns_failed() {
+    let node_sample = serde_json::json!({
+        "projectItems": {
+            "pageInfo": { "hasNextPage": true },
+            "nodes": [
+                {
+                    "id": "item-other",
+                    "project": { "number": 99, "owner": { "login": "example" } },
+                    "fieldValueByName": { "name": "Done" }
+                }
+            ]
+        }
+    });
+
+    let (item_id, status, err) =
+        extract_project_item_and_status(&node_sample, &serde_json::json!(1), "example", None);
+    assert_eq!(item_id, "?");
+    assert_eq!(status, "?");
+    assert_eq!(err.as_deref(), Some("projectItems has more than 50 items"));
+}
+
+// Item 3d: projectItems null with GraphQL errors returns ? and Failed
+#[test]
+fn test_project_items_null_with_graphql_error_returns_failed() {
+    let node_sample = serde_json::json!({
+        "projectItems": null
+    });
+
+    let (item_id, status, err) = extract_project_item_and_status(
+        &node_sample,
+        &serde_json::json!(1),
+        "example",
+        Some("Could not resolve to a node"),
+    );
+    assert_eq!(item_id, "?");
+    assert_eq!(status, "?");
+    assert_eq!(err.as_deref(), Some("Could not resolve to a node"));
+}
+
+// Item 4: Parent mode validates projectNumber as number or digit string
+#[test]
+fn test_parent_github_project_source_invalid_project_number_returns_err() {
+    let fake = FakeGh::new(vec![]);
+    let keys = sample_keys();
+
+    // String with non-digits
+    let sources_non_digits = vec![serde_json::json!({
+        "type": "github-project",
+        "projectOwner": "example",
+        "projectNumber": "abc"
+    })];
+    let input = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &sources_non_digits,
+        parent: Some("ALPHA-10"),
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+    let err = collect_with(&input, &fake.runner(), &fake_worktrees(true, vec![])).unwrap_err();
+    assert_eq!(
+        err,
+        "ALPHA-10's task source (github-project) has invalid projectNumber in the config"
+    );
+
+    // Empty string
+    let sources_empty = vec![serde_json::json!({
+        "type": "github-project",
+        "projectOwner": "example",
+        "projectNumber": ""
+    })];
+    let input_empty = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &sources_empty,
+        parent: Some("ALPHA-10"),
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+    let err_empty =
+        collect_with(&input_empty, &fake.runner(), &fake_worktrees(true, vec![])).unwrap_err();
+    assert_eq!(
+        err_empty,
+        "ALPHA-10's task source (github-project) has invalid projectNumber in the config"
+    );
+
+    // Boolean
+    let sources_bool = vec![serde_json::json!({
+        "type": "github-project",
+        "projectOwner": "example",
+        "projectNumber": true
+    })];
+    let input_bool = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &sources_bool,
+        parent: Some("ALPHA-10"),
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+    let err_bool =
+        collect_with(&input_bool, &fake.runner(), &fake_worktrees(true, vec![])).unwrap_err();
+    assert_eq!(
+        err_bool,
+        "ALPHA-10's task source (github-project) has invalid projectNumber in the config"
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+// Item 5: P6 search returning 100 results with none matching records Failed and ?/?
+#[test]
+fn test_parent_pr_search_fallback_100_results_unmatched_records_failed() {
+    let p1 = "api repos/example/team-app/issues/10 --jq {title, html_url, node_id}";
+    let p2 = "api user --jq .login";
+    let p3 = format!(
+        "api --paginate repos/example/team-app/issues/10/sub_issues --jq {}",
+        SUB_ISSUES_JQ
+    );
+    let open_state = "OPEN";
+    let p5 = "pr list -R example/android-app --head alice/ALPHA-1 --state all --limit 50 --json number,title,url,state,isDraft";
+    let p6 = "pr list -R example/android-app --search ALPHA-1 --state all --limit 100 --json number,title,url,state,isDraft,body,headRefName";
+
+    let pr_state_open = "OPEN";
+    let mut fake_prs = Vec::new();
+    for i in 1..=100 {
+        fake_prs.push(serde_json::json!({
+            "number": i + 1000,
+            "state": pr_state_open,
+            "title": format!("Unrelated PR {i}"),
+            "url": format!("https://example.com/{i}"),
+            "isDraft": false,
+            "body": "No match here",
+            "headRefName": "main"
+        }));
+    }
+
+    let fake = FakeGh::new(vec![
+        (p1, gh_ok(r#"{"title":"P","html_url":"u","node_id":"nid"}"#)),
+        (p2, gh_ok("alice")),
+        (
+            &p3,
+            gh_ok(format!(
+                r#"{{"number":1,"title":"C1","state":"{open_state}","html_url":"u1","node_id":"n1","repo":"example/team-app","labels":[],"assignees":[]}}"#
+            )),
+        ),
+        (p5, gh_ok("[]")),
+        (p6, gh_ok(serde_json::to_string(&fake_prs).unwrap())),
+    ]);
+    let sources = vec![serde_json::json!({
+        "type": "github",
+        "issueRepo": "example/team-app"
+    })];
+    let keys = sample_keys();
+    let input = CollectInput {
+        code_repo: "example/android-app",
+        issue_keys: &keys,
+        sources: &sources,
+        parent: Some("ALPHA-10"),
+        taken_at: "2026-11-07T00:00:00Z".to_string(),
+    };
+
+    let col = collect_with(&input, &fake.runner(), &fake_worktrees(true, vec![])).unwrap();
+    match &col.rows[1] {
+        Row::Subtask(s) => {
+            assert_eq!(s.pr, "?");
+            assert_eq!(s.pr_state, "?");
+        }
+        _ => panic!(),
+    }
+    assert_eq!(col.failed.len(), 1);
+    assert_eq!(col.failed[0].what, "ALPHA-1");
+    assert_eq!(col.failed[0].lookup, "pr search");
+    assert_eq!(
+        col.failed[0].error,
+        "the PR search for ALPHA-1 returned 100 results and none named it"
+    );
 }

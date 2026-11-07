@@ -29,15 +29,30 @@ pub(super) fn collect_parent(
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or("");
-    if chosen_type == "github-project"
-        && chosen_source
-            .get("projectNumber")
-            .filter(|v| !v.is_null())
-            .is_none()
-    {
-        return Err(format!(
-            "{parent_key}'s task source (github-project) has no projectNumber in the config"
-        ));
+    if chosen_type == "github-project" {
+        match chosen_source.get("projectNumber") {
+            None | Some(Value::Null) => {
+                return Err(format!(
+                    "{parent_key}'s task source (github-project) has no projectNumber in the config"
+                ));
+            }
+            Some(Value::Number(_)) => {}
+            Some(Value::String(s)) if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) => {}
+            Some(_) => {
+                return Err(format!(
+                    "{parent_key}'s task source (github-project) has invalid projectNumber in the config"
+                ));
+            }
+        }
+        let project_owner = chosen_source
+            .get("projectOwner")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        if project_owner.is_none() {
+            return Err(format!(
+                "{parent_key}'s task source (github-project) has no projectOwner in the config"
+            ));
+        }
     }
 
     let parent_repo = parent_r;
@@ -224,6 +239,10 @@ pub(super) fn collect_parent(
 
     if is_project && !keyed_children.is_empty() {
         let project_num_val = chosen_source.get("projectNumber").unwrap();
+        let project_owner = chosen_source
+            .get("projectOwner")
+            .and_then(Value::as_str)
+            .unwrap();
         let source_label = source_label(chosen_source);
 
         let mut unique_node_ids = Vec::new();
@@ -286,12 +305,22 @@ pub(super) fn collect_parent(
 
             match parsed_nodes {
                 Ok((nodes_arr, stdout)) => {
+                    let first_err = first_error(&stdout);
                     for (idx, &node_id) in chunk.iter().enumerate() {
                         let node_opt = nodes_arr.get(idx);
                         if let Some(node) = node_opt.filter(|n| !n.is_null()) {
-                            let (item, status) =
-                                extract_project_item_and_status(node, project_num_val);
-                            child_node_status_item.insert(node_id.to_string(), Ok((item, status)));
+                            let (item, status, err_opt) = extract_project_item_and_status(
+                                node,
+                                project_num_val,
+                                project_owner,
+                                first_err.as_deref(),
+                            );
+                            if let Some(err) = err_opt {
+                                child_node_status_item.insert(node_id.to_string(), Err(Some(err)));
+                            } else {
+                                child_node_status_item
+                                    .insert(node_id.to_string(), Ok((item, status)));
+                            }
                         } else {
                             let err =
                                 first_error(&stdout).unwrap_or_else(|| "not found".to_string());
@@ -881,6 +910,8 @@ fn resolve_child_pr(
                 &search_term,
                 "--state",
                 "all",
+                "--limit",
+                "100",
                 "--json",
                 "number,title,url,state,isDraft,body,headRefName",
             ];
@@ -892,6 +923,7 @@ fn resolve_child_pr(
 
             match p6_prs {
                 Some(prs) => {
+                    let count_before_filter = prs.len();
                     let matching_prs: Vec<ParsedPr> = prs
                         .into_iter()
                         .filter(|pr| {
@@ -907,6 +939,16 @@ fn resolve_child_pr(
 
                     if let Some(best) = pick_best_pr(&matching_prs) {
                         (best.number.to_string(), best.state, None)
+                    } else if count_before_filter == 100 {
+                        let failure = Failed {
+                            what: child_key.to_string(),
+                            lookup: "pr search".to_string(),
+                            error: format!(
+                                "the PR search for {} returned 100 results and none named it",
+                                child_key
+                            ),
+                        };
+                        ("?".to_string(), "?".to_string(), Some(failure))
                     } else {
                         ("-".to_string(), "-".to_string(), None)
                     }
@@ -914,7 +956,7 @@ fn resolve_child_pr(
                 None => {
                     let failure = Failed {
                         what: child_key.to_string(),
-                        lookup: "PR by --search".to_string(),
+                        lookup: "pr search".to_string(),
                         error: error_text(&p6_res, None),
                     };
                     ("?".to_string(), "?".to_string(), Some(failure))
