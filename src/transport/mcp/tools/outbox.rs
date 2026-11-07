@@ -1,7 +1,7 @@
 use crate::mail;
 use serde_json::{Value, json};
 
-use super::cwd_property;
+use super::{cwd_property, string_key};
 
 pub(super) fn definition() -> Value {
     json!({
@@ -19,6 +19,9 @@ pub(super) fn definition() -> Value {
 }
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
+    for key in ["worktree", "cwd"] {
+        string_key(args, key)?;
+    }
     let worktree = match args["worktree"]
         .as_str()
         .filter(|s| !s.is_empty())

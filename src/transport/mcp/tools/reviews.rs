@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::text_param;
+use super::{string_key, text_param};
 
 /// How long a read may run before it is said to have hung: `OTHERS_HUNG_SECS` of the page.
 const HUNG_SECS: i64 = 1800;
@@ -22,6 +22,8 @@ pub(super) fn definition() -> Value {
 }
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
+    // A `repo` that is not a string would otherwise narrow nothing and return every repository.
+    string_key(args, "repo")?;
     let root = crate::registry::state_root(None);
     let doc = crate::board::ask_resident(&root, "/api/others")?;
     reviews_of(&doc, text_param(args, "repo"))

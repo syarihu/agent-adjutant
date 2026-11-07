@@ -2,6 +2,8 @@ use crate::kernel::prompts;
 use crate::transport::mcp::client_name;
 use serde_json::{Value, json};
 
+use super::string_key;
+
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_skill",
@@ -21,6 +23,9 @@ pub(super) fn definition() -> Value {
 }
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
+    for key in ["worktree", "cwd"] {
+        string_key(args, key)?;
+    }
     let worktree = args["worktree"]
         .as_str()
         .or_else(|| args["cwd"].as_str())
