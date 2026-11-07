@@ -1351,6 +1351,77 @@ fn a_subtask_s_branch_is_resolved_from_the_convention_rather_than_spelled_out() 
     );
 }
 
+/// The collection agent resolved each subtask's expected branch from `worktreeName`, which
+/// defaults to `{issuekey-lowercase}-{issue}`. But on a machine with proctor installed,
+/// worktree creation passes `{issueKey}-{issue}` (the key spelled as it is) as proctor's
+/// `{name}`, creating a branch like `{user}/ABC-819`. Because `gh pr list --head` and the
+/// worktree match are exact string matches, resolving from `worktreeName` (`{user}/abc-819`)
+/// found neither the PR nor the worktree, leaving an active child reported as not started.
+///
+/// The rule for what name a task's branch is made from lives in one place (§proctor) so that
+/// worktree creation, parent-fetch branch resolution, and the collection agent's brief all
+/// resolve the branch from the same name instead of drifting apart.
+#[test]
+fn a_subtask_s_branch_is_resolved_from_the_same_name_as_its_worktree() {
+    let raw = find("adj-hub").unwrap().raw_content;
+
+    let proctor = step(raw, "### Where proctor ends");
+    let proctor_flowed: String = flow(&proctor);
+    assert!(
+        proctor_flowed.contains("The name a task's branch is made from"),
+        "proctor section does not define the rule for what name a task's branch is made from: {proctor}"
+    );
+    assert!(
+        proctor_flowed
+            .contains("With proctor installed (`proctor` is on `PATH`): `{issueKey}-{issue}`"),
+        "proctor section does not name the spelled key for proctor: {proctor}"
+    );
+    assert!(
+        proctor_flowed.contains("Without proctor: the source's `worktreeName`"),
+        "proctor section does not name worktreeName for machines without proctor: {proctor}"
+    );
+    assert!(
+        proctor_flowed.contains("adj worktree-path --name '{branch name}'"),
+        "proctor section does not give the command to resolve the branch from that name: {proctor}"
+    );
+
+    let fetch = step(raw, "### Fetching what sits under the parent");
+    let fetch_flowed: String = flow(&fetch);
+    assert!(
+        fetch_flowed.contains("adj worktree-path --name '{branch name}'"),
+        "fetching under parent does not use '{{branch name}}' to resolve a child's branch: {fetch}"
+    );
+    assert!(
+        fetch_flowed.contains("The name a task's branch is made from"),
+        "fetching under parent does not point to the rule in §proctor: {fetch}"
+    );
+    assert!(
+        !fetch_flowed.contains("--name '{worktreeName}'"),
+        "fetching under parent still resolves the branch from '{{worktreeName}}': {fetch}"
+    );
+
+    let create = step(raw, "### 3. Create the worktree");
+    let create_flowed: String = flow(&create);
+    assert!(
+        create_flowed.contains("The name a task's branch is made from"),
+        "worktree creation does not point to the rule in §proctor: {create}"
+    );
+
+    let brief = section(
+        raw,
+        "## Appendix — Brief for the parent task collection agent",
+    );
+    let brief_flowed: String = flow(&brief);
+    assert!(
+        brief_flowed.contains("--section proctor"),
+        "brief-parent appendix does not tell the agent to fetch §proctor: {brief}"
+    );
+    assert!(
+        brief_flowed.contains("The name a task's branch is made from"),
+        "brief-parent appendix does not name the rule in §proctor: {brief}"
+    );
+}
+
 /// A Linear task's branch is its `gitBranchName` in "3. Create the worktree" too.
 ///
 /// "Task sources" `linear` already said to use `gitBranchName` verbatim and not build one from
