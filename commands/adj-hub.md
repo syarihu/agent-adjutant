@@ -128,23 +128,26 @@ heavy collection to a sub-agent.
    (without a config, requests cannot be handled when they come).
    If `warnings` is not empty, **mention it in the one line you write on starting to wait** (do not
    open a question).
-3. **Decide first, from `adjutant_config`'s `settings.startupDashboard`, whether to send collection
-   to a sub-agent.** If `true` (default), send out the Dashboard collection (§brief-dashboard) and **do not wait for the result**.
-   If `settings.startupDashboard` is `false`, do not send the collection agent.
-   **This is exactly what made startup slow**: with the hub itself running the board search, GraphQL
-   and PR listing, its hands are full for those tens of seconds and nobody can talk to it. Sent out,
-   the hub can wait the whole time. `false` says "no need to scan the board on every start", so
-   **the hub does not go and collect it itself instead.** When a list is needed, a person says
-   "list".
+3. **Decide first, from `adjutant_config`'s `settings.startupDashboard`, whether to send collection.**
+   When `true` (default), the hub runs `adj collect --json` (or `adjutant_collect`) itself for the
+   github-family sources (§dashboard-collect), and sends the Dashboard collection agent
+   (§brief-dashboard) only when `agentSources` is not empty, for those sources only; **do not wait
+   for the result**. If `settings.startupDashboard` is `false`, do not send the collection agent and do
+   not run the call (neither is run at startup).
+   The board search, GraphQL and PR listing that used to keep the hub busy for tens of seconds are
+   one call of a few seconds; the agent remains for jira / linear, whose search results are too
+   large for the hub's transcript (§task-sources `jira`). `false` says "no need to scan the board on
+   every start", so with `startupDashboard` `false` nothing is collected. When a list is needed,
+   a person says "list".
    In the same block, run `adjutant title --title '🗂 hub {repo}'` to name your own tab (`{repo}` is
    the part of `adjutant_config`'s `repo` to the right of `/`). How it is named is in
    `settings.terminal.title`, so **do not write escape sequences yourself.**
    Name the tab (`adjutant title`) even when not sending the collection — that is not collection,
    it shows a person what this tab is.
-   **If `adjutant_config`'s `hub` holds an identifier and it matches a source, what goes out here is
-   not the Dashboard but the parent task collection** (§parent-hub). The repository-wide
-   list is not that hub's business. If it does not match, it stays the Dashboard. Whether to send is
-   decided the same way for both, and both take this one slot at startup.
+   **If `adjutant_config`'s `hub` holds an identifier and it matches a source, what runs here is
+   not the Dashboard but the parent task collection** (§parent-hub, §parent-list). The
+   repository-wide list is not that hub's business. If it does not match, it stays the Dashboard.
+   Whether to collect is decided the same way for both, and both take this one slot at startup.
 4. **Empty the inbox.** Sort what is waiting in Context's `adjutant_pending` by `kind`. When one is
    done, clear its name with `adjutant_pending` `action: ack` (it moves to `read/`, so it is not
    processed twice):
@@ -387,7 +390,7 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 
 ### What you are about to do
 
-- show the list (menu 1), or send the dashboard collection agent → §dashboard, §brief-dashboard; the rows come back → §dashboard-display
+- show the list (menu 1): run `adj collect` → §dashboard-collect; send the dashboard collection agent → §dashboard, §brief-dashboard; the rows come back → §dashboard-display
 - offer to clean up finished worktrees → §cleanup-offer
 - start a task (menu 2) → §pick-task; assign it or move it to In Progress → §claim
 - run `proctor worktree add` / `git worktree add` → §worktree
@@ -399,7 +402,7 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 - run `adj task park` → §park
 - list the PRs you were asked to review → §review-prs
 - tell a person how to start, resume or close a hub, or run `adj hub-close` → §hub-lifecycle
-- start as a hub for a parent task (`adjutant_config` `hub` is not null) → §parent-hub; then show its list → §parent-list, §listing-rules; start a row or a key → §parent-pick, §parent-foreign-key; split it → §parent-split; dispatch anything → §parent-dispatch; create or re-parent a child, or pass `--after` → §parent-structure; send the parent collection agent → §brief-parent
+- start as a hub for a parent task (`adjutant_config` `hub` is not null) → §parent-hub; then show its list → §parent-list, §listing-rules; start a row or a key → §parent-pick, §parent-foreign-key; split it → §parent-split; dispatch anything → §parent-dispatch; create or re-parent a child, or pass `--after` → §parent-structure; run `adj collect --parent` → §parent-list; send the parent collection agent → §brief-parent
 - write the config (also when `registered` is false or `warnings` names `issueKeys`) → §config-sources; write `branchPattern` / `worktreeName` → §proctor
 - fetch tasks from a source → §task-sources
 - set this hub's tab title → §tab-title
@@ -554,23 +557,28 @@ hub for the board, and a person is the one who knows the parent task is finished
 ### Read at startup
 
 This replaces Step 3 of "On startup". **Only what is collected changes; whether to send it is still
-decided in Step 3.** If `settings.startupDashboard` is `true` (default), send the **parent task
-collection**, not the Dashboard, to a sub-agent (§brief-parent). Once sent, **do not wait for the result**. **If `settings.startupDashboard` is `false`, do
-not send it here either.**
-What the setting stops is "running a heavy collection at startup", and that is the same whether it
-fetches a parent task or scans the whole repository.
+decided in Step 3.** If `settings.startupDashboard` is `true` (default), collect the **parent task**,
+not the Dashboard. For a github-family parent (the type the reverse lookup in §parent-hub found), the
+hub runs `adj collect --parent {parent key} --json` (or `adjutant_collect` with `parent`) itself instead
+of sending the agent; `takenAt` is the listing's "Taken at", `unmatchedWorktrees` is the "Worktrees that
+matched no subtask" line, and `failed` is the "Lookups that failed" line. If the call fails, the
+collection stopped: say so with its error and list nothing (do not read it as "no subtasks", and do not
+send the agent to run the same recipe again). For a `jira` / `linear` parent, send the parent
+collection agent to a sub-agent (§brief-parent) as now, and **do not wait for the result**. **If
+`settings.startupDashboard` is `false`, do not send it here either** (neither is run at startup).
+What the setting stops is "running a collection at startup", and that is the same whether it fetches a
+parent task or scans the whole repository.
 
-The reasons for sending it out are the Dashboard's: the hub lives all day, so raw JSON piled into it
-makes every later turn heavy, and the hub's hands are full for the tens of seconds it takes to
-collect. **Whether or not it is sent**, name the tab after the parent's key (`adjutant title --title
-'🗂 {parent key} hub'`). However many hubs are side by side, which is which parent is plain at a
-glance. The waiting line is as in Step 5 of "On startup", with "ask and it collects" when it was not sent.
+**Whether or not it is run**, name the tab after the parent's key (`adjutant title --title '🗂 {parent
+key} hub'`). However many hubs are side by side, which is which parent is plain at a glance. The waiting
+line is as in Step 5 of "On startup", with "ask and it collects" when it was not run.
 
-**The hub hands over only the identifier and the source information the reverse lookup found**
-(`type` and where the issue lives). The parent task itself — its title and URL, and for `linear` the
-internal id — **is fetched by the collection agent.** The hub's startup gets to waiting in one block
-first, and no one-off lookup is added for it. How to fetch it is "Fetching the parent itself" in
-§parent-fetch.
+**The hub hands over only the identifier and the source information the reverse lookup found** (`type`
+and where the issue lives) for the `jira` / `linear` collection agent. The parent task itself — its
+title and URL, and for `linear` the internal id — **is fetched by the collection agent** (for the
+github family, `adj collect --parent` fetches the parent itself). The hub's startup gets to waiting in
+one block first, and no one-off lookup is added for it. How to fetch it is "Fetching the parent itself"
+in §parent-fetch.
 
 **What is read is three levels: parent task → the subtasks under it → the PRs those subtasks
 opened.** If the collection stopped (whole-list failure), say so with the error and list nothing;
@@ -828,6 +836,9 @@ there is a child.
 
 <!-- section: parent-fetch -->
 ### Fetching what sits under the parent
+
+For the `github` family, `adj collect --parent` does everything in this section, and the github
+branches below are what its rows mean; the agent follows this section for `jira` / `linear`.
 
 How to fetch differs per source `type`. **Only fetching the parent itself and its subtasks branches**;
 the PRs after that do not.
@@ -1268,26 +1279,27 @@ adj task unpark --id {task_id}
 <!-- section: dashboard -->
 ## Dashboard — listing and cleanup
 
-**Collection (§dashboard-collect) goes to a sub-agent.** The same at startup and when a person says "list"
-(§brief-dashboard). But **only the startup one can be turned off
-in the config** (`settings.startupDashboard` is `false`, or `adj hub --no-dashboard`; Step 3 of "On
-startup"). **When a person says "list", it is not turned off** — what is turned off is "collecting on
-every start when nobody asked", not the list itself. Two reasons:
+**Collection (§dashboard-collect) is `adj collect --json` (or `adjutant_collect`) in the hub plus the
+agent (§brief-dashboard) only for `agentSources`** (the `jira` / `linear` entries). The same at startup
+and when a person says "list". But **only the startup one can be turned off in the config**
+(`settings.startupDashboard` is `false`, or `adj hub --no-dashboard`; Step 3 of "On startup"). **When a
+person says "list", it is not turned off** — what is turned off is "collecting on every start when nobody
+asked", not the list itself. The `jira` / `linear` part still goes to an agent for two reasons:
 
-- **So as not to keep the hub busy.** The board search, GraphQL and PR listing take tens of seconds,
-  during which the hub can take neither people nor workers. When a person asks too, do not wait for
-  the result: say it is being collected, end the turn, and show it when the notification comes.
-- **So as not to pollute the transcript.** The hub lives all day, so raw JSON piling up makes every
-  later turn heavy. The agent returns only the table and the machine rows.
+- **So as not to keep the hub busy.** The jira / linear search takes time, during which the hub can take
+  neither people nor workers. When the agent is sent, do not wait for the result: say it is being
+  collected, end the turn, and show it when the notification comes.
+- **So as not to pollute the transcript.** The hub lives all day, so raw JSON piling up makes every later
+  turn heavy. The agent returns only the table and the machine rows.
 
 **A worktree of a session started with no task is cleaned up only when a person asks.** Nothing marks
 it as finished, so Step 1 (§cleanup-offer) does not offer it.
 
-**Cleanup (§cleanup-offer) is done by the hub.** It is one proctor call and a confirmation from the user, and
-a sub-agent cannot ask for that. **The order is: send out §dashboard-collect's agent, then §cleanup-offer.** The proctor
-call and the user's answer overlap with the collection, so by the time the answer comes back the table
-is back too. The other way round, not a second of collection happens while the cleanup question is
-waiting.
+**Cleanup (§cleanup-offer) is done by the hub.** It is one proctor call and a confirmation from the user,
+and a sub-agent cannot ask for that. **The order is: run `adj collect --json` (or `adjutant_collect`),
+send out the agent if any (`agentSources` has entries), then §cleanup-offer.** The proctor call and the
+user's answer overlap with the agent's collection, so by the time the answer comes back the table is back
+too. The other way round, not a second of collection happens while the cleanup question is waiting.
 
 <!-- section: cleanup-offer -->
 ### Step 1: Offer to clean up finished worktrees
@@ -1461,17 +1473,25 @@ when it finishes.
 <!-- section: dashboard-collect -->
 ### Step 2: Collect
 
-**This is the agent's procedure** (the brief points to this section). The hub runs it itself only when
-the agent failed and came back.
+The hub runs `adj collect --json` (or `adjutant_collect`). Its rows are read as §dashboard-display says,
+its `failed` entries are the "Lookups that failed" line, and its `leftOut` is "no key configured, left
+out" (§pick-task 3). If `agentSources` is empty that is the whole collection and no agent is sent;
+otherwise send the agent (§brief-dashboard) for exactly those entries and merge its rows (dedupe as
+§pick-task). If the call itself fails, show its error as "could not be read" for the github-family sources
+(never as "no tasks"), and still send the agent for the jira / linear entries of `taskSources`.
+
+**The rest of this section is what the call and the agent both follow** (the agent for its sources; the
+brief points to this section).
 
 **A lookup that fails cannot be told from none, so a lookup that fails is `?`, not `-`.** One source's
 failure marks that source, not the whole collection: the other sources are still valid. Only an
 empty list from a call that succeeded is none (`-`).
 
-Fetch tasks from **every** entry in this repo's `taskSources`, each with the recipe for its
-`type` (see §task-sources), then key and dedupe as in §pick-task (for the `github`
-family, make the key from the issue's repo through `issueKeys`; for `jira` / `linear`, use the issue
-key as it is). Plus:
+What the collection fetches (the call does all of it for the github family, so the hub does not
+fetch it again; the agent does it for the entries it was given): tasks from **every** entry in
+this repo's `taskSources`, each with the recipe for its `type` (see §task-sources), then keyed and
+deduped as in §pick-task (for the `github` family, make the key from the issue's repo through
+`issueKeys`; for `jira` / `linear`, use the issue key as it is). Plus:
 
 ```bash
 gh pr list -R <codeRepo> --author @me --state open --json number,title,url,isDraft,statusCheckRollup
@@ -1492,8 +1512,9 @@ checkout under `[Worktrees]` and marks that task as started. Go by the marker, n
 paths with `adjutant_config`'s `main`, as in Step 1 (§cleanup-offer).
 
 **Do not show the Project item id in this table** (it means nothing to a person). Pick it up from the
-machine rows that come with the agent's report, and use it in §claim. **The machine rows are
-JSON Lines** (one JSON object per line; the collection briefs §brief-dashboard and §brief-parent). Read each line as
+machine rows (`adj collect`'s, and the agent's report), and use it in §claim. `adj collect` returns
+them as the `rows` array of its one JSON object, each element one row. **The machine rows are
+JSON Lines** in the agent's report (one JSON object per line; the collection briefs §brief-dashboard and §brief-parent). Read each line as
 JSON and take values by key (`item`, `title`, `url` ...); the repo is the `owner/repo` before `#` in
 `identifier`. **Never split a row on `|` or any other character** — a title may contain it, and
 every later value then lands in the wrong field. `kind` says what a row is (`task`, `worktree`,
@@ -1582,9 +1603,9 @@ boards that has `projectFields` shows it in progress, do not start it. If the wo
 listing failed, say so in the line that presents the candidates (a candidate may already have a
 worktree; the start of §worktree checks again with proctor).
 
-This list normally comes from the Dashboard collection agent's report (the machine rows carry the
-repo, key, item id and status; read by key as §dashboard-display says). **If told "start
-ALPHA-233" before that has come back, do not wait.** Go ahead by fetching just that one directly
+This list normally comes from `adj collect` and, for jira / linear, the collection agent's report
+(the machine rows carry the repo, key, item id and status; read by key as §dashboard-display says).
+**If told "start ALPHA-233" before that has come back, do not wait.** Go ahead by fetching just that one directly
 (for the `github` family `gh issue view`, plus one `nodes(ids:)` if the item id is needed; for
 `jira` one `getJiraIssue`; until the collection is back, whether a lookup failed is not known, so
 for the `github` family read every board as below). The collection can be shown when it arrives. A person may also name a
@@ -3217,10 +3238,11 @@ alone keeps the old way when the config changes.
 <!-- section: brief-dashboard -->
 ## Appendix — Brief for the dashboard collection agent
 
-The prompt passed to `Agent`. `subagent_type` is `general-purpose`, and **always specify
-`model: "opus"`** (the hub sometimes runs on another model, and without it the agent starts on that
-model). Do not use `fork` — the hub's transcript is full of other tasks, and there is no point
-carrying it over.
+The prompt passed to `Agent`. The agent is sent only for the `jira` / `linear` sources `adj collect`
+returned in `agentSources` (or, when the call failed, for the jira / linear entries of `taskSources`).
+`subagent_type` is `general-purpose`, and **always specify `model: "opus"`** (the hub sometimes runs
+on another model, and without it the agent starts on that model). Do not use `fork` — the hub's
+transcript is full of other tasks, and there is no point carrying it over.
 
 `Agent` **returns as soon as it is sent** (verified; the result arrives as a completion
 notification). So both on startup and when asked for "list", the hub can start waiting by sending it
@@ -3233,6 +3255,7 @@ procedure by name, to keep one authority.
 Collect the data for the task hub's dashboard. **Read only. Change nothing.**
 
 - Repository: {owner/repo}
+- Sources: collect only these taskSources entries: {the jira / linear entries}. The github and github-project sources, your own PRs and the worktrees were collected by adj collect: do not collect them.
 - Config: take the resolved one from `adjutant_config` (or `adj config --repo {owner/repo}` without
   it). Do not read the config file yourself — finding the entry and merging `defaults` are done inside
   it
@@ -3289,10 +3312,11 @@ drop them silently).
 <!-- section: brief-parent -->
 ## Appendix — Brief for the parent task collection agent
 
-The prompt passed to `Agent`. Sent under the same conditions as the dashboard collection —
-`subagent_type` is `general-purpose`, **always specify `model: "opus"`**, no `fork`, and end the turn
-once it is sent. Pointing to the `adj-hub` procedure by name instead of copying it is the same too, to
-keep one authority.
+The prompt passed to `Agent`. It is sent only for a `jira` / `linear` parent (a github-family parent
+is collected with `adj collect --parent`). Sent under the same conditions as the dashboard collection
+agent — `subagent_type` is `general-purpose`, **always specify `model: "opus"`**, no `fork`, and end the
+turn once it is sent. Pointing to the `adj-hub` procedure by name instead of copying it is the same too,
+to keep one authority.
 
 ```
 Collect how things stand under {parent key}.

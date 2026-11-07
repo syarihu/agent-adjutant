@@ -3,6 +3,7 @@ use crate::registry;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+pub(super) mod collect;
 pub(super) mod config;
 pub(super) mod gate_answer;
 pub(super) mod gate_close;
@@ -157,6 +158,11 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_pr_check_base",
         definition: pr_check_base::definition,
         call: pr_check_base::call,
+    },
+    Tool {
+        name: "adjutant_collect",
+        definition: collect::definition,
+        call: collect::call,
     },
 ];
 
