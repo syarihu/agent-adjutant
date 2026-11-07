@@ -17,7 +17,7 @@ pub(super) fn definition() -> Value {
                 },
                 "name": {
                     "type": "string",
-                    "description": "Worktree name (e.g. app-1234), used for branch naming and hooks."
+                    "description": "Task name (e.g. app-1234) for add: the branch and the path are built from it as adj worktree-path --name does."
                 },
                 "user": {
                     "type": "string",
@@ -29,7 +29,7 @@ pub(super) fn definition() -> Value {
                 },
                 "branch": {
                     "type": "string",
-                    "description": "Branch name to create and check out (for add), or expected branch (for rm)."
+                    "description": "For add: the branch to create and check out instead of the one built from name (the path still comes from name); alone, it also decides the path. For rm: the branch the worktree must have checked out."
                 },
                 "path": {
                     "type": "string",

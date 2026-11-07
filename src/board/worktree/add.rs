@@ -59,11 +59,10 @@ pub fn add(ctx: &Context, request: AddRequest) -> Result<AddOutcome, String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    if name.is_none() && path.is_none() {
-        return Err("pass --name, or --path with --branch".to_string());
-    }
-    if path.is_some() && branch.is_none() && name.is_none() {
-        return Err("pass --name, or --path with --branch".to_string());
+    // A path needs a branch to check out, and a branch alone decides a path as
+    // `adj worktree-path --branch` does; only a call naming neither has nothing to go on.
+    if name.is_none() && branch.is_none() {
+        return Err("pass --name, or --branch (with --path if it goes elsewhere)".to_string());
     }
     if let Some(ref n) = name {
         task::check_worktree_name(n)?;
@@ -78,16 +77,22 @@ pub fn add(ctx: &Context, request: AddRequest) -> Result<AddOutcome, String> {
         }
     }
 
-    let branch = match branch {
-        Some(b) => b,
-        None => {
-            let user = user
-                .unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "worker".to_string()));
-            let pattern_str = pattern
-                .as_deref()
-                .unwrap_or(identity::DEFAULT_BRANCH_PATTERN);
-            identity::branch_fallback(pattern_str, &user, name.as_deref().unwrap())
-        }
+    // The branch the conventions build from the name. It also places the worktree when a
+    // branch is given as well: a Linear task checks out its `gitBranchName`, but its worktree
+    // sits where the name puts it, as `adj worktree-path --name` says.
+    let conventional = name.as_deref().map(|n| {
+        let user =
+            user.unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "worker".to_string()));
+        let pattern_str = pattern
+            .as_deref()
+            .unwrap_or(identity::DEFAULT_BRANCH_PATTERN);
+        identity::branch_fallback(pattern_str, &user, n)
+    });
+    let (branch, placed_by) = match (branch, conventional) {
+        (Some(b), Some(c)) => (b, c),
+        (Some(b), None) => (b.clone(), b),
+        (None, Some(c)) => (c.clone(), c),
+        (None, None) => unreachable!("refused above"),
     };
     let path = match path {
         Some(p) => crate::infra::paths::absolute(&p)
@@ -99,7 +104,7 @@ pub fn add(ctx: &Context, request: AddRequest) -> Result<AddOutcome, String> {
                 .worktree_pattern
                 .as_deref()
                 .unwrap_or(identity::DEFAULT_WORKTREE_PATTERN);
-            identity::worktree_fallback(layout, &ctx.repo.main, &branch)?
+            identity::worktree_fallback(layout, &ctx.repo.main, &placed_by)?
         }
     };
     let name = Path::new(&path)
@@ -304,6 +309,54 @@ mod tests {
         };
         let err = add(&ctx, req).unwrap_err();
         assert!(err.contains("path already exists"), "{err}");
+    }
+
+    #[test]
+    fn a_given_branch_is_checked_out_where_the_name_places_the_worktree() {
+        let (_sandbox, _origin, main, ctx) = setup_test_repo();
+
+        // A Linear task: the tracker's branch, the worktree where its name puts it.
+        let named = add(
+            &ctx,
+            AddRequest {
+                name: Some("abc-819".to_string()),
+                user: Some("alice".to_string()),
+                branch: Some("alice/abc-819-fix-login".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("add with name and branch");
+        assert_eq!(named.branch, "alice/abc-819-fix-login");
+        assert_eq!(named.name, "alice-abc-819");
+        assert!(
+            named.path.ends_with("/.claude/worktrees/alice-abc-819"),
+            "{}",
+            named.path
+        );
+
+        // A branch alone places it as `adj worktree-path --branch` does.
+        let bare = add(
+            &ctx,
+            AddRequest {
+                branch: Some("bob/feature-x".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("add with a branch alone");
+        assert_eq!(bare.branch, "bob/feature-x");
+        assert!(
+            bare.path.ends_with("/.claude/worktrees/bob-feature-x"),
+            "{}",
+            bare.path
+        );
+
+        let err = add(&ctx, AddRequest::default()).unwrap_err();
+        assert!(err.contains("pass --name, or --branch"), "{err}");
+
+        for path in [&named.path, &bare.path] {
+            let _ =
+                crate::infra::git::git(&["worktree", "remove", "--force", path], Some(main.path()));
+        }
     }
 
     #[test]

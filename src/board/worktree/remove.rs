@@ -457,4 +457,52 @@ mod tests {
         .unwrap();
         assert!(branch_check.status.success());
     }
+
+    #[test]
+    fn a_pr_task_is_done_when_its_branch_is_merged() {
+        let (_sandbox, _origin, main, ctx) = setup_test_repo();
+
+        let wt_parent = tempfile::tempdir().unwrap();
+        let wt_path = wt_parent.path().join("merged-rm");
+        run_git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "merged-branch",
+                wt_path.to_str().unwrap(),
+                "origin/main",
+            ],
+            main.path(),
+        );
+        let (created, _) = task::create(
+            &ctx,
+            task::NewTask {
+                title: Some("Merged PR task".to_string()),
+                worktree: Some(wt_path.to_string_lossy().to_string()),
+                base: Some("origin/main".to_string()),
+                status: task::Status::Pr,
+                ..Default::default()
+            },
+            false,
+        )
+        .expect("task creation should succeed");
+
+        let outcome = remove(
+            &ctx,
+            RemoveRequest {
+                path: wt_path.to_string_lossy().to_string(),
+                branch: None,
+                cwd: Some(main.path().to_path_buf()),
+            },
+        )
+        .expect("remove should succeed");
+        let RemoveOutcome::Removed(res) = outcome else {
+            panic!("a clean merged worktree must be removed");
+        };
+        assert_eq!(res.tasks, vec![created.id.clone()]);
+        assert!(res.kept_tasks.is_empty());
+        let after = task::get(&ctx.state, &ctx.repo.slug, &created.id).unwrap();
+        assert_eq!(after.status, task::Status::Done);
+    }
 }

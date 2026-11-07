@@ -258,7 +258,7 @@ pub fn clean_up_worktree(
             closed: None,
         });
     }
-    let state = state.ok().flatten();
+    let mut state = state.ok().flatten();
 
     let main = Path::new(&repo.main);
     let was_running = registry::worker_status(Path::new(worktree)).present;
@@ -299,6 +299,10 @@ pub fn clean_up_worktree(
                 closed: Some(was_running),
             });
         }
+        // What the branch and the tasks are decided on below: a worker that committed and
+        // pushed before its tab closed has a branch the first look called merged, and
+        // deleting it on that answer would drop a ref holding work no base has.
+        state = again.ok().flatten();
     }
     // The lock covers only the last look at the worker slots and the marker that says the
     // worktree is going, which `claim_worker_slot` refuses on under the same lock: a worker

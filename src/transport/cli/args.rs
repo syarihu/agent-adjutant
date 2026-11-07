@@ -136,7 +136,7 @@ pub(crate) struct WorktreeAddArgs {
     /// Repository owner/name (default: this checkout's origin)
     #[arg(long)]
     pub(crate) repo: Option<String>,
-    /// Worktree name (e.g. app-1234)
+    /// Task name (e.g. app-1234): the branch and the path are built from it as `adj worktree-path --name` does
     #[arg(long)]
     pub(crate) name: Option<String>,
     /// Branch owner (default: $USER)
@@ -145,7 +145,7 @@ pub(crate) struct WorktreeAddArgs {
     /// The task source's branchPattern
     #[arg(long)]
     pub(crate) pattern: Option<String>,
-    /// Branch name to create and check out
+    /// Branch to create and check out instead of the one built from --name (the path still comes from --name); alone, it also decides the path
     #[arg(long)]
     pub(crate) branch: Option<String>,
     /// Path for the worktree (default: derived from worktreePattern)

@@ -1710,8 +1710,10 @@ already exist. The `{name}` passed to proctor is the one "The name a task's bran
 **If not, adjutant answers itself.** Pass `--name` (without proctor, the name "The name a task's
 branch is made from" in §proctor settles is `worktreeName`) with `--user` and the source's
 `--pattern`, and `adj worktree add` decides the branch (`{user}/{name}` by default) and the path
-(`<main>/.claude/worktrees/{name}` by default, the same shape as proctor; `settings.worktreePattern`
-changes it), as `adj worktree-path` does. **Do not stop because proctor is missing**: proctor only
+(`<main>/.claude/worktrees/` and that branch with `/` turned into `-`, by default, the same shape as
+proctor; `settings.worktreePattern` changes it), as `adj worktree-path` does. A `--branch` given as
+well (Linear's `gitBranchName`) changes only the branch checked out; the path still comes from the
+name. **Do not stop because proctor is missing**: proctor only
 reads, and the worktree is made by this side either way.
 
 **The config's `postCreate` stands in for `copyFiles`.** Without proctor nobody carries gitignored
