@@ -156,6 +156,8 @@ You can answer gates on the web board, in the worker's terminal (`adj gate close
 | `adj gate open\|list\|show\|answer\|close` | Manage structured human review gates |
 | `adj task add\|list\|show\|update\|refresh\|park\|unpark` | Manage task records and synchronize state with GitHub Issues/PRs |
 | `adj pr check-base --pr <n>` | Move a worker's PR to the brief's Base branch when its base differs; exits 1 with the reason when it cannot |
+| `adj jules prepare --issue <n> \| --id <task>` | Before a Jules task is planned: assign its issue, cut a detached worktree, write the record and print what the planning agent needs (several in one call) |
+| `adj jules hand-over --id <task> [--discard]` | Once its plan is approved: check the planning worktree is clean and detached, start the Jules session, remove the worktree (`--discard`: remove it without a session) |
 | `adj agent-sessions [--json]` | Inspect active agent states, tools, and token context from the session ledger |
 | `adj send --subject … --body …` | Send a message to the repository hub's inbox |
 | `adj tell --worktree … --subject …` | Send a message to a specific worker's outbox |
