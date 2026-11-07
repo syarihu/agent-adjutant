@@ -404,6 +404,7 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 - tell a person how to start, resume or close a hub, or run `adj hub-close` → §hub-lifecycle
 - start as a hub for a parent task (`adjutant_config` `hub` is not null) → §parent-hub; then show its list → §parent-list, §listing-rules; start a row or a key → §parent-pick, §parent-foreign-key; split it → §parent-split; dispatch anything → §parent-dispatch; create or re-parent a child, or pass `--after` → §parent-structure; run `adj collect --parent` → §parent-list; send the parent collection agent → §brief-parent
 - write the config (also when `registered` is false or `warnings` names `issueKeys`) → §config-sources; write `branchPattern` / `worktreeName` → §proctor
+- work out the name a task's branch is made from → §proctor
 - fetch tasks from a source → §task-sources
 - set this hub's tab title → §tab-title
 
@@ -479,7 +480,8 @@ Worktree conventions (`worktreeBase`, `branchPattern`, `copyFiles`) belong to pr
 the `proctor-worktree` skill is what says where they live and how to write them. **Do not
 name that location here or assume it** — it has already moved once, and a copy of the answer
 in this file is how adjutant starts contradicting proctor. Ask the skill. On a machine without
-proctor, this whole section does not apply (`adjutant worktree-path` answers instead).
+proctor, this section does not apply, except "The name a task's branch is made from" below
+(`adjutant worktree-path` answers instead).
 
 adjutant sets `branchPattern` / `worktreeName` itself only where proctor has no usable
 convention — and a multi-source repo is exactly where that happens. proctor's pattern
@@ -490,6 +492,24 @@ proctor pattern that bakes one key in (`{user}/ALPHA-{issue}`) cannot serve a se
 the generic `{user}/{name}`, and adjutant passes `{issueKey}-{issue}` (`ALPHA-233` / `BETA-233`) as
 `{name}`. The branch names from the single-source days come out exactly the same, so **even in a
 multi-source repository adjutant normally needs no `branchPattern`**.
+
+**The name a task's branch is made from.** §worktree creates a task's branch from this name and
+"Resolve the branch per child" in §parent-fetch expects the branch from it, so both take the name
+from here and nowhere else; the two disagreeing is how a child with a PR and a worktree is listed
+as not started:
+
+- With proctor installed (`proctor` is on `PATH`): `{issueKey}-{issue}`, the key spelled as it is
+  (for the `github` family the `issueKeys` value, for `jira` the issue key as it is): `ALPHA-233`,
+  `ABC-819`. This is the `{name}` passed to proctor.
+- Without proctor: the source's `worktreeName` with its placeholders expanded for the task (default
+  `{issuekey-lowercase}-{issue}`: `alpha-233`, `abc-819`); pass the expanded name, not the template.
+- A task without an issue has no key: the slug settled for it is the name, with or without proctor.
+
+The branch is then what
+`adj worktree-path --name '{branch name}' --user '{user}' [--pattern '{the source's branchPattern}']`
+returns for that name. Not for `linear`: its branch is `gitBranchName` as it is (§task-sources
+`linear`). `adj collect` applies the same rule for the `github` family, and also matches a worktree
+whose branch was made from the other form (one created before proctor was installed or removed).
 
 Write a per-source `branchPattern` into adjutant only when proctor has no convention for the
 repository, or its convention bakes in one of the keys and **the user said they do not want to
@@ -902,19 +922,19 @@ separately). Do not compare display names.
 
 **Resolve the branch per child.** Both the PR lookup and the worktree matching below take the branch
 name as the expected value. The default shape is `{user}/{key}`, but a source with a `branchPattern`
-has a different shape, so **ask the conventions instead of guessing**:
+has a different shape, so **ask the conventions instead of guessing** (`{branch name}` is the name
+"The name a task's branch is made from" in §proctor settles: `{issueKey}-{issue}` with proctor
+installed, `worktreeName` without):
 
 ```bash
-adj worktree-path --name '{worktreeName}' --user '{user}' [--pattern '{the source's branchPattern}']
+adj worktree-path --name '{branch name}' --user '{user}' [--pattern '{the source's branchPattern}']
 ```
 
-The `branch` that comes back is that subtask's expected value (`worktreeName` defaults to
-`{issuekey-lowercase}-{issue}`, and `{user}` is `gh api user -q '.login'`. **Only on a machine
-without proctor does §worktree dig with the same call, so the expected value and the
-real one come from the same conventions** — on a machine with it, the authority is proctor; see the
-paragraph below). **Run it in the code repository's checkout** — the conventions come from that
-repository's config, so where it is run does not change even when the parent task is in another repo
-(another host for `jira`). **Do not run it for `linear`** — its branch is `gitBranchName` as it is
+The `branch` that comes back is that subtask's expected value (§worktree creates the branch from the
+same name, so the expected value and the real one come from one rule; `{user}` is
+`gh api user -q '.login'`). **Run it in the code repository's checkout** — the conventions come from
+that repository's config, so where it is run does not change even when the parent task is in another
+repo (another host for `jira`). **Do not run it for `linear`** — its branch is `gitBranchName` as it is
 (§task-sources `linear`). Once per child, and a local call that only reads config, so nothing is
 waited on.
 
@@ -1718,9 +1738,11 @@ Everything here uses **the selected task's own source**, not the repo's first on
 
 **If proctor is installed, follow its conventions.** The `proctor-worktree` skill resolves
 `worktreeBase` / `branchPattern` / `copyFiles` from proctor's own config, and also checks that this
-task's worktree does not already exist.
+task's worktree does not already exist. The `{name}` passed to proctor is the one "The name a task's
+branch is made from" in §proctor settles.
 
-**If not, adjutant answers itself.** Get the conventions in one call:
+**If not, adjutant answers itself.** Get the conventions in one call (without proctor, the name
+"The name a task's branch is made from" in §proctor settles is `worktreeName`):
 
 ```bash
 adj worktree-path --name '{worktreeName}' --user '{GitHub user}' [--pattern '{the source's branchPattern}']
@@ -1744,7 +1766,8 @@ The branch name and the worktree name come from the **selected task's source** (
 except for `linear`, below — and `worktreeName` defaulting to `{issuekey-lowercase}-{issue}`). A new
 issue the hub filed has no source, so pass that issue's repo through `issueKeys` to make the key
 (`example/team-app` → `ALPHA` → `ALPHA-1234`). For `jira` the issue key is the key as it is, so no
-conversion is needed (`ABC-819` → branch `{user}/ABC-819`, worktree `abc-819`). **For `linear` the
+conversion is needed (`ABC-819` → branch `{user}/ABC-819` with proctor, `{user}/abc-819` and
+worktree `abc-819` without; with proctor, proctor names the worktree from that `{name}`). **For `linear` the
 branch is the issue's `gitBranchName`, used as it is** (§task-sources `linear`), read from the
 issue the tracker returned; it is not built from `branchPattern`. Only the worktree's location comes
 from the conventions (its name and its path): the worktree name is still the key (`ABC-819` →
@@ -3349,7 +3372,8 @@ Collect how things stand under {parent key}.
   subtasks are fetched changes with the source's `type`, so follow the branches written there
 - Resolve the branch per child — as "Resolve the branch per child" in §parent-fetch
   says, it is the `branch` `adj worktree-path` returns (`gitBranchName` for `linear` alone).
-  **Do not build the shape yourself**
+  The name passed is the one "The name a task's branch is made from" in §proctor settles; fetch
+  that section too, with `adj skill adj-hub --section proctor`. **Do not build the shape yourself**
 - Worktrees go one JSON object per line, `{"kind": "worktree", "path": "{worktree path}", "branch":
   "{branch}"}` (`proctor worktree ls --json`, or
   `git worktree list` without it). **The main checkout does not count as a worktree** — it is on both
