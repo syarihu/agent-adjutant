@@ -576,6 +576,11 @@ fn prepare_one(
                 ));
             }
 
+            // The planning agent writes into it; a reused worktree may have lost it.
+            let claude_dir = Path::new(&wt).join(".claude");
+            std::fs::create_dir_all(&claude_dir)
+                .map_err(|e| format!("cannot create {}: {e}", claude_dir.display()))?;
+
             (wt, true, base)
         } else {
             if let Some(err) = fetch_err {

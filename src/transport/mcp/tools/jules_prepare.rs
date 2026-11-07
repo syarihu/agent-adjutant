@@ -64,7 +64,13 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
         return Err("pass at least one issue or id".to_string());
     }
 
-    let base = text_param(args, "base").map(str::to_string);
+    // A base that is not a string is refused: read as absent it would fall back to
+    // `baseBranch` and cut the worktree from a branch nobody named.
+    let base = match args.get("base") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(_)) => text_param(args, "base").map(str::to_string),
+        Some(other) => return Err(format!("base must be a branch name, not {other}")),
+    };
     let req = PrepareRequest { targets, base };
 
     let outcome = prepare(&ctx, &req);

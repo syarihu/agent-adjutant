@@ -2118,7 +2118,8 @@ adj jules prepare [--issue '{issue number or URL}' …] [--id {task_id} …] [--
 
 `--id` is a record that exists already: a request from the dashboard (the id on its `## task`
 line), a record from the queue or confirmed through a dispatch gate. `--issue` is for a task with
-no record yet (asked in the tab, or just filed); the record is created with `--executor jules`,
+no record yet (asked in the tab, or just filed; a record still open for the same issue is used
+instead); the record is created with `--executor jules`,
 `--done-when pr` and `--stop-at plan` — nothing after the plan waits here, and Jules opens the
 PR. `--base` only for a branching point a person gave for this dispatch; otherwise the record's
 base or `baseBranch` is used and checked as §worktree says. A record that exists and still has its

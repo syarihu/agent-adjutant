@@ -27,7 +27,13 @@ pub fn prepare_cmd(args: &JulesPrepareArgs) -> Result<(), String> {
     }
     let req = PrepareRequest {
         targets,
-        base: args.base.clone(),
+        // Blank is no base, as the MCP tool reads it.
+        base: args
+            .base
+            .as_deref()
+            .map(str::trim)
+            .filter(|base| !base.is_empty())
+            .map(str::to_string),
     };
     let outcome = prepare(&ctx, &req);
     if args.json {

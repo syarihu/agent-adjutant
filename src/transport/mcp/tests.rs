@@ -219,6 +219,22 @@ fn jules_prepare_tool_refuses_call_with_neither_issues_nor_ids() {
 }
 
 #[test]
+fn jules_prepare_tool_refuses_a_base_that_is_not_a_string() {
+    let out = call(
+        "tools/call",
+        json!({"name": "adjutant_jules_prepare", "arguments": {"issues": [12], "base": 2.1}}),
+    );
+    assert_eq!(out["result"]["isError"], true, "{out}");
+    assert!(
+        out["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("base must be a branch name"),
+        "{out}"
+    );
+}
+
+#[test]
 fn jules_hand_over_tool_refuses_unknown_task_id() {
     let out = call(
         "tools/call",
