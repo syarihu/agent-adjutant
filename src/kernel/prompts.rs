@@ -96,7 +96,8 @@ yours to file: an unrelated fix pollutes this task's diff, and a diff nobody can
 diff nobody can revert. Hand it over instead — `adj skill adj-report` (or adjutant_skill,
 name=adj-report), follow it, go back to your task. Hub: `adj hub`. Worker: adj-worker.
 Procedures come as a core and sections: read the core, and fetch the section its index names before the step it covers (adj skill <name> --section <id>, or adjutant_skill section).
-After opening a PR from a worktree, before asking for a review: adj pr check-base --pr <n> (or adjutant_pr_check_base); if it fails, tell the user.";
+After opening a PR from a worktree, before asking for a review: adj pr check-base --pr <n> (or adjutant_pr_check_base); if it fails, tell the user.
+Handing tasks to Jules: adjutant_jules_prepare (adj jules prepare) assigns, cuts the worktree and writes the record before planning; adjutant_jules_hand_over (adj jules hand-over) once the plan is approved.";
 
 pub fn find(name: &str) -> Option<&'static PromptDef> {
     PROMPTS.iter().find(|p| p.name == name)

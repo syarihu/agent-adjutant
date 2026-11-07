@@ -89,6 +89,8 @@ fn run_task(action: &TaskAction) -> Result<(), String> {
 /// The `adj jules` verbs, split out for the same reason `run_task` is.
 fn run_jules(action: &JulesAction) -> Result<(), String> {
     match action {
+        JulesAction::Prepare(args) => super::jules_prepare_cmd(args),
+        JulesAction::HandOver(args) => super::jules_hand_over_cmd(args),
         JulesAction::Start(args) => super::jules_start(args),
         JulesAction::Show(args) => super::jules_show(args),
         JulesAction::Findings(args) => super::jules_findings_cmd(args),

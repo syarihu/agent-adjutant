@@ -202,6 +202,38 @@ fn a_tool_failure_comes_back_as_content_the_model_can_read() {
     assert!(out["error"].is_null());
 }
 
+#[test]
+fn jules_prepare_tool_refuses_call_with_neither_issues_nor_ids() {
+    let out = call(
+        "tools/call",
+        json!({"name": "adjutant_jules_prepare", "arguments": {}}),
+    );
+    assert_eq!(out["result"]["isError"], true);
+    assert!(
+        out["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("pass at least one issue or id")
+    );
+    assert!(out["error"].is_null());
+}
+
+#[test]
+fn jules_hand_over_tool_refuses_unknown_task_id() {
+    let out = call(
+        "tools/call",
+        json!({"name": "adjutant_jules_hand_over", "arguments": {"id": "no-such-task"}}),
+    );
+    assert_eq!(out["result"]["isError"], true);
+    assert!(
+        out["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no-such-task")
+    );
+    assert!(out["error"].is_null());
+}
+
 static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct ClientNameGuard;

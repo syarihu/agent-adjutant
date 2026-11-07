@@ -1219,3 +1219,573 @@ fn a_gh_that_hangs_on_the_post_does_not_hold_the_relay() {
         .unwrap_or_else(|| panic!("{listed}"));
     assert_eq!(first["relayed"], false, "{listed}");
 }
+
+fn setup_local_origin(fixture: &Fixture) -> tempfile::TempDir {
+    let bare = tempfile::tempdir().unwrap();
+    // Named like the GitHub repository: `insteadOf` rewrites what `git remote get-url` prints
+    // too, and the repository's owner/name is read from that.
+    let bare_path = bare.path().join("acme").join("widget.git");
+    std::fs::create_dir_all(&bare_path).unwrap();
+    let out = std::process::Command::new("git")
+        .args(["init", "--bare", "-b", "main", &bare_path.to_string_lossy()])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git init bare: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let file_url = format!("file://{}", bare_path.to_string_lossy());
+    let instead_key = format!("url.{file_url}.insteadOf");
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["config", &instead_key, "git@github.com:acme/widget.git"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git config insteadOf: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["push", "-u", "origin", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git push: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["remote", "set-head", "origin", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git set-head: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    bare
+}
+
+fn stub_tools_with_gh_log(fixture: &Fixture) -> (String, PathBuf, PathBuf, PathBuf) {
+    let (path, curl_args, curl_stdin) = stub_curl(fixture);
+    let stubs = fixture.repo.join("stub-bin");
+    let gh_log = fixture.repo.join("gh-log");
+    stub_bin(
+        &stubs,
+        "gh",
+        &format!(
+            "#!/bin/sh\n\
+             echo \"$*\" >> {gh_log}\n\
+             case \"$1 $2\" in\n\
+             'api user') echo someone ;;\n\
+             'issue edit'*) exit 0 ;;\n\
+             'issue view'*) echo \"\" ;;\n\
+             'repo view'*) echo main ;;\n\
+             *) exit 0 ;;\n\
+             esac\n",
+            gh_log = shell_quoted(&gh_log.to_string_lossy()),
+        ),
+    );
+    (path, gh_log, curl_args, curl_stdin)
+}
+
+#[test]
+fn prepare_issue_creates_record_detached_worktree_and_assigns_issue() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, gh_log, _, _) = stub_tools_with_gh_log(&fixture);
+
+    let out = fixture
+        .command(["jules", "prepare", "--issue", "12", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(doc["prepared"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["failed"].as_array().unwrap().len(), 0);
+
+    let task_item = &doc["prepared"][0];
+    let record = task_item["record"].as_str().unwrap();
+    assert_eq!(task_item["key"], "WID-12");
+    assert_eq!(task_item["tracker"], "github");
+    assert_eq!(task_item["base"], "origin/main");
+    assert_eq!(task_item["created"], true);
+    assert_eq!(task_item["reusedWorktree"], false);
+    assert_eq!(task_item["assign"]["done"], true);
+
+    let worktree = task_item["worktree"].as_str().unwrap();
+    assert!(Path::new(worktree).is_dir());
+    assert!(Path::new(worktree).join(".claude").is_dir());
+
+    // Detached check
+    let sym = std::process::Command::new("git")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(worktree)
+        .output()
+        .unwrap();
+    assert!(!sym.status.success(), "worktree should be detached");
+
+    // Task record check
+    let shown = fixture.json(&["task", "show", "--id", record]);
+    assert_eq!(shown["executor"], "jules");
+    assert_eq!(shown["doneWhen"], "pr");
+    assert_eq!(shown["stopAt"], "plan");
+    assert_eq!(shown["status"], "dispatched");
+    assert_eq!(shown["worktree"], worktree);
+    assert_eq!(shown["base"], "origin/main");
+
+    // Stubbed gh was called to assign
+    let gh_calls = std::fs::read_to_string(&gh_log).unwrap();
+    assert!(gh_calls.contains("issue edit 12 -R acme/widget --add-assignee @me"));
+}
+
+#[test]
+fn prepare_two_targets_with_one_failing_exits_nonzero_and_leaves_no_stray_worktree() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, _, _) = stub_tools_with_gh_log(&fixture);
+
+    // Create a task record with worker executor
+    let worker_task = fixture.json(&[
+        "task",
+        "add",
+        "--title",
+        "worker task",
+        "--body",
+        "b",
+        "--executor",
+        "worker",
+        "--json",
+    ])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let out = fixture
+        .command([
+            "jules",
+            "prepare",
+            "--issue",
+            "13",
+            "--id",
+            &worker_task,
+            "--json",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !out.status.success(),
+        "should exit non-zero when failed is not empty"
+    );
+
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(doc["prepared"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["failed"].as_array().unwrap().len(), 1);
+
+    assert_eq!(doc["prepared"][0]["key"], "WID-13");
+    assert_eq!(doc["failed"][0]["target"], worker_task);
+    assert!(
+        doc["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("is to be implemented by its worker")
+    );
+
+    // The failed worker task must not have a worktree
+    let shown = fixture.json(&["task", "show", "--id", &worker_task]);
+    assert!(shown["worktree"].is_null() || shown["worktree"] == "");
+}
+
+#[test]
+fn prepare_reuses_existing_dispatched_worktree() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, _, _) = stub_tools_with_gh_log(&fixture);
+
+    // Prepare once
+    let out1 = fixture
+        .command(["jules", "prepare", "--issue", "12", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out1.status.success());
+    let doc1: serde_json::Value = serde_json::from_slice(&out1.stdout).unwrap();
+    let record = doc1["prepared"][0]["record"].as_str().unwrap();
+    let initial_worktree = doc1["prepared"][0]["worktree"].as_str().unwrap();
+
+    // Prepare again with --id
+    let out2 = fixture
+        .command(["jules", "prepare", "--id", record, "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out2.status.success());
+    let doc2: serde_json::Value = serde_json::from_slice(&out2.stdout).unwrap();
+    assert_eq!(doc2["prepared"].as_array().unwrap().len(), 1);
+    assert_eq!(doc2["failed"].as_array().unwrap().len(), 0);
+
+    let prepared = &doc2["prepared"][0];
+    assert_eq!(prepared["record"], record);
+    assert_eq!(prepared["worktree"], initial_worktree);
+    assert_eq!(prepared["reusedWorktree"], true);
+    assert_eq!(prepared["created"], false);
+}
+
+#[test]
+fn hand_over_refuses_dirty_worktree_without_starting_session() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, curl_args, _) = stub_tools_with_gh_log(&fixture);
+
+    let out = fixture
+        .command(["jules", "prepare", "--issue", "12", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let record = doc["prepared"][0]["record"].as_str().unwrap();
+    let worktree = doc["prepared"][0]["worktree"].as_str().unwrap();
+
+    // Write a plan file and an unexpected dirty file
+    std::fs::write(
+        Path::new(worktree).join(".claude/jules-plan.md"),
+        "A jules plan",
+    )
+    .unwrap();
+    std::fs::write(Path::new(worktree).join("dirty.txt"), "uncommitted changes").unwrap();
+
+    let out_handover = fixture
+        .command(["jules", "hand-over", "--id", record])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        !out_handover.status.success(),
+        "should fail on dirty worktree"
+    );
+    let stderr = String::from_utf8_lossy(&out_handover.stderr);
+    assert!(stderr.contains("dirty.txt"));
+    assert!(stderr.contains("has changes"));
+    assert!(stderr.contains("nothing was started"));
+
+    // No curl call
+    assert!(
+        !curl_args.exists(),
+        "curl was called despite dirty worktree"
+    );
+
+    // Worktree kept
+    assert!(Path::new(worktree).is_dir());
+}
+
+#[test]
+fn hand_over_clean_worktree_starts_session_removes_worktree_and_runs_hooks() {
+    let hook_log = tempfile::tempdir().unwrap();
+    let hook_log_path = hook_log.path().join("hook.log");
+    let mut conf_val: serde_json::Value =
+        serde_json::from_str(&config(&format!("\"echo {KEY}\""))).unwrap();
+    conf_val["repos"]["acme/widget"]["onWorktreeRemove"] = serde_json::json!([format!(
+        "echo {{worktree}} {{name}} >> {}",
+        hook_log_path.display()
+    )]);
+    let conf_str = serde_json::to_string(&conf_val).unwrap();
+
+    let fixture = Fixture::new(&conf_str);
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, curl_args, _) = stub_tools_with_gh_log(&fixture);
+
+    let out = fixture
+        .command(["jules", "prepare", "--issue", "12", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let record = doc["prepared"][0]["record"].as_str().unwrap();
+    let worktree = doc["prepared"][0]["worktree"].as_str().unwrap().to_string();
+
+    // Write valid plan files
+    std::fs::write(
+        Path::new(&worktree).join(".claude/jules-plan.md"),
+        "Approved design plan",
+    )
+    .unwrap();
+    std::fs::write(Path::new(&worktree).join(".claude/jules-gate.json"), "{}").unwrap();
+
+    let out_handover = fixture
+        .command(["jules", "hand-over", "--id", record, "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out_handover.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out_handover.stderr)
+    );
+
+    let handover_doc: serde_json::Value = serde_json::from_slice(&out_handover.stdout).unwrap();
+    assert_eq!(handover_doc["session"]["id"], "42");
+    assert_eq!(handover_doc["worktreeRemoved"], true);
+    assert!(handover_doc["removeError"].is_null());
+    assert_eq!(handover_doc["hooks"].as_array().unwrap().len(), 1);
+    assert_eq!(handover_doc["hooks"][0]["ok"], true);
+
+    // Curl was called to start session
+    assert!(curl_args.exists());
+
+    // Task record updated
+    let shown = fixture.json(&["task", "show", "--id", record]);
+    assert_eq!(shown["julesSession"], "42");
+    assert!(shown["worktree"].is_null() || shown["worktree"] == "");
+
+    // Worktree removed
+    assert!(!Path::new(&worktree).exists());
+
+    // onWorktreeRemove hook ran
+    assert!(hook_log_path.exists());
+    let log_content = std::fs::read_to_string(&hook_log_path).unwrap();
+    assert!(log_content.contains(&worktree));
+}
+
+#[test]
+fn hand_over_discard_removes_worktree_without_session_leaving_task_dispatched() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, curl_args, _) = stub_tools_with_gh_log(&fixture);
+
+    let out = fixture
+        .command(["jules", "prepare", "--issue", "14", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let record = doc["prepared"][0]["record"].as_str().unwrap();
+    let worktree = doc["prepared"][0]["worktree"].as_str().unwrap().to_string();
+
+    // Discard hand-over
+    let out_handover = fixture
+        .command(["jules", "hand-over", "--id", record, "--discard", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        out_handover.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out_handover.stderr)
+    );
+
+    let handover_doc: serde_json::Value = serde_json::from_slice(&out_handover.stdout).unwrap();
+    assert!(handover_doc["session"].is_null());
+    assert_eq!(handover_doc["worktreeRemoved"], true);
+
+    // No curl call
+    assert!(!curl_args.exists());
+
+    // Worktree removed
+    assert!(!Path::new(&worktree).exists());
+
+    // Task record still in dispatched status, worktree cleared, no session
+    let shown = fixture.json(&["task", "show", "--id", record]);
+    assert_eq!(shown["status"], "dispatched");
+    assert!(shown["julesSession"].is_null());
+    assert!(shown["worktree"].is_null() || shown["worktree"] == "");
+}
+
+#[test]
+fn prepare_with_nonexistent_base_fails_and_leaves_no_worktree_or_record() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, _, _) = stub_tools_with_gh_log(&fixture);
+
+    let out = fixture
+        .command([
+            "jules",
+            "prepare",
+            "--issue",
+            "12",
+            "--base",
+            "no-such-branch",
+            "--json",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !out.status.success(),
+        "should exit non-zero when target base does not exist"
+    );
+
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(doc["prepared"].as_array().unwrap().len(), 0);
+    assert_eq!(doc["failed"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["failed"][0]["target"], "12");
+    assert!(
+        doc["failed"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("nothing was kept")
+    );
+
+    // No worktree created
+    let worktrees_dir = fixture.repo.join(".claude").join("worktrees");
+    if worktrees_dir.exists() {
+        let entries: Vec<_> = std::fs::read_dir(&worktrees_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(entries.is_empty(), "worktree was left behind: {entries:?}");
+    }
+
+    // No record left for the issue
+    let list = fixture.json(&["task", "list", "--json"]);
+    let found = list.as_array().unwrap().iter().any(|t| {
+        t["issueUrl"]
+            .as_str()
+            .is_some_and(|u| u.ends_with("/issues/12"))
+    });
+    assert!(!found, "task record was left behind: {list}");
+}
+
+#[test]
+fn prepare_reusing_worktree_with_different_base_fails_and_keeps_record_base() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, _, _) = stub_tools_with_gh_log(&fixture);
+
+    let out1 = fixture
+        .command(["jules", "prepare", "--issue", "12", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out1.status.success());
+    let doc1: serde_json::Value = serde_json::from_slice(&out1.stdout).unwrap();
+    let record = doc1["prepared"][0]["record"].as_str().unwrap().to_string();
+    let initial_base = doc1["prepared"][0]["base"].as_str().unwrap().to_string();
+
+    // Create release/9 branch with a new commit in the repo and push it to origin
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["checkout", "-b", "release/9"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["commit", "--allow-empty", "-m", "release 9 commit"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["push", "-u", "origin", "release/9"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let out = std::process::Command::new("git")
+        .current_dir(&fixture.repo)
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Prepare again with --base release/9: worktree HEAD != origin/release/9 commit
+    let out2 = fixture
+        .command([
+            "jules",
+            "prepare",
+            "--id",
+            &record,
+            "--base",
+            "release/9",
+            "--json",
+        ])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        !out2.status.success(),
+        "should exit non-zero when reused worktree HEAD does not match base"
+    );
+
+    let doc2: serde_json::Value = serde_json::from_slice(&out2.stdout).unwrap();
+    assert_eq!(doc2["failed"].as_array().unwrap().len(), 1);
+    let error_msg = doc2["failed"][0]["error"].as_str().unwrap();
+    assert!(
+        error_msg.contains("not origin/release/9"),
+        "error message should say not origin/release/9, got: {error_msg}"
+    );
+
+    // Record's base is unchanged
+    let shown = fixture.json(&["task", "show", "--id", &record]);
+    assert_eq!(shown["base"], initial_base);
+}
+
+#[test]
+fn hand_over_refuses_worktree_switched_to_branch() {
+    let fixture = Fixture::new(&config(&format!("\"echo {KEY}\"")));
+    let _bare = setup_local_origin(&fixture);
+    let (path, _, curl_args, _) = stub_tools_with_gh_log(&fixture);
+
+    let out = fixture
+        .command(["jules", "prepare", "--issue", "12", "--json"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let record = doc["prepared"][0]["record"].as_str().unwrap();
+    let worktree = doc["prepared"][0]["worktree"].as_str().unwrap();
+
+    // Switch to a branch in the worktree
+    let out_switch = std::process::Command::new("git")
+        .current_dir(worktree)
+        .args(["switch", "-c", "x"])
+        .output()
+        .unwrap();
+    assert!(out_switch.status.success());
+
+    // Write plan file
+    std::fs::write(
+        Path::new(worktree).join(".claude/jules-plan.md"),
+        "A jules plan",
+    )
+    .unwrap();
+
+    let out_handover = fixture
+        .command(["jules", "hand-over", "--id", record])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert!(
+        !out_handover.status.success(),
+        "should fail on worktree on a branch"
+    );
+    let stderr = String::from_utf8_lossy(&out_handover.stderr);
+    assert!(
+        stderr.contains("is on branch"),
+        "unexpected stderr: {stderr}"
+    );
+
+    // Curl was never called
+    assert!(!curl_args.exists(), "curl was called despite branch check");
+}

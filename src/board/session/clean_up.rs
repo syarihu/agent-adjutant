@@ -1,12 +1,9 @@
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-use serde_json::Value;
-
 use crate::board::view::{find_session, git_state_of};
 use crate::board::{NEXT, Server, settings_now};
 use crate::infra::paths::same_path;
-use crate::infra::template::{Sub, render};
 use crate::kernel::worktree_state::GitState;
 use crate::mail;
 use crate::registry::{self, Context};
@@ -55,11 +52,7 @@ pub struct BranchRemoval {
     pub deleted: Result<(), String>,
 }
 
-/// One `onWorktreeRemove` command and how it ended, as the error text when it failed.
-pub struct HookRun {
-    pub command: String,
-    pub result: Result<(), String>,
-}
+pub use crate::kernel::worktree_hooks::HookRun;
 
 /// Work that removing the worktree would lose.
 #[derive(Debug, PartialEq, Eq)]
@@ -205,7 +198,12 @@ pub fn clean_up(server: &Server, id: &str, request: CleanUpRequest) -> Result<Cl
         BranchRemoval { name, deleted }
     });
 
-    let hooks = run_remove_hooks(server, worktree, &name);
+    let hooks = crate::kernel::worktree_hooks::run_remove_hooks(
+        &server.ctx.repo.nwo,
+        &server.ctx.repo.main,
+        worktree,
+        &name,
+    );
 
     // After the removal, as the hub does: a card left in progress for a worktree that is gone
     // would stay on the board for good.
@@ -437,58 +435,6 @@ fn git_ok(args: &[&str]) -> Result<(), String> {
 /// head of a PR that is still open.
 fn delete_branch(main: &str, branch: &str) -> Result<(), String> {
     git_ok(&["-C", main, "branch", "-D", "--", branch])
-}
-
-/// The repository's `onWorktreeRemove` commands, run in the main checkout after the removal
-/// with `{worktree}` and `{name}` filled in, as the hub does. Read from the config now, not
-/// from the settings the server started with. A hook that fails is reported and does not
-/// undo anything.
-fn run_remove_hooks(server: &Server, worktree: &str, name: &str) -> Vec<HookRun> {
-    let hooks = crate::kernel::config::resolve_config(&server.ctx.repo.nwo)
-        .ok()
-        .and_then(|resolved| resolved.config)
-        .and_then(|config| config.get("onWorktreeRemove").cloned())
-        .and_then(|hooks| hooks.as_array().cloned())
-        .unwrap_or_default();
-    hooks
-        .iter()
-        .filter_map(Value::as_str)
-        .map(|template| {
-            let command = render(
-                template,
-                &[
-                    ("worktree", Sub::Quoted(worktree)),
-                    ("name", Sub::Quoted(name)),
-                ],
-            );
-            let ran = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(&command)
-                .current_dir(&server.ctx.repo.main)
-                .output();
-            match ran {
-                Ok(out) if out.status.success() => HookRun {
-                    command,
-                    result: Ok(()),
-                },
-                Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    let error = match stderr.is_empty() {
-                        true => format!("exited with {}", out.status),
-                        false => stderr,
-                    };
-                    HookRun {
-                        command,
-                        result: Err(error),
-                    }
-                }
-                Err(e) => HookRun {
-                    command,
-                    result: Err(e.to_string()),
-                },
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -13,7 +13,9 @@ mod api;
 mod findings;
 mod follow;
 mod get;
+mod hand_over;
 mod model;
+mod prepare;
 mod relay;
 mod start;
 
@@ -21,7 +23,9 @@ pub use announce_review::*;
 pub use findings::*;
 pub use follow::*;
 pub use get::*;
+pub use hand_over::*;
 pub use model::*;
+pub use prepare::*;
 pub use relay::*;
 pub use start::*;
 

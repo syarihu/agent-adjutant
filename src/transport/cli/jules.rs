@@ -1,15 +1,79 @@
 //! `adj jules` — hand a task's approved plan to Jules, and ask how that is going.
 //!
 //! The hub is the caller. It has a sub-agent write the plan in a worktree cut only to be read,
-//! and once a person approves that plan it runs `adj jules start` with it, which starts the
+//! and once a person approves that plan it runs `adj jules hand-over` with it, which starts the
 //! session and writes its id onto the task record. From there the record is what
 //! the board and the hub follow: the session id is the only thing about Jules kept locally.
 
 use serde_json::{Value, json};
 
-use super::args::{JulesFindingsArgs, JulesRelayArgs, JulesShowArgs, JulesStartArgs};
-use crate::jules::{self, Chosen, findings, read_plan, relay};
+use super::args::{
+    JulesFindingsArgs, JulesHandOverArgs, JulesPrepareArgs, JulesRelayArgs, JulesShowArgs,
+    JulesStartArgs,
+};
+use crate::jules::{
+    self, Chosen, PrepareRequest, PrepareTarget, findings, hand_over, prepare, read_plan, relay,
+};
 use crate::task;
+
+pub fn prepare_cmd(args: &JulesPrepareArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let mut targets = Vec::new();
+    for issue in &args.issue {
+        targets.push(PrepareTarget::Issue(issue.clone()));
+    }
+    for id in &args.id {
+        targets.push(PrepareTarget::Task(id.clone()));
+    }
+    let req = PrepareRequest {
+        targets,
+        base: args.base.clone(),
+    };
+    let outcome = prepare(&ctx, &req);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&outcome).unwrap_or_default()
+        );
+    } else {
+        for t in &outcome.prepared {
+            println!("{} {} (base {})", t.record, t.worktree, t.base);
+        }
+        for f in &outcome.failed {
+            println!("{}: {}", f.target, f.error);
+        }
+    }
+    if !outcome.failed.is_empty() {
+        return Err("some targets failed to prepare".to_string());
+    }
+    Ok(())
+}
+
+pub fn hand_over_cmd(args: &JulesHandOverArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    let res = hand_over(&ctx, &args.id, args.discard)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&res).unwrap_or_default());
+        return Ok(());
+    }
+    if let Some(session) = &res.session {
+        println!("{} — handed to Jules as session {}", res.task, session.id);
+        if let Some(url) = &session.url {
+            println!("{url}");
+        }
+    }
+    if res.worktree_removed {
+        println!("worktree removed");
+    } else if let Some(reason) = &res.remove_error {
+        println!("worktree kept: {reason}");
+    }
+    for hook in &res.hooks {
+        if let Err(e) = &hook.result {
+            println!("hook `{}` failed: {e}", hook.command);
+        }
+    }
+    Ok(())
+}
 
 pub fn start(args: &JulesStartArgs) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;

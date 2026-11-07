@@ -864,6 +864,11 @@ pub(crate) struct GateCloseArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum JulesAction {
+    /// Before a Jules task is planned: assign its issue, cut its detached worktree and write its record, and print what the planning agent needs
+    Prepare(JulesPrepareArgs),
+    /// Once a Jules plan is approved: start the session from the plan and remove the planning worktree (--discard: remove it without starting, for a rejected plan)
+    #[command(name = "hand-over")]
+    HandOver(JulesHandOverArgs),
     /// Start a Jules session for a task and write its id onto the record
     Start(JulesStartArgs),
     /// How a session is doing: its state, its page and its pull request
@@ -872,6 +877,36 @@ pub(crate) enum JulesAction {
     Findings(JulesFindingsArgs),
     /// Pass review comments on to Jules, as one comment on the pull request in your name
     Relay(JulesRelayArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct JulesPrepareArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long = "issue", value_name = "n|url", required_unless_present = "id")]
+    pub(crate) issue: Vec<String>,
+    #[arg(long = "id", value_name = "task", required_unless_present = "issue")]
+    pub(crate) id: Vec<String>,
+    #[arg(long)]
+    pub(crate) base: Option<String>,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct JulesHandOverArgs {
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    #[arg(long)]
+    pub(crate) hub: Option<String>,
+    #[arg(long)]
+    pub(crate) id: String,
+    #[arg(long)]
+    pub(crate) discard: bool,
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Args)]

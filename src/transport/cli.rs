@@ -52,7 +52,8 @@ use hub::{ago, print_performed};
 pub use hub::{hub, hub_close, hub_stop};
 pub use ide_title_notify::{notify_user, open_ide, set_title, worktree_path};
 pub use jules::{
-    findings_cmd as jules_findings_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
+    findings_cmd as jules_findings_cmd, hand_over_cmd as jules_hand_over_cmd,
+    prepare_cmd as jules_prepare_cmd, relay_cmd as jules_relay_cmd, show as jules_show,
     start as jules_start,
 };
 pub use review::{

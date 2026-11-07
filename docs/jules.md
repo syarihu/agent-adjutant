@@ -22,9 +22,17 @@ A task can be implemented by [Jules](https://jules.google) instead of a local wo
 
 ## Workflow
 
-### 1. Marking a Task for Jules
+### 1. Preparing the Task
 
-Specify `--executor jules` when creating or updating a task:
+The hub runs `adj jules prepare` to cut the detached worktree and write the task record before planning:
+
+```bash
+adj jules prepare --issue <issue-number-or-url>
+# or for an existing task record
+adj jules prepare --id <task-id>
+```
+
+You can also specify `--executor jules` by hand when creating or updating a task:
 
 ```bash
 adjutant task add --executor jules
@@ -43,16 +51,18 @@ The hub opens a `plan` gate using `adj gate open --body-file design.md --openedB
 
 ### 3. Launching the Session
 
-Once the human approves the plan, the hub dispatches the task to Jules and disposes of the temporary worktree:
+Once the human approves the plan, the hub hands the task over to Jules and removes the planning worktree using `adj jules hand-over`:
 
 ```bash
-adj jules start --id <task-id> --prompt-file design.md
+adj jules hand-over --id <task-id>
 ```
 
-- Starts the Jules session from the branch specified by `--base` (or the task's base).
+- Starts the Jules session from the base written on the record by `adj jules prepare`.
 - Instructs Jules to open a PR automatically upon completion.
 - Records the session ID under `julesSession` on the task record.
+- Deletes the plan files and removes the temporary worktree, running `onWorktreeRemove` hooks.
 - You can query session progress with `adj jules show --id <task-id>`.
+- `adj jules start` still exists for starting a session by hand.
 
 ---
 
