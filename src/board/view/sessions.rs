@@ -875,7 +875,7 @@ pub fn board_sessions(
 /// mount must not hold a connection thread indefinitely, but a busy machine can take well over
 /// 10 s for the several git calls a check makes, and a timeout makes cleanup refuse with "git did
 /// not answer in time" rather than tell what would be lost.
-const GIT_CHECK_SECS: u64 = 30;
+pub(crate) const GIT_CHECK_SECS: u64 = 30;
 
 /// The session `id` of this board, from the board's own records.
 pub fn find_session(
@@ -888,7 +888,7 @@ pub fn find_session(
 
 /// The slug of the hub the worker in `worktree` reports to, from its own record: the same one
 /// `parent_hub_id` and the hub listing arrive at, without listing the hubs.
-fn worker_hub_slug(repo: &crate::kernel::identity::RepoInfo, worktree: &Path) -> String {
+pub(crate) fn worker_hub_slug(repo: &crate::kernel::identity::RepoInfo, worktree: &Path) -> String {
     match crate::registry::worker_hub_key(worktree) {
         Some(key) => crate::kernel::identity::slug_for(&repo.nwo, Some(&key)),
         None => match &repo.hub {
