@@ -156,6 +156,8 @@ You can answer gates on the web board, in the worker's terminal (`adj gate close
 | `adj gate open\|list\|show\|answer\|close` | Manage structured human review gates |
 | `adj task add\|list\|show\|update\|refresh\|park\|unpark` | Manage task records and synchronize state with GitHub Issues/PRs |
 | `adj pr check-base --pr <n>` | Move a worker's PR to the brief's Base branch when its base differs; exits 1 with the reason when it cannot |
+| `adj jules prepare --issue <n> \| --id <task>` | Before a Jules task is planned: assign its issue, cut a detached worktree, write the record and print what the planning agent needs (several in one call) |
+| `adj jules hand-over --id <task> [--discard]` | Once its plan is approved: check the planning worktree is clean and detached, start the Jules session, remove the worktree (`--discard`: remove it without a session) |
 | `adj collect [--parent <key>] [--repo <owner/name>] [--json]` | Collect the Dashboard's rows (or a parent task's) from the github and github-project task sources; jira and linear sources are returned for the collection agent |
 | `adj agent-sessions [--json]` | Inspect active agent states, tools, and token context from the session ledger |
 | `adj send --subject … --body …` | Send a message to the repository hub's inbox |
@@ -168,7 +170,7 @@ You can answer gates on the web board, in the worker's terminal (`adj gate close
 When running inside an agent session (`adjutant mcp`), adjutant exposes tools and prompts:
 
 - **Prompts**: `adj-hub` (hub orchestration), `adj-worker` (task execution), `adj-report` (bug reporting to hub), `adj-review-hub`, `adj-reviewer`.
-- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_request`, `adjutant_gate_answer`, `adjutant_pr_check_base`, `adjutant_collect`.
+- **Tools**: `adjutant_config`, `adjutant_hub_status`, `adjutant_send`, `adjutant_pending`, `adjutant_tell`, `adjutant_outbox`, `adjutant_gate_open`, `adjutant_gate_close`, `adjutant_refresh`, `adjutant_skill`, `adjutant_work`, `adjutant_gate_read`, `adjutant_reviews`, `adjutant_request`, `adjutant_gate_answer`, `adjutant_pr_check_base`, `adjutant_collect`, `adjutant_jules_prepare`, `adjutant_jules_hand_over`.
 
 ---
 

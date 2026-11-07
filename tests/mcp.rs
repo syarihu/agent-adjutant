@@ -65,7 +65,15 @@ fn the_server_handshakes_serves_the_procedures_and_answers_about_the_repo() {
         !procedure.starts_with("---"),
         "frontmatter leaked into the procedure"
     );
-    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(replies[3]["result"]["tools"].as_array().unwrap().len(), 19);
+    let tool_names: Vec<&str> = replies[3]["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(tool_names.contains(&"adjutant_jules_prepare"));
+    assert!(tool_names.contains(&"adjutant_jules_hand_over"));
 
     let hub = tool_result(&replies[4]);
     assert_eq!(hub["hubName"], HUB);

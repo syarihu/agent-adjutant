@@ -345,7 +345,7 @@ as standard input to an option that accepts `-`. Remove the file once read:
 | A task's title read from a tracker | `adj task update --title -` | `{main}/.claude/task-title-{task_id}.md` |
 | A request a parent task's hub hands to the repository's hub | `adj task add --body -` | `{main}/.claude/task-request-{key}.md` |
 | A relay gate's content (JSON) | `adj gate open --file` | `{main}/.claude/gate-relay-{task}.json` |
-| A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules start --prompt-file` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
+| A plan for Jules and its gate (written by the planning sub-agent; gone with the worktree) | `adj gate open --file --body-file`, `adj jules hand-over` | `{worktree}/.claude/jules-gate.json`, `{worktree}/.claude/jules-plan.md` |
 | Findings to pass to Jules, with notes (JSON) | `adj jules relay --plan-file` | `{main}/.claude/relay-{task}.json` |
 | A handover note put on a task's record | `adj task update --instruction -` | `{worktree}/.claude/task-handover.md` |
 | What a task is parked for, in words | `adj task park --text -` | `{main}/.claude/task-park-{task_id}.md` |
@@ -395,7 +395,7 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 - start a task (menu 2) → §pick-task; assign it or move it to In Progress → §claim
 - run `proctor worktree add` / `git worktree add` → §worktree
 - start a worker → §start-worker; run `adj task add` → §task-record; run `adj task brief` → §worker-brief; run `adjutant work`, or set a record `dispatched` → §worker-spawn
-- hand a task to Jules (the implementer is `jules`) → §jules-plan, and §brief-jules for its sub-agent; switch a Jules task to a worker → §jules-to-worker
+- hand a task to Jules (the implementer is `jules`), or run `adj jules prepare` → §jules-plan, and §brief-jules for its sub-agent; run `adj jules hand-over` → §jules-plan-answer; switch a Jules task to a worker → §jules-to-worker
 - file something (menu 3, a report) → §request-read; search for duplicates or file it → §request-file; start what was filed → §request-start; reply to the requester → §request-reply
 - investigate only (menu 4) → §investigate-only; work on an existing worktree (menu 5) → §existing-worktree
 - a person names a parent task or asks to split one, in a repository hub → §offer-parent-hub
@@ -1461,7 +1461,7 @@ when it finishes.
    If `task` is `null`, do nothing more.
 2. Run that record as §board-request-run (including the `adj task show` check). **A
    record whose `executor` is `jules` never gets `adjutant work`**: run §jules-plan for it
-   (reusing its worktree if it still exists, otherwise creating it detached in §worktree). It takes no slot, so it does not count as the one taken here; go back to 1 for the
+   (`adj jules prepare --id` reuses its worktree if it still exists and creates it otherwise). It takes no slot, so it does not count as the one taken here; go back to 1 for the
    next. Otherwise, if `worktree` is written and that worktree **still exists**, only Step 3 (§worker-spawn). If not
    written, or gone (not in `git worktree list`), start again from creating the worktree in §start-worker. If `note`
    says "resume with --resume", start it with `adjutant work --resume` (starting it with a plain
@@ -1550,8 +1550,9 @@ worktree. A task row with `?` is shown with `?` in its status, not as not starte
 <!-- section: pick-task -->
 ## Starting a task
 
-These moves are all the hub does for one task. It does not touch the implementation. A task
-handed to Jules takes §jules-plan in place of §start-worker.
+These moves are all the hub does for one task. It does not touch the implementation. A task handed
+to Jules takes §jules-plan in place of §start-worker, and its `adj jules prepare` does §claim's
+assignment and §worktree for it.
 
 ### 1. Pick the task
 
@@ -1809,16 +1810,13 @@ hook is where per-repo setup a fresh worktree cannot inherit belongs: gitignored
 its own Gradle daemon registry so one `--stop` does not kill the other worktrees' builds.
 adjutant itself knows nothing about any build tool.
 
-**For a task handed to Jules, create it detached, and do not run `postCreate`.** Nothing is committed
-there — the plan is written into its `.claude/`, and everything after the plan is Jules's — so it
-needs no branch; and it is only read, so it needs none of the setup a build does. The location, the
-name and the branching point are decided as above, the same as for any task:
-
-```bash
-git -C '{main}' worktree add --detach '{path}' '{base}'
-```
-
-A branch and `postCreate` come only if the task is switched to a worker (§jules-to-worker).
+**For a task handed to Jules, do not create it here.** `adj jules prepare` (Step 1 of
+§jules-plan) creates it detached, from the base decided as above, and does not run `postCreate`:
+nothing is committed there — the plan is written into its `.claude/`, and everything after the
+plan is Jules's — so it needs no branch, and it is only read, so it needs none of the setup a
+build does. It takes the location and the name from adjutant's own conventions
+(`adj worktree-path`), not proctor's: the worktree lives only until the plan is handed over. A
+branch and `postCreate` come only if the task is switched to a worker (§jules-to-worker).
 
 Then, whichever the user chose:
 
@@ -1916,8 +1914,8 @@ card on the board. The worker starts clean, so that file is everything it knows.
   nothing was said, `plan`. The worker decides by it whether the diff and verification wait on a
   person, so do not raise it to `all` on a guess (raised, tasks nobody will look at pile up as needing
   attention).
-  `--executor` is the implementer (`worker` / `jules`): `worker` on this route, `jules` when §jules-plan
-  creates the record. Left out it is `worker`, and a task handed to Jules is recorded as
+  `--executor` is the implementer (`worker` / `jules`): `worker` on this route (`adj jules prepare`
+  writes `jules` on the records it creates). Left out it is `worker`, and a task handed to Jules is recorded as
   the worker's: the board then waits on a worker that is never started, and `adj jules start` refuses
   the task. **The record and the route taken must match.**
 
@@ -2132,23 +2130,35 @@ detached in §worktree) only as a place to read from.
 A sub-agent cannot ask a person anything. A task that needs a decision partway through planning is not
 a good fit for Jules in the first place; it goes to a worker (§jules-to-worker).
 
-**Step 1 — the record.** For a request from the dashboard, the id on the `## task` line. Otherwise
-create it with the `adj task add` command in §task-record (the summary file as
-written there), with `--executor jules`, `--done-when pr` and `--stop-at plan` — nothing after the
-plan waits here, and Jules opens the PR. Then mark it in progress with the worktree and the base:
+**Step 1 — `adj jules prepare`.** One call assigns the issue, decides the base, creates the
+worktree detached, writes the record and marks it in progress, for one task or several:
 
 ```bash
-adj task update --id {task_id} --status dispatched --worktree '{worktree}' --base '{base}' --note ''
+adj jules prepare [--issue '{issue number or URL}' …] [--id {task_id} …] [--base '{base}'] --json
 ```
 
-`{base}` is the branching point decided in §worktree. It goes on the record because the
-plan is answered on a later wake, perhaps after the hub restarted, and `adj jules start` reads it from
-there. `adj jules start` also refuses a task that is not `dispatched`, and the card shows it in
-progress while the plan is written. **No worker slot is taken** — `maxWorkers` counts worker sessions, and none is
-started — so there is no waiting for a slot on this route.
+`--id` is a record that exists already: a request from the dashboard (the id on its `## task`
+line), a record from the queue or confirmed through a dispatch gate. `--issue` is for a task with
+no record yet (asked in the tab, or just filed; a record still open for the same issue is used
+instead); the record is created with `--executor jules`,
+`--done-when pr` and `--stop-at plan` — nothing after the plan waits here, and Jules opens the
+PR. `--base` only for a branching point a person gave for this dispatch; otherwise the record's
+base or `baseBranch` is used and checked as §worktree says. A record that exists and still has its
+worktree keeps it. The base goes on the record because the plan is answered on a later wake,
+perhaps after the hub restarted, and `adj jules hand-over` reads it from there. **No worker slot
+is taken** — `maxWorkers` counts worker sessions, and none is started — so there is no waiting for
+a slot on this route.
 
-**Step 2 — the planning sub-agent.** Run `mkdir -p '{worktree}/.claude'`, then start a sub-agent with
-§brief-jules, **in the background**, and go back to waiting. Its
+Each entry of `prepared` holds what Step 2 needs (`record`, `key`, `title`, `tracker`, `url`,
+`parent`, `instruction`, `base`, `worktree`, `planFile`, `gateFile`, `verify`, `language`). Each
+entry of `failed` names the target and why nothing was prepared for it (a record whose implementer
+is a worker, one already with Jules, a base that does not exist, a path already taken): tell the
+user and leave that one. `assign.done: false` is not a failure: for `jira` / `linear` assign it
+with the tracker's tool as §claim says, otherwise tell the user why it was not assigned. Moving
+the task to In Progress (§claim) is still yours.
+
+**Step 2 — the planning sub-agent.** Start a sub-agent with §brief-jules, filled in from the task's
+entry in `prepared`, **in the background**, and go back to waiting. Its
 completion arrives as a notification. **Keep its agent id**: a `changes` answer goes back to the same
 one. It writes two files, and reports only their paths and one line, so the plan does not pile up in
 this transcript:
@@ -2179,13 +2189,13 @@ approval: {worktree}/.claude/jules-plan.md" in `--note` and leave it.
 
 A Jules task whose record is `dispatched` with no `julesSession`, and with no gate open for it (`task`
 in `adj gate list --json`), is between a planning sub-agent and a person with nobody moving it: the hub
-restarted while the sub-agent ran, the gate was closed without an answer, or `adj jules start` failed.
+restarted while the sub-agent ran, the gate was closed without an answer, or `adj jules hand-over` failed.
 The board shows 「計画が止まっています」 on its card after `stuckAfterMinutes`. When a person points at
 one, or asks to try a failed hand-over again:
 
-- If the record's `worktree` is gone, create it again detached (§worktree), write the
-  new path and base onto the record with the `adj task update` of Step 1 (the answer and `adj jules
-  start` read both from there), and start from Step 2.
+- If the record's `worktree` is gone, run `adj jules prepare --id {task_id}` again (it creates it and
+  writes the new path and base onto the record, where the answer and `adj jules hand-over` read them),
+  and start from Step 2.
 - If `{worktree}/.claude/jules-gate.json` and `jules-plan.md` are there, open the gate again (Step 3);
   the approval that comes back runs the hand-over again.
 - Otherwise start the planning sub-agent again (Step 2).
@@ -2462,7 +2472,9 @@ Run the moves of "Starting a task" (§pick-task, §claim, §worktree, §start-wo
   update and carry on.
   `jira` has no item id. Assign and transition directly with the key of the ticket filed.
 - **3. Create the worktree** — make the key by passing the repo it was filed into through
-  `issueKeys`. For `jira`, the issue key returned at filing is the key as it is.
+  `issueKeys`. For `jira`, the issue key returned at filing is the key as it is. For a task handed
+  to Jules, skip it and the assignment in 2: `adj jules prepare --issue '{issue url}'` in
+  §jules-plan does both (In Progress is still 2's).
 - **4. Start the worker** (§start-worker; or **5. Hand it to Jules**, §jules-plan, when the requester asked for Jules) — `adj task add --done-when …` is the scope the requester gave; if none, `pr` ("up to a
   PR"). `--issue-url` is the issue just filed, and **its title is the one used for filing** (Step 1
   of §start-worker saying "the title is held by §pick-task" is about that route).
@@ -2833,36 +2845,31 @@ decision:
 
 - **`approve`** — if the comment asks for a worker to implement it, go to §jules-to-worker.
   Otherwise:
-  1. Hand it to Jules with the approved plan:
+  1. Hand it to Jules with the approved plan, and remove the planning worktree:
 
      ```bash
-     adj jules start --id {task_id} --prompt-file '{worktree}/.claude/jules-plan.md'
+     adj jules hand-over --id {task_id} --json
      ```
 
-     No `--base`: it reads the base Step 1 of §jules-plan wrote onto the record, and turns `origin/release/1.2`
-     into the `release/1.2` Jules wants. If it says the base is missing (a record from before Step 1 of §jules-plan
-     wrote it), write it with `adj task update --id {task_id} --base '{base}'` — the worktree's
-     branching point, as §worktree decides it — and run it again.
-     **If it fails otherwise, tell the user why and stop**, keeping the worktree and the plan; write
-     "Could not hand to Jules: {reason}" in `--note` through a file ("Keep task text off the shell").
-     Trying again is "When a plan stopped" in §jules-plan. Do not start a worker in its place — who implements was
-     decided when the task was created.
+     It starts the session from `{worktree}/.claude/jules-plan.md` with the base Step 1 of
+     §jules-plan wrote onto the record, deletes the two plan files (Jules has the plan, and
+     `adj jules show` returns it), removes the worktree, clears it from the record and runs
+     `onWorktreeRemove`. The hub created the worktree and nobody wrote to it, so no `kind: done`
+     comes and nobody is asked. **It checks the worktree first**: when it is not clean or not
+     detached it refuses and starts nothing — tell the user what tripped and stop, keeping the
+     worktree and the plan. When the session started but the worktree could not be removed,
+     `worktreeRemoved` is false and `removeError` says why: tell the user, and leave it (the
+     session is running).
+     If it says the base is missing (a record from before Step 1 of §jules-plan wrote it), write
+     it with `adj task update --id {task_id} --base '{base}'` — the worktree's branching point, as
+     §worktree decides it — and run it again.
+     **If it fails otherwise, tell the user why and stop**, keeping the worktree and the plan;
+     write "Could not hand to Jules: {reason}" in `--note` through a file ("Keep task text off the
+     shell"). Trying again is "When a plan stopped" in §jules-plan. Do not start a worker in its
+     place — who implements was decided when the task was created.
      If told there is no `julesKey`, or no item in the keychain, have the user register it as the
      message says. **Do not ask for the key or have it pasted into the conversation.**
-  2. **Remove the worktree yourself.** The hub created it and nobody wrote to it, so no `kind: done`
-     comes and nobody is asked. First delete the two plan files (`rm -f
-     '{worktree}/.claude/jules-plan.md' '{worktree}/.claude/jules-gate.json'`; Jules has the plan, and
-     `adj jules show` returns it) — in a repository where `.claude/` is not gitignored they would
-     otherwise count as changes. Then check: `git -C '{worktree}' status --porcelain` is empty, and
-     `git -C '{worktree}' symbolic-ref -q HEAD` fails (still detached, so there is no branch to keep).
-     If either trips, do not remove it; tell the user what tripped. Otherwise:
-
-     ```bash
-     git -C '{main}' worktree remove '{worktree}' && adj task update --id {task_id} --worktree ''
-     ```
-
-     Then the config's `onWorktreeRemove`, as in §cleanup-one.
-  3. Tell the user the session's URL, and that the board moves the card to in review once Jules opens
+  2. Tell the user the session's URL, and that the board moves the card to in review once Jules opens
      a PR.
 - **`changes`** — pass the comment to **the same sub-agent** to revise the plan (in Claude Code,
   `SendMessage` to the id kept in Step 2 of §jules-plan), telling it to rewrite both files and add one to `rounds` in
@@ -2871,9 +2878,10 @@ decision:
   `{worktree}/.claude/jules-plan.md`; revise it as this comment says" and the comment. Then open the
   gate again as step 3 of §jules-plan says. If the comment asks for a worker rather than a
   revision, go to §jules-to-worker instead.
-- **`reject`** — remove the worktree and the plan with it, in the same way as step 2 of `approve`
-  (delete the plan files, check, `git worktree remove`, then `onWorktreeRemove`), then put the task
-  back in the person's court:
+- **`reject`** — remove the worktree and the plan with it
+  (`adj jules hand-over --id {task_id} --discard --json`: the same checks and removal, with no
+  session started; if it refuses, tell the user what tripped), then put the task back in the
+  person's court:
   `adj task update --id {task_id} --status backlog --worktree '' --note 'Plan rejected'`. Moved back
   to the queue it would be planned again the same way.
 - Ack when done.
@@ -2922,8 +2930,8 @@ Do not change the title. The report is the updated body as it is.
 
 - Glance at the body that comes back, checking only that what is to be kept has not disappeared. If it
   has, send it back to the same sub-agent.
-- Ack when done. **There is no worktree to clean up here** — the hub removed it right after `adj
-  jules start` ("The answer to a plan for Jules").
+- Ack when done. **There is no worktree to clean up here** — the hub removed it in `adj jules
+  hand-over` ("The answer to a plan for Jules").
 
 <!-- section: jules-review -->
 ### Jules's PR got a review (`kind: jules-review`)
@@ -3422,15 +3430,15 @@ it instead.**
 <!-- section: brief-jules -->
 ## Appendix — Brief for the Jules planning agent
 
-Handed to the sub-agent in step 2 of §jules-plan. Fill in the placeholders. `{task_id}`,
-`{task_title}`, `{tracker}`, `{task_url}`, `{parent_task}`, `{base_branch}`, `{instruction}` and
-`{language}` are the tracker's key, the record's title, the source's `type`, the issue URL, the
-parent task's URL or `-`, the base decided in §worktree, the record's handover note
-or `-`, and the person's language: `settings.language`, else the language the person uses with you
-(as on the brief's Language line in §worker-brief), else `-`. `{verify}` is the config's
-`verify`. **`{record_id}` is the record's id** from Step 1 of §jules-plan — not the tracker's key in `{task_id}`.
-The hub reads the task back out of the gate's answer by that id, so a key there leaves the approval
-with no task to hand over.
+Handed to the sub-agent in step 2 of §jules-plan. Fill in the placeholders from the task's entry
+in the `prepared` list `adj jules prepare` printed: `{record_id}` = `record`, `{task_id}` = `key`,
+`{task_title}` = `title`, `{tracker}` = `tracker`, `{task_url}` = `url`, `{parent_task}` =
+`parent`, `{worktree}` = `worktree`, `{base_branch}` = `base`, `{instruction}` = `instruction`,
+`{verify}` = `verify`, and `{language}` = `language`, or when that is null the language the person
+uses with you, else `-`. A `parent` that is a key is turned into its URL first ("Write the parent
+task as a URL"). **`{record_id}` is the record's id, not the tracker's key in `{task_id}`.**
+The hub reads the task back out of the gate's answer by that id, so a key there leaves the
+approval with no task to hand over.
 
 **What Jules gets is a design document, not a summary of a plan.** Jules's model is weaker than the
 one writing the plan. The more judgement it is left, the more it misses, so every decision is made

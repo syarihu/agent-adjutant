@@ -10,6 +10,8 @@ pub(super) mod gate_close;
 pub(super) mod gate_open;
 pub(super) mod gate_read;
 pub(super) mod hub_status;
+pub(super) mod jules_hand_over;
+pub(super) mod jules_prepare;
 pub(super) mod outbox;
 pub(super) mod pending;
 pub(super) mod pr_check_base;
@@ -163,6 +165,16 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_collect",
         definition: collect::definition,
         call: collect::call,
+    },
+    Tool {
+        name: "adjutant_jules_prepare",
+        definition: jules_prepare::definition,
+        call: jules_prepare::call,
+    },
+    Tool {
+        name: "adjutant_jules_hand_over",
+        definition: jules_hand_over::definition,
+        call: jules_hand_over::call,
     },
 ];
 

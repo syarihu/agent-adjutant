@@ -423,8 +423,12 @@ fn the_task_record_the_hub_creates_carries_the_implementer() {
     );
     let jules = flow(&step(hub, "### 5. "));
     assert!(
-        jules.contains("with `--executor jules`"),
+        jules.contains("the record is created with `--executor jules`"),
         "the Jules route records the task as the worker's: {jules}"
+    );
+    assert!(
+        jules.contains("adj jules prepare"),
+        "the Jules route does not mention adj jules prepare: {jules}"
     );
 }
 
@@ -2805,8 +2809,10 @@ fn the_always_on_instructions_carry_the_rule_and_its_reason() {
 
 #[test]
 fn the_always_on_instructions_stay_short_enough_to_always_be_on() {
+    // The instructions are a short index of when to use which tool (one line per tool an agent
+    // should reach for unprompted, #111), so the cap bounds the index rather than forbidding it.
     assert!(
-        INSTRUCTIONS.lines().count() <= 8,
+        INSTRUCTIONS.lines().count() <= 9,
         "instructions are {} lines",
         INSTRUCTIONS.lines().count()
     );
@@ -3221,13 +3227,16 @@ fn a_jules_task_is_planned_by_a_subagent_and_no_worker_is_started() {
         "the worker still hands tasks to Jules"
     );
     let hub = find("adj-hub").unwrap().raw_content;
-    // Nothing is committed there and nothing is built, so no branch and no setup.
     let create = flow(&step(hub, "### 3. "));
     assert!(
-        create.contains("git -C '{main}' worktree add --detach '{path}' '{base}'"),
+        create.contains("**For a task handed to Jules, do not create it here.**"),
         "{create}"
     );
-    assert!(create.contains("do not run `postCreate`"), "{create}");
+    assert!(create.contains("does not run `postCreate`"), "{create}");
+    assert!(
+        !hub.contains("worktree add --detach"),
+        "the hub still contains worktree add --detach"
+    );
 
     let route = step(hub, "### 5. ");
     let planning = flow(&route[..route.find("#### Switching to a worker").unwrap()]);
@@ -3275,44 +3284,35 @@ fn the_hub_hands_an_approved_plan_to_jules_and_removes_the_worktree() {
     );
     let flowed = flow(&answer);
     assert!(
-        flowed.contains(
-            "adj jules start --id {task_id} --prompt-file '{worktree}/.claude/jules-plan.md'"
-        ),
+        flowed.contains("adj jules hand-over --id {task_id} --json"),
         "{flowed}"
     );
-    // The base is read from the record: the answer comes on a later wake, perhaps after a
-    // restart, when what "3. Create the worktree" decided is no longer in the hub's context.
-    assert!(flowed.contains("No `--base`"), "{flowed}");
-    let record = flow(&step(hub, "### 5. "));
+    assert!(flowed.contains("It checks the worktree first"), "{flowed}");
+    assert!(flowed.contains("starts nothing"), "{flowed}");
+    assert!(flowed.contains("worktreeRemoved"), "{flowed}");
     assert!(
-        record.contains(
-            "adj task update --id {task_id} --status dispatched --worktree '{worktree}' --base '{base}'"
-        ),
-        "{record}"
-    );
-    // The key is typed into the keychain by the person, never into this conversation.
-    assert!(flowed.contains("Do not ask for the key"), "{flowed}");
-    // Where `.claude/` is tracked, the plan files would stop the clean check.
-    assert!(
-        flowed.contains(
-            "rm -f '{worktree}/.claude/jules-plan.md' '{worktree}/.claude/jules-gate.json'"
-        ),
-        "{flowed}"
-    );
-    // A worktree still detached and clean holds nothing to lose.
-    assert!(flowed.contains("symbolic-ref -q HEAD"), "{flowed}");
-    assert!(
-        flowed.contains(
-            "git -C '{main}' worktree remove '{worktree}' && adj task update --id {task_id} --worktree ''"
-        ),
+        flowed.contains("adj jules hand-over --id {task_id} --discard --json"),
         "{flowed}"
     );
     // Asked for a worker, the approved plan must not reach Jules as well.
     before(
         &answer,
         "if the comment asks for a worker",
-        "adj jules start",
+        "adj jules hand-over",
     );
+    assert!(
+        !answer.contains("worktree remove"),
+        "the answer still contains worktree remove"
+    );
+    let record = flow(&step(hub, "### 5. "));
+    assert!(
+        record.contains(
+            "adj jules prepare [--issue '{issue number or URL}' …] [--id {task_id} …] [--base '{base}'] --json"
+        ),
+        "{record}"
+    );
+    // The key is typed into the keychain by the person, never into this conversation.
+    assert!(flowed.contains("Do not ask for the key"), "{flowed}");
     assert!(flowed.contains("**the same sub-agent**"), "{flowed}");
     assert!(flowed.contains("Where it cannot be continued"), "{flowed}");
 
@@ -3339,6 +3339,26 @@ fn the_hub_hands_an_approved_plan_to_jules_and_removes_the_worktree() {
         plan.contains("do not plan again and do not open another plan gate"),
         "{plan}"
     );
+}
+
+#[test]
+fn the_jules_brief_is_filled_from_what_prepare_printed() {
+    let hub = find("adj-hub").unwrap().raw_content;
+    let brief = flow(&section(
+        hub,
+        "## Appendix — Brief for the Jules planning agent",
+    ));
+    assert!(brief.contains("from the task's entry"), "{brief}");
+    assert!(brief.contains("`{record_id}` = `record`"), "{brief}");
+    assert!(brief.contains("`{task_id}` = `key`"), "{brief}");
+}
+
+#[test]
+fn each_jules_command_has_a_tool_and_a_line_in_the_instructions() {
+    assert!(INSTRUCTIONS.contains("adjutant_jules_prepare"));
+    assert!(INSTRUCTIONS.contains("adj jules prepare"));
+    assert!(INSTRUCTIONS.contains("adjutant_jules_hand_over"));
+    assert!(INSTRUCTIONS.contains("adj jules hand-over"));
 }
 
 /// The hub rewrites the description of a PR Jules opened, and nothing a reviewer bot or

@@ -205,6 +205,90 @@ fn a_tool_failure_comes_back_as_content_the_model_can_read() {
     assert!(out["error"].is_null());
 }
 
+#[test]
+fn jules_prepare_tool_refuses_call_with_neither_issues_nor_ids() {
+    let out = call(
+        "tools/call",
+        json!({"name": "adjutant_jules_prepare", "arguments": {}}),
+    );
+    assert_eq!(out["result"]["isError"], true);
+    assert!(
+        out["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("pass at least one issue or id")
+    );
+    assert!(out["error"].is_null());
+}
+
+#[test]
+fn jules_prepare_tool_refuses_a_base_that_is_not_a_string() {
+    let out = call(
+        "tools/call",
+        json!({"name": "adjutant_jules_prepare", "arguments": {"issues": [12], "base": 2.1}}),
+    );
+    assert_eq!(out["result"]["isError"], true, "{out}");
+    assert!(
+        out["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("base must be a branch name"),
+        "{out}"
+    );
+}
+
+#[test]
+fn jules_prepare_and_hand_over_refuse_arguments_of_the_wrong_shape() {
+    for (name, arguments, needle) in [
+        (
+            "adjutant_jules_prepare",
+            json!({"issues": [12, {}]}),
+            "`issues` entries",
+        ),
+        (
+            "adjutant_jules_prepare",
+            json!({"issues": "12"}),
+            "`issues` must be an array",
+        ),
+        (
+            "adjutant_jules_prepare",
+            json!({"ids": [5]}),
+            "`ids` entries",
+        ),
+        (
+            "adjutant_jules_hand_over",
+            json!({"id": 5}),
+            "`id` must be a string",
+        ),
+        (
+            "adjutant_jules_hand_over",
+            json!({"id": "x", "cwd": 1}),
+            "`cwd` must be a string",
+        ),
+    ] {
+        let out = call("tools/call", json!({"name": name, "arguments": arguments}));
+        assert_eq!(out["result"]["isError"], true, "{name}: {out}");
+        let text = out["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(needle), "{name}: {text}");
+    }
+}
+
+#[test]
+fn jules_hand_over_tool_refuses_unknown_task_id() {
+    let out = call(
+        "tools/call",
+        json!({"name": "adjutant_jules_hand_over", "arguments": {"id": "no-such-task"}}),
+    );
+    assert_eq!(out["result"]["isError"], true);
+    assert!(
+        out["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no-such-task")
+    );
+    assert!(out["error"].is_null());
+}
+
 static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct ClientNameGuard;

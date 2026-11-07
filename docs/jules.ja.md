@@ -22,9 +22,17 @@
 
 ## 実行フロー
 
-### 1. タスクの担当者を Jules に設定する
+### 1. タスクの準備
 
-タスクの作成時または更新時に `--executor jules` を指定します。
+hub は `adj jules prepare` を実行して detached な worktree を作成し、計画前にタスクレコードを書き込みます。
+
+```bash
+adj jules prepare --issue <issue-number-or-url>
+# または既存のタスクレコードに対して
+adj jules prepare --id <task-id>
+```
+
+手動でタスクの作成時または更新時に `--executor jules` を指定することもできます。
 
 ```bash
 adjutant task add --executor jules
@@ -43,16 +51,18 @@ hub は `adj gate open --body-file design.md --openedBy hub` で plan gate を�
 
 ### 3. セッションの開始
 
-計画が承認されると、hub が Jules にタスクを引き渡し、一時 worktree を削除します。
+計画が承認されると、hub は `adj jules hand-over` を実行してタスクを Jules に引き渡し、計画用 worktree を削除します。
 
 ```bash
-adj jules start --id <task-id> --prompt-file design.md
+adj jules hand-over --id <task-id>
 ```
 
-- `--base`（またはタスクに記録された base）を起点ブランチとしてセッションを開始
+- タスクに記録された base を起点ブランチとしてセッションを開始
 - 作業完了時に自動で PR を作成するよう指定
 - 生成されたセッション ID をタスクの `julesSession` に記録
+- 計画ファイルを削除し、計画用 worktree を削除して `onWorktreeRemove` フックを実行
 - 進行状況は `adj jules show --id <task-id>` で確認可能
+- 手動でセッションを開始するための `adj jules start` も引き続き利用できます。
 
 ---
 

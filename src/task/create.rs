@@ -85,7 +85,7 @@ pub(super) fn check_typed(new: &NewTask) -> Result<(), String> {
 
 /// Refuse a URL that is not safe to put in quotes on a command line: not an http(s) address
 /// with a plausible host, or holding a character the shell would read.
-pub(super) fn check_url(url: &str, what: &str) -> Result<(), String> {
+pub fn check_url(url: &str, what: &str) -> Result<(), String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"));

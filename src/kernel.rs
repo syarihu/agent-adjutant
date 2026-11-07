@@ -7,4 +7,5 @@ pub mod config;
 pub mod identity;
 pub mod prompts;
 pub mod runner;
+pub mod worktree_hooks;
 pub mod worktree_state;
