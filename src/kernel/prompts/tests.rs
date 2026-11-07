@@ -293,6 +293,7 @@ fn no_procedure_opens_a_pull_request_without_saying_what_to_base_it_on() {
 #[test]
 fn the_worktree_step_takes_a_base_meant_for_one_dispatch() {
     let create = step(find("adj-hub").unwrap().raw_content, "### 3. ");
+    let flowed = flow(&create);
     // Which of the two wins. Without this the step can describe a per-dispatch base and
     // still leave the reader to guess whether the config overrides it.
     assert_once_in(
@@ -305,41 +306,13 @@ fn the_worktree_step_takes_a_base_meant_for_one_dispatch() {
         "rewriting the config's `baseBranch` is wrong",
         "the worktree step does not say to leave the repository-wide default alone",
     );
-    // The value has to be turned into the remote-tracking form. `git worktree add` takes
-    // a commit-ish, and a bare `feature/x` resolves to nothing in a worktree with no
-    // local branch of that name — and the brief would then carry a spelling the base
-    // line is not otherwise written in.
-    assert_once_in(
-        &create,
-        "Normalise the value to a commit-ish with `origin/`",
-        "the worktree step does not normalise the base it was handed",
-    );
-    // A base that does not resolve has to stop the dispatch. Falling through to the
-    // default puts the worktree — and the pull request that follows it — on a branch
-    // nobody asked for, and the brief then records that answer as though it were chosen.
-    assert_once_in(
-        &create,
-        "git rev-parse --verify",
-        "the worktree step never checks that the base it was handed exists",
-    );
-    // …against refs that were refreshed. A fetch that does not prune leaves the
-    // remote-tracking ref of a branch deleted upstream in place, so the check above
-    // answers "it exists" for a base that is gone and the failure surfaces later, at
-    // `gh pr create`. Written as a ban on the bare form while each fetch is pinned on
-    // its own together with the command that follows it.
     assert!(
-        !flow(&create).contains("git fetch origin"),
-        "the worktree step fetches without pruning, so a deleted base still resolves: {create}"
+        flowed.contains("adj worktree add"),
+        "the worktree step does not name adj worktree add: {create}"
     );
-    assert_once_in(
-        &create,
-        "git fetch --prune origin git rev-parse --verify",
-        "the worktree step does not refresh the remote before resolving a base",
-    );
-    assert_once_in(
-        &create,
-        "git fetch --prune origin git branch -r --list",
-        "the worktree step does not refresh the remote before listing release branches",
+    assert!(
+        flowed.contains("--base"),
+        "the worktree step does not pass --base: {create}"
     );
     assert_once_in(
         &create,
@@ -1463,13 +1436,12 @@ fn a_linear_task_s_branch_is_its_git_branch_name_when_the_worktree_is_created() 
     );
 }
 
-/// Both worktree lists include the main checkout — proctor as the `isMain` row,
-/// `git worktree list` as its first line — and nothing that read them said to drop it. The
-/// cleanup then weighs the hub's own checkout, the hand-over offers it as a worktree to
-/// work in, and the subtask collector matches it by branch the moment the hub is left on a
-/// task branch, so a worker is opened where the hub runs. Each carries the same clause,
-/// or the list means two things in one file. The dashboard's `[Worktrees]` block reads the
-/// same lists and would show the hub's checkout as a started task, so it carries it too.
+/// `proctor worktree ls` and `git worktree list` both include the main checkout, and each of
+/// the four readers once carried its own paragraph on dropping it (#115). Left in, the cleanup
+/// weighs the hub's own checkout, the hand-over offers it as a worktree to work in, and the
+/// subtask collector matches it by branch the moment the hub is left on a task branch, so a
+/// worker is opened where the hub runs. `adj worktree ls` leaves it out, so every reader takes
+/// its list from that command, says so, and no longer reads either of the old lists.
 #[test]
 fn every_reader_of_the_worktree_list_leaves_the_main_checkout_out() {
     let raw = find("adj-hub").unwrap().raw_content;
@@ -1494,7 +1466,7 @@ fn every_reader_of_the_worktree_list_leaves_the_main_checkout_out() {
                 raw,
                 "## When asked to work on an existing worktree",
             )),
-            "The main checkout does not count as a worktree.",
+            "The main checkout does not count as a worktree",
         ),
         (
             "subtask collector",
@@ -1510,27 +1482,17 @@ fn every_reader_of_the_worktree_list_leaves_the_main_checkout_out() {
             text.contains(clause),
             "the {reader} counts the main checkout as a worktree: {text}"
         );
-        // Identified by the marker each list carries, not by comparing paths with the
-        // resolved `main`: proctor prints paths with symlinks resolved and git may not, so
-        // the same checkout can be two strings. Looked for right after the clause: the
-        // collector brief names `adjutant_config` earlier for the settings, which would
-        // satisfy a search of the whole section.
-        let near: String = text[text.find(clause).unwrap()..]
-            .chars()
-            .take(400)
-            .collect();
         assert!(
-            near.contains("`isMain: true`"),
-            "the {reader} does not name proctor's marker for the main checkout: {text}"
+            text.contains("adj worktree ls"),
+            "the {reader} does not name adj worktree ls: {text}"
         );
         assert!(
-            near.contains("first line"),
-            "the {reader} does not say the main checkout is git's first line: {text}"
+            !text.contains("isMain"),
+            "the {reader} still mentions isMain: {text}"
         );
         assert!(
-            near.contains("not by comparing paths with `adjutant_config`")
-                || near.contains("by matching the path with `adjutant_config`"),
-            "the {reader} leaves the main checkout to be found by path equality: {text}"
+            !text.contains("proctor worktree ls"),
+            "the {reader} still mentions proctor worktree ls: {text}"
         );
     }
     // Dropped before matching, not after: a main checkout left in the collector's list
@@ -4692,12 +4654,10 @@ fn cleanup_does_not_read_a_failed_merged_lookup_as_not_merged() {
         "the cleanup step does not show failed lookups as could not check: {cleanup}"
     );
     assert!(
-        cleanup_flowed.contains("If `git worktree list` fails too, offer nothing"),
+        cleanup_flowed.contains(
+            "If the call fails, offer nothing: say the worktrees could not be listed with the error"
+        ),
         "a failed worktree listing reads as nothing to clean up: {cleanup}"
-    );
-    assert!(
-        cleanup_flowed.contains("If proctor is installed but the call fails (a non-zero exit or an error), offer nothing"),
-        "a failed proctor call falls back to a listing that cannot see who is working there: {cleanup}"
     );
 }
 
@@ -4820,5 +4780,67 @@ fn the_collection_briefs_are_for_the_sources_adj_collect_does_not_cover() {
     assert!(
         parent_flowed.contains("sent only for a `jira` / `linear` parent"),
         "parent brief intro does not say it is sent only for jira / linear: {parent_brief}"
+    );
+}
+
+/// The listing is `adj worktree ls` everywhere in the hub: a `proctor worktree ls` left in one
+/// place brings back the main checkout and a second shape of row for the same list.
+#[test]
+fn adj_hub_contains_no_proctor_worktree_ls() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    assert!(
+        !raw.contains("proctor worktree ls"),
+        "adj-hub still contains proctor worktree ls"
+    );
+}
+
+/// Removal is one command (#113): its checks run in order and refuse before anything is
+/// removed. A `git worktree remove` left in either cleanup step is a route that skips them.
+#[test]
+fn cleanup_steps_call_adj_worktree_rm_and_contain_no_git_worktree_remove() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let offer = step(raw, "### Step 1: Offer to clean up finished worktrees");
+    let offer_flowed = flow(&offer);
+    assert!(
+        offer_flowed.contains("adj worktree rm"),
+        "cleanup offer does not call adj worktree rm: {offer}"
+    );
+    assert!(
+        !offer.contains("git worktree remove"),
+        "cleanup offer still contains git worktree remove: {offer}"
+    );
+
+    let one = step(raw, "#### Cleaning up one worktree");
+    let one_flowed = flow(&one);
+    assert!(
+        one_flowed.contains("adj worktree rm"),
+        "cleanup-one does not call adj worktree rm: {one}"
+    );
+    assert!(
+        !one.contains("git worktree remove"),
+        "cleanup-one still contains git worktree remove: {one}"
+    );
+}
+
+/// Creation is one command that resolves the base and runs `postCreate` (#114). A bare
+/// `git worktree add` or a hand-run base check left in the step is a second set of rules that
+/// can drift from the command's.
+#[test]
+fn worktree_step_calls_adj_worktree_add_and_contains_no_git_worktree_add() {
+    let raw = find("adj-hub").unwrap().raw_content;
+    let create = step(raw, "### 3. Create the worktree");
+    let create_flowed = flow(&create);
+    assert!(
+        create_flowed.contains("adj worktree add"),
+        "worktree step does not call adj worktree add: {create}"
+    );
+    assert!(
+        !create.contains("git -C '{main}' worktree add"),
+        "worktree step still contains git -C '{{main}}' worktree add: {create}"
+    );
+    assert!(
+        !create_flowed.contains("git rev-parse --verify")
+            && !create_flowed.contains("git branch -r --list"),
+        "worktree step still resolves the base by hand: {create}"
     );
 }

@@ -106,7 +106,7 @@ Issue all of the following **in a single tool block**. None of them waits on ano
   **Call it only this once, at startup** (a person pressing 「PR を確認」 on the board runs the same)
 - `git rev-parse --show-toplevel` and `git branch --show-current`
 - `gh api user -q '.login'` (only for a repository that uses GitHub)
-- `proctor worktree ls --json 2>/dev/null || git worktree list`
+- `adj worktree ls --json` (or `adjutant_worktree` `action: ls`)
 
 ## On startup (once, before any request arrives)
 
@@ -391,9 +391,11 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 ### What you are about to do
 
 - show the list (menu 1): run `adj collect` → §dashboard-collect; send the dashboard collection agent → §dashboard, §brief-dashboard; the rows come back → §dashboard-display
+- list the worktrees (adj worktree ls) → §dashboard
 - offer to clean up finished worktrees → §cleanup-offer
+- remove a worktree (adj worktree rm) → §cleanup-offer, or §cleanup-one when a worker asked
 - start a task (menu 2) → §pick-task; assign it or move it to In Progress → §claim
-- run `proctor worktree add` / `git worktree add` → §worktree
+- create a worktree (adj worktree add) → §worktree
 - start a worker → §start-worker; run `adj task add` → §task-record; run `adj task brief` → §worker-brief; run `adjutant work`, or set a record `dispatched` → §worker-spawn
 - hand a task to Jules (the implementer is `jules`), or run `adj jules prepare` → §jules-plan, and §brief-jules for its sub-agent; run `adj jules hand-over` → §jules-plan-answer; switch a Jules task to a worker → §jules-to-worker
 - file something (menu 3, a report) → §request-read; search for duplicates or file it → §request-file; start what was filed → §request-start; reply to the requester → §request-reply
@@ -481,7 +483,7 @@ the `proctor-worktree` skill is what says where they live and how to write them.
 name that location here or assume it** — it has already moved once, and a copy of the answer
 in this file is how adjutant starts contradicting proctor. Ask the skill. On a machine without
 proctor, this section does not apply, except "The name a task's branch is made from" below
-(`adjutant worktree-path` answers instead).
+(`adj worktree add` decides the path and branch itself then).
 
 adjutant sets `branchPattern` / `worktreeName` itself only where proctor has no usable
 convention — and a multi-source repo is exactly where that happens. proctor's pattern
@@ -1315,9 +1317,9 @@ asked", not the list itself. The `jira` / `linear` part still goes to an agent f
 **A worktree of a session started with no task is cleaned up only when a person asks.** Nothing marks
 it as finished, so Step 1 (§cleanup-offer) does not offer it.
 
-**Cleanup (§cleanup-offer) is done by the hub.** It is one proctor call and a confirmation from the user,
+**Cleanup (§cleanup-offer) is done by the hub.** It is one `adj worktree ls` call and a confirmation from the user,
 and a sub-agent cannot ask for that. **The order is: run `adj collect --json` (or `adjutant_collect`),
-send out the agent if any (`agentSources` has entries), then §cleanup-offer.** The proctor call and the
+send out the agent if any (`agentSources` has entries), then §cleanup-offer.** The worktree listing call and the
 user's answer overlap with the agent's collection, so by the time the answer comes back the table is back
 too. The other way round, not a second of collection happens while the cleanup question is waiting.
 
@@ -1325,28 +1327,28 @@ too. The other way round, not a second of collection happens while the cleanup q
 ### Step 1: Offer to clean up finished worktrees
 
 ```bash
-proctor worktree ls --json
+adj worktree ls --json
 ```
 
-`isRemovable` is true only when nobody is working there, there are no uncommitted changes,
-the branch is merged, and it is not locked. **Trust it only when `diffKnown` is true** — a
-worktree proctor could not read reports zeros, which means "unknown", not "empty".
+(or `adjutant_worktree` with `action: ls`).
 
-If proctor is installed but the call fails (a non-zero exit or an error), offer nothing: say the
-worktrees could not be checked, with the error (the fallback below does not see who is working there
-or what is unpushed, so it is no stand-in for a proctor that failed). If proctor is not installed,
-fall back to: `git worktree list`, then for each branch
-`gh pr list -R <codeRepo> --head <branch> --state merged --json number,title,url`. If that
-lookup fails for a branch, that worktree is not removable: list it as "could not check" with the
-error, never as not merged and never as removable. If `git worktree list` fails too, offer nothing:
-say the worktrees could not be listed, with the error, never "nothing to clean up".
+The list leaves the main checkout out. Each row has `path`, `branch`, `git` (uncommitted, unpushed
+and `merged`; `null` with `error` when git could not answer), `tasks` (the records naming that
+worktree), `session.running`, and `removable` with `blockers`. `removable` says `adj worktree rm`
+would remove it now: nothing uncommitted, untracked or unpushed, no queued task waiting in it, no
+Jules plan being written in it, and no session starting; `blockers` says what stops it. A running
+session is not a blocker (rm closes it), so it is read separately.
 
-**The main checkout is not one of the worktrees.** Both lists include it: proctor as the row
-with `isMain: true`, `git worktree list` as its first line. Drop that row before reading the
-rest — it is where the hub itself runs and where every other worktree is cut from, so it is
-never offered for cleanup. Go by the marker, not by comparing paths with `adjutant_config`'s
-`main`: proctor resolves symlinks in the paths it prints, so the two can differ for the same
-checkout.
+**Offer the rows with `removable: true`, `session.running: false` and `git.merged.merged: true`**
+(a branch with no commits beyond its base counts as merged). Nobody is working there and the work
+has landed.
+
+If a row has `git: null` (the git lookup failed; `error` says why), that worktree is not removable:
+list it as "could not check" with the error, never as not merged and never as removable.
+
+If the call fails, offer nothing: say the worktrees could not be listed with the error, never "nothing to clean up".
+
+**The main checkout is not one of the worktrees**: `adj worktree ls --json` leaves it out.
 
 The hub does not stand in a worktree, so the "cannot remove the ground you stand on" problem does not
 arise. **Cleanup is the hub's job.** The board (`POST /api/sessions/<id>/cleanup`) may also remove a
@@ -1354,35 +1356,23 @@ worktree: it refuses on uncommitted, untracked or unpushed work unless a person 
 deletes the local branch (the hub deletes one only when it is merged or empty), so a worktree and
 branch the procedure below names can already be gone.
 
-**Leave out any worktree a Jules plan is being written or read in** (`adj task list --worktree <path>
---json` has a record whose `executor` is `jules`, `status` is `dispatched` and `julesSession` is
-unset). It is detached and has no commits, so it looks finished — but the plan in it is with a
-sub-agent or a person, and the hub removes it itself once that is answered.
-
-**Leave out any worktree a queued task is waiting in** (`adj task list --worktree <path>
---json` has a record whose `status` is `queued`). A worktree prepared for a worker that was
-turned away for a slot has no commits and no session, so it looks removable — but the queue
-will start a worker there when a slot frees up.
-
-If `adj task list --worktree <path> --json` fails (the Jules-plan and queued leave-outs, and the
-task lookup before removal), leave that worktree out and say it could not be checked.
-
 Show the removable ones and ask whether to clean up. On yes, for each:
 
 ```bash
-git worktree remove <path>
-git branch -D <branch>
+adj worktree rm --path '<path>'
 ```
 
-Before removing each one, look up its task (`adj task list --worktree <path> --json`, the
-records whose `status` is `dispatched` or `pr`), and after it is gone set them `done` with
-`adj task update --id {id} --status done` — the same as §cleanup-one, or the card
-stays on the board as in progress.
+(or `adjutant_worktree` with `action: rm`). In this order it refuses, removing nothing, on anything
+that would be lost or a blocker above; closes the worker's session if one runs; removes the
+worktree; deletes the local branch only when it is merged (or has no commits); runs the config's
+`onWorktreeRemove` (with `{worktree}` and `{name}`; that hook is where editor-specific cleanup
+lives); and sets the worktree's `dispatched` tasks `done`, and its `pr` tasks `done` only when the
+branch is merged (otherwise they stay `pr`, and become `done` once the PR is seen merged). It never
+forces.
 
-Then run the repo's `onWorktreeRemove` commands from the config, substituting `{worktree}`
-(full path) and `{name}` (directory name). That hook is where editor-specific cleanup lives
-(e.g. dropping the entry from Android Studio's `recentProjects.xml`) — adjutant itself knows
-nothing about any editor.
+Report what it printed: `removed`, `branch` (`deleted`, or `kept` with why), `tasks` set done,
+`keptTasks` left in `pr`, `taskErrors` and `hooks`. When it prints `removed: false` (with `reasons`)
+or fails, nothing was removed: show why. Show a failed hook with its error.
 
 <!-- section: cleanup-one -->
 #### Cleaning up one worktree (asked by a worker)
@@ -1398,51 +1388,29 @@ independently:
    worktree would go through if that path exists. `adjutant close` answers "no worker there" and
    succeeds for a path that does not exist, so only this match stops a wrong address).
    A request with **no** header (sent from outside git, an old format) is asked back about too.
-   Then confirm that `git worktree list` has **that path together with that branch**.
-   **If the path is not in `git worktree list` at all, it was already removed** before this request
-   was read — from the board, or by someone else. There is nothing to remove: do not run `git worktree
-   remove`, and do not delete a branch. The branch comes from the request's body, which the worker
-   typed, so put it in single quotes as one argument and never inside `$(…)` or double quotes (a
-   name with a `'` in it is not used; ask back instead). If it still exists locally (`git rev-parse
-   -q --verify 'refs/heads/<branch>'`) and `git log 'refs/heads/<branch>' --not --remotes --oneline`
-   prints anything, do not mark the task done; tell the person the branch holds unpushed commits. Otherwise (the branch
-   is gone, as the board leaves it, or it has nothing unpushed) set any still `dispatched` or `pr`
-   task from `adj task list --worktree <path> --json` to `done`, ack (7), and stop.
-2. **Safety checks.** Look **only at uncommitted changes and unpushed commits**. That row of `proctor
-   worktree ls --json` has `diff` all 0 (and `diffKnown: true`) and `isLocked: false`. **Do not look
-   at `isRemovable` or `sessions`** — those include "nobody is working there", and the worker that
-   sent the request is still alive, so they are always false. Without proctor, the hub is outside the
-   worktree, so `git -C <worktree> status --porcelain`. **proctor does not answer for unpushed
-   commits, so in either case** look with `git -C <worktree> log --branches --not --remotes
-   --oneline`.
-3. **If all is green, note that worktree's task id, then close the tab first and remove the
-   worktree.** Get the id with `adj task list --worktree <path> --json`, taking the ones whose
-   `status` is `dispatched` or `pr` (if a worktree was recreated at the same path, earlier `done` or
-   `cancelled` ones come back too). After removal there is no worktree, so look it up first. A live
-   worker holds on to its worktree, so without closing it `git worktree remove` fails:
+   Then confirm that `adj worktree ls` has **that path together with that branch**.
+   **If the path is not in `adj worktree ls` at all, it was already removed** before this request
+   was read — from the board, or by someone else. There is nothing to remove: do not run `adj worktree rm`.
+   The branch comes from the request's body, which the worker typed, so put it in single quotes as one
+   argument and never inside `$(…)` or double quotes (a name with a `'` in it is not used; ask back
+   instead). If it still exists locally (`git rev-parse -q --verify 'refs/heads/<branch>'`) and
+   `git log 'refs/heads/<branch>' --not --remotes --oneline` prints anything, do not mark the task done;
+   tell the person the branch holds unpushed commits. Otherwise (the branch is gone, as the board
+   leaves it, or it has nothing unpushed) set any still `dispatched` or `pr` task from
+   `adj task list --worktree <path> --json` to `done`, ack (7), and stop.
+2. **Remove the worktree in one call**:
 
    ```bash
-   adjutant close --worktree <path> && git worktree remove <path>
+   adj worktree rm --path '{the header's worktree}' --branch '{branch from the body}'
    ```
 
-   **Join them with `&&`.** `adjutant close`'s exit code is the answer to "may the worktree be
-   removed": 0 if there was no worker / it was closed and confirmed actually gone. **Everything else
-   is 1** (could not close / closed but still alive = waiting on a confirmation dialog / could not
-   tell whether alive). Put them on separate lines and you step over that answer and remove the
-   ground from under a live worker.
-   If it stops at 1, go to 4. **`--dry-run` returns the same answer** (only the close is not carried
-   out), so adding it to see what would happen never tips towards removing.
-
-   **Whether to delete the branch is a separate decision** (once pushed it stays on the remote, so it
-   is no condition for removing the worktree). If `merged` is true, `git branch -D <branch>`; if it
-   has 0 commits (`git log <base>..<branch>` is empty; an investigation-only request is like this)
-   there is no point keeping it, so delete it too. Otherwise keep it. **Run this check from the hub's
-   main checkout** — once the worktree is removed, `git -C <worktree>` cannot be used. After that,
-   the config's `onWorktreeRemove` (as above).
-
-   **Once removed, set the noted task to `done`** (`adj task update --id {id} --status done`).
-   Without this the card stays in "in progress" or "in review" forever. When not removed (4), do not
-   touch it.
+   (or `adjutant_worktree` with `action: rm`). It does what §cleanup-offer says `adj worktree rm`
+   does: it refuses, removing nothing, on uncommitted, untracked or unpushed work, a queued task or
+   a Jules plan, and when the worktree has another branch checked out than the one named; closes
+   the worker's tab and confirms it is gone before removing; deletes the branch only when merged;
+   runs `onWorktreeRemove`; and sets the tasks as said there. Do not run its steps by hand.
+   If it exits non-zero, prints `removed: false`, or errors, treat that as a check tripping and go
+   to 4 with its reason.
 4. **If even one check trips, do not remove.** The worker is still alive, so reply with
    `adjutant_tell` (`wake: true`) saying "what tripped" and keep the worktree. The worker side decides again
    whether to clean up.
@@ -1525,11 +1493,8 @@ The PRs others asked you to review are not collected here: they are on the board
 Cross-reference worktrees against tasks by issue key so the user can see which tasks are
 already started.
 
-**The main checkout is not one of the worktrees.** Both lists include it: proctor as the row
-with `isMain: true`, `git worktree list` as its first line. Drop that row before
-cross-referencing — left in while the hub sits on a task branch, it lists the hub's own
-checkout under `[Worktrees]` and marks that task as started. Go by the marker, not by comparing
-paths with `adjutant_config`'s `main`, as in Step 1 (§cleanup-offer).
+**The main checkout is not one of the worktrees**: the list comes from `adj worktree ls --json`
+(or `adjutant_worktree` with `action: ls`), which leaves the main checkout out.
 
 **Do not show the Project item id in this table** (it means nothing to a person). Pick it up from the
 machine rows (`adj collect`'s, and the agent's report), and use it in §claim. `adj collect` returns
@@ -1737,30 +1702,21 @@ Everything here uses **the selected task's own source**, not the repo's first on
 ### 3. Create the worktree
 
 **If proctor is installed, follow its conventions.** The `proctor-worktree` skill resolves
-`worktreeBase` / `branchPattern` / `copyFiles` from proctor's own config, and also checks that this
-task's worktree does not already exist. The `{name}` passed to proctor is the one "The name a task's
-branch is made from" in §proctor settles.
+`worktreeBase` / `branchPattern` / `copyFiles` from proctor's own config (giving path and branch;
+pass them as `--path` and `--branch` below), and also checks that this task's worktree does not
+already exist. The `{name}` passed to proctor is the one "The name a task's branch is made from" in
+§proctor settles.
 
-**If not, adjutant answers itself.** Get the conventions in one call (without proctor, the name
-"The name a task's branch is made from" in §proctor settles is `worktreeName`):
-
-```bash
-adj worktree-path --name '{worktreeName}' --user '{GitHub user}' [--pattern '{the source's branchPattern}']
-```
-
-`branch` / `path` / `main` come back as JSON (by default the branch is `{user}/{name}` and the
-location is `<main>/.claude/worktrees/{name}` = the same shape as proctor; `settings.worktreePattern`
-changes it). `main` is **the main checkout's path**, where `git worktree add` is run. **It is not the
-branching point.** The branching point is the branch decided in "Base branch" below (an `origin/…`
-commit-ish); pass a path and it always fails with `fatal: invalid reference`.
+**If not, adjutant answers itself.** Pass `--name` (without proctor, the name "The name a task's
+branch is made from" in §proctor settles is `worktreeName`) with `--user` and the source's
+`--pattern`, and `adj worktree add` decides the branch (`{user}/{name}` by default) and the path
+(`<main>/.claude/worktrees/{name}` by default, the same shape as proctor; `settings.worktreePattern`
+changes it), as `adj worktree-path` does. **Do not stop because proctor is missing**: proctor only
+reads, and the worktree is made by this side either way.
 
 **The config's `postCreate` stands in for `copyFiles`.** Without proctor nobody carries gitignored
-files (`local.properties`, certificates), so write that into `postCreate`. It is the same mechanism as
-"After creation" below, and runs with or without proctor.
-
-**Do not stop because proctor is missing.** proctor does not create worktrees — it only reads, and
-`git worktree add` is run by this side either way. All that is missing is the conventions, and those
-are filled in above.
+files (`local.properties`, certificates), so write that into `postCreate` (there is no separate
+setting for files to copy). `adj worktree add` runs it with or without proctor.
 
 The branch name and the worktree name come from the **selected task's source** (`branchPattern` —
 except for `linear`, below — and `worktreeName` defaulting to `{issuekey-lowercase}-{issue}`). A new
@@ -1771,75 +1727,55 @@ worktree `abc-819` without; with proctor, proctor names the worktree from that `
 branch is the issue's `gitBranchName`, used as it is** (§task-sources `linear`), read from the
 issue the tracker returned; it is not built from `branchPattern`. Only the worktree's location comes
 from the conventions (its name and its path): the worktree name is still the key (`ABC-819` →
-worktree `abc-819`) and the path comes from proctor or `adj worktree-path`, but the `branch` they
-return is not used — the branch is `gitBranchName` (example: `ABC-819` → branch
+worktree `abc-819`) and the path comes from proctor or `adj worktree add`'s default, but the `branch`
+from the pattern is not used — the branch is `gitBranchName` (example: `ABC-819` → branch
 `alice/abc-819-fix-login-redirect`, worktree `abc-819`). If proctor's pattern for this repo bakes in
 one source's key, stop and settle it with the user — §proctor says how that is
 normally resolved.
 
 **Base branch** — the branching point is decided in two levels. **A branching point given for this
-dispatch takes precedence over the config's `baseBranch`.** Without one, `baseBranch`.
+dispatch takes precedence over the config's `baseBranch`.** Without one, pass no `--base` and the command
+uses `baseBranch`.
 
 - **A given branching point applies to this one task only.** Answering "branch it off `feature/x`" by
   rewriting the config's `baseBranch` is wrong — that is a per-repository-entry setting, so every
   later unrelated task would branch off the feature branch too.
-- **Normalise the value to a commit-ish with `origin/`** (`feature/x` → `origin/feature/x`; if it
-  already has `origin/`, leave it — adding one gives `origin/origin/feature/x`, and a branch that
-  exists fails the check below). `git worktree add` below takes a commit-ish, and a bare branch name
-  cannot be resolved unless the main checkout has a local branch of the same name, giving `fatal:
-  invalid reference`. What is meant is the one on the remote, so name that.
-  The shape of the brief's "Base branch" line then matches the default route (`auto` below) too — the
-  worker strips `origin/` from that line and passes it to `--base`, so with two spellings the worker
-  would behave differently depending on which it got.
-- **Check that it exists before using it.** If it does not resolve, **do not fall back to the
-  default; ask the user.** Fall back silently and the worktree branches off the default branch and the
-  PR targets it, while whoever asked believes they are on the feature branch. `--prune` is needed:
-  the remote-tracking ref of a branch deleted upstream stays behind, so without it `rev-parse`
-  answers "it exists" for a deleted branch, and `gh pr create --base` fails later.
-
-  ```bash
-  git fetch --prune origin
-  git rev-parse --verify '{base}'
-  ```
-
+- Pass a given branching point as `--base '{given base}'`. The command normalises the value to a
+  commit-ish with `origin/`, fetches with `git fetch --prune origin` and checks that the base exists.
+  When `baseBranch` is used (`auto` uses the newest `origin/release/*` or the default branch), it runs
+  the same fetch and checks the base. If the base does not exist, **do not fall back to the default;
+  ask the user.** Fall back silently and the worktree branches off the default branch and the PR
+  targets it, while whoever asked believes they are on the feature branch.
 - **Only the branching point changes.** The branch name and the worktree name stay as decided above
   (the branch from `branchPattern`, or `gitBranchName` for `linear`; the worktree name from
   `worktreeName`), and a given branching point adds nothing to them.
 
-When `baseBranch` holds a branch name, that is the branching point. **Treat it the same as a given
-branching point** — add `origin/` and put it through the same fetch and `rev-parse --verify` as above.
-Being written in the config does not mean the branch is there, and checking only the `auto` side while
-passing a fixed value through unchecked leaves one route unchecked.
-
-With `baseBranch: "auto"`, a repo that has release branches uses the newest one, and otherwise the
-default branch. `--format` is needed: the default output is indented two columns for the current
-branch marker, and passed to a commit-ish as it is it gives `fatal: invalid reference`.
+Create the worktree in one call:
 
 ```bash
-git fetch --prune origin
-git branch -r --list 'origin/release/*' --format='%(refname:short)' --sort=-version:refname | head -1
+adj worktree add --name '{worktreeName}' --user '{GitHub user}' [--pattern '{the source's branchPattern}'] [--branch '{branch}'] [--path '{path}'] [--base '{given base}']
 ```
 
-Then create the worktree. `{base}` is **the branch just decided** (`origin/main` or
-`origin/release/1.2`), and `{main}` is a path:
+(or `adjutant_worktree` with `action: add`). It refuses (with an error, and nothing created) if the
+path or a local branch already exists. It prints `name`, `branch`, `path`, `base`, `main`, and
+`postCreate`. The printed `base` goes into the brief's Base branch (`adj task brief --base '{base}'`
+in §worker-brief).
 
-```bash
-git -C '{main}' worktree add -b '{branch}' '{path}' '{base}'
-```
-
-After creation run the config's `postCreate` commands with `{worktree}` substituted. That
-hook is where per-repo setup a fresh worktree cannot inherit belongs: gitignored files
-(`local.properties`, certificates), and per-worktree build state such as giving the worktree
-its own Gradle daemon registry so one `--stop` does not kill the other worktrees' builds.
-adjutant itself knows nothing about any build tool.
+`adj worktree add` runs the config's `postCreate` commands with `{worktree}` substituted and reports
+each hook in `postCreate`. A failed hook does not undo the worktree: tell the person which hook failed
+and its output. That hook is where per-repo setup a fresh worktree cannot inherit belongs: gitignored
+files (`local.properties`, certificates), and per-worktree build state such as giving the worktree its
+own Gradle daemon registry so one `--stop` does not kill the other worktrees' builds. adjutant itself
+knows nothing about any build tool.
 
 **For a task handed to Jules, do not create it here.** `adj jules prepare` (Step 1 of
 §jules-plan) creates it detached, from the base decided as above, and does not run `postCreate`:
 nothing is committed there — the plan is written into its `.claude/`, and everything after the
 plan is Jules's — so it needs no branch, and it is only read, so it needs none of the setup a
 build does. It takes the location and the name from adjutant's own conventions
-(`adj worktree-path`), not proctor's: the worktree lives only until the plan is handed over. A
-branch and `postCreate` come only if the task is switched to a worker (§jules-to-worker).
+(the same as `adj worktree add`'s default), not proctor's: the worktree lives only until
+the plan is handed over. A branch and `postCreate` come only if the task is switched to a worker
+(§jules-to-worker).
 
 Then, whichever the user chose:
 
@@ -1987,7 +1923,7 @@ comes from:
   `--language '{language}'` with the language the person uses with you, as one word (a language name
   or tag); when you do not know it, pass nothing and the brief writes `-`.
 - **Workspace**: the branch the worktree is on.
-- **Base branch**: `--base`, the commit-ish given to `git worktree add` in §worktree
+- **Base branch**: `--base`, the `base` `adj worktree add` printed in §worktree
   (with its `origin/`). Pass `-` only when handing over an existing worktree whose base is not known;
   the worker then asks.
 - **Parent task**: the `adj task brief --parent` flag wins; without it the record's own (`adj task
@@ -3058,13 +2994,9 @@ The answer to a `relay` gate (`kind: gate`, with the `## gate` line reading `({i
 
 The hub does not go into worktrees, so all that can be done here is **handing over**.
 
-1. List the worktrees (`proctor worktree ls --json`, or `git worktree list` without it).
-   **The main checkout does not count as a worktree.** It is on both lists — the `isMain: true` row for
-   proctor, the first line for `git worktree list` — so drop that row before reading. Do not look for
-   it by matching the path with `adjutant_config`'s `main` — proctor prints paths with symlinks
-   resolved, so the strings can differ for the same place. It is where the hub itself stands, so offer
-   it here and a worker opens there.
-   If none remain after dropping it, say so and go back to waiting.
+1. List the worktrees with `adj worktree ls --json` (or `adjutant_worktree` `action: ls`).
+   **The main checkout does not count as a worktree**: `adj worktree ls --json` leaves it out.
+   If none remain, say so and go back to waiting.
 2. Have the user choose one with `AskUserQuestion`.
 3. Work out **which tracker's task it is**: take the key from the branch name (`ALPHA-233` /
    `ABC-819`) and find the source that has that key — for the `github` family by reversing
@@ -3320,7 +3252,7 @@ Put both of these in the report:
    failing source does not stop the whole collection (the other sources are still valid). If every
    source's lists fail, there is nothing to show: say so with the errors. If the own open PR list
    lookup fails (`gh pr list`), write no `pr` rows and name it in the report; never "no open PRs". If
-   the worktree listing fails (`proctor worktree ls --json`, or `git worktree list`), write no
+   the worktree listing fails (`adj worktree ls --json`), write no
    `worktree` rows and name it in the report; never "no worktrees". Name every failed lookup in the
    report's part for people, on one line together: `Lookups that failed: {key or source or "own PRs"
    or "worktrees"} ({which lookup}: {the error, one line})`, ...
@@ -3375,13 +3307,8 @@ Collect how things stand under {parent key}.
   The name passed is the one "The name a task's branch is made from" in §proctor settles; fetch
   that section too, with `adj skill adj-hub --section proctor`. **Do not build the shape yourself**
 - Worktrees go one JSON object per line, `{"kind": "worktree", "path": "{worktree path}", "branch":
-  "{branch}"}` (`proctor worktree ls --json`, or
-  `git worktree list` without it). **The main checkout does not count as a worktree** — it is on both
-  lists, the `isMain: true` row for proctor and the first line for `git worktree list`. Drop that row
-  first. Do not look for it by matching the path with `adjutant_config`'s `main` — proctor prints paths
-  with symlinks resolved, so the strings can differ for the same place. When the hub is on a task's
-  branch it matches that subtask, which is then read as "has a worktree" and a worker opens under the
-  hub's feet.
+  "{branch}"}`. List them with `adj worktree ls --json`. **The main checkout does not count as a worktree**:
+  `adj worktree ls --json` leaves it out.
   Which subtask a worktree belongs to is decided by **an exact string match with the resolved
   branch** (strip `refs/heads/` first if present). **Do not look for whether the key is contained** —
   `ALPHA-1` would match `ALPHA-10`'s worktree. **Put worktrees that matched no subtask in the report
