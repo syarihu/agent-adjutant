@@ -1332,7 +1332,7 @@ adj worktree ls --json
 
 (or `adjutant_worktree` with `action: ls`).
 
-The list leaves the main checkout out. Each row has `path`, `branch`, `git` (uncommitted, unpushed
+Each row has `path`, `branch`, `git` (uncommitted, unpushed
 and `merged`; `null` with `error` when git could not answer), `tasks` (the records naming that
 worktree), `session.running`, and `removable` with `blockers`. `removable` says `adj worktree rm`
 would remove it now: nothing uncommitted, untracked or unpushed, no queued task waiting in it, no
@@ -1343,8 +1343,9 @@ session is not a blocker (rm closes it), so it is read separately.
 (a branch with no commits beyond its base counts as merged). Nobody is working there and the work
 has landed.
 
-If a row has `git: null` (the git lookup failed; `error` says why), that worktree is not removable:
-list it as "could not check" with the error, never as not merged and never as removable.
+If a row has `git: null` (`error` says why), that worktree is not removable: list it as "could not check"
+with the error, never as not merged and never as removable. (A directory deleted by hand reads `git: null`
+with `removable: true`; rm would only drop git's record of it. Offer that only when a person asks.)
 
 If the call fails, offer nothing: say the worktrees could not be listed with the error, never "nothing to clean up".
 
@@ -1451,7 +1452,7 @@ when it finishes.
    record whose `executor` is `jules` never gets `adjutant work`**: run §jules-plan for it
    (`adj jules prepare --id` reuses its worktree if it still exists and creates it otherwise). It takes no slot, so it does not count as the one taken here; go back to 1 for the
    next. Otherwise, if `worktree` is written and that worktree **still exists**, only Step 3 (§worker-spawn). If not
-   written, or gone (not in `git worktree list`), start again from creating the worktree in §start-worker. If `note`
+   written, or gone (not in `adj worktree ls`), start again from creating the worktree in §start-worker. If `note`
    says "resume with --resume", start it with `adjutant work --resume` (starting it with a plain
    `adjutant work` loses the saved conversation).
 3. If `adjutant work` returns 3 again, the slots are still full. Leave the record as it is, and
