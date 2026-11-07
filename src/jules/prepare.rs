@@ -518,7 +518,9 @@ fn prepare_one(
                     decide_base(&ctx.repo.main, &ctx.repo.nwo, req_b)?
                 }
                 None => match task.base.clone() {
-                    Some(b) => decide_base(&ctx.repo.main, &ctx.repo.nwo, &b)?,
+                    // Kept as written: the worktree was cut from it, and a branch since gone from
+                    // origin is not a reason to refuse the worktree.
+                    Some(b) => b,
                     None => {
                         if let Some(err) = fetch_err {
                             return Err(err.to_string());
@@ -536,10 +538,10 @@ fn prepare_one(
                 },
             };
 
-            // Only a base given for this dispatch has to match the worktree: the record's own
-            // base is what the worktree was cut from, and origin moving on since then is not a
-            // reason to refuse it.
-            if request_base.is_some() {
+            // A base given for this dispatch, or one decided now for a record that had none, has to
+            // match the worktree. The record's own base is what the worktree was cut from, and
+            // origin moving on since then is not a reason to refuse it.
+            if request_base.is_some() || task.base.is_none() {
                 let wt_head_out = git(&["rev-parse", "HEAD"], Some(Path::new(&wt)))?;
                 if !wt_head_out.status.success() {
                     let stderr = String::from_utf8_lossy(&wt_head_out.stderr)
