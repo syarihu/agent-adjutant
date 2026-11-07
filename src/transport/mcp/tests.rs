@@ -428,7 +428,7 @@ fn cli_skill_picks_the_agent_from_the_runner_without_an_override() {
         let _sandbox = crate::testing::Sandbox::new(&format!(
             r#"{{ "defaults": {{ "agentRunner": "{runner}" }} }}"#
         ));
-        let text = crate::transport::wording::skill_text("adj-worker", "", None).unwrap();
+        let text = crate::transport::wording::skill_text("adj-worker", "", None, None).unwrap();
         assert!(text.contains("ask_question"), "{runner}");
         assert!(!text.contains("AskUserQuestion"), "{runner}");
     }

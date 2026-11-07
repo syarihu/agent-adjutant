@@ -101,8 +101,9 @@ pub fn link(ctx: &Context, worktree: &Path, request: LinkRequest) -> Result<Link
         ""
     };
     let body = format!(
-        "From now on your Task record is {} and your hub is {}. Fetch adj-worker \
-         (`adj skill adj-worker`) and follow it from where the work stands.\n\n{filing}{}",
+        "From now on your Task record is {} and your hub is {}. Fetch the core of adj-worker \
+         (`adj skill adj-worker`) and follow it from where the work stands, fetching the \
+         sections its index names.\n\n{filing}{}",
         linked.id,
         ctx.repo.hub_name,
         task::render_request(&linked)

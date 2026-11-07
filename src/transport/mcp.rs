@@ -102,6 +102,11 @@ fn prompt_definitions() -> Value {
                         "required": false,
                     },
                     {
+                        "name": "section",
+                        "description": "Which part to print: core (default), all, or section ids separated by commas. Optional.",
+                        "required": false,
+                    },
+                    {
                         "name": "agent",
                         "description": "Target agent format: claude (claude-code) | agy (antigravity) | generic (codex). Defaults to auto-detect.",
                         "required": false,
@@ -141,6 +146,7 @@ fn prompt_get(params: &Value) -> Result<Value, String> {
     let rendered = prompts::render_skill(&prompts::SkillRequest {
         name,
         arguments: params["arguments"]["arguments"].as_str().unwrap_or(""),
+        section: params["arguments"]["section"].as_str(),
         agent: params["arguments"]["agent"].as_str(),
         client_name: client.as_deref(),
         runner_dir: worktree.as_deref(),

@@ -51,7 +51,7 @@ fn an_unterminated_frontmatter_is_not_swallowed() {
 /// The one line the brief carries about where the branch came from has to be read back.
 ///
 /// The hub decides the base with its `baseBranch` rule and writes the answer into the
-/// brief; nothing else records it. §5 had no step that read it, so every PR fell through
+/// brief; nothing else records it. The PR step (§pr) had no step that read it, so every PR fell through
 /// to a bare `gh pr create` — which targets the repository's default branch. A task
 /// branched off a release branch then opened a PR carrying every commit the release
 /// branch has and the default branch does not, and merging it put the release into the
@@ -102,7 +102,7 @@ fn the_pr_step_takes_its_base_from_the_brief() {
 
     // The base is checked before anyone is asked to review, not after. A bot asked to
     // read a PR opened against the wrong base reviews a diff of everything the base was
-    // missing, and correcting the base afterwards does not re-run that review — so §6
+    // missing, and correcting the base afterwards does not re-run that review — so §review-comments
     // ends up triaging it.
     let checks_base = flowed
         .find("baseRefName")
@@ -1116,7 +1116,7 @@ fn a_parent_task_listing_has_an_age_and_readers_recollect_a_stale_one() {
     // 4. The start route fetches that one row again when the listing is older than the age.
     assert!(
         startup_flowed.contains(
-            "**If the listing is older than 10 minutes** (the age set out after \"Keep no state\" below), **fetch that one row again on the spot**"
+            "**If the listing is older than 10 minutes** (the age set out in §listing-rules), **fetch that one row again on the spot**"
         ),
         "the start route does not say to fetch that one row again on the spot when older: {startup}"
     );
@@ -1514,7 +1514,7 @@ fn a_number_answered_to_a_parent_hub_is_read_against_the_list_it_printed() {
         "the number is answered against some other list: {startup}"
     );
     assert!(
-        flowed.contains("do not rebuild the list in \"1. Pick the task\""),
+        flowed.contains("do not rebuild the list in §pick-task"),
         "the route re-runs the repository-wide selection: {startup}"
     );
     // The reason has to travel with the rule, or a reader who finds the selection step
@@ -1526,7 +1526,7 @@ fn a_number_answered_to_a_parent_hub_is_read_against_the_list_it_printed() {
     // And the key alone is not enough to carry: the claim step reads an item id it is
     // told not to fetch twice, which for this hub comes from the collector's rows.
     assert!(
-        flowed.contains("Go on to \"2. Claim it\""),
+        flowed.contains("Go on to §claim"),
         "the route does not say where the decided key goes instead: {startup}"
     );
     assert!(
@@ -1547,12 +1547,12 @@ fn a_named_key_is_checked_before_a_parent_hub_starts_it() {
     let startup = step(raw, "### Read at startup");
     let flowed: String = flow(&startup);
     assert!(
-        flowed.contains("A key that is not one of your children"),
+        flowed.contains("first go through §parent-foreign-key"),
         "startup step does not route a named key through the child check: {startup}"
     );
     before(
         &startup,
-        "When a person names a key, first go through \"A key that is not one of your children\"",
+        "When a person names a key, first go through §parent-foreign-key",
         "only a key found to be a child goes on to \"2. Start a task\"",
     );
     // The waiting paragraph is one way in; a person saying "start ALPHA-999" in plain words
@@ -1562,7 +1562,7 @@ fn a_named_key_is_checked_before_a_parent_hub_starts_it() {
     let talk_flowed: String = flow(&talk);
     assert!(
         talk_flowed.contains(
-            "In a parent task's hub, a key named to be started goes through \"A key that is not one of your children\" first"
+            "In a parent task's hub, a key named to be started goes through §parent-foreign-key first"
         ),
         "a key named in plain words reaches \"2. Start a task\" without the child check: {talk}"
     );
@@ -1570,7 +1570,7 @@ fn a_named_key_is_checked_before_a_parent_hub_starts_it() {
     let existing = section(raw, "## When asked to work on an existing worktree");
     assert!(
         flow(&existing).contains(
-            "In a parent task's hub, check that key as \"A key that is not one of your children\" says before step 4"
+            "In a parent task's hub, check that key as §parent-foreign-key says before step 4"
         ),
         "an existing worktree's task is started under this hub's parent without the child check: {existing}"
     );
@@ -1732,7 +1732,7 @@ fn parent_task_dispatch_and_split_guarded_to_children_only() {
     let split_flowed = flow(&split);
     assert!(
         split_flowed.contains(
-            "A key that is not one of the keys this split just filed goes through \"A key that is not one of your children\" first"
+            "A key that is not one of the keys this split just filed goes through §parent-foreign-key first"
         ),
         "split step does not send foreign keys through the child check: {split}"
     );
@@ -1793,7 +1793,7 @@ fn the_parent_route_keeps_the_selection_step_s_rules_when_it_skips_the_fetch() {
         "a child from an unkeyed repository is dropped or offered in silence: {startup}"
     );
     assert!(
-        flowed.contains("numbering them gets stuck at \"3. Create the worktree\""),
+        flowed.contains("numbering them gets stuck at §worktree"),
         "nothing says why an unkeyed child cannot be numbered: {startup}"
     );
 
@@ -1891,7 +1891,7 @@ fn a_row_handed_to_the_claim_step_travels_whole_rather_than_column_by_column() {
     // The branch. Re-deriving it is the specific failure, so the ban has to be on the
     // re-derivation and not merely on forgetting the column.
     assert!(
-        flowed.contains("**it is not fetched again in \"3. Create the worktree\"**"),
+        flowed.contains("**it is not fetched again in §worktree**"),
         "the worktree step is left to rebuild the branch from the pattern: {startup}"
     );
     // Only the branch, though: the path still comes from the convention, or a Linear
@@ -2336,7 +2336,7 @@ fn a_freshly_filed_subtask_reaches_dispatch_through_the_step_that_needs_no_row()
     );
     // Where the values come from: the step that already starts an issue with no row.
     assert!(
-        flowed.contains("Step 4 of \"When a request arrives\". Do not copy it here"),
+        flowed.contains("The chosen one is handed to §request-start. Do not copy it here"),
         "this route sources a dispatch of its own instead of reusing Step 4: {split}"
     );
     assert!(
@@ -2345,12 +2345,11 @@ fn a_freshly_filed_subtask_reaches_dispatch_through_the_step_that_needs_no_row()
     );
     // Why the missing machine row costs nothing here.
     assert!(
-        flowed.contains("Fetch that one")
-            && flowed.contains("do the matching of \"When handing on to start\""),
+        flowed.contains("Fetch that one") && flowed.contains("do the matching of §parent-pick"),
         "the row the collection would have given is neither read nor replaced: {split}"
     );
     assert!(
-        flowed.contains("How is exactly \"Fetching what sits under the parent\", for one item"),
+        flowed.contains("How is exactly §parent-fetch, for one item"),
         "this route writes a second recipe for reading a subtask's state: {split}"
     );
     assert!(
@@ -2391,8 +2390,7 @@ fn a_freshly_filed_subtask_reaches_dispatch_through_the_step_that_needs_no_row()
     let menu = section(raw, "## When a person talks to you");
     let menu_flowed: String = flow(&menu);
     assert!(
-        menu_flowed
-            .contains("go to \"When asked to split it\" in \"A hub for a parent task\", not 3"),
+        menu_flowed.contains("go to §parent-split, not 3"),
         "a parent hub asked to split is routed to the step that also claims: {menu}"
     );
     assert!(
@@ -2447,15 +2445,14 @@ fn an_entry_with_two_boards_still_stands_a_parent_hub_up() {
     // Not a new rule: the selection step decides where a status comes from the same way,
     // and two answers to one question is how the two steps start disagreeing.
     assert!(
-        flowed.contains(
-            "the Dedupe in \"1. Pick the task\" decides where status comes from by the same rule"
-        ),
+        flowed
+            .contains("the Dedupe in §pick-task decides where status comes from by the same rule"),
         "the board choice is invented rather than taken from the existing precedent: {scoped}"
     );
     // The chosen source is not only where the board query runs: two later steps say
     // "the selected task's own source" and the row carries no source column.
     assert!(
-        flowed.contains("\"2. Claim it\" and \"3. Create the worktree\" call"),
+        flowed.contains("§claim and §worktree call"),
         "the later steps are left with no source to call the task's own: {scoped}"
     );
     // And the rule needs the same escape hatch as the ambiguous lookup above it, or a
@@ -2657,14 +2654,14 @@ fn a_collected_row_is_one_json_object_so_no_value_can_split_it() {
     let startup = step(raw, "### Read at startup");
     let startup_flowed: String = flow(&startup);
     assert!(
-        startup_flowed.contains("read as JSON by key, as Step 3 of the Dashboard says"),
+        startup_flowed.contains("read as JSON by key, as §dashboard-display says"),
         "Read at startup does not point to the Step 3 reading rule: {startup}"
     );
 
     let pick = step(raw, "### 1. Pick the task");
     let pick_flowed: String = flow(&pick);
     assert!(
-        pick_flowed.contains("read by key as Step 3 of the Dashboard says"),
+        pick_flowed.contains("read by key as §dashboard-display says"),
         "1. Pick the task does not point to the Step 3 reading rule: {pick}"
     );
 
@@ -2697,7 +2694,7 @@ fn flow(text: &str) -> String {
 
 /// The span between two headings, for a section `section` cannot hold.
 ///
-/// `adj-report` §2 is a fenced block whose lines are the report's own `## ` headings, so
+/// Step 2 of `adj-report` is a fenced block whose lines are the report's own `## ` headings, so
 /// `section` — which ends at the next line starting `## ` — stops at the first line of
 /// the template and reads none of the prose that follows it. A guard scoped that way
 /// passes by finding nothing to object to.
@@ -2800,7 +2797,7 @@ fn the_always_on_instructions_carry_the_rule_and_its_reason() {
 #[test]
 fn the_always_on_instructions_stay_short_enough_to_always_be_on() {
     assert!(
-        INSTRUCTIONS.lines().count() <= 5,
+        INSTRUCTIONS.lines().count() <= 6,
         "instructions are {} lines",
         INSTRUCTIONS.lines().count()
     );
@@ -3393,8 +3390,8 @@ fn the_hub_prepares_a_jules_review_for_approval_and_passes_it_on_after() {
 #[test]
 fn procedures_are_tailored_for_agy() {
     for prompt in &PROMPTS {
-        let claude_version = render_for(prompt, "", Agent::Claude);
-        let agy_version = render_for(prompt, "", Agent::Agy);
+        let claude_version = render_selection(prompt, "", Agent::Claude, &Selection::All).unwrap();
+        let agy_version = render_selection(prompt, "", Agent::Agy, &Selection::All).unwrap();
 
         // If the prompt contained AskUserQuestion, the agy version replaces it with ask_question
         if claude_version.contains("AskUserQuestion") {
@@ -3421,7 +3418,7 @@ fn a_worker_whose_wake_reads_the_screen_ends_its_turn_after_opening_a_gate() {
     let worker = find("adj-worker").unwrap();
     let after = |text: &str| flow(&between(text, "### After opening", "### When woken"));
 
-    let claude = after(&render_for(worker, "", Agent::Claude));
+    let claude = after(&render_selection(worker, "", Agent::Claude, &Selection::All).unwrap());
     assert!(claude.contains("`wakeChecksScreen`"), "{claude}");
     assert!(
         claude.contains("end the turn without `AskUserQuestion`"),
@@ -3438,7 +3435,7 @@ fn a_worker_whose_wake_reads_the_screen_ends_its_turn_after_opening_a_gate() {
     // The blind wake keeps asking in both places.
     assert!(claude.contains("without `wakeChecksScreen`"), "{claude}");
 
-    let agy = after(&render_for(worker, "", Agent::Agy));
+    let agy = after(&render_selection(worker, "", Agent::Agy, &Selection::All).unwrap());
     assert!(agy.contains("end the turn without `ask_question`"), "{agy}");
     assert!(!agy.contains("AskUserQuestion"), "{agy}");
     assert!(agy.contains("`terminal: true`"), "{agy}");
@@ -3509,7 +3506,7 @@ fn a_request_from_the_form_is_read_and_confirmed_before_anything_starts() {
         answers.contains("adj task update --id {task_id} --read --auto-start true"),
         "{answers}"
     );
-    assert!(answers.contains("Reading a request"), "{answers}");
+    assert!(answers.contains("§board-request"), "{answers}");
     let table = hub
         .lines()
         .find(|l| l.trim_start().starts_with("| `request` |"))
@@ -3566,6 +3563,7 @@ fn an_unknown_procedure_names_the_known_ones() {
     let req = SkillRequest {
         name: "nope",
         arguments: "",
+        section: None,
         agent: None,
         client_name: None,
         runner_dir: None,
@@ -3596,6 +3594,7 @@ fn an_agent_parse_refuses_is_refused() {
         let req = SkillRequest {
             name: "adj-worker",
             arguments: "",
+            section: None,
             agent: Some(value),
             client_name: None,
             runner_dir: None,
@@ -3614,6 +3613,7 @@ fn the_name_is_checked_before_the_agent() {
     let req = SkillRequest {
         name: "nope",
         arguments: "",
+        section: None,
         agent: Some("unknown"),
         client_name: None,
         runner_dir: None,
@@ -3635,6 +3635,7 @@ fn every_alias_agent_parse_takes_is_taken() {
         let req = SkillRequest {
             name: "adj-worker",
             arguments: "x",
+            section: None,
             agent: Some(value),
             client_name: None,
             runner_dir: None,
@@ -3644,7 +3645,11 @@ fn every_alias_agent_parse_takes_is_taken() {
         assert_eq!(r.agent, expected, "{value}");
         assert_eq!(r.name, "adj-worker");
         assert_eq!(r.description, description(prompt));
-        assert_eq!(r.text, render_for(prompt, "x", r.agent), "{value}");
+        assert_eq!(
+            r.text,
+            render_selection(prompt, "x", r.agent, &Selection::Core).unwrap(),
+            "{value}"
+        );
     }
 }
 
@@ -3863,8 +3868,8 @@ fn a_superseded_reader_is_told_to_stop_and_replies_are_not_entries() {
 ///
 /// In a brief with a parent task the two differ: an answer whose subject carries the
 /// parent's number tells the hub it is about a different task, and a cleanup request naming
-/// the parent says the worktree being removed was for the parent's work. So §7 and the note
-/// under the §9 template must both point at the brief's Task line.
+/// the parent says the worktree being removed was for the parent's work. So §outside-bug and the note
+/// under the §done template must both point at the brief's Task line.
 #[test]
 fn an_answer_and_the_cleanup_request_name_the_worker_s_own_task() {
     let raw = find("adj-worker").unwrap().raw_content;
@@ -3872,22 +3877,22 @@ fn an_answer_and_the_cleanup_request_name_the_worker_s_own_task() {
     let s7_flowed = flow(&s7);
     assert!(
         s7_flowed.contains("this task's number (the brief's Task line)"),
-        "§7 answer fallback does not name this task's number (the brief's Task line): {s7}"
+        "§outside-bug answer fallback does not name this task's number (the brief's Task line): {s7}"
     );
     assert!(
         !s7_flowed.contains("parent task number"),
-        "§7 answer fallback still names the parent task number: {s7}"
+        "§outside-bug answer fallback still names the parent task number: {s7}"
     );
 
-    let s9 = between(raw, "## 9. ", "## Appendix — Show a person and wait (gate)");
+    let s9 = part("adj-worker", "done");
     let s9_flowed = flow(&s9);
     assert!(
         s9_flowed.contains("`## Task` is the brief's Task line"),
-        "§9 cleanup template does not identify `## Task` as the brief's Task line: {s9}"
+        "§done cleanup template does not identify `## Task` as the brief's Task line: {s9}"
     );
     assert!(
         !s9_flowed.contains("\"Parent task\""),
-        "§9 cleanup template still refers to \"Parent task\": {s9}"
+        "§done cleanup template still refers to \"Parent task\": {s9}"
     );
 }
 
@@ -4032,5 +4037,388 @@ fn a_stopped_parent_collection_is_not_read_as_an_empty_list_when_splitting() {
     assert!(
         flow(&split).contains("file nothing from it"),
         "the split route may file from a collection that stopped: {split}"
+    );
+}
+
+fn part(name: &str, id: &str) -> String {
+    let prompt = find(name).unwrap_or_else(|| panic!("no procedure {name}"));
+    let (_, sections) = parts(prompt);
+    sections
+        .into_iter()
+        .find(|s| s.id == id)
+        .unwrap_or_else(|| panic!("no section {id} in {name}"))
+        .text
+        .to_string()
+}
+
+/// Section identifiers must be well-formed lowercase kebab-case strings, unique within the procedure,
+/// and not collide with reserved selectors ("core" and "all").
+#[test]
+fn section_ids_are_well_formed_unique_and_not_reserved() {
+    for prompt in &PROMPTS {
+        let (_, sections) = parts(prompt);
+        if sections.is_empty() {
+            continue;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for s in &sections {
+            assert!(
+                !s.id.is_empty(),
+                "{}: section id cannot be empty",
+                prompt.name
+            );
+            assert_ne!(
+                s.id, "core",
+                "{}: core is a reserved section id",
+                prompt.name
+            );
+            assert_ne!(s.id, "all", "{}: all is a reserved section id", prompt.name);
+
+            let mut chars = s.id.chars();
+            let first = chars.next().unwrap();
+            assert!(
+                first.is_ascii_lowercase(),
+                "{}: section id '{}' must start with a lowercase letter",
+                prompt.name,
+                s.id
+            );
+            for c in chars {
+                assert!(
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-',
+                    "{}: section id '{}' contains invalid character '{}'",
+                    prompt.name,
+                    s.id,
+                    c
+                );
+            }
+
+            assert!(
+                seen.insert(s.id),
+                "{}: duplicate section id '{}'",
+                prompt.name,
+                s.id
+            );
+        }
+    }
+}
+
+/// Cross-references to sections (`§id` and `§proc/id`) must resolve to existing sections,
+/// and legacy numbered references (`§<digit>`) must not remain: an agent following a missing
+/// or numeric reference has nowhere to go.
+#[test]
+fn section_cross_references_resolve_and_have_no_digits() {
+    for prompt in &PROMPTS {
+        let (_, sections) = parts(prompt);
+        if sections.is_empty() {
+            continue;
+        }
+        let known_ids: std::collections::HashSet<&str> = sections.iter().map(|s| s.id).collect();
+
+        let text = prompt.raw_content;
+        for (idx, _) in text.match_indices('§') {
+            let after = &text[idx + '§'.len_utf8()..];
+            assert!(
+                !after.starts_with(|c: char| c.is_ascii_digit()),
+                "{}: found § followed by digit: {:?}",
+                prompt.name,
+                &after[..after
+                    .char_indices()
+                    .take(10)
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(after.len())]
+            );
+
+            let ref_str: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '/' || *c == '-')
+                .collect();
+            let trimmed_ref = ref_str.trim_end_matches(['.', ',', ')', ':', ';']);
+            if trimmed_ref.is_empty() {
+                continue;
+            }
+
+            if let Some((target_proc, target_id)) = trimmed_ref.split_once('/') {
+                let target_prompt = find(target_proc).unwrap_or_else(|| {
+                    panic!(
+                        "{}: unknown procedure in reference §{}",
+                        prompt.name, trimmed_ref
+                    )
+                });
+                let (_, target_sections) = parts(target_prompt);
+                let target_known: std::collections::HashSet<&str> =
+                    target_sections.iter().map(|s| s.id).collect();
+                assert!(
+                    target_known.contains(target_id),
+                    "{}: unresolved cross-procedure reference §{} (target procedure {} sections: {:?})",
+                    prompt.name,
+                    trimmed_ref,
+                    target_proc,
+                    target_known
+                );
+            } else {
+                assert!(
+                    known_ids.contains(trimmed_ref),
+                    "{}: unresolved reference §{} (known sections: {:?})",
+                    prompt.name,
+                    trimmed_ref,
+                    known_ids
+                );
+            }
+        }
+    }
+}
+
+/// The core must provide an index of triggers that reaches every section: an unreachable section
+/// is dead text that an agent will never know to fetch.
+#[test]
+fn core_index_of_triggers_resolves_and_reaches_all_sections() {
+    for prompt in &PROMPTS {
+        let (core, sections) = parts(prompt);
+        if sections.is_empty() {
+            continue;
+        }
+
+        assert!(
+            core.contains("## Index of triggers"),
+            "{}: core is missing '## Index of triggers'",
+            prompt.name
+        );
+
+        let index_start = core.find("## Index of triggers").unwrap();
+        let index_text = &core[index_start..];
+
+        let mut reached: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<&str> = std::collections::VecDeque::new();
+
+        // Extract section references from the index of triggers
+        for (idx, _) in index_text.match_indices('§') {
+            let after = &index_text[idx + '§'.len_utf8()..];
+            let ref_str: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '/' || *c == '-')
+                .collect();
+            let trimmed_ref = ref_str.trim_end_matches(['.', ',', ')', ':', ';']);
+            if !trimmed_ref.contains('/') && sections.iter().any(|s| s.id == trimmed_ref) {
+                let s_id = sections.iter().find(|s| s.id == trimmed_ref).unwrap().id;
+                if reached.insert(s_id) {
+                    queue.push_back(s_id);
+                }
+            }
+        }
+
+        assert!(
+            !reached.is_empty(),
+            "{}: index of triggers contains no section references",
+            prompt.name
+        );
+
+        // Follow reachability
+        while let Some(curr_id) = queue.pop_front() {
+            let section = sections.iter().find(|s| s.id == curr_id).unwrap();
+            for (idx, _) in section.text.match_indices('§') {
+                let after = &section.text[idx + '§'.len_utf8()..];
+                let ref_str: String = after
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '/' || *c == '-')
+                    .collect();
+                let trimmed_ref = ref_str.trim_end_matches(['.', ',', ')', ':', ';']);
+                if !trimmed_ref.contains('/') && sections.iter().any(|s| s.id == trimmed_ref) {
+                    let s_id = sections.iter().find(|s| s.id == trimmed_ref).unwrap().id;
+                    if reached.insert(s_id) {
+                        queue.push_back(s_id);
+                    }
+                }
+            }
+        }
+
+        let all_ids: std::collections::HashSet<&str> = sections.iter().map(|s| s.id).collect();
+        let unreached: Vec<&str> = all_ids.difference(&reached).copied().collect();
+        assert!(
+            unreached.is_empty(),
+            "{}: unreached sections: {:?}",
+            prompt.name,
+            unreached
+        );
+    }
+}
+
+/// The core is read whole every time a procedure is opened, so each procedure has a size limit
+/// to keep always-on context small (the hub's core must fit in a single tool response).
+#[test]
+fn core_size_limits() {
+    // A core is read whole every time; the hub's has to fit in one tool response.
+    const LIMITS: [(&str, usize); 3] = [
+        ("adj-hub", 32 * 1024),
+        ("adj-worker", 12 * 1024),
+        ("adj-report", 8 * 1024),
+    ];
+
+    for (name, limit) in LIMITS {
+        let prompt = find(name).unwrap();
+        let (_, sections) = parts(prompt);
+        // Lose the markers and the core is the whole text, which the limit would only catch by luck.
+        assert!(!sections.is_empty(), "{name} has no sections");
+        let core_text = render_selection(prompt, "", Agent::Claude, &Selection::Core)
+            .expect("failed to render core");
+        let core_size = core_text.len();
+        assert!(
+            core_size <= limit,
+            "{name} core size {core_size} exceeds limit {limit}"
+        );
+    }
+}
+
+/// Concatenating the core and every section in order must reconstruct the body without frontmatter
+/// byte-for-byte, ensuring no text is lost or duplicated across the split.
+#[test]
+fn core_plus_all_sections_joined_equals_whole_body() {
+    for prompt in &PROMPTS {
+        let (_, body) = strip_frontmatter(prompt.raw_content);
+        let (core, sections) = parts(prompt);
+        let mut reconstructed = core.to_string();
+        for s in &sections {
+            reconstructed.push_str(s.text);
+        }
+        assert_eq!(
+            reconstructed, body,
+            "{}: core + all sections does not equal body",
+            prompt.name
+        );
+    }
+}
+
+/// Procedures support selective fetching: omitting a section requests the core, "all" requests
+/// the entire body, and comma-separated ids return the named sections in order. Unknown section
+/// ids fail explicitly so typos do not silently drop instructions, and agent tailoring applies
+/// to rendered selections.
+#[test]
+fn selection_behaviour() {
+    let worker = find("adj-worker").unwrap();
+    let (worker_core, _) = parts(worker);
+    let (_, worker_body) = strip_frontmatter(worker.raw_content);
+
+    // No section = core
+    let sel_core = render_selection(worker, "", Agent::Claude, &Selection::Core).unwrap();
+    assert_eq!(sel_core, worker_core);
+
+    // all = whole
+    let sel_all = render_selection(worker, "", Agent::Claude, &Selection::All).unwrap();
+    assert_eq!(sel_all, worker_body);
+
+    // ids in order
+    let sel_ids = render_selection(
+        worker,
+        "",
+        Agent::Claude,
+        &Selection::Ids(vec!["pr", "done"]),
+    )
+    .unwrap();
+    assert!(sel_ids.contains("## 5. Open a PR"));
+    assert!(sel_ids.contains("## 9. Done: ask for cleanup"));
+    let pr_idx = sel_ids.find("## 5. Open a PR").unwrap();
+    let done_idx = sel_ids.find("## 9. Done: ask for cleanup").unwrap();
+    assert!(pr_idx < done_idx);
+
+    // unknown id -> NoSuchSection
+    let err = render_selection(
+        worker,
+        "",
+        Agent::Claude,
+        &Selection::Ids(vec!["nonexistent"]),
+    )
+    .unwrap_err();
+    assert!(matches!(err, SkillError::NoSuchSection { .. }));
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("no such section of adj-worker: nonexistent (core / all /"));
+
+    // a procedure with no markers: core == all == whole, an id is refused
+    let review_hub = find("adj-review-hub").unwrap();
+    let (_, rh_body) = strip_frontmatter(review_hub.raw_content);
+    let rh_core = render_selection(review_hub, "", Agent::Claude, &Selection::Core).unwrap();
+    let rh_all = render_selection(review_hub, "", Agent::Claude, &Selection::All).unwrap();
+    assert_eq!(rh_core, rh_body);
+    assert_eq!(rh_all, rh_body);
+
+    let rh_err =
+        render_selection(review_hub, "", Agent::Claude, &Selection::Ids(vec!["nope"])).unwrap_err();
+    assert_eq!(
+        rh_err.to_string(),
+        "adj-review-hub has no sections: use core or all"
+    );
+    // A list of nothing but commas is a mistake to report, not a quiet fall back to the core.
+    assert!(matches!(
+        render_selection(worker, "", Agent::Claude, &Selection::parse(Some(" , "))),
+        Err(SkillError::NoSuchSection { .. })
+    ));
+    // What the refusal tells the caller to use has to work.
+    let rh_listed = render_selection(
+        review_hub,
+        "",
+        Agent::Claude,
+        &Selection::Ids(vec!["core", "all"]),
+    )
+    .unwrap();
+    assert!(rh_listed.contains(rh_body.trim_end()));
+
+    // agy tailoring applies to a section (AskUserQuestion -> ask_question)
+    let agy_gate = render_selection(worker, "", Agent::Agy, &Selection::Ids(vec!["gate"])).unwrap();
+    assert!(!agy_gate.contains("AskUserQuestion"));
+    assert!(agy_gate.contains("ask_question"));
+
+    // $ARGUMENTS is replaced in the adj-report core
+    let report = find("adj-report").unwrap();
+    let report_core = render_selection(
+        report,
+        "CUSTOM_ARGUMENT_STRING",
+        Agent::Claude,
+        &Selection::Core,
+    )
+    .unwrap();
+    assert!(report_core.contains("CUSTOM_ARGUMENT_STRING"));
+    assert!(!report_core.contains("$ARGUMENTS"));
+}
+
+/// Fenced code blocks may contain text that resembles section markers; the parser must ignore
+/// markers inside code blocks so examples do not split the procedure.
+#[test]
+fn markers_inside_fenced_blocks_are_not_section_starts() {
+    let sample = "\
+core start
+```
+<!-- section: fenced-fake -->
+```
+<!-- section: real-one -->
+real section text
+";
+    let (core, sections) = parts_from_body(sample);
+    assert_eq!(
+        core,
+        "core start\n```\n<!-- section: fenced-fake -->\n```\n"
+    );
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0].id, "real-one");
+    assert_eq!(
+        sections[0].text,
+        "<!-- section: real-one -->\nreal section text\n"
+    );
+}
+
+/// A `~~~` fence is a fence too, and a ``` line inside it does not close it.
+#[test]
+fn markers_inside_tilde_fences_are_not_section_starts() {
+    let sample = "\
+core start
+~~~
+```
+<!-- section: fenced-fake -->
+~~~
+<!-- section: real-one -->
+real section text
+";
+    let (_, sections) = parts_from_body(sample);
+    assert_eq!(
+        sections.iter().map(|s| s.id).collect::<Vec<_>>(),
+        ["real-one"]
     );
 }

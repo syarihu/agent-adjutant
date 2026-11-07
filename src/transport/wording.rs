@@ -95,10 +95,16 @@ pub fn wake_note_sentence(note: &str) -> String {
 }
 
 /// The text `skill` prints, rendered for the agent the override or the configured runner names.
-pub fn skill_text(name: &str, arguments: &str, agent: Option<&str>) -> Result<String, String> {
+pub fn skill_text(
+    name: &str,
+    arguments: &str,
+    agent: Option<&str>,
+    section: Option<&str>,
+) -> Result<String, String> {
     prompts::render_skill(&prompts::SkillRequest {
         name,
         arguments,
+        section,
         agent,
         client_name: None,
         runner_dir: None,

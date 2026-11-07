@@ -1,5 +1,9 @@
 //! The procedures, baked into the binary.
 //!
+//! Procedures come as a core (always read: role, general rules, and an index of triggers)
+//! and sections fetched by id. An agent that loads 200 KB reads parts by guess; a trigger
+//! index makes the part it needs the one it opens.
+//!
 //! They are shipped as MCP prompts rather than written into each agent's commands directory
 //! because a file that is copied into place is a file that drifts: upgrade the tool and the
 //! copies stay behind, one per config directory, all subtly different. A prompt served over
@@ -16,6 +20,45 @@ pub use render_skill::*;
 pub struct PromptDef {
     pub name: &'static str,
     pub raw_content: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub id: &'static str,
+    pub text: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Selection<'a> {
+    Core,
+    All,
+    Ids(Vec<&'a str>),
+}
+
+impl<'a> Selection<'a> {
+    pub fn parse(s: Option<&'a str>) -> Self {
+        let Some(s) = s else {
+            return Selection::Core;
+        };
+        let trimmed = s.trim();
+        if trimmed.is_empty() || trimmed == "core" {
+            return Selection::Core;
+        }
+        if trimmed == "all" {
+            return Selection::All;
+        }
+        let ids: Vec<&'a str> = trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .collect();
+        // Only commas is a mistyped list, not a request for the core: let it be refused as an id.
+        if ids.is_empty() {
+            Selection::Ids(vec![trimmed])
+        } else {
+            Selection::Ids(ids)
+        }
+    }
 }
 
 pub const PROMPTS: [PromptDef; 5] = [
@@ -51,7 +94,8 @@ adjutant hands work out to workers and takes their bug reports back in.
 While you are working a task, a bug you find OUTSIDE that task is not yours to fix and not
 yours to file: an unrelated fix pollutes this task's diff, and a diff nobody can review is a
 diff nobody can revert. Hand it over instead — `adj skill adj-report` (or adjutant_skill,
-name=adj-report), follow it, go back to your task. Hub: `adj hub`. Worker: adj-worker.";
+name=adj-report), follow it, go back to your task. Hub: `adj hub`. Worker: adj-worker.
+Procedures come as a core and sections: read the core, and fetch the section its index names before the step it covers (adj skill <name> --section <id>, or adjutant_skill section).";
 
 pub fn find(name: &str) -> Option<&'static PromptDef> {
     PROMPTS.iter().find(|p| p.name == name)
@@ -94,6 +138,7 @@ pub fn description(prompt: &PromptDef) -> String {
 /// A procedure invoked with nothing to say is normal (the hub is just starting up), so the
 /// placeholder is replaced with an empty string rather than left as literal text for the
 /// reader to puzzle over.
+#[cfg(test)]
 pub fn render(prompt: &PromptDef, arguments: &str) -> String {
     let (_, body) = strip_frontmatter(prompt.raw_content);
     body.replace("$ARGUMENTS", arguments)
@@ -133,24 +178,133 @@ pub fn resolve_agent(
     Agent::Claude
 }
 
-/// The procedure body rendered for a specific agent.
-pub fn render_for(prompt: &PromptDef, arguments: &str, agent: Agent) -> String {
-    let text = render(prompt, arguments);
+/// The core and sections of a procedure.
+pub fn parts(prompt: &PromptDef) -> (&'static str, Vec<Section>) {
+    let (_, body) = strip_frontmatter(prompt.raw_content);
+    parts_from_body(body)
+}
+
+/// Parse a markdown body into its core and sections, ignoring markers inside fenced code blocks.
+pub fn parts_from_body(body: &'static str) -> (&'static str, Vec<Section>) {
+    // The open fence's character and length: a ``` block is not closed by ~~~, nor the reverse.
+    let mut fence: Option<(char, usize)> = None;
+    let mut markers: Vec<(&'static str, usize)> = Vec::new();
+    let mut byte_offset = 0;
+
+    for line in body.split_inclusive('\n') {
+        let trimmed_start = line.trim_start();
+        let fence_char = trimmed_start
+            .chars()
+            .next()
+            .filter(|c| matches!(c, '`' | '~'));
+        let count = fence_char.map_or(0, |c| trimmed_start.chars().take_while(|&d| d == c).count());
+        if let (Some(c), true) = (fence_char, count >= 3) {
+            match fence {
+                None => fence = Some((c, count)),
+                Some((open, len)) if open == c && count >= len => fence = None,
+                Some(_) => {}
+            }
+        } else if fence.is_none() {
+            let stripped = line.trim_end_matches(['\r', '\n']);
+            if let Some(id) = stripped
+                .strip_prefix("<!-- section: ")
+                .and_then(|rest| rest.strip_suffix(" -->"))
+            {
+                markers.push((id, byte_offset));
+            }
+        }
+        byte_offset += line.len();
+    }
+
+    if markers.is_empty() {
+        return (body, Vec::new());
+    }
+
+    let core = &body[..markers[0].1];
+    let mut sections = Vec::with_capacity(markers.len());
+    for i in 0..markers.len() {
+        let (id, start) = markers[i];
+        let end = if i + 1 < markers.len() {
+            markers[i + 1].1
+        } else {
+            body.len()
+        };
+        sections.push(Section {
+            id,
+            text: &body[start..end],
+        });
+    }
+
+    (core, sections)
+}
+
+/// Render a specific selection (core, all, or specific sections) of a procedure.
+pub fn render_selection(
+    prompt: &PromptDef,
+    arguments: &str,
+    agent: Agent,
+    selection: &Selection<'_>,
+) -> Result<String, SkillError> {
+    let (core, sections) = parts(prompt);
+    let raw_text = match selection {
+        Selection::Core => core.to_string(),
+        Selection::All => {
+            let (_, body) = strip_frontmatter(prompt.raw_content);
+            body.to_string()
+        }
+        Selection::Ids(ids) => {
+            let known: Vec<&'static str> = sections.iter().map(|s| s.id).collect();
+            if let Some(&section) = ids
+                .iter()
+                .find(|id| sections.is_empty() && !matches!(**id, "core" | "all"))
+            {
+                let section = section.to_string();
+                return Err(SkillError::NoSuchSection {
+                    name: prompt.name.to_string(),
+                    section,
+                    known: vec![],
+                });
+            }
+            let mut pieces = Vec::with_capacity(ids.len());
+            for &id in ids {
+                if id == "core" {
+                    pieces.push(core);
+                } else if id == "all" {
+                    let (_, body) = strip_frontmatter(prompt.raw_content);
+                    pieces.push(body);
+                } else if let Some(s) = sections.iter().find(|s| s.id == id) {
+                    pieces.push(s.text);
+                } else {
+                    return Err(SkillError::NoSuchSection {
+                        name: prompt.name.to_string(),
+                        section: id.to_string(),
+                        known,
+                    });
+                }
+            }
+            let joined = pieces
+                .iter()
+                .map(|p| p.trim_end_matches(['\r', '\n']))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if joined.is_empty() {
+                String::new()
+            } else {
+                format!("{joined}\n")
+            }
+        }
+    };
+    let replaced = raw_text.replace("$ARGUMENTS", arguments);
+    Ok(tailor(replaced, agent))
+}
+
+fn tailor(text: String, agent: Agent) -> String {
     match agent {
         Agent::Claude => text,
-        Agent::Agy => tailor_for_agy(&text),
-        Agent::Generic => tailor_for_generic(&text),
+        Agent::Agy | Agent::Generic => text
+            .replace("`AskUserQuestion`", "`ask_question`")
+            .replace("AskUserQuestion", "ask_question"),
     }
-}
-
-fn tailor_for_agy(text: &str) -> String {
-    text.replace("`AskUserQuestion`", "`ask_question`")
-        .replace("AskUserQuestion", "ask_question")
-}
-
-fn tailor_for_generic(text: &str) -> String {
-    text.replace("`AskUserQuestion`", "`ask_question`")
-        .replace("AskUserQuestion", "ask_question")
 }
 
 #[cfg(test)]
