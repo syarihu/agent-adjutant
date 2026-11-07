@@ -112,8 +112,71 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: PrAction,
     },
+    /// Worktree operations: make, list and clean up worktrees instead of `git worktree`
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
     /// Collect the Dashboard's rows, or a parent task's, from the github and github-project task sources
     Collect(CollectArgs),
+}
+
+#[derive(Subcommand)]
+pub(crate) enum WorktreeAction {
+    /// Make a worktree and its branch on the resolved base, whenever a worktree is made instead of `git worktree`
+    Add(WorktreeAddArgs),
+    /// List the repository's linked worktrees, their tasks and removable state, whenever worktrees are listed instead of `git worktree`
+    Ls(WorktreeLsArgs),
+    /// Safely remove a worktree and close any running session, whenever a worktree is cleaned up instead of `git worktree`
+    Rm(WorktreeRmArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct WorktreeAddArgs {
+    /// Repository owner/name (default: this checkout's origin)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Worktree name (e.g. app-1234)
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+    /// Branch owner (default: $USER)
+    #[arg(long)]
+    pub(crate) user: Option<String>,
+    /// The task source's branchPattern
+    #[arg(long)]
+    pub(crate) pattern: Option<String>,
+    /// Branch name to create and check out
+    #[arg(long)]
+    pub(crate) branch: Option<String>,
+    /// Path for the worktree (default: derived from worktreePattern)
+    #[arg(long)]
+    pub(crate) path: Option<String>,
+    /// Branching point on origin (default: repository baseBranch or auto)
+    #[arg(long)]
+    pub(crate) base: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct WorktreeLsArgs {
+    /// Repository owner/name (default: this checkout's origin)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Print output as JSON (accepted for symmetry; output is JSON either way)
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct WorktreeRmArgs {
+    /// Path to the worktree to remove
+    #[arg(long)]
+    pub(crate) path: String,
+    /// Expected branch checked out in the worktree
+    #[arg(long)]
+    pub(crate) branch: Option<String>,
+    /// Repository owner/name (default: this checkout's origin)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
 }
 
 #[derive(Args)]

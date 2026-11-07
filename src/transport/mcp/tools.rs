@@ -22,6 +22,7 @@ pub(super) mod send;
 pub(super) mod skill;
 pub(super) mod tell;
 pub(super) mod work;
+pub(super) mod worktree;
 
 pub(super) fn cwd_param(args: &Value) -> Option<PathBuf> {
     args["cwd"]
@@ -175,6 +176,11 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_jules_hand_over",
         definition: jules_hand_over::definition,
         call: jules_hand_over::call,
+    },
+    Tool {
+        name: "adjutant_worktree",
+        definition: worktree::definition,
+        call: worktree::call,
     },
 ];
 

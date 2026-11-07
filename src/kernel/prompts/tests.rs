@@ -2893,7 +2893,7 @@ fn the_always_on_instructions_stay_short_enough_to_always_be_on() {
     // The instructions are a short index of when to use which tool (one line per tool an agent
     // should reach for unprompted, #111), so the cap bounds the index rather than forbidding it.
     assert!(
-        INSTRUCTIONS.lines().count() <= 9,
+        INSTRUCTIONS.lines().count() <= 10,
         "instructions are {} lines",
         INSTRUCTIONS.lines().count()
     );
@@ -2904,6 +2904,14 @@ fn the_always_on_instructions_stay_short_enough_to_always_be_on() {
     assert!(
         INSTRUCTIONS.contains("adjutant_collect"),
         "instructions do not name adjutant_collect: {INSTRUCTIONS}"
+    );
+    assert!(
+        INSTRUCTIONS.contains("adjutant_worktree"),
+        "instructions do not name adjutant_worktree: {INSTRUCTIONS}"
+    );
+    assert!(
+        INSTRUCTIONS.contains("adj worktree"),
+        "instructions do not name adj worktree: {INSTRUCTIONS}"
     );
 }
 

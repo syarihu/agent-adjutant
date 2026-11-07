@@ -134,6 +134,7 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
                 "adjutant_request",
                 "adjutant_pr_check_base",
                 "adjutant_collect",
+                "adjutant_worktree",
             ]
             .contains(&tool["name"].as_str().unwrap_or(""))
         {
@@ -1171,4 +1172,70 @@ fn collect_tool_advertised_and_checks_inputs() {
         err.contains("no task sources"),
         "expected 'no task sources', got: {err}"
     );
+}
+
+#[test]
+fn worktree_tool_advertised_and_checks_inputs() {
+    let _sandbox = crate::testing::Sandbox::empty();
+    let listed = call("tools/list", json!({}));
+    let worktree_tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "adjutant_worktree")
+        .expect("adjutant_worktree is advertised");
+    let desc = worktree_tool["description"].as_str().unwrap();
+    assert!(desc.contains("Whenever a worktree is made"), "{desc}");
+    assert!(desc.contains("git worktree"), "{desc}");
+
+    // missing action
+    let err = call_tool("adjutant_worktree", &json!({})).unwrap_err();
+    assert!(err.contains("pass `action`"), "{err}");
+
+    // unknown action
+    let err = call_tool("adjutant_worktree", &json!({ "action": "foo" })).unwrap_err();
+    assert!(err.contains("unknown action 'foo'"), "{err}");
+    assert!(err.contains("add, ls, rm"), "{err}");
+
+    // non-string action
+    let err = call_tool("adjutant_worktree", &json!({ "action": 123 })).unwrap_err();
+    assert!(err.contains("`action` must be a string"), "{err}");
+
+    // non-string arguments
+    for (key, val) in [
+        ("path", json!(5)),
+        ("name", json!(1)),
+        ("user", json!(true)),
+        ("pattern", json!(["x"])),
+        ("branch", json!(10)),
+        ("base", json!(false)),
+        ("cwd", json!(1)),
+        ("repo", json!(["a/b"])),
+    ] {
+        let err = call_tool("adjutant_worktree", &json!({ "action": "rm", key: val })).unwrap_err();
+        assert!(
+            err.contains(&format!("`{key}` must be a string")),
+            "worktree with {key}: {err}"
+        );
+    }
+
+    // rm requires path
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["remote", "add", "origin", "git@github.com:acme/widget.git"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir.path())
+                .status()
+                .unwrap()
+                .success(),
+            "git {args:?}"
+        );
+    }
+    let cwd = dir.path().to_string_lossy();
+    let err = call_tool("adjutant_worktree", &json!({ "action": "rm", "cwd": cwd })).unwrap_err();
+    assert!(err.contains("pass `path`"), "{err}");
 }

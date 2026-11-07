@@ -4,7 +4,7 @@ use clap::Parser;
 
 use super::args::{
     Cli, Commands, GateAction, JulesAction, PrAction, ReviewAction, ServerAction, TaskAction,
-    TmuxAction,
+    TmuxAction, WorktreeAction,
 };
 use super::outbox;
 use crate::transport::cli;
@@ -59,6 +59,7 @@ pub fn run() -> ! {
         Commands::UninstallMcp(args) => crate::transport::mcp::uninstall(&args.target).map(|_| 0),
         Commands::Tmux { action } => run_tmux(action).map(|_| 0),
         Commands::Pr { action } => run_pr(action).map(|_| 0),
+        Commands::Worktree { action } => run_worktree(action),
         Commands::Collect(args) => super::collect::run(args).map(|_| 0),
     };
     match result {
@@ -138,5 +139,14 @@ fn run_tmux(action: &TmuxAction) -> Result<(), String> {
 fn run_pr(action: &PrAction) -> Result<(), String> {
     match action {
         PrAction::CheckBase(args) => super::pr::check_base(args),
+    }
+}
+
+/// The `adj worktree` verbs.
+fn run_worktree(action: &WorktreeAction) -> Result<i32, String> {
+    match action {
+        WorktreeAction::Add(args) => super::worktree::add(args).map(|_| 0),
+        WorktreeAction::Ls(args) => super::worktree::ls(args).map(|_| 0),
+        WorktreeAction::Rm(args) => super::worktree::rm(args),
     }
 }
