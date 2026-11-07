@@ -1300,8 +1300,14 @@ proctor worktree ls --json
 the branch is merged, and it is not locked. **Trust it only when `diffKnown` is true** — a
 worktree proctor could not read reports zeros, which means "unknown", not "empty".
 
-If proctor is unavailable, fall back to: `git worktree list`, then for each branch
-`gh pr list -R <codeRepo> --head <branch> --state merged --json number,title,url`.
+If proctor is installed but the call fails (a non-zero exit or an error), offer nothing: say the
+worktrees could not be checked, with the error (the fallback below does not see who is working there
+or what is unpushed, so it is no stand-in for a proctor that failed). If proctor is not installed,
+fall back to: `git worktree list`, then for each branch
+`gh pr list -R <codeRepo> --head <branch> --state merged --json number,title,url`. If that
+lookup fails for a branch, that worktree is not removable: list it as "could not check" with the
+error, never as not merged and never as removable. If `git worktree list` fails too, offer nothing:
+say the worktrees could not be listed, with the error, never "nothing to clean up".
 
 **The main checkout is not one of the worktrees.** Both lists include it: proctor as the row
 with `isMain: true`, `git worktree list` as its first line. Drop that row before reading the
@@ -1325,6 +1331,9 @@ sub-agent or a person, and the hub removes it itself once that is answered.
 --json` has a record whose `status` is `queued`). A worktree prepared for a worker that was
 turned away for a slot has no commits and no session, so it looks removable — but the queue
 will start a worker there when a slot frees up.
+
+If `adj task list --worktree <path> --json` fails (the Jules-plan and queued leave-outs, and the
+task lookup before removal), leave that worktree out and say it could not be checked.
 
 Show the removable ones and ask whether to clean up. On yes, for each:
 
@@ -1455,6 +1464,10 @@ when it finishes.
 **This is the agent's procedure** (the brief points to this section). The hub runs it itself only when
 the agent failed and came back.
 
+**A lookup that fails cannot be told from none, so a lookup that fails is `?`, not `-`.** One source's
+failure marks that source, not the whole collection: the other sources are still valid. Only an
+empty list from a call that succeeded is none (`-`).
+
 Fetch tasks from **every** entry in this repo's `taskSources`, each with the recipe for its
 `type` (see §task-sources), then key and dedupe as in §pick-task (for the `github`
 family, make the key from the issue's repo through `issueKeys`; for `jira` / `linear`, use the issue
@@ -1489,6 +1502,12 @@ parse is not repaired by guessing: for a task, fetch that one directly, as §pic
 for a task asked for before the report returns; for anything else, say in one line that it could
 not be read.
 
+**Show a section whose lookup failed as "could not be read" with the error, never as empty**
+(`[My Open PRs]`, `[Worktrees]`, and a task source whose list failed). Show the collection's
+"Lookups that failed" line as it is. When the worktree listing failed, no task can be marked as
+started or not started from worktrees: say so instead of listing `[My Tasks]` as if none had a
+worktree. A task row with `?` is shown with `?` in its status, not as not started.
+
 ```
 ═══════════════════════════════════════════
   Task Hub Dashboard — <repo>
@@ -1522,6 +1541,9 @@ sets:
 - the **unassigned** ones, so a task can be picked up off the board. Mark those `unassigned`
   in the list — §claim is what assigns them.
 
+When the hub fetches these itself, a lookup that fails is read as §dashboard-collect says: unknown,
+not none.
+
 Then, over the merged list:
 
 1. **Key each task off its own tracker.** For `github` / `github-project`, pass **that issue's repo**
@@ -1543,11 +1565,32 @@ Then, over the merged list:
    For `jira`, drop those whose status name matches `inProgressStatus` (do not judge by
    `statusCategory`; the reason is in §task-sources `jira`).
 
+A row with `?` in `status` or `item` is not offered as a candidate (an unknown board status may
+be one already in progress, so offering it hands the same work out twice). List such rows as
+"Could not be read: `{key}` ({which lookup failed})", not numbered. Which lookups failed is read
+from the collection's "Lookups that failed" line (a failed list writes no rows, so the rows alone do
+not show it). If a source's list failed, say so in the line that presents the candidates; do not
+read it as "nothing assigned". While any lookup failed (a source's list, or a `nodes(ids:)` call
+for one board), a task offered from another source may sit on the failed one too, with a status that was not read (dedupe in 2 takes the status from
+the source with `projectFields`), so before §claim always fetch the chosen task directly, and stop
+if that fails. For the `github` family that is `gh issue view` with `id` in `--json`, then one
+`nodes(ids:)` for that id with its `projectItems` and their Status (the query in §task-sources
+`github-project`, but without its `select(.project.number == ...)` and `[0]`, so that every board's item comes
+back), whether or not the item id is needed. Read its status on every board it is on
+(all of its `projectItems`, not only the item of the source the row came from), and if any of those
+boards that has `projectFields` shows it in progress, do not start it. If the worktree
+listing failed, say so in the line that presents the candidates (a candidate may already have a
+worktree; the start of §worktree checks again with proctor).
+
 This list normally comes from the Dashboard collection agent's report (the machine rows carry the
 repo, key, item id and status; read by key as §dashboard-display says). **If told "start
 ALPHA-233" before that has come back, do not wait.** Go ahead by fetching just that one directly
 (for the `github` family `gh issue view`, plus one `nodes(ids:)` if the item id is needed; for
-`jira` one `getJiraIssue`). The collection can be shown when it arrives.
+`jira` one `getJiraIssue`; until the collection is back, whether a lookup failed is not known, so
+for the `github` family read every board as below). The collection can be shown when it arrives. A person may also name a
+`?` row (or a task of a failed source) by key: fetch that one directly in the same way. If that lookup
+fails too, say which lookup failed and stop: do not start it (fail closed). A `?` from the old row is
+never carried into §claim as the item id.
 
 Present up to 4 with `AskUserQuestion`, highest priority first, and say how many more there
 are. Group by key when more than one is in play.
@@ -3213,8 +3256,22 @@ Put both of these in the report:
    an encoder escapes them. The reason: a value may contain any character, so a row split on a
    separator character moves every later value into the wrong field. Fill what is missing with `"-"`;
    never drop a key.
+   **A lookup that failed is `"?"`, never `"-"`** (for `status` and `item`). `-` means "looked, and
+   there is none"; `?` means "the lookup failed, so it cannot be told". Only an empty list from a call
+   that succeeded is none. A failure is a non-zero exit or an error from `gh` / the tracker tool. If
+   the board item lookup (`nodes(ids:)`) fails, write `"status": "?"` and `"item": "?"` on the rows it
+   covered. If a task source's issue list fails (per `taskSources` entry: the assigned search or the
+   unassigned search; `gh issue list`, `gh search issues`, the Jira search, the Linear list), write
+   no task rows from that list, never report that source as "no tasks", and name it in the report; one
+   failing source does not stop the whole collection (the other sources are still valid). If every
+   source's lists fail, there is nothing to show: say so with the errors. If the own open PR list
+   lookup fails (`gh pr list`), write no `pr` rows and name it in the report; never "no open PRs". If
+   the worktree listing fails (`proctor worktree ls --json`, or `git worktree list`), write no
+   `worktree` rows and name it in the report; never "no worktrees". Name every failed lookup in the
+   report's part for people, on one line together: `Lookups that failed: {key or source or "own PRs"
+   or "worktrees"} ({which lookup}: {the error, one line})`, ...
    Shape of a task row (keys in this order):
-   {"kind": "task", "identifier": "{identifier}", "key": "{KEY-number}", "item": "{project item id or -}", "status": "{status}", "title": "{title}", "url": "{URL}"}
+   {"kind": "task", "identifier": "{identifier}", "key": "{KEY-number}", "item": "{project item id, - or ?}", "status": "{status or ?}", "title": "{title}", "url": "{URL}"}
    The identifier is `{owner/repo}#{number}` for the `github` family, and the issue key for `jira` /
    `linear`.
    The hub uses this item id as it is when starting. Drop it and GraphQL has to be run again, so always
