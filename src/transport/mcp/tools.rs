@@ -11,6 +11,7 @@ pub(super) mod gate_read;
 pub(super) mod hub_status;
 pub(super) mod outbox;
 pub(super) mod pending;
+pub(super) mod pr_check_base;
 pub(super) mod refresh;
 pub(super) mod request;
 pub(super) mod reviews;
@@ -135,6 +136,11 @@ pub(super) const TOOLS: &[Tool] = &[
         name: "adjutant_gate_answer",
         definition: gate_answer::definition,
         call: gate_answer::call,
+    },
+    Tool {
+        name: "adjutant_pr_check_base",
+        definition: pr_check_base::definition,
+        call: pr_check_base::call,
     },
 ];
 

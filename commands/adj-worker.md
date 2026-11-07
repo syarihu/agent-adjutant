@@ -324,14 +324,14 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    it has no way to know what the hub chose — the decision is written only in the brief. Without
    createPr, open it yourself with `gh pr create --base '<the branch name from step 2>'` (without
    `--base` the PR targets the default branch).
-4. **Once the PR is open, check its base first.** Do this before asking for a review:
-   if `gh pr view <n> -R <codeRepo> --json baseRefName` differs from the branch in step 2, fix it
-   with `gh pr edit <n> -R <codeRepo> --base '<the branch name from step 2>'`. createPr is an
-   external skill that promises nothing about how it decides the base — if it quietly targets the
-   default branch, this is the only way an auto-mode worker notices. **If it cannot be fixed, stop
-   here and tell the user** (do not go on to step 5). Ask for a review with the wrong base and the
-   bot reads a huge wrong diff; fixing the base afterwards does not re-run the review, so §review-comments ends
-   up triaging that wrong review.
+4. **Once the PR is open, check its base first** with `adj pr check-base --pr <n>` (or
+   `adjutant_pr_check_base` with `pr` and this worktree as `cwd`). Do this before asking for a
+   review. It takes the base from the brief as step 2 does, compares it with the PR's base and moves
+   the PR there if they differ. createPr is an external skill that promises nothing about how it decides
+   the base, so this is the only way an auto-mode worker notices a PR opened on the default branch.
+   **If it fails, stop here and tell the user what it said** (do not go on to step 5). Ask for a
+   review with the wrong base and the bot reads a huge wrong diff; fixing the base afterwards does
+   not re-run the review, so §review-comments ends up triaging that wrong review.
 5. **Move the board's card to "in review".** If the brief's Task record line is not `-`:
    ```bash
    adj task update --id {task record} --status pr --pr <the PR's URL>

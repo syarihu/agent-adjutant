@@ -124,9 +124,15 @@ fn every_tool_that_takes_a_repository_takes_which_hub_of_it() {
         // `adjutant_work`'s `repo` only narrows a machine-wide document to one repository; it
         // addresses no hub. `adjutant_request` names its hub by `board` (a slug), and `repo` is
         // what the slug must agree with.
+        // `adjutant_pr_check_base` acts on the PR of the worktree in `cwd`, which names no hub.
         if properties.get("repo").is_none()
-            || ["adjutant_work", "adjutant_reviews", "adjutant_request"]
-                .contains(&tool["name"].as_str().unwrap_or(""))
+            || [
+                "adjutant_work",
+                "adjutant_reviews",
+                "adjutant_request",
+                "adjutant_pr_check_base",
+            ]
+            .contains(&tool["name"].as_str().unwrap_or(""))
         {
             continue;
         }
@@ -873,4 +879,40 @@ fn the_read_tools_write_nothing() {
     call_tool("adjutant_config", &json!({})).ok();
     assert!(call_tool("adjutant_work", &json!({})).is_err());
     assert_eq!(snapshot(&sandbox.state()), before);
+}
+
+#[test]
+fn pr_check_base_is_advertised_and_names_the_review_moment() {
+    let listed = call("tools/list", json!({}));
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let tool = tools
+        .iter()
+        .find(|t| t["name"] == "adjutant_pr_check_base")
+        .expect("adjutant_pr_check_base is not advertised");
+    let desc = tool["description"].as_str().unwrap();
+    assert!(
+        desc.contains("before asking") && desc.contains("review"),
+        "description does not name the review moment: {desc}"
+    );
+}
+
+#[test]
+fn pr_check_base_tool_requires_pr() {
+    let err = call_tool("adjutant_pr_check_base", &json!({})).unwrap_err();
+    assert!(err.contains("pr"), "{err}");
+}
+
+#[test]
+fn pr_check_base_tool_errors_in_directory_with_no_brief() {
+    let temp = tempfile::tempdir().unwrap();
+    let err = call_tool(
+        "adjutant_pr_check_base",
+        &json!({
+            "pr": 42,
+            "cwd": temp.path().to_str().unwrap(),
+            "repo": "owner/repo",
+        }),
+    )
+    .unwrap_err();
+    assert!(err.contains("brief") && err.contains("not found"), "{err}");
 }

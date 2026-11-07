@@ -107,6 +107,33 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: TmuxAction,
     },
+    /// Pull request operations
+    Pr {
+        #[command(subcommand)]
+        action: PrAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum PrAction {
+    /// Check a PR's base against the brief's Base branch and move it there if it differs; exit 1 with the reason if it cannot
+    CheckBase(PrCheckBaseArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct PrCheckBaseArgs {
+    /// The pull request number
+    #[arg(long)]
+    pub(crate) pr: u64,
+    /// The worktree directory (default: current directory)
+    #[arg(long)]
+    pub(crate) worktree: Option<String>,
+    /// Repository owner/name (default: derived from the worktree)
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Print the result as JSON
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Subcommand)]

@@ -65,7 +65,7 @@ fn the_pr_step_takes_its_base_from_the_brief() {
     // holds.
     let flowed: String = flow(&worker);
     // Each place `--base` appears is pinned on its own: the create command, the reason,
-    // and the repair.
+    // and the check-base command.
     assert_once_in(
         &worker,
         "gh pr create --base '<the branch name from step 2>'",
@@ -78,8 +78,13 @@ fn the_pr_step_takes_its_base_from_the_brief() {
     );
     assert_once_in(
         &worker,
-        "gh pr edit <n> -R <codeRepo> --base",
-        "the PR step never moves a PR opened on the wrong base",
+        "adj pr check-base --pr <n>",
+        "the PR step never names adj pr check-base",
+    );
+    assert_once_in(
+        &worker,
+        "adjutant_pr_check_base",
+        "the PR step never names adjutant_pr_check_base",
     );
     // The label as the brief spells it, not the bare noun: the step after this one says
     // "the base branch from step 2", so a check for the words alone was satisfied by that
@@ -99,13 +104,17 @@ fn the_pr_step_takes_its_base_from_the_brief() {
         "with `origin/` stripped",
         "the PR step does not say to strip the remote from the brief's value",
     );
+    assert!(
+        flowed.contains("If it fails, stop here and tell the user"),
+        "the PR step does not say to stop and tell the user when it fails: {worker}"
+    );
 
     // The base is checked before anyone is asked to review, not after. A bot asked to
     // read a PR opened against the wrong base reviews a diff of everything the base was
     // missing, and correcting the base afterwards does not re-run that review — so §review-comments
     // ends up triaging it.
     let checks_base = flowed
-        .find("baseRefName")
+        .find("adj pr check-base --pr <n>")
         .expect("the PR step never checks the base it landed on");
     let asks_for_review = flowed
         .find("request_copilot_review")
@@ -143,7 +152,7 @@ fn the_copilot_review_request_follows_the_brief() {
     );
     // The branch sits between the base check and the request, so the base is still
     // corrected before a review can be asked for.
-    let checks_base = flowed.find("baseRefName").unwrap();
+    let checks_base = flowed.find("adj pr check-base --pr <n>").unwrap();
     let requests = flowed.find("request_copilot_review").unwrap();
     assert!(
         checks_base < reads_line && reads_line < requests,
@@ -2797,9 +2806,13 @@ fn the_always_on_instructions_carry_the_rule_and_its_reason() {
 #[test]
 fn the_always_on_instructions_stay_short_enough_to_always_be_on() {
     assert!(
-        INSTRUCTIONS.lines().count() <= 6,
+        INSTRUCTIONS.lines().count() <= 7,
         "instructions are {} lines",
         INSTRUCTIONS.lines().count()
+    );
+    assert!(
+        INSTRUCTIONS.contains("adjutant_pr_check_base"),
+        "instructions do not name adjutant_pr_check_base: {INSTRUCTIONS}"
     );
 }
 

@@ -90,7 +90,7 @@ fixtures.
   agents; it does not decide what a message means, so it holds no task or gate logic.
 - `task`: task records, one file per task, and their operations (`create`, `update`, `edit`,
   `remove`, `get`, `list`, `next`, `hand_over`, `refresh`, `write_brief`, ...), plus the GitHub
-  reads behind them. It does not wake or type into a terminal itself; it hands a message to `mail`.
+  reads behind them, and `check_pr_base`, which moves a worktree's PR onto its brief's Base branch. It does not wake or type into a terminal itself; it hands a message to `mail`.
   A record's `after` lists the sibling tasks (same parent) it comes after without being stacked on
   them; the parents view in `board::view` resolves each entry against that parent's children and
   drops the ones that name nothing there or would close a loop. The same view takes a child's base
