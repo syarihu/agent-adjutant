@@ -1381,6 +1381,16 @@ fn a_subtask_s_branch_is_resolved_from_the_same_name_as_its_worktree() {
         "proctor section does not name worktreeName for machines without proctor: {proctor}"
     );
     assert!(
+        proctor_flowed.contains("pass the expanded name, not the template"),
+        "proctor section lets the worktreeName template be passed unexpanded: {proctor}"
+    );
+    assert!(
+        proctor_flowed.contains(
+            "A task without an issue has no key: the slug settled for it is the name, with or without proctor"
+        ),
+        "proctor section does not say what name a task without an issue uses: {proctor}"
+    );
+    assert!(
         proctor_flowed.contains("adj worktree-path --name '{branch name}'"),
         "proctor section does not give the command to resolve the branch from that name: {proctor}"
     );

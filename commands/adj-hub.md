@@ -501,14 +501,15 @@ as not started:
 - With proctor installed (`proctor` is on `PATH`): `{issueKey}-{issue}`, the key spelled as it is
   (for the `github` family the `issueKeys` value, for `jira` the issue key as it is): `ALPHA-233`,
   `ABC-819`. This is the `{name}` passed to proctor.
-- Without proctor: the source's `worktreeName` (default `{issuekey-lowercase}-{issue}`: `alpha-233`,
-  `abc-819`).
+- Without proctor: the source's `worktreeName` with its placeholders expanded for the task (default
+  `{issuekey-lowercase}-{issue}`: `alpha-233`, `abc-819`); pass the expanded name, not the template.
 - A task without an issue has no key: the slug settled for it is the name, with or without proctor.
 
 The branch is then what
 `adj worktree-path --name '{branch name}' --user '{user}' [--pattern '{the source's branchPattern}']`
 returns for that name. Not for `linear`: its branch is `gitBranchName` as it is (§task-sources
-`linear`). `adj collect` applies the same rule for the `github` family.
+`linear`). `adj collect` applies the same rule for the `github` family, and also matches a worktree
+whose branch was made from the other form (one created before proctor was installed or removed).
 
 Write a per-source `branchPattern` into adjutant only when proctor has no convention for the
 repository, or its convention bakes in one of the keys and **the user said they do not want to
