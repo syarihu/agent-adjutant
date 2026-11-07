@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::text_param;
+use super::{string_key, text_param};
 
 pub(super) fn definition() -> Value {
     json!({
@@ -16,6 +16,8 @@ pub(super) fn definition() -> Value {
 }
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
+    // A `repo` that is not a string would otherwise narrow nothing and return every repository.
+    string_key(args, "repo")?;
     let repo = text_param(args, "repo");
     let root = crate::registry::state_root(None);
     let mut work = crate::board::ask_resident(&root, "/api/work")?;

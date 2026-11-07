@@ -3,7 +3,7 @@ use crate::kernel::identity;
 use crate::transport::wording::open_json as gate_open_json;
 use serde_json::{Value, json};
 
-use super::{cwd_param, cwd_property, hub_property, repo_property, resolve_repo};
+use super::{cwd_param, cwd_property, hub_property, repo_property, resolve_repo, string_key};
 
 pub(super) fn definition() -> Value {
     json!({
@@ -49,6 +49,7 @@ pub(super) fn definition() -> Value {
 }
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
+    string_key(args, "worktree")?;
     let ctx = crate::registry::context_of(resolve_repo(args)?)?;
     let mut payload = args.clone();
     let fields = payload
