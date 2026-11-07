@@ -1512,8 +1512,9 @@ checkout under `[Worktrees]` and marks that task as started. Go by the marker, n
 paths with `adjutant_config`'s `main`, as in Step 1 (§cleanup-offer).
 
 **Do not show the Project item id in this table** (it means nothing to a person). Pick it up from the
-machine rows (`adj collect`'s, and the agent's report), and use it in §claim. **The machine rows are
-JSON Lines** (one JSON object per line; the collection briefs §brief-dashboard and §brief-parent). Read each line as
+machine rows (`adj collect`'s, and the agent's report), and use it in §claim. `adj collect` returns
+them as the `rows` array of its one JSON object, each element one row. **The machine rows are
+JSON Lines** in the agent's report (one JSON object per line; the collection briefs §brief-dashboard and §brief-parent). Read each line as
 JSON and take values by key (`item`, `title`, `url` ...); the repo is the `owner/repo` before `#` in
 `identifier`. **Never split a row on `|` or any other character** — a title may contain it, and
 every later value then lands in the wrong field. `kind` says what a row is (`task`, `worktree`,
