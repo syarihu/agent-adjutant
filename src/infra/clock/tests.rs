@@ -18,6 +18,12 @@ fn stamp_handles_leap_days() {
 }
 
 #[test]
+fn utc_iso_formats_standard_iso() {
+    assert_eq!(utc_iso(0), "1970-01-01T00:00:00Z");
+    assert_eq!(utc_iso(1_709_208_000), "2024-02-29T12:00:00Z");
+}
+
+#[test]
 fn a_time_from_github_becomes_a_stamp() {
     assert_eq!(
         stamp_from_iso("2026-10-10T05:06:07Z").as_deref(),

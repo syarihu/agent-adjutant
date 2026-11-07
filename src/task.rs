@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 mod check_pr_base;
+mod collect;
 mod create;
 mod edit;
 mod exists;
@@ -39,6 +40,7 @@ mod update;
 mod write_brief;
 
 pub use check_pr_base::*;
+pub use collect::*;
 pub use create::*;
 pub use edit::*;
 pub use exists::*;
