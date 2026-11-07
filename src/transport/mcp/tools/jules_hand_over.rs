@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::jules::hand_over;
 
-use super::{cwd_property, hub_property, repo_property, resolve_repo, text_param};
+use super::{cwd_property, hub_property, repo_property, resolve_repo, string_key, text_param};
 
 pub(super) fn definition() -> Value {
     json!({
@@ -30,6 +30,7 @@ pub(super) fn definition() -> Value {
 
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let ctx = crate::registry::context_of(resolve_repo(args)?)?;
+    string_key(args, "id")?;
     let id = text_param(args, "id").ok_or_else(|| "id is required".to_string())?;
     // Refused rather than read as false: a `discard` that is not a boolean was meant to say
     // something, and false starts a Jules session from a plan the caller wanted thrown away.

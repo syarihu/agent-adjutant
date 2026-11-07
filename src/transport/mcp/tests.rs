@@ -238,6 +238,42 @@ fn jules_prepare_tool_refuses_a_base_that_is_not_a_string() {
 }
 
 #[test]
+fn jules_prepare_and_hand_over_refuse_arguments_of_the_wrong_shape() {
+    for (name, arguments, needle) in [
+        (
+            "adjutant_jules_prepare",
+            json!({"issues": [12, {}]}),
+            "`issues` entries",
+        ),
+        (
+            "adjutant_jules_prepare",
+            json!({"issues": "12"}),
+            "`issues` must be an array",
+        ),
+        (
+            "adjutant_jules_prepare",
+            json!({"ids": [5]}),
+            "`ids` entries",
+        ),
+        (
+            "adjutant_jules_hand_over",
+            json!({"id": 5}),
+            "`id` must be a string",
+        ),
+        (
+            "adjutant_jules_hand_over",
+            json!({"id": "x", "cwd": 1}),
+            "`cwd` must be a string",
+        ),
+    ] {
+        let out = call("tools/call", json!({"name": name, "arguments": arguments}));
+        assert_eq!(out["result"]["isError"], true, "{name}: {out}");
+        let text = out["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(needle), "{name}: {text}");
+    }
+}
+
+#[test]
 fn jules_hand_over_tool_refuses_unknown_task_id() {
     let out = call(
         "tools/call",

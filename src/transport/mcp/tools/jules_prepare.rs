@@ -36,27 +36,37 @@ pub(super) fn definition() -> Value {
 pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
     let ctx = crate::registry::context_of(resolve_repo(args)?)?;
 
+    // Like a non-string `cwd` or `repo`, a target of the wrong shape is refused rather than
+    // dropped: dropped, the call would prepare fewer tasks than it was asked for and say nothing.
+    let list = |key: &str| -> Result<Vec<Value>, String> {
+        match args.get(key) {
+            None | Some(Value::Null) => Ok(Vec::new()),
+            Some(Value::Array(items)) => Ok(items.clone()),
+            Some(_) => Err(format!("`{key}` must be an array")),
+        }
+    };
     let mut targets = Vec::new();
-    if let Some(issues) = args.get("issues").and_then(Value::as_array) {
-        for item in issues {
-            if let Some(n) = item.as_i64() {
-                targets.push(PrepareTarget::Issue(n.to_string()));
-            } else if let Some(s) = item.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    targets.push(PrepareTarget::Issue(trimmed.to_string()));
-                }
+    for item in list("issues")? {
+        match item {
+            Value::Number(n) if n.as_u64().is_some() => {
+                targets.push(PrepareTarget::Issue(n.to_string()))
+            }
+            Value::String(s) if !s.trim().is_empty() => {
+                targets.push(PrepareTarget::Issue(s.trim().to_string()))
+            }
+            other => {
+                return Err(format!(
+                    "`issues` entries must be issue numbers or URLs, not {other}"
+                ));
             }
         }
     }
-    if let Some(ids) = args.get("ids").and_then(Value::as_array) {
-        for item in ids {
-            if let Some(s) = item.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    targets.push(PrepareTarget::Task(trimmed.to_string()));
-                }
+    for item in list("ids")? {
+        match item {
+            Value::String(s) if !s.trim().is_empty() => {
+                targets.push(PrepareTarget::Task(s.trim().to_string()))
             }
+            other => return Err(format!("`ids` entries must be task ids, not {other}")),
         }
     }
 
