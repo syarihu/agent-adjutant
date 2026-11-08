@@ -1,5 +1,5 @@
-use crate::infra::env::STATE_DIR_ENV;
-use std::path::PathBuf;
+use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CODEX_HOME_ENV, STATE_DIR_ENV};
+use std::path::{Path, PathBuf};
 
 /// `ADJUTANT_STATE_DIR` wins, then `$XDG_STATE_HOME/adjutant`, then `~/.local/state/adjutant`.
 pub fn state_dir() -> PathBuf {
@@ -65,6 +65,39 @@ pub(super) fn home_from(home: Option<&str>) -> PathBuf {
             fallback
         }
     }
+}
+
+/// A directory variable's value when it says something: set and not blank. Used as given, not
+/// trimmed and not made absolute. Split out from the readers below so a test answers for the
+/// value it chose rather than for the machine it runs on.
+pub fn dir_said(var: Option<&str>) -> Option<PathBuf> {
+    var.filter(|dir| !dir.trim().is_empty()).map(PathBuf::from)
+}
+
+/// Where the Claude Code account keeps its files: `CLAUDE_CONFIG_DIR` when it says something,
+/// else `~/.claude`. The hook receiver stores a session row's `configDir` by this rule and
+/// `adj review-engine` looks the row up by it, so the two name the same directory for the
+/// same account.
+pub fn claude_config_dir() -> PathBuf {
+    claude_config_dir_from(
+        std::env::var(CLAUDE_CONFIG_DIR_ENV).ok().as_deref(),
+        &home_dir(),
+    )
+}
+
+/// `claude_config_dir` for a value and a home handed in.
+pub fn claude_config_dir_from(var: Option<&str>, home: &Path) -> PathBuf {
+    dir_said(var).unwrap_or_else(|| home.join(".claude"))
+}
+
+/// Where Codex keeps its files: `CODEX_HOME` when it says something, else `~/.codex`.
+pub fn codex_home() -> PathBuf {
+    codex_home_from(std::env::var(CODEX_HOME_ENV).ok().as_deref(), &home_dir())
+}
+
+/// `codex_home` for a value and a home handed in.
+pub fn codex_home_from(var: Option<&str>, home: &Path) -> PathBuf {
+    dir_said(var).unwrap_or_else(|| home.join(".codex"))
 }
 
 pub fn expand_home(path: &str) -> PathBuf {

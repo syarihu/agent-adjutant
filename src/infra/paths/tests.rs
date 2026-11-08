@@ -46,3 +46,31 @@ fn a_home_path_is_expanded_and_then_left_alone() {
 fn an_absolute_path_is_unchanged() {
     assert_eq!(absolute("/tmp/wt"), PathBuf::from("/tmp/wt"));
 }
+
+#[test]
+fn a_config_dir_variable_that_says_nothing_is_the_default_directory() {
+    let home = Path::new("/home/a");
+    for v in [None, Some(""), Some("  "), Some("\t\n")] {
+        assert_eq!(
+            claude_config_dir_from(v, home),
+            PathBuf::from("/home/a/.claude")
+        );
+        assert_eq!(codex_home_from(v, home), PathBuf::from("/home/a/.codex"));
+        assert_eq!(dir_said(v), None);
+    }
+}
+
+#[test]
+fn a_config_dir_variable_that_says_something_is_used_as_given() {
+    let home = Path::new("/home/a");
+    assert_eq!(
+        claude_config_dir_from(Some("/cfg/a"), home),
+        PathBuf::from("/cfg/a")
+    );
+    assert_eq!(codex_home_from(Some("/cx"), home), PathBuf::from("/cx"));
+    assert_eq!(
+        claude_config_dir_from(Some("rel/cfg"), home),
+        PathBuf::from("rel/cfg")
+    );
+    assert_eq!(dir_said(Some(" /cfg ")), Some(PathBuf::from(" /cfg ")));
+}

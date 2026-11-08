@@ -7,9 +7,7 @@ use serde_json::json;
 use std::path::Path;
 
 use super::args::ReviewEngineArgs;
-use crate::task::{
-    Engine, Reason, Usage, cache_path, claude_config_dir, decide, ledger_usage, read_cache,
-};
+use crate::task::{Engine, Reason, Usage, cache_path, decide, ledger_usage, read_cache};
 
 /// The one line the worker tells the user.
 fn message(engine: Engine, reason: &Reason, setting: &str, cache: &Path, now: i64) -> String {
@@ -82,10 +80,8 @@ pub fn run(args: &ReviewEngineArgs) -> Result<(), String> {
     let ctx = crate::registry::context_without_hub(args.repo.as_deref())?;
     let setting = &ctx.settings.review_engine;
 
-    let config_var = std::env::var_os("CLAUDE_CONFIG_DIR");
-    let home = crate::infra::paths::home_dir();
-    let config_dir = claude_config_dir(config_var.as_deref(), &home);
-    let cache = cache_path(config_var.as_deref(), &home);
+    let config_dir = crate::infra::paths::claude_config_dir();
+    let cache = cache_path(&config_dir);
     let now = crate::infra::clock::now_secs();
     // The ledger first; a ledger that cannot be read is the same as one with nothing to say.
     let root = crate::registry::hook_state_root(std::env::current_dir().ok().as_deref());
