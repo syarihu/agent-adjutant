@@ -1,5 +1,6 @@
 use super::args::TellArgs;
 use super::*;
+use crate::transport::wording::{WORKER_NOT_RUNNING, WORKER_RUNNING};
 
 pub fn tell(args: &TellArgs) -> Result<(), String> {
     let ctx = context(args.repo.as_deref(), args.hub.as_deref())?;
@@ -31,15 +32,13 @@ pub fn tell(args: &TellArgs) -> Result<(), String> {
         Reached::Running {
             wake: NotWoken::Held { why },
         } => {
-            println!(
-                "The worker is running; it will read this the next time it checks its outbox."
-            );
+            println!("{WORKER_RUNNING}");
             if let Some(note) = why {
                 println!("{}", wake_note_sentence(&note));
             }
         }
         Reached::NotRunning => {
-            println!("The worker is not running; it will read this the next time it starts.")
+            println!("{WORKER_NOT_RUNNING}");
         }
     }
     Ok(())

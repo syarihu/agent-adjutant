@@ -1,4 +1,5 @@
 use crate::mail::{NotWoken, Reached};
+use crate::transport::wording::{WORKER_NOT_RUNNING, WORKER_RUNNING};
 use serde_json::{Value, json};
 
 use super::{cwd_property, hub_property, repo_property, resolve_repo, string_key};
@@ -56,14 +57,8 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
         ),
         Reached::Running {
             wake: NotWoken::Held { why },
-        } => (
-            "The worker is running; it will read this the next time it checks its outbox.",
-            why.as_ref(),
-        ),
-        Reached::NotRunning => (
-            "The worker is not running; it will read this the next time it starts.",
-            None,
-        ),
+        } => (WORKER_RUNNING, why.as_ref()),
+        Reached::NotRunning => (WORKER_NOT_RUNNING, None),
     };
     let note = match why {
         Some(why) => format!(

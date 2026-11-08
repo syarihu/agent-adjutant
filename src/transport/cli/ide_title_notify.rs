@@ -7,7 +7,7 @@ pub fn open_ide(args: &IdeArgs) -> Result<(), String> {
         .to_string_lossy()
         .to_string();
     let Some(command) = ide::open_command(ctx.settings.ide.as_deref(), &worktree) else {
-        return Err("ide is not set: put your editor command in the config's ide key".to_string());
+        return Err(crate::transport::wording::IDE_NOT_SET.to_string());
     };
     if args.dry_run {
         println!("{command}");
