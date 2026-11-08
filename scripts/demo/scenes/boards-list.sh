@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Seeds a board with tasks on every stage so the list view reads well in a short clip.
-source "$(dirname "$0")/common.sh"
+source "$(dirname "$0")/common.sh" || return 1 2>/dev/null || exit 1
 
 # Workers playing their scripted scenes.
 ISSUE_URL=https://github.com/acme/shop-app/issues/61 start_worker shipping-fee \

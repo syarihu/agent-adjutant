@@ -36,6 +36,8 @@ language.
 - `env.sh` points everything at `/tmp/adj-demo`: `ADJUTANT_STATE_DIR`, `ADJUTANT_CONFIG`, `HOME`,
   `GH_CONFIG_DIR`, the git config and a tmux socket of its own. A recording never reads or writes
   your own state, config, GitHub login or tmux server.
+  `env.sh` and the scenes refuse to go on under a shell other than bash, and the scenes also outside a
+  world `setup.sh` built, so a scene sourced by hand cannot reach the real state.
 - `gh-stub.py` stands in for `gh`. It answers from the pull requests in `prs/` and fails every other
   call, so nothing reaches GitHub.
 - `agents/claude` is the hub, the worker and the reader (`hubRunner`, `agentRunner` and
