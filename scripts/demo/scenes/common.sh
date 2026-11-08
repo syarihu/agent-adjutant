@@ -4,9 +4,10 @@
 # by hand from another shell, env.sh does not load and adj would reach the real config and state.
 # `return 1 2>/dev/null || exit 1` stops a file whether it was sourced (return) or run (exit).
 if [ -z "${BASH_VERSION:-}" ]; then echo "scenes: run a scene with bash, not sourced from another shell" >&2; return 1 2>/dev/null || exit 1; fi
-# The marker is looked at before env.sh, so a refused source leaves the shell's environment as it
+# The world is looked at before env.sh, so a refused source leaves the shell's environment as it
 # was; the state and config are checked after it in case env.sh ever points them elsewhere.
-if [ ! -f "${DEMO_ROOT:-/tmp/adj-demo}/.adj-demo" ] || ! source "$(dirname "${BASH_SOURCE[0]}")/../env.sh" ||
+if [ ! -f "${DEMO_ROOT:-/tmp/adj-demo}/.adj-demo" ] || [ ! -d "${DEMO_ROOT:-/tmp/adj-demo}/src/shop-app" ] ||
+  ! source "$(dirname "${BASH_SOURCE[0]}")/../env.sh" ||
   [ "$ADJUTANT_STATE_DIR" != "$DEMO_ROOT/state" ] || [ "$ADJUTANT_CONFIG" != "$DEMO_ROOT/config.json" ] ||
   ! cd "$DEMO_ROOT/src/shop-app"; then
   echo "scenes: ${DEMO_ROOT:-/tmp/adj-demo} is not a demo world (run setup.sh and start.sh first)" >&2
