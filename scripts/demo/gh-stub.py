@@ -73,7 +73,7 @@ def graphql_pr(nwo, number):
         "latestReviews": {"nodes": []}, "myReviews": {"nodes": []},
         "requests": {"nodes": [{"createdAt": "2026-11-03T09:10:00Z", "requestedReviewer": {"login": ME}}] if p["requested"] else []},
         "commits": {"nodes": commits}, "lastCommit": {"nodes": commits[-1:]},
-        "reviewDecision": p.get("decision", "REVIEW_REQUIRED"), "latestOpinionatedReviews": {"nodes": []},
+        "reviewDecision": p.get("decision", "review_required").upper(), "latestOpinionatedReviews": {"nodes": []},
     }
 
 

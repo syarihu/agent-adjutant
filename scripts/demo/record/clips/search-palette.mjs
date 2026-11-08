@@ -1,5 +1,5 @@
 // Clip: search and jump to a session with ⌘K.
-import { caption, press, sleep, title, visible, byText } from '../lib.mjs';
+import { caption, press, sleep, title, visible } from '../lib.mjs';
 
 export const name = 'search-palette';
 
@@ -31,11 +31,11 @@ export async function play(rec) {
   await page.keyboard.type('価格', { delay: 160 });
   await sleep(2200);
 
-  await press(rec, 'Enter', 'Enter');
   await caption(rec, {
     ja: 'Enter で、選んだセッションが開く',
     en: 'Enter opens the chosen session',
   });
+  await press(rec, 'Enter', 'Enter');
   // The chosen session opens in place of the palette, with its terminal.
   await page.locator('#palette').waitFor({ state: 'hidden', timeout: 10000 });
   await sleep(4000);

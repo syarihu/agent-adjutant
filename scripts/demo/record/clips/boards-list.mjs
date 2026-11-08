@@ -1,5 +1,5 @@
 // Clip: show every stage in the 工程 list view and switch between list and columns.
-import { caption, click, moveTo, sleep, title, visible, byText } from '../lib.mjs';
+import { caption, click, moveTo, sleep, title, visible } from '../lib.mjs';
 
 export const name = 'boards-list';
 
@@ -19,8 +19,8 @@ export async function play(rec) {
   await sleep(1000);
 
   await caption(rec, {
-    ja: 'いちばん上は、あなたの確認を待っているタスク',
-    en: 'At the top: tasks waiting for you to check them',
+    ja: 'いちばん上の「セルフレビュー」は、あなたが差分や PR を見る番のタスク',
+    en: 'At the top, 「セルフレビュー」: tasks where you check the diff or the PR',
   });
   await moveTo(rec, visible(page, '[data-col="me"] .stage-head'));
   await sleep(2000);

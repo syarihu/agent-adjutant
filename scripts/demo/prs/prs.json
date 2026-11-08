@@ -13,7 +13,7 @@
   },
   "acme/shop-app#66": {
     "title": "ポイントの有効期限をマイページに表示する", "author": "demo", "head": "demo/points-expiry",
-    "sha": "3c8d1e2f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8066", "requested": false, "decision": "APPROVED",
+    "sha": "3c8d1e2f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8066", "requested": false, "decision": "approved",
     "body": "マイページで保有ポイントと有効期限を確認できるようにします。",
     "commits": ["ポイント有効期限の取得処理を追加", "マイページに有効期限の表示を追加"]
   },

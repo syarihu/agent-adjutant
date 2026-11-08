@@ -123,7 +123,7 @@ Pull requests waiting on your review are read the same way. The comments you cho
 
 ### See where every task stands
 
-「工程」 lists the tasks by stage, with the ones waiting on you at the top, so you can see where each one is and who it waits on. 「列」 shows the same stages as columns.
+「工程」 lists the tasks by stage, so you can see where each one is and who it waits on. A task waiting on you is marked in whatever stage it is in. 「列」 shows the same stages as columns.
 
 ![The stages in the list layout, with a task on every stage](docs/images/board-boards-list.gif)
 
