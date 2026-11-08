@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the demo server and the scripted hub in a world setup.sh built. Prints the board URL.
 set -euo pipefail
-source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/env.sh" || return 1 2>/dev/null || exit 1
 PORT="${DEMO_PORT:-4599}"
 cd "$DEMO_ROOT/src/shop-app"
 adj server start --foreground --no-open --port "$PORT" > "$DEMO_ROOT/server.log" 2>&1 &
