@@ -28,6 +28,8 @@ language.
 | `investigate-result` | An investigation that comes back as a report, with an HTML report attached |
 | `review-own` | An AI read-through of the PR a worker opened, handed back to the worker |
 | `review-others` | An AI read-through of a PR you were asked to review, and a pending review |
+| `boards-list` | 「工程」 in its list layout, a task on every stage, and switching to the columns |
+| `search-palette` | Finding a session with ⌘K and opening it |
 
 ## How it works
 

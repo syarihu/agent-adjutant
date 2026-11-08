@@ -121,6 +121,18 @@ Pull requests waiting on your review are read the same way. The comments you cho
 
 ![An AI read-through of a pull request to review](docs/images/board-review-others.gif)
 
+### See where every task stands
+
+「工程」 lists the tasks by stage, with the ones waiting on you at the top, so you can see where each one is and who it waits on. 「列」 shows the same stages as columns.
+
+![The stages in the list layout, with a task on every stage](docs/images/board-boards-list.gif)
+
+### Find a session with ⌘K
+
+⌘K (Ctrl+K outside macOS) opens a search over the sessions, with the ones waiting for your answer first. Type to narrow them by title, key, branch or repository, and press Enter to open one.
+
+![Finding a session with ⌘K](docs/images/board-search-palette.gif)
+
 See [Web Board & Resident Server](docs/board.md) for every view.
 
 ---

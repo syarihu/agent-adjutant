@@ -86,6 +86,10 @@ worker_scene() { # WORKTREE-NAME
     coupon-expiry) worker_plan_coupon ;;
     checkout-slow) worker_investigate_checkout ;;
     checkout-batch) worker_pr_checkout ;;
+    shipping-fee) worker_shipping_fee ;;
+    order-mail) worker_order_mail ;;
+    price-filter) worker_price_filter ;;
+    low-stock) worker_low_stock ;;
   esac
 }
 
@@ -207,4 +211,91 @@ PY
   tool Bash "gh pr create --title 在庫の確認を 1 回の問い合わせにまとめる" "https://github.com/acme/shop-app/pull/57"
   say "PR #57 を作りました。レビューを待っています。"
   stop "PR #57 を作りました。レビューを待っています。"
+}
+
+worker_shipping_fee() {
+  adj phase --set plan > /dev/null
+  working "brief を読んでいます"
+  tool Read ".claude/task-brief.md" "Read 35 lines"
+  tool Read "src/cart/calculate.ts" "Read 28 lines"
+  tool Grep "totalAmount" "src/cart/calculate.ts:12"
+  say "カート集計時に送料計算関数が呼ばれていないことが分かりました。"
+  working "計画を書いています"
+  gate_open plan <<JSON
+{
+  "kind": "plan",
+  "task": "$(task_of_worktree)",
+  "title": "計画: カートの合計に送料が入らない",
+  "problem": "カート画面で合計金額を計算する際に送料が加算されず、商品代金のみが表示される。",
+  "goal": "カートの合計金額に配送先に応じた送料が含まれるようにする。",
+  "facts": ["触るファイル 3 つ", "base: main"],
+  "focus": "送料の計算ロジックと送料無料の条件はこの方針で問題ないでしょうか。",
+  "steps": [
+    { "text": "送料計算のユーティリティをカート集計処理に組み込む", "detail": "src/cart/calculate.ts" },
+    { "text": "無料配送条件の判定処理を追加する", "detail": "src/cart/shipping.ts" },
+    { "text": "送料込み合計金額と送料無料のテストを追加する", "detail": "src/cart/cart.test.ts" }
+  ]
+}
+JSON
+  tool Bash "adj gate open (計画)" "server: up · ボードで承認を待っています"
+  say "計画の確認をボードに出しました。承認を待っています。"
+  stop "計画の確認をボードに出しました。承認を待っています。"
+}
+
+worker_order_mail() {
+  working "brief を読んでいます"
+  tool Read ".claude/task-brief.md" "Read 24 lines"
+  tool Edit "src/mail/order-confirmed.ts" "Added 2 lines"
+  working "テストを実行しています"
+  tool Bash "npm test src/mail/order-confirmed.test.ts" "2 passed, 0 failed"
+  adj phase --set self-review > /dev/null
+  python3 - "$(task_of_worktree)" > "$DEMO_ROOT/diff-order-mail.json" <<'PY'
+import json, sys
+diff = """--- a/src/mail/order-confirmed.ts
++++ b/src/mail/order-confirmed.ts
+@@ -10,6 +10,8 @@ export function formatOrderConfirmedMail(order: Order): string {
+   const lines = [
+     `ご注文ありがとうございます。注文番号: ${order.id}`,
+     `合計金額: ¥${order.total.toLocaleString()}`,
++    `配送予定日: ${order.estimatedDeliveryDate ?? '未定'}`,
++    `配送方法: ${order.shippingMethod}`,
+   ];
+   return lines.join('\\n');
+ }
+"""
+print(json.dumps({
+  "kind": "diff", "task": sys.argv[1],
+  "title": "差分: 注文確認メールに配送予定日を入れる",
+  "facts": ["セルフレビュー通過", "テスト通過", "+2 行"],
+  "stoppedBy": ["unsure"],
+  "focus": "この差分で PR を出してよいですか？",
+  "unsure": "配送予定日が決まっていない注文で「未定」と書くのでよいかは確かめていません。",
+  "diff": diff,
+  "reviewRounds": [{"engine": "claude", "must": 0, "want": 0, "scope": 0, "falsePositives": 0}],
+  "findings": []
+}, ensure_ascii=False))
+PY
+  adj gate open --json < "$DEMO_ROOT/diff-order-mail.json" > "$DEMO_ROOT/gate-order-mail.out" 2>&1
+  tool Bash "adj gate open (差分確認)" "server: up · ボードで差分レビューを待っています"
+  say "実装が完了し、差分確認をボードに出しました。差分レビューを待っています。"
+  stop "実装が完了し、差分確認をボードに出しました。差分レビューを待っています。"
+}
+
+worker_price_filter() {
+  adj phase --set implement > /dev/null
+  working "検索クエリの処理を実装しています"
+  tool Read "src/catalog/search.ts" "Read 45 lines"
+  tool Edit "src/catalog/search.ts" "Added 12 lines, removed 2 lines"
+  say "価格帯パラメータ（minPrice / maxPrice）のフィルタリング処理を実装しています。"
+  stop "価格帯フィルタを実装中です。"
+}
+
+worker_low_stock() {
+  adj phase --set implement > /dev/null
+  tool Edit "src/admin/alerts.ts" "Added 18 lines"
+  adj phase --set self-review > /dev/null
+  working "セルフレビューを行っています"
+  tool Bash "git diff main --stat" "1 file changed, 18 insertions(+)"
+  say "在庫僅少アラートの実装を終え、セルフレビューを行っています。"
+  stop "セルフレビュー中です。"
 }

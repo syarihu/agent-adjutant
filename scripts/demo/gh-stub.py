@@ -23,7 +23,10 @@ def fail(message="gh: not available in the demo"):
 
 
 def diff_of(number):
-    return open(os.path.join(HERE, "prs", f"{number}.diff")).read()
+    path = os.path.join(HERE, "prs", f"{number}.diff")
+    if not os.path.exists(path):
+        return ""
+    return open(path).read()
 
 
 def files_of(number):
@@ -59,6 +62,8 @@ def graphql_pr(nwo, number):
                            "statusCheckRollup": {"state": "SUCCESS", "contexts": {"checkRunCountsByState": [{"state": "SUCCESS", "count": 3}], "statusContextCountsByState": []}}}}
                for i in range(len(p["commits"]))]
     requested = [{"requestedReviewer": {"__typename": "User", "login": ME}}] if p["requested"] else []
+    for reviewer in p.get("reviewers", []):
+        requested.append({"requestedReviewer": {"__typename": "User", "login": reviewer}})
     return {
         "number": number, "url": url(nwo, number), "title": p["title"], "state": "OPEN", "isDraft": False,
         "author": {"login": p["author"]}, "baseRefName": "main", "headRefName": p["head"], "headRefOid": p["sha"],
@@ -68,7 +73,7 @@ def graphql_pr(nwo, number):
         "latestReviews": {"nodes": []}, "myReviews": {"nodes": []},
         "requests": {"nodes": [{"createdAt": "2026-11-03T09:10:00Z", "requestedReviewer": {"login": ME}}] if p["requested"] else []},
         "commits": {"nodes": commits}, "lastCommit": {"nodes": commits[-1:]},
-        "reviewDecision": "REVIEW_REQUIRED", "latestOpinionatedReviews": {"nodes": []},
+        "reviewDecision": p.get("decision", "REVIEW_REQUIRED"), "latestOpinionatedReviews": {"nodes": []},
     }
 
 
