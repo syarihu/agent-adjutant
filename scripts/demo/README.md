@@ -28,12 +28,16 @@ language.
 | `investigate-result` | An investigation that comes back as a report, with an HTML report attached |
 | `review-own` | An AI read-through of the PR a worker opened, handed back to the worker |
 | `review-others` | An AI read-through of a PR you were asked to review, and a pending review |
+| `boards-list` | 「工程」 in its list layout, a task on every stage, and switching to the columns |
+| `search-palette` | Finding a session with ⌘K and opening it |
 
 ## How it works
 
 - `env.sh` points everything at `/tmp/adj-demo`: `ADJUTANT_STATE_DIR`, `ADJUTANT_CONFIG`, `HOME`,
   `GH_CONFIG_DIR`, the git config and a tmux socket of its own. A recording never reads or writes
   your own state, config, GitHub login or tmux server.
+  `env.sh` and the scenes refuse to go on under a shell other than bash, and the scenes also
+  outside a world `setup.sh` built, so a scene sourced by hand cannot reach the real state.
 - `gh-stub.py` stands in for `gh`. It answers from the pull requests in `prs/` and fails every other
   call, so nothing reaches GitHub.
 - `agents/claude` is the hub, the worker and the reader (`hubRunner`, `agentRunner` and

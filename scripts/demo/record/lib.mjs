@@ -27,6 +27,11 @@ const OVERLAY_CSS = `
   font: 700 40px/1.3 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif; }
 #demo-title small { font-weight: 400; font-size: 20px; opacity: .75; }
 #demo-title.off { opacity: 0; }
+#demo-key { position: fixed; z-index: 2147483647; left: 50%; bottom: 40px; transform: translateX(-50%);
+  padding: 10px 24px; border-radius: 12px; background: rgba(20,24,33,.92); color: #fff;
+  font: 700 26px/1.2 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.08em; pointer-events: none; transition: opacity 400ms; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+#demo-key.off { opacity: 0; }
 `;
 
 const CURSOR_SVG = `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 2 L4 20 L9 15 L12.5 22 L15.5 20.6 L12 13.8 L19 13.8 Z"
@@ -102,6 +107,22 @@ export async function title(rec, text, ms = 2200) {
   await sleep(ms);
   await rec.page.evaluate(() => { const el = document.getElementById('demo-title'); el.classList.add('off'); setTimeout(() => el.remove(), 500); });
   await sleep(500);
+}
+
+/* Draw a keycap badge over the page, press a key or shortcut, and fade the badge out after ~1 s. */
+export async function press(rec, keys, label) {
+  const t = typeof label === 'string' ? label : label[rec.lang];
+  await rec.page.evaluate(t => {
+    const el = document.createElement('div'); el.id = 'demo-key'; el.textContent = t;
+    document.getElementById('demo-layer').appendChild(el);
+  }, t);
+  await rec.page.keyboard.press(keys);
+  await sleep(1000);
+  await rec.page.evaluate(() => {
+    const el = document.getElementById('demo-key');
+    if (el) { el.classList.add('off'); setTimeout(() => el.remove(), 400); }
+  });
+  await sleep(400);
 }
 
 /* Glide the drawn cursor to the middle of `locator` (or a point), and wait for it to arrive. */

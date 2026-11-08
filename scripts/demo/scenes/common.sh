@@ -1,17 +1,41 @@
 # Helpers for the scene setups, which run after start.sh: they put the board in the state a clip
 # starts from, through adj as the hub would (a task, a worktree, a worker in it).
-source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
-cd "$DEMO_ROOT/src/shop-app"
+# A scene runs adj as the hub would, so it goes on only inside a demo world setup.sh built: sourced
+# by hand from another shell, env.sh does not load and adj would reach the real config and state.
+# `return 1 2>/dev/null || exit 1` stops a file whether it was sourced (return) or run (exit).
+if [ -z "${BASH_VERSION:-}" ]; then echo "scenes: run a scene with bash, not sourced from another shell" >&2; return 1 2>/dev/null || exit 1; fi
+# The world is looked at before env.sh, so a refused source leaves the shell's environment as it
+# was; the state and config are checked after it in case env.sh ever points them elsewhere.
+if [ ! -f "${DEMO_ROOT:-/tmp/adj-demo}/.adj-demo" ] || [ ! -d "${DEMO_ROOT:-/tmp/adj-demo}/src/shop-app" ] ||
+  ! source "$(dirname "${BASH_SOURCE[0]}")/../env.sh" ||
+  [ "$ADJUTANT_STATE_DIR" != "$DEMO_ROOT/state" ] || [ "$ADJUTANT_CONFIG" != "$DEMO_ROOT/config.json" ] ||
+  ! cd "$DEMO_ROOT/src/shop-app"; then
+  echo "scenes: ${DEMO_ROOT:-/tmp/adj-demo} is not a demo world (run setup.sh and start.sh first)" >&2
+  # Typed into a shell, only this file stops; under a scene script, the whole scene does.
+  case $- in *i*) return 1 ;; *) exit 1 ;; esac
+fi
 
 # start_worker NAME TITLE KIND BODY: a task, its worktree and a scripted worker playing NAME.
 start_worker() {
   local name="$1" title="$2" kind="$3" body="$4" wt="$DEMO_ROOT/src/shop-app/.claude/worktrees/$1" task
-  task=$(adj task add --title "$title" --body "$body" --kind "$kind" --done-when "${DONE_WHEN:-pr}" --worktree-name "$name" --json |
+  task=$(adj task add --title "$title" --body "$body" --kind "$kind" --done-when "${DONE_WHEN:-pr}" \
+    ${ISSUE_URL:+--issue-url "$ISSUE_URL"} --worktree-name "$name" --json |
     python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("task") or d)["id"])')
   git worktree add -q -b "demo/$name" "$wt" main
   adj task brief --id "$task" --worktree "$wt" --base main > /dev/null
   adj task update --id "$task" --status dispatched --worktree "$wt" > /dev/null
   adj work --worktree "$wt" --task "$task" > /dev/null
+  echo "$task"
+}
+
+# add_task TITLE ISSUE_NUMBER STATUS [PR_URL] [BODY]: a task with no worker.
+add_task() {
+  local title="$1" issue="$2" status="$3" pr="${4:-}" body="${5:-${BODY:-$title。}}" task
+  task=$(adj task add --title "$title" --body "$body" \
+    --issue-url "https://github.com/acme/shop-app/issues/$issue" \
+    --worktree-name "task-$issue" --json |
+    python3 -c 'import json,sys;d=json.load(sys.stdin);print((d.get("task") or d)["id"])')
+  adj task update --id "$task" --status "$status" ${pr:+--pr "$pr"} > /dev/null
   echo "$task"
 }
 

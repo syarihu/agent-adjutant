@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start the demo server and the scripted hub in a world setup.sh built. Prints the board URL.
+# Options are set after env.sh, so a refused source leaves the shell it was typed into as it was.
+source "$(dirname "$0")/env.sh" || return 1 2>/dev/null || exit 1
 set -euo pipefail
-source "$(dirname "$0")/env.sh"
 PORT="${DEMO_PORT:-4599}"
 cd "$DEMO_ROOT/src/shop-app"
 adj server start --foreground --no-open --port "$PORT" > "$DEMO_ROOT/server.log" 2>&1 &

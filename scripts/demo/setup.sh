@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build a fresh demo world under $DEMO_ROOT: a fictional repository acme/shop-app, a config whose
 # hub and worker are the scripted agents in agents/, a stub gh, and an isolated tmux server.
+# Options are set after env.sh, so a refused source leaves the shell it was typed into as it was.
+source "$(dirname "$0")/env.sh" || return 1 2>/dev/null || exit 1
 set -euo pipefail
-source "$(dirname "$0")/env.sh"
 
 # Remove only a directory this script made, so a DEMO_ROOT pointed elsewhere is never wiped.
 if [ -e "$DEMO_ROOT" ] && [ ! -f "$DEMO_ROOT/.adj-demo" ]; then
