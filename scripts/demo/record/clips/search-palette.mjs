@@ -29,6 +29,9 @@ export async function play(rec) {
     en: 'Narrow by title, key, branch, or repository',
   });
   await page.keyboard.type('価格', { delay: 160 });
+  // Enter opens the active row: wait until the narrowed list has made the price-filter session the one.
+  await page.locator('#palette-list [role="option"][aria-selected="true"]', { hasText: '商品検索に価格の絞り込みを足す' })
+    .waitFor({ timeout: 10000 });
   await sleep(2200);
 
   await caption(rec, {
