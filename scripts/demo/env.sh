@@ -1,5 +1,8 @@
 # Sourced by the demo scripts: everything adj, gh, git and tmux read points into $DEMO_ROOT,
 # so a recording never touches the real state directory, config, GitHub login or tmux server.
+# Only bash finds this file through BASH_SOURCE: sourced from another shell, the paths below would
+# be wrong, so stop rather than let adj reach the real state.
+if [ -z "${BASH_VERSION:-}" ]; then echo "scripts/demo: run the demo scripts with bash, not sourced from another shell" >&2; return 1 2>/dev/null || exit 1; fi
 DEMO_ROOT="${DEMO_ROOT:-/tmp/adj-demo}"
 DEMO_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$DEMO_SRC/../.." && pwd)"

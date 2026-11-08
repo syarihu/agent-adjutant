@@ -1,7 +1,17 @@
 # Helpers for the scene setups, which run after start.sh: they put the board in the state a clip
 # starts from, through adj as the hub would (a task, a worktree, a worker in it).
-source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
-cd "$DEMO_ROOT/src/shop-app"
+# A scene runs adj as the hub would, so it goes on only inside a demo world setup.sh built: sourced
+# by hand from another shell, env.sh does not load and adj would reach the real config and state.
+if [ -z "${BASH_VERSION:-}" ]; then echo "scenes: run a scene with bash, not sourced from another shell" >&2; return 1 2>/dev/null || exit 1; fi
+# Under a scene script the whole scene stops (exit); typed into a shell, only this file does (return).
+demo_world_ok() {
+  [ "$ADJUTANT_STATE_DIR" = "$DEMO_ROOT/state" ] && [ "$ADJUTANT_CONFIG" = "$DEMO_ROOT/config.json" ] &&
+    [ -f "$DEMO_ROOT/.adj-demo" ] && cd "$DEMO_ROOT/src/shop-app"
+}
+if ! source "$(dirname "${BASH_SOURCE[0]}")/../env.sh" || ! demo_world_ok; then
+  echo "scenes: ${DEMO_ROOT:-/tmp/adj-demo} is not a demo world (run setup.sh and start.sh first)" >&2
+  case $- in *i*) return 1 ;; *) exit 1 ;; esac
+fi
 
 # start_worker NAME TITLE KIND BODY: a task, its worktree and a scripted worker playing NAME.
 start_worker() {
