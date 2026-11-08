@@ -7,8 +7,9 @@ if [ -z "${BASH_VERSION:-}" ]; then
   return 1 2>/dev/null || exit 1
 fi
 DEMO_ROOT="${DEMO_ROOT:-/tmp/adj-demo}"
-DEMO_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$DEMO_SRC/../.." && pwd)"
+# A path that cannot be worked out stops here, before anything is reset or linked from it.
+DEMO_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1 2>/dev/null || exit 1
+REPO_ROOT="$(cd "$DEMO_SRC/../.." && pwd)" || return 1 2>/dev/null || exit 1
 export DEMO_ROOT DEMO_SRC REPO_ROOT
 export ADJUTANT_CONFIG="$DEMO_ROOT/config.json"
 export ADJUTANT_STATE_DIR="$DEMO_ROOT/state"
