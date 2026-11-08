@@ -41,7 +41,8 @@ export async function play(rec) {
   await press(rec, 'Enter', 'Enter');
   // The chosen session opens in place of the palette, with its terminal under its title.
   await page.locator('#palette').waitFor({ state: 'hidden', timeout: 10000 });
-  await page.locator('#wk-term-head .wk-term-title', { hasText: '商品検索に価格の絞り込みを足す' }).waitFor({ timeout: 10000 });
+  await page.locator('#wk-term-head .wk-term-title', { hasText: '商品検索に価格の絞り込みを足す' })
+    .waitFor({ timeout: 10000 });
   await sleep(4000);
 
   await caption(rec, '');
