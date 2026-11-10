@@ -807,6 +807,8 @@ fn kids_of(parent: &str, n: u32, done: u32) -> Vec<task::Task> {
         .collect()
 }
 
+/// The `closed` the parent of `kids` comes to, with the tracker's `(total, completed)` read for
+/// every child when it is given, and the parent-task hub's own `(total, completed)` when it is.
 fn closed_of(
     kids: Vec<task::Task>,
     tracker: Option<(u32, u32)>,

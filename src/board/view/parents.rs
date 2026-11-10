@@ -439,6 +439,9 @@ fn siblings_before(kids: &[Kid], inputs: &Inputs) -> Vec<Vec<usize>> {
     edges
 }
 
+/// A parent as the board lists it: its children in stack order, what each is stacked on and
+/// waits for, and how many children it has, how many are merged and how many of the unlisted
+/// ones the tracker has closed.
 fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     acc.kids
         .sort_by(|a, b| (a.order, &a.created_at).cmp(&(b.order, &b.created_at)));
