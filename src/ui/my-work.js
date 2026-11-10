@@ -407,7 +407,8 @@ function workTreeByParent(rows, chipsByRepo = new Map(), repos = workRepos(), { 
 }
 
 /* The children of a parent as the bar draws them: a segment each for listed children, then at most one segment
-   for the unlisted remainder as wide as that many children, so the bar stands for the whole total however large it is. */
+   for the unlisted remainder as wide as that many children (`grow` is how many), so the bar stands for the whole total
+   however large it is. The gaps between those children are part of its width; `workBarHtml` adds them. */
 function workSegments(p) {
   const segs = (p.children || []).map(c => ({ cls: WORK_PROGRESS[c.progress]?.[0] || 'not-started', title: `${c.id} ${WORK_PROGRESS[c.progress]?.[1] || ''}` }));
   const rest = (p.total || 0) - segs.length;
@@ -440,10 +441,17 @@ function workProgressHtml(p) {
   return `${parts.length ? `${parts.join(' · ')} ` : '0 '}/ ${esc(String(total))}`;
 }
 
-/* The progress bar of a parent: one segment per listed child, and a wider segment for any unlisted remainder. */
+/* The progress bar of a parent: one segment per listed child, and a wider segment for any unlisted remainder.
+   The remainder is as wide as `grow` children *including the gaps between them*: a plain flex-grow would leave it
+   narrower, because those gaps are not drawn when it is one segment. So its basis is that many gaps, and the free
+   space left over is shared by the total, which gives every child the same width. The basis is capped at half of
+   what the listed children's gaps leave of the bar: with a huge total the gaps alone do not fit, and an uncapped
+   basis would take all the free space and shrink the listed children to nothing. */
 function workBarHtml(p) {
   const segs = workSegments(p);
-  return `<span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"${x.grow > 1 ? ` style="flex-grow:${x.grow}"` : ''}></i>`).join('')}</span>`;
+  const listed = segs.length - 1;
+  const style = x => x.grow > 1 ? ` style="flex:${x.grow} 1 min(calc(${x.grow - 1} * var(--wk-gap)), calc((100% - ${listed} * var(--wk-gap)) / 2))"` : '';
+  return `<span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"${style(x)}></i>`).join('')}</span>`;
 }
 
 /* The board a selection of `p` opens on: the hub that runs it when this server has its board, else the

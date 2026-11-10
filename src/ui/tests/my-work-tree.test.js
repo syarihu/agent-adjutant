@@ -1420,10 +1420,10 @@ test('a parent whose remainder is one gets no grow above one, and one with none 
   assert.ok(segsMissing.every(s => !s.grow));
 });
 
-test('the bar helper adds flex-grow only for remainder above one, and labels the bar with the progress text', () => {
+test('the bar helper sizes a remainder above one to include its gaps, and labels the bar with the progress text', () => {
   const p200 = { children: kids('merged', 'working', 'pr'), total: 200 };
   const html200 = run('workBarHtml(p)', { p: p200 });
-  const matches = html200.match(/style="flex-grow:197"/g);
+  const matches = html200.match(/style="flex:197 1 min\(calc\(196 \* var\(--wk-gap\)\), calc\(\(100% - 3 \* var\(--wk-gap\)\) \/ 2\)\)"/g);
   assert.strictEqual(matches?.length, 1);
   assert.strictEqual(html200.match(/style=/g)?.length, 1);
   assert.ok(html200.includes(`aria-label="${run('workProgressText(p)', { p: p200 })}"`));
@@ -1438,6 +1438,19 @@ test('the bar helper adds flex-grow only for remainder above one, and labels the
   const pOne = { children: kids('merged', 'working', 'pr'), total: 4 };
   const htmlOne = run('workBarHtml(p)', { p: pOne });
   assert.ok(!htmlOne.includes('style='));
+
+  // A remainder of two has one gap in its basis.
+  const pTwo = { children: kids('merged', 'working', 'pr'), total: 5 };
+  assert.ok(run('workBarHtml(p)', { p: pTwo }).includes('style="flex:2 1 min(calc(1 * var(--wk-gap)), calc((100% - 3 * var(--wk-gap)) / 2))"'));
+
+  // The cap counts the listed children's gaps, however many there are.
+  const pMany = { children: kids(...Array(100).fill('working')), total: 200 };
+  const htmlMany = run('workBarHtml(p)', { p: pMany });
+  assert.ok(htmlMany.includes('style="flex:100 1 min(calc(99 * var(--wk-gap)), calc((100% - 100 * var(--wk-gap)) / 2))"'));
+  assert.strictEqual(htmlMany.match(/style=/g)?.length, 1);
+
+  // A total at or below the listed children draws no remainder, so no style attribute.
+  assert.ok(!run('workBarHtml(p)', { p: { children: kids('merged', 'working', 'pr'), total: 2 } }).includes('style='));
 
   // The row that heads a parent's group draws the same bar.
   assert.strictEqual(run('workParentMeta(p)', { p: p200 })[0], html200);
