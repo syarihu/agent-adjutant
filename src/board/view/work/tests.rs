@@ -233,6 +233,7 @@ fn group(key: &str, children: usize) -> ParentGroup {
             .collect(),
         merged: 0,
         total: children,
+        closed: 0,
         stacked: false,
         hub: REPO.to_string(),
         title_hub: None,

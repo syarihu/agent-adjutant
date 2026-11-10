@@ -425,6 +425,7 @@ pub fn state(server: &Server, with_sessions: bool, lines: Lines) -> BoardState {
                 slug: h.slug.clone(),
                 title: h.title.clone(),
                 total: st.total,
+                completed: st.completed,
             })
         })
         .collect();

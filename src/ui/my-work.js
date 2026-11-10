@@ -15,6 +15,7 @@ const WORK_RUNNING = ['working', 'idle', 'unknown', 'restarting'];
 const WORK_PROGRESS = {
   merged: ['merged', 'マージ済み'],
   done: ['done', '完了'],
+  closed: ['closed', 'クローズ'],
   pr: ['pr', 'PR あり'],
   working: ['working', '作業中'],
   'not-started': ['not-started', '未着手'],
@@ -406,28 +407,40 @@ function workTreeByParent(rows, chipsByRepo = new Map(), repos = workRepos(), { 
   return headings ? repoNodes : repoNodes.flatMap(n => n.items);
 }
 
-/* The children of a parent as the bar draws them: a segment each for listed children, then at most one segment
-   for the unlisted remainder as wide as that many children (`grow` is how many), so the bar stands for the whole total
-   however large it is. The gaps between those children are part of its width; `workBarHtml` adds them. */
+/* How many of the children the board does not list the tracker has closed, as the server's `closed` says. Missing is none,
+   and it is held to what is unlisted: the bar and the text must not stand for more children than the total. */
+function workClosed(p) {
+  const rest = Math.max((p.total || 0) - (p.children || []).length, 0);
+  const closed = Number.isFinite(p.closed) ? p.closed : 0;
+  return Math.min(Math.max(closed, 0), rest);
+}
+
+/* The children of a parent as the bar draws them: a segment each for listed children, then up to two segments for the
+   unlisted remainder, each as wide as that many children (`grow` is how many): the ones the tracker has closed, then the
+   ones not started. So the bar stands for the whole total however large it is. The gaps between those children are part
+   of a segment's width; `workBarHtml` adds them. */
 function workSegments(p) {
   const segs = (p.children || []).map(c => ({ cls: WORK_PROGRESS[c.progress]?.[0] || 'not-started', title: `${c.id} ${WORK_PROGRESS[c.progress]?.[1] || ''}` }));
   const rest = (p.total || 0) - segs.length;
-  if (rest > 0) segs.push({ cls: 'not-started', title: `未着手 ${rest} 件`, grow: rest });
+  const closed = workClosed(p);
+  if (closed > 0) segs.push({ cls: 'closed', title: `クローズ ${closed} 件`, grow: closed });
+  if (rest - closed > 0) segs.push({ cls: 'not-started', title: `未着手 ${rest - closed} 件`, grow: rest - closed });
   return segs;
 }
 
 /* How many children are in each state the bar colours, counted as the bar draws them (a child's own `progress`, never the
-   server's merged count, which also counts a cancelled child whose PR is merged), with the total the bar stands for. What is
-   not listed is not started, so that state is the remainder and is not counted here. */
-const WORK_COUNTED = [['merged', 'マージ'], ['done', '完了'], ['pr', 'PR'], ['working', '作業中']];
+   server's merged count, which also counts a cancelled child whose PR is merged), with the total the bar stands for. The
+   closed ones are the unlisted children the tracker has closed, as many as the bar draws. What is left of the unlisted is
+   not started, so that state is the remainder and is not counted here. */
+const WORK_COUNTED = [['merged', 'マージ'], ['done', '完了'], ['closed', 'クローズ'], ['pr', 'PR'], ['working', '作業中']];
 function workProgressCounts(p) {
   const children = p.children || [];
-  const n = { merged: 0, done: 0, pr: 0, working: 0 };
-  for (const c of children) if (c.progress in n) n[c.progress]++;
+  const n = { merged: 0, done: 0, closed: workClosed(p), pr: 0, working: 0 };
+  for (const c of children) if (c.progress in n && c.progress !== 'closed') n[c.progress]++;
   return { n, total: Math.max(p.total || 0, children.length) };
 }
 
-/* How far a parent's children have got, in words: `5 マージ · 3 完了 · 8 PR · 6 作業中 / 42`, the states with none left out. */
+/* How far a parent's children have got, in words: `5 マージ · 3 完了 · 19 クローズ · 8 PR · 6 作業中 / 42`, the states with none left out. */
 function workProgressText(p) {
   const { n, total } = workProgressCounts(p);
   const parts = WORK_COUNTED.filter(([k]) => n[k]).map(([k, word]) => `${n[k]} ${word}`);
@@ -441,16 +454,22 @@ function workProgressHtml(p) {
   return `${parts.length ? `${parts.join(' · ')} ` : '0 '}/ ${esc(String(total))}`;
 }
 
-/* The progress bar of a parent: one segment per listed child, and a wider segment for any unlisted remainder.
-   The remainder is as wide as `grow` children *including the gaps between them*: a plain flex-grow would leave it
-   narrower, because those gaps are not drawn when it is one segment. So its basis is that many gaps, and the free
-   space left over is shared by the total, which gives every child the same width. The basis is capped at half of
-   what the listed children's gaps leave of the bar: with a huge total the gaps alone do not fit, and an uncapped
-   basis would take all the free space and shrink the listed children to nothing. */
+/* The progress bar of a parent: one segment per listed child, and a wider segment for each part of the unlisted remainder
+   (closed, not started). A remainder segment is as wide as `grow` children *including the gaps between them*: a plain
+   flex-grow would leave it narrower, because those gaps are not drawn when it is one segment. So its basis is that many
+   gaps, and the free space left over is shared by the total, which gives every child the same width. The basis is capped
+   at half of what the gaps between all the segments leave of the bar: with a huge total the gaps alone do not fit, and an
+   uncapped basis would take all the free space and shrink the listed children to nothing. With two remainder segments the
+   half is split between them by `grow`, so together they take no more than one segment would. */
 function workBarHtml(p) {
   const segs = workSegments(p);
-  const listed = segs.length - 1;
-  const style = x => x.grow > 1 ? ` style="flex:${x.grow} 1 min(calc(${x.grow - 1} * var(--wk-gap)), calc((100% - ${listed} * var(--wk-gap)) / 2))"` : '';
+  const remainder = segs.reduce((sum, x) => sum + (x.grow || 0), 0);
+  const gaps = segs.length - 1;
+  const style = x => {
+    if (!(x.grow > 1)) return '';
+    const share = x.grow === remainder ? '' : ` * ${x.grow} / ${remainder}`;
+    return ` style="flex:${x.grow} 1 min(calc(${x.grow - 1} * var(--wk-gap)), calc((100% - ${gaps} * var(--wk-gap)) / 2${share}))"`;
+  };
   return `<span class="wk-bar" role="img" aria-label="${esc(workProgressText(p))}">${segs.map(x => `<i class="${x.cls}" title="${esc(x.title)}"${style(x)}></i>`).join('')}</span>`;
 }
 

@@ -669,6 +669,7 @@ fn expected_parents() -> Value {
         ],
         "hub": FEATURE_SLUG,
         "key": "acme/widget#957",
+        "closed": 0,
         "merged": 0,
         "number": 957,
         "stacked": true,

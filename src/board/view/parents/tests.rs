@@ -495,6 +495,7 @@ fn the_shape_the_page_reads() {
             "children": [{"hub": SLUG, "id": "a", "title": "Task a", "merged": false, "progress": "not-started"}],
             "merged": 0,
             "total": 1,
+            "closed": 0,
             "stacked": false,
             "hub": SLUG
         })
@@ -723,6 +724,7 @@ fn hub_parent(key: &str, title: Option<&str>, total: Option<u32>) -> HubParent {
         slug: "acme-widget-ALPHA-549".to_string(),
         title: title.map(str::to_string),
         total,
+        completed: None,
     }
 }
 
@@ -788,6 +790,89 @@ fn a_group_names_a_title_hub_only_when_the_issue_keys_match() {
     assert_eq!(groups[0].title_hub, None);
     assert_eq!(groups[0].title, None);
     assert_eq!(groups[0].total, 1);
+}
+
+/// `n` children of one parent, the first `done` of them done.
+fn kids_of(parent: &str, n: u32, done: u32) -> Vec<task::Task> {
+    (0..n)
+        .map(|i| {
+            let mut t = with_parent(&format!("k{i}"), i, parent);
+            // The tracker is asked about the issue a task works on.
+            t.issue_url = Some(format!("https://github.com/acme/widget/issues/{}", 100 + i));
+            if i < done {
+                t.status = task::Status::Done;
+            }
+            t
+        })
+        .collect()
+}
+
+fn closed_of(
+    kids: Vec<task::Task>,
+    tracker: Option<(u32, u32)>,
+    hub: Option<(u32, Option<u32>)>,
+) -> usize {
+    let mut tasks = cards(kids);
+    let hubs: Vec<HubParent> = hub
+        .map(|(total, completed)| HubParent {
+            completed,
+            ..hub_parent("acme/widget#549", None, Some(total))
+        })
+        .into_iter()
+        .collect();
+    let groups = run_with_hubs(
+        &mut tasks,
+        &mut [],
+        &[],
+        &|_| {
+            tracker.map(|(total, completed)| TrackerParent {
+                completed,
+                ..tracker_parent(549, total)
+            })
+        },
+        &hubs,
+    );
+    groups[0].closed
+}
+
+const P549: &str = "https://github.com/acme/widget/issues/549";
+
+#[test]
+fn closed_is_what_the_tracker_closed_among_the_children_the_board_does_not_list() {
+    // 10 sub-issues, 8 closed; 4 listed, 2 of them done: 6 of the 6 unlisted are closed.
+    assert_eq!(closed_of(kids_of(P549, 4, 2), Some((10, 8)), None), 6);
+}
+
+#[test]
+fn closed_takes_the_hub_s_pair_when_the_tracker_gave_none() {
+    assert_eq!(closed_of(kids_of(P549, 2, 1), None, Some((10, Some(4)))), 3);
+    // The hub's total is not read with a completed that is not its own: none known, none closed.
+    assert_eq!(closed_of(kids_of(P549, 2, 1), None, Some((10, None))), 0);
+}
+
+#[test]
+fn closed_never_exceeds_the_unlisted_remainder() {
+    // 5 sub-issues, all closed, 3 listed and none done: only the 2 unlisted can be closed.
+    assert_eq!(closed_of(kids_of(P549, 3, 0), Some((5, 5)), None), 2);
+}
+
+#[test]
+fn closed_is_never_negative_when_merged_and_done_exceed_completed() {
+    assert_eq!(closed_of(kids_of(P549, 4, 4), Some((10, 1)), None), 0);
+}
+
+#[test]
+fn closed_is_zero_when_no_completed_is_known() {
+    assert_eq!(closed_of(kids_of(P549, 2, 0), None, None), 0);
+}
+
+#[test]
+fn a_group_takes_the_tracker_pair_whole_not_its_total_with_the_hub_s_completed() {
+    // The tracker says 4 sub-issues with 0 closed; the hub's 7 and 6 are not mixed into it.
+    assert_eq!(
+        closed_of(kids_of(P549, 1, 0), Some((4, 0)), Some((7, Some(6)))),
+        0
+    );
 }
 
 const PARENT: &str = "https://github.com/acme/widget/issues/9";

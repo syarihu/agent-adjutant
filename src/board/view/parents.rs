@@ -66,6 +66,11 @@ pub struct ParentGroup {
     /// How many children the parent has: what the tracker counts when it counts, but never fewer
     /// than the board lists.
     pub total: usize,
+    /// How many of the children the board does not list are closed on the tracker. The tracker
+    /// says how many sub-issues are closed but not which, and a listed child's issue state is not
+    /// read, so the listed children that are closed are approximated by the merged and done ones
+    /// and taken off that count. The rest of the unlisted children are the ones not started.
+    pub closed: usize,
     /// Whether some child branches from another's branch.
     pub stacked: bool,
     /// The slug of the hub that runs the children: a parent-task hub among the children's when
@@ -85,6 +90,8 @@ pub(super) struct HubParent {
     pub slug: String,
     pub title: Option<String>,
     pub total: Option<u32>,
+    /// How many of those sub-issues are closed, from the same read as `total`.
+    pub completed: Option<u32>,
 }
 
 /// How far a child has got, for the one bar a parent draws with a segment per child.
@@ -155,10 +162,12 @@ pub(super) struct Inputs<'a> {
     pub tracker: &'a dyn Fn(&str) -> Option<TrackerParent>,
 }
 
-/// A card's parent, and how many sub-issues the tracker counts under it.
+/// A card's parent, and how many sub-issues the tracker counts under it and how many of those it
+/// says are closed: `(total, completed)`, kept as a pair so one read's total is never read with
+/// another's completed.
 struct Resolved {
     parent: ParentIssue,
-    tracker_total: Option<u32>,
+    tracker_count: Option<(u32, u32)>,
 }
 
 /// The record's `parent` as the issue it names: its URL, key and number. A key `issueKeys` does
@@ -218,12 +227,12 @@ fn resolve(task: &task::Task, inputs: &Inputs) -> Option<Resolved> {
                 hub: String::new(),
                 record_key: record.and_then(|(_, key)| key),
             },
-            tracker_total: Some(t.total),
+            tracker_count: Some((t.total, t.completed)),
         });
     }
     Some(Resolved {
         parent: record?.0,
-        tracker_total: None,
+        tracker_count: None,
     })
 }
 
@@ -257,7 +266,7 @@ struct Kid {
 
 struct Acc {
     parent: ParentIssue,
-    tracker_total: Option<u32>,
+    tracker_count: Option<(u32, u32)>,
     kids: Vec<Kid>,
 }
 
@@ -313,7 +322,7 @@ pub(super) fn attach(
             .entry(resolved.parent.key.clone())
             .or_insert_with(|| Acc {
                 parent: resolved.parent.clone(),
-                tracker_total: None,
+                tracker_count: None,
                 kids: Vec::new(),
             });
         // The tracker's description of the parent, with its title and number, outranks the
@@ -323,7 +332,7 @@ pub(super) fn attach(
         {
             acc.parent = resolved.parent.clone();
         }
-        acc.tracker_total = acc.tracker_total.or(resolved.tracker_total);
+        acc.tracker_count = acc.tracker_count.or(resolved.tracker_count);
         acc.kids.push(kid);
         let mut shown = resolved.parent;
         shown.hub = kid_hub;
@@ -497,10 +506,29 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
     // tracker's count, and "3 / 2" would read as an error.
     // The hub's own read counts only when the tracker was never asked about a child.
     let from_hub = inputs.hub_parents.iter().find(|h| h.key == acc.parent.key);
-    let total = acc
-        .tracker_total
-        .or(from_hub.and_then(|h| h.total))
-        .map_or(acc.kids.len(), |total| (total as usize).max(acc.kids.len()));
+    // The total and the closed count come from the same read: the tracker's pair, else the hub's.
+    let counted = acc
+        .tracker_count
+        .map(|(total, completed)| (total, Some(completed)))
+        .or_else(|| from_hub.and_then(|h| h.total.map(|total| (total, h.completed))));
+    let total = counted.map_or(acc.kids.len(), |(total, _)| {
+        (total as usize).max(acc.kids.len())
+    });
+    // Of the closed sub-issues, those that are not among the listed children. A listed child that
+    // is closed is told by its progress (its issue's state is not read), so merged and done ones
+    // are taken off first; the count never goes below 0 and never above what is unlisted.
+    let listed_closed = acc
+        .kids
+        .iter()
+        .filter(|k| matches!(k.progress, Progress::Merged | Progress::Done))
+        .count();
+    let closed = counted
+        .and_then(|(_, completed)| completed)
+        .map_or(0, |completed| {
+            (completed as usize)
+                .saturating_sub(listed_closed)
+                .min(total - acc.kids.len())
+        });
     // A parent-task hub that runs one of the children runs the parent; otherwise the children
     // are the repository's own.
     let hub = acc
@@ -534,6 +562,7 @@ fn group_of(mut acc: Acc, inputs: &Inputs) -> ParentGroup {
             .collect(),
         merged,
         total,
+        closed,
         stacked: on.iter().any(Option::is_some),
         hub,
         title_hub: from_hub.map(|h| h.slug.clone()),

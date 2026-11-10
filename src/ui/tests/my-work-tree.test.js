@@ -59,6 +59,7 @@ vm.runInContext([
   cut(/^function workShape[\s\S]*?^}/m),
   cut(/^function workNewOrder[\s\S]*?^}/m),
   cut(/^const WORK_PROGRESS = \{[\s\S]*?^\};/m),
+  cut(/^function workClosed[\s\S]*?^}/m),
   cut(/^function workSegments[\s\S]*?^}/m),
   cut(/^const WORK_COUNTED = [^\n]*;/m),
   cut(/^function workProgressCounts[\s\S]*?^}/m),
@@ -1454,4 +1455,52 @@ test('the bar helper sizes a remainder above one to include its gaps, and labels
 
   // The row that heads a parent's group draws the same bar.
   assert.strictEqual(run('workParentMeta(p)', { p: p200 })[0], html200);
+});
+
+/* ── the unlisted children the tracker has closed ── */
+
+test('the remainder splits into a closed segment and a not-started one, each only when there is something in it', () => {
+  const p = { children: kids('merged', 'working'), total: 10, closed: 5 };
+  const segs = plain(run('workSegments(p)', { p }));
+  assert.strictEqual(segs.length, 4);
+  assert.deepStrictEqual([segs[2].cls, segs[2].title, segs[2].grow], ['closed', 'クローズ 5 件', 5]);
+  assert.deepStrictEqual([segs[3].cls, segs[3].title, segs[3].grow], ['not-started', '未着手 3 件', 3]);
+  assert.strictEqual(segs.reduce((sum, s) => sum + (s.grow || 1), 0), 10);
+  // All of the remainder closed: no not-started segment.
+  const all = plain(run('workSegments(p)', { p: { ...p, closed: 8 } }));
+  assert.deepStrictEqual(all.map(s => s.cls), ['merged', 'working', 'closed']);
+});
+
+test('a missing, zero or negative closed is the old bar, and one larger than the remainder is held to it', () => {
+  const base = { children: kids('merged', 'working'), total: 10 };
+  for (const closed of [undefined, null, 0, -3]) {
+    const segs = plain(run('workSegments(p)', { p: { ...base, closed } }));
+    assert.deepStrictEqual(segs.map(s => s.cls), ['merged', 'working', 'not-started']);
+    assert.strictEqual(segs[2].grow, 8);
+  }
+  const over = plain(run('workSegments(p)', { p: { ...base, closed: 99 } }));
+  assert.deepStrictEqual(over.map(s => s.cls), ['merged', 'working', 'closed']);
+  assert.strictEqual(over[2].grow, 8);
+  assert.strictEqual(run('workProgressText(p)', { p: { ...base, closed: 99 } }), '1 マージ · 8 クローズ · 1 作業中 / 10');
+  // Nothing is unlisted, so nothing can be closed.
+  assert.strictEqual(run('workProgressText(p)', { p: { children: kids('pr'), total: 1, closed: 4 } }), '1 PR / 1');
+});
+
+test('the progress text and html count the closed ones after the done ones, with a dot of their own colour', () => {
+  const p = { children: kids(...Array(30).fill('merged'), ...Array(7).fill('done')), total: 56, closed: 19 };
+  assert.strictEqual(run('workProgressText(p)', { p }), '30 マージ · 7 完了 · 19 クローズ / 56');
+  assert.ok(run('workProgressHtml(p)', { p }).includes('<i class="wk-dot closed" aria-hidden="true"></i>19 クローズ'));
+  assert.strictEqual(plain(run('workProgressCounts(p)', { p })).n.closed, 19);
+});
+
+test('with two remainder segments the bar splits the cap between them by grow, and counts every gap', () => {
+  const p = { children: kids('merged', 'working', 'pr'), total: 200, closed: 150 };
+  const html = run('workBarHtml(p)', { p });
+  assert.ok(html.includes('style="flex:150 1 min(calc(149 * var(--wk-gap)), calc((100% - 4 * var(--wk-gap)) / 2 * 150 / 197))"'));
+  assert.ok(html.includes('style="flex:47 1 min(calc(46 * var(--wk-gap)), calc((100% - 4 * var(--wk-gap)) / 2 * 47 / 197))"'));
+  assert.ok(html.includes('<i class="closed" title="クローズ 150 件"'));
+  // A segment of one has no style; the other still takes its share of the cap.
+  const one = run('workBarHtml(p)', { p: { children: kids('merged'), total: 12, closed: 1 } });
+  assert.strictEqual(one.match(/style=/g)?.length, 1);
+  assert.ok(one.includes('style="flex:10 1 min(calc(9 * var(--wk-gap)), calc((100% - 2 * var(--wk-gap)) / 2 * 10 / 11))"'));
 });
