@@ -239,6 +239,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
 .wk-bar i.merged, .wk-dot.merged { background: var(--md-sys-color-success); }
 .wk-bar i.done, .wk-dot.done { background: color-mix(in srgb, var(--md-sys-color-success) 45%, var(--md-sys-color-outline-variant)); }
+.wk-bar i.closed, .wk-dot.closed { background: color-mix(in srgb, var(--md-sys-color-success) 25%, var(--md-sys-color-outline-variant)); }
 .wk-bar i.pr, .wk-dot.pr { background: var(--md-sys-color-tertiary); }
 .wk-bar i.working, .wk-dot.working { background: var(--md-sys-color-primary); }
 .wk-bar i.not-started { background: var(--md-sys-color-outline-variant); }
