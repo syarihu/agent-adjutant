@@ -30,8 +30,13 @@ pub(super) fn create_task(server: &Server, body: &[u8]) -> Result<Value, String>
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let new = crate::task::NewTask::from_json(&input)?;
-    let (task, handed) = crate::task::create(&server.ctx, new, hand_over)?;
-    Ok(json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) }))
+    let created = crate::task::create(&server.ctx, new, hand_over)?;
+    let warnings = crate::transport::wording::create_warnings_json(&created.warnings);
+    Ok(json!({
+        "task": created.task,
+        "handed": created.handed.as_ref().map(crate::mail::Handed::from),
+        "warnings": warnings,
+    }))
 }
 
 pub(super) fn update_task(server: &Server, id: &str, body: &[u8]) -> Result<Value, String> {
@@ -435,8 +440,8 @@ pub(super) fn fetch_issue(server: &Server, id: &str) -> Result<Value, String> {
 /// The board's 「PR を確認」: the same pass as `adj task refresh`, whose answer the page shows
 /// in its log before it redraws.
 pub(super) fn refresh_tasks(server: &Server) -> Result<Value, String> {
-    let checked = crate::task::refresh(&server.ctx)?;
-    Ok(crate::transport::wording::refresh_json(&checked))
+    let refreshed = crate::task::refresh(&server.ctx)?;
+    Ok(crate::transport::wording::refresh_json(&refreshed))
 }
 
 pub(super) fn nudge_hub(server: &Server) -> Result<Value, String> {

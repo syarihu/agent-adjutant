@@ -23,6 +23,22 @@ pub struct Checked {
     pub failed: Option<String>,
 }
 
+/// Something a refresh could not do that did not stop it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshWarning {
+    /// What GitHub said about a record's PR could not be written on it (its lock, its read or
+    /// its save failed). The record is left as it was, for the next refresh.
+    SummaryNotKept { id: String, why: String },
+}
+
+/// What a refresh found, and what it could not keep.
+pub struct Refreshed {
+    /// One entry per record whose PR was read, as `Checked` describes.
+    pub checked: Vec<Checked>,
+    /// What GitHub said that could not be kept on a record; empty when everything was.
+    pub warnings: Vec<RefreshWarning>,
+}
+
 /// How long moving a task to `done` may wait on `gh` to read its PR once. Short: a person is
 /// waiting on the move, and a PR that cannot be read in time is simply left as recorded.
 /// Raised by `ADJUTANT_DEADLINE_FLOOR_SECS` when set.
@@ -103,7 +119,7 @@ pub(super) fn unreadable_pr(pr: &str) -> String {
 /// Nothing else is changed. A PR still open is still in review; one closed without merging
 /// may have been replaced by another, which only a person knows; one `gh` cannot read is
 /// not evidence of anything. Those are returned for the caller to report.
-pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
+pub fn refresh(ctx: &Context) -> Result<Refreshed, String> {
     let live = candidates(ctx);
     let stale = stale_finished(ctx);
     let deadline = std::time::Instant::now() + GH_TIMEOUT;
@@ -127,8 +143,13 @@ pub fn refresh(ctx: &Context) -> Result<Vec<Checked>, String> {
         })
         .collect();
     let stale_answers = answers.split_off(live.len());
-    record_finished(ctx, stale, stale_answers);
-    Ok(apply(ctx, live, answers))
+    let mut warnings = record_finished(ctx, stale, stale_answers);
+    let mut applied = apply(ctx, live, answers);
+    warnings.append(&mut applied.warnings);
+    Ok(Refreshed {
+        checked: applied.checked,
+        warnings,
+    })
 }
 
 /// Keep what GitHub said on done records whose PR state was out of date, one answer each. The
@@ -139,12 +160,17 @@ pub(super) fn record_finished(
     ctx: &Context,
     tasks: Vec<Task>,
     answers: Vec<(PrState, Option<PrStatus>)>,
-) {
+) -> Vec<RefreshWarning> {
+    let mut warnings = Vec::new();
     for (task, (_, summary)) in tasks.into_iter().zip(answers) {
         if let Some(summary) = summary.filter(|s| task.pr_status.as_ref() != Some(s)) {
-            store_pr_status(ctx, task, summary, Seen::Finished);
+            let (_, warning) = store_pr_status(ctx, task, summary, Seen::Finished);
+            if let Some(warning) = warning {
+                warnings.push(warning);
+            }
         }
     }
+    warnings
 }
 
 /// Read the PR of a task that has just been moved to `done`, once, and keep what GitHub said
@@ -163,7 +189,10 @@ pub(super) fn read_on_finish(ctx: &Context, task: Task) -> Task {
     let deadline = std::time::Instant::now() + crate::infra::env::deadline(FINISH_TIMEOUT);
     match read_prs(&[pr], deadline).answers.into_iter().next() {
         Some((_, Some(summary))) if task.pr_status.as_ref() != Some(&summary) => {
-            store_pr_status(ctx, task, summary, Seen::Finished)
+            // The move to done stands whatever happens here; a done record whose kept
+            // state is not final is read again by the next refresh (stale_finished),
+            // which reports a failure to keep it.
+            store_pr_status(ctx, task, summary, Seen::Finished).0
         }
         _ => task,
     }
@@ -176,15 +205,22 @@ pub fn apply(
     ctx: &Context,
     candidates: Vec<Task>,
     answers: Vec<(PrState, Option<PrStatus>)>,
-) -> Vec<Checked> {
+) -> Refreshed {
     let mut checked = Vec::new();
+    let mut warnings = Vec::new();
     for (task, (state, summary)) in candidates.into_iter().zip(answers) {
         if state != PrState::Merged {
             // Kept for the board, and nothing else about the record changes. Written only
             // when GitHub's answer differs from what is stored, so a quiet PR costs no write
             // and the page, which redraws when the JSON changes, stays still.
             let task = match summary.filter(|s| task.pr_status.as_ref() != Some(s)) {
-                Some(summary) => store_pr_status(ctx, task, summary, Seen::Now),
+                Some(summary) => {
+                    let (task, warning) = store_pr_status(ctx, task, summary, Seen::Now);
+                    if let Some(warning) = warning {
+                        warnings.push(warning);
+                    }
+                    task
+                }
                 None => task,
             };
             checked.push(Checked {
@@ -226,7 +262,7 @@ pub fn apply(
             },
         });
     }
-    checked
+    Refreshed { checked, warnings }
 }
 
 /// How a PR summary reached a record.
@@ -243,10 +279,15 @@ pub(super) enum Seen {
 
 /// Keep what GitHub said about `task`'s PR on its record, if the record still points at that
 /// PR once the lock is held. The summary is a cache, so a record that cannot be written is
-/// returned as it was rather than failing the refresh. `updatedAt` stays: nobody changed the
-/// task, and the board reads that stamp as the last time somebody did. `seen` says
-/// how the answer was come by (see `Seen`).
-pub(super) fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus, seen: Seen) -> Task {
+/// returned as it was, with a warning, rather than failing the refresh. `updatedAt` stays:
+/// nobody changed the task, and the board reads that stamp as the last time somebody did.
+/// `seen` says how the answer was come by (see `Seen`).
+pub(super) fn store_pr_status(
+    ctx: &Context,
+    task: Task,
+    summary: PrStatus,
+    seen: Seen,
+) -> (Task, Option<RefreshWarning>) {
     let write = || -> Result<Option<Task>, String> {
         let _lock = store::lock(ctx, &task.id)?;
         let mut now = get(&ctx.state, &ctx.repo.slug, &task.id)?;
@@ -265,11 +306,11 @@ pub(super) fn store_pr_status(ctx: &Context, task: Task, summary: PrStatus, seen
         Ok(Some(now))
     };
     match write() {
-        Ok(Some(now)) => now,
-        Ok(None) => task,
+        Ok(Some(now)) => (now, None),
+        Ok(None) => (task, None),
         Err(why) => {
-            eprintln!("could not keep the PR summary of {}: {why}", task.id);
-            task
+            let id = task.id.clone();
+            (task, Some(RefreshWarning::SummaryNotKept { id, why }))
         }
     }
 }

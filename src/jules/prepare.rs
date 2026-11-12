@@ -457,7 +457,7 @@ fn prepare_one(
                 (t, false)
             } else {
                 let parent = lookup_github_parent(&ctx.repo.main, &url);
-                let (new_task, _) = task::create(
+                let created = task::create(
                     ctx,
                     task::NewTask {
                         kind: task::Kind::Start,
@@ -472,7 +472,10 @@ fn prepare_one(
                     },
                     false,
                 )?;
-                (new_task, true)
+                // A warning that the issue could not be read is dropped: the record keeps the
+                // issue's reference as its title (`title_pending`), which the board shows and
+                // the next read replaces.
+                (created.task, true)
             }
         }
     };

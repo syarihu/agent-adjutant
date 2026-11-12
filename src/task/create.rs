@@ -143,13 +143,28 @@ pub fn check_request(body: &str, parent: Option<&str>) -> Result<(), String> {
     }
 }
 
+/// Something `create` could not do that did not stop it from writing the record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateWarning {
+    /// The task's issue could not be read: the record is kept under the issue's reference
+    /// (`owner/repo#N`) as its title until a later read replaces it. `why` is what `gh` said.
+    IssueUnread { why: String },
+}
+
+/// What `create` wrote and did.
+pub struct Created {
+    /// The record as written.
+    pub task: Task,
+    /// The hand-over to the hub, when the task was created queued and `hand` was true.
+    pub handed: Option<DeliveryOutcome>,
+    /// What went wrong without stopping it; empty when nothing did.
+    pub warnings: Vec<CreateWarning>,
+}
+
 /// Write a new record, and hand it over if it was created already queued and `hand` says so.
+/// The outcome carries what went wrong without stopping it, for the transport to word.
 /// `hand` is an instruction to this function, not a field of the task.
-pub fn create(
-    ctx: &Context,
-    new: NewTask,
-    hand: bool,
-) -> Result<(Task, Option<DeliveryOutcome>), String> {
+pub fn create(ctx: &Context, new: NewTask, hand: bool) -> Result<Created, String> {
     let stamp = store::stamp();
     // Before anything reaches `gh` or the id is claimed: claiming writes a reservation, and a
     // refusal after it would leave that behind.
@@ -166,11 +181,12 @@ pub fn create(
         .map(str::trim)
         .filter(|u| fetchable_issue(u));
     let reads = starts && url.is_some() && new.body.trim().is_empty();
+    let mut warnings = Vec::new();
     let snapshot = match url {
         Some(url) if reads => match read_issue(&ctx.repo.main, url) {
             Ok(read) => Some(read).filter(|s| !s.title.is_empty()),
             Err(why) => {
-                eprintln!("could not read the issue: {why}");
+                warnings.push(CreateWarning::IssueUnread { why });
                 None
             }
         },
@@ -240,7 +256,11 @@ pub fn create(
         Status::Queued if hand => Some(hand_over(ctx, &task)?),
         _ => None,
     };
-    Ok((task, handed))
+    Ok(Created {
+        task,
+        handed,
+        warnings,
+    })
 }
 
 /// A worktree path as `git worktree list` prints it: absolute, symlinks resolved. The board

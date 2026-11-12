@@ -241,3 +241,5 @@ anything else the usual review finds.
   board's session clean-up (`board/session/clean_up.rs`) and `kernel::worktree_state` naming
   `.claude/adjutant-*` and `task-brief.md` in a worktree, and
   `#[cfg(test)] pub(crate) use store::...` for other modules' test fixtures.
+- **The known exceptions to rule 5 in `docs/architecture.md`** (the background loops,
+  `board::token`'s `random_hex`, `infra::paths::home_from`) writing to stderr.

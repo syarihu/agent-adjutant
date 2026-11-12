@@ -163,8 +163,17 @@ fixtures.
    review ([review-checklist.md](review-checklist.md)).
 5. Typed outcomes, worded by the transport. Operations return values (`DeliveryOutcome`,
    `Reached`, `HubStart`, `TabOutcome`), never text for stdout. CLI and MCP texts differ on
-   purpose; shared words live in `transport::wording`. Convention, checked by review
-   ([review-checklist.md](review-checklist.md)).
+   purpose; shared words live in `transport::wording`. A warning which does not stop an operation
+   is part of its outcome too (`task::Created::warnings`, `task::Refreshed::warnings`). Only this
+   code writes to stderr itself, each for its reason:
+   - the background loops (`board::jobs`, and the accept loops in `board/daemon.rs` and
+     `board/dedicated.rs`): no caller waits for a value, and the server's log is where they report;
+   - `board::token`'s `random_hex`, which warns when `/dev/urandom` cannot be read: it runs while a
+     server makes its token, before any request, and the warning is for the server's log;
+   - `infra::paths::home_from` (through `home_dir`), which warns once per process when `HOME` is not
+     an absolute path: every path the program builds goes through it, from every transport and
+     before any outcome exists, and `infra` names no outcome type (rule 8).
+   Convention, checked by review ([review-checklist.md](review-checklist.md)).
 6. Undo through reverse operations. An operation that writes to several modules takes a failed step
    back with the other modules' own operations, latest first, never by touching their stores.
    `lifecycle::worker::undo` calls `task::remove` and `task::update`. Convention, checked by review
@@ -263,16 +272,17 @@ sequenceDiagram
         Mail-->>Task: DeliveryOutcome
     end
     alt adj task add
-        Task-->>Cli: (Task, Option of DeliveryOutcome)
+        Task-->>Cli: Created (task, handed, warnings)
         Cli->>Shell: say_where_it_went, or JSON with Handed
     else POST /api/tasks
-        Task-->>Http: (Task, Option of DeliveryOutcome)
-        Http->>Page: JSON task and handed (Handed)
+        Task-->>Http: Created (task, handed, warnings)
+        Http->>Page: JSON task, handed (Handed) and warnings
     end
 ```
 
-`adj task add --json` and `POST /api/tasks` both answer `{ "task", "handed" }`, with `handed` built
-from `mail::Handed` (`present`, `woken`, `path`) and null when nothing was handed over. The files are `transport/cli/task.rs`,
+`adj task add --json` and `POST /api/tasks` both answer `{ "task", "handed", "warnings" }`, with
+`warnings` the worded strings (empty when none); `adj task add` also prints each on stderr. `handed`
+is built from `mail::Handed` (`present`, `woken`, `path`) and null when nothing was handed over. The files are `transport/cli/task.rs`,
 `transport/board_http/routes.rs` and `handlers.rs`, `task/create.rs` and `task/hand_over.rs`.
 
 ## Walk-through: delivering a message

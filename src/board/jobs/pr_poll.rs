@@ -420,7 +420,17 @@ impl PrPoll {
             let mut closing = Vec::new();
             for (ctx, (tasks, answers, ended)) in boards.iter().zip(per_board) {
                 if !tasks.is_empty() {
-                    task::apply(ctx, tasks, answers);
+                    let refreshed = task::apply(ctx, tasks, answers);
+                    for warning in refreshed.warnings {
+                        match warning {
+                            task::RefreshWarning::SummaryNotKept { id, why } => {
+                                let _ = writeln!(
+                                    std::io::stderr(),
+                                    "adj server: could not keep the PR summary of {id}: {why}"
+                                );
+                            }
+                        }
+                    }
                 }
                 if !ended.is_empty() {
                     closing.extend(close_ended_pr_readers(&ctx.state, &ended));
