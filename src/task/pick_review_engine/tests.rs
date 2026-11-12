@@ -230,40 +230,10 @@ fn the_cache_is_read_as_missing_broken_or_read() {
 }
 
 #[test]
-fn the_cache_sits_under_claude_config_dir_or_home() {
-    let home = Path::new("/home");
+fn the_cache_sits_directly_under_the_config_dir() {
     assert_eq!(
-        cache_path(Some(OsStr::new("/cfg/a")), home),
+        cache_path(Path::new("/cfg/a")),
         PathBuf::from("/cfg/a/rate-limit-cache.json")
-    );
-    assert_eq!(
-        cache_path(Some(OsStr::new("")), home),
-        PathBuf::from("/home/.claude/rate-limit-cache.json")
-    );
-    assert_eq!(
-        cache_path(None, home),
-        PathBuf::from("/home/.claude/rate-limit-cache.json")
-    );
-}
-
-#[test]
-fn a_blank_claude_config_dir_is_the_default_account() {
-    let home = Path::new("/home");
-    assert_eq!(
-        claude_config_dir(Some(OsStr::new("  ")), home),
-        PathBuf::from("/home/.claude")
-    );
-    assert_eq!(
-        claude_config_dir(Some(OsStr::new("")), home),
-        PathBuf::from("/home/.claude")
-    );
-    assert_eq!(
-        claude_config_dir(Some(OsStr::new("/cfg/a")), home),
-        PathBuf::from("/cfg/a")
-    );
-    assert_eq!(
-        cache_path(Some(OsStr::new(" ")), home),
-        PathBuf::from("/home/.claude/rate-limit-cache.json")
     );
 }
 

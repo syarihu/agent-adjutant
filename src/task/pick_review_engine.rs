@@ -1,7 +1,6 @@
 //! Which engine reads the diff in a self-review round, decided from the rate limits of the agent
 //! session ledger (`adj hook claude --status-line` fills it) or, failing that, the rate-limit cache.
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -106,20 +105,9 @@ pub struct LedgerUsage {
     pub seven_day: Option<RateWindow>,
 }
 
-/// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`: the variable when it says something, else the default
-/// account's directory. Takes both inputs as arguments so a test answers for values it chose
-/// rather than for the machine it runs on. The rule mirrors the one `adj hook claude` stores a
-/// row's `configDir` by, so the two name the same directory for the same account.
-pub fn claude_config_dir(var: Option<&OsStr>, home: &Path) -> PathBuf {
-    var.and_then(OsStr::to_str)
-        .filter(|dir| !dir.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".claude"))
-}
-
-/// `rate-limit-cache.json` under `claude_config_dir`.
-pub fn cache_path(claude_config_dir_var: Option<&OsStr>, home: &Path) -> PathBuf {
-    claude_config_dir(claude_config_dir_var, home).join(CACHE_FILE)
+/// `rate-limit-cache.json` under the Claude config directory (`infra::paths::claude_config_dir`).
+pub fn cache_path(claude_config_dir: &Path) -> PathBuf {
+    claude_config_dir.join(CACHE_FILE)
 }
 
 /// NotFound -> Missing; any other read error, invalid JSON -> Broken; otherwise Read.

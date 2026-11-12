@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::args::SetupArgs;
 use crate::infra::env::{CLAUDE_CONFIG_DIR_ENV, CODEX_HOME_ENV};
 use crate::infra::fs::replace_json;
-use crate::infra::paths::{exe_path_absolute, home_dir};
+use crate::infra::paths::{claude_config_dir_from, codex_home_from, exe_path_absolute, home_dir};
 use crate::kernel::agent_hooks::{
     GlobalHookAgent, add_global_hooks, count_global_hooks, global_hook_command, remove_global_hooks,
 };
@@ -72,21 +72,14 @@ pub fn setup(args: &SetupArgs) -> Result<(), String> {
 const CODEX_TRUST: &str = "Codex asks you to trust each new hook the next time it starts. \
     After moving adj, run `adj setup codex` again and trust the hooks again.";
 
-/// The same rule as the hook receiver's: the variable when it says something, else the default
-/// account's directory.
+/// `settings.json` in the Claude config directory (`infra::paths::claude_config_dir`).
 fn settings_path(config_dir: Option<&str>, home: &Path) -> PathBuf {
-    match config_dir.filter(|dir| !dir.trim().is_empty()) {
-        Some(dir) => Path::new(dir).join("settings.json"),
-        None => home.join(".claude").join("settings.json"),
-    }
+    claude_config_dir_from(config_dir, home).join("settings.json")
 }
 
-/// Codex's global hooks file: under `CODEX_HOME` when it says something, else `~/.codex`.
+/// Codex's global hooks file, `hooks.json` in `infra::paths::codex_home`.
 fn codex_hooks_path(codex_home: Option<&str>, home: &Path) -> PathBuf {
-    match codex_home.filter(|dir| !dir.trim().is_empty()) {
-        Some(dir) => Path::new(dir).join("hooks.json"),
-        None => home.join(".codex").join("hooks.json"),
-    }
+    codex_home_from(codex_home, home).join("hooks.json")
 }
 
 /// Add adjutant's hooks to the settings file at `path` (`exe` is the binary they run), or, with
