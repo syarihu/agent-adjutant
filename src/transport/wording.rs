@@ -52,13 +52,13 @@ pub const RECORDED: &str = "Kept as a record: nobody is asked to answer it. Do n
                         with your work. If a person sends it back, the answer arrives in \
                         `adj outbox`.";
 
-/// What the hub is told when it leaves a message for a worker that is running but was not woken,
-/// whether by `adj tell`, `adjutant_tell` or a gate answer.
+/// What `adj tell`, `adjutant_tell` and `adj gate answer` say when they leave a message for a
+/// worker that is running but was not woken.
 pub const WORKER_RUNNING: &str =
     "The worker is running; it will read this the next time it checks its outbox.";
 
-/// What the hub is told when it leaves a message for a worker that is not running, by `adj tell`
-/// or `adjutant_tell`.
+/// What `adj tell` and `adjutant_tell` say when they leave a message for a worker that is not
+/// running.
 pub const WORKER_NOT_RUNNING: &str =
     "The worker is not running; it will read this the next time it starts.";
 
