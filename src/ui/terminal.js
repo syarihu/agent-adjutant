@@ -4,7 +4,7 @@
    resident server and loaded on first use. */
 let xtermLoading = null;
 function loadXterm(base = BASE) {
-  if (window.Terminal && window.FitAddon && window.Unicode11Addon) return Promise.resolve();
+  if (window.Terminal && window.FitAddon && window.Unicode11Addon && window.WebLinksAddon) return Promise.resolve();
   if (xtermLoading) return xtermLoading;
   const token = encodeURIComponent(TOKEN);
   const link = document.createElement('link');
@@ -66,6 +66,32 @@ function terminalEndText(code, reason) {
   return TERMINAL_ENDS[code] || `接続が閉じました（${code}）`;
 }
 
+/* Links inside the terminal are opened only with the platform modifier (Cmd on macOS, Ctrl
+   elsewhere) so that plain clicks and text selection are left alone. tmux forwards OSC 8
+   hyperlinks only when the client has the feature, while plain text URLs are found by the
+   addon. A URL that tmux broke across two screen lines is not joined (xterm only joins lines it
+   wrapped itself), and when tmux has the mouse on, the click also reaches tmux, where it only
+   selects the pane. */
+// The addon's own expression with one balanced pair of parentheses allowed inside, so a URL such
+// as a Wikipedia title (`/wiki/Rust_(programming_language)`) is not cut at its `(`. A `)` with no
+// `(` before it in the URL, as in `(see https://…)`, still ends it.
+const TERMINAL_URL = /(https?|HTTPS?):\/\/(?:[^\s"'!*(){}|\\^<>`]|\([^\s"'!*(){}|\\^<>`]*\))*(?:[^\s"':,.!?{}|\\^~\[\]`()<>]|\([^\s"'!*(){}|\\^<>`]*\))/;
+function terminalLinkOpens(event, uri, mac = IS_MAC) {
+  const modifier = mac ? !!event?.metaKey : !!event?.ctrlKey;
+  if (!modifier || !uri) return false;
+  try {
+    const u = new URL(uri);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+// Takes the event and the URI alone: whatever else a caller passes (xterm's range) is not a platform.
+function openTerminalLink(event, uri) {
+  if (!terminalLinkOpens(event, uri)) return;
+  window.open(uri, '_blank', 'noopener,noreferrer');
+}
+
 /* `base` is the board's path; a view across boards, where `BASE` is empty, names the board of
    the session. `path` is the socket's path when it is not a board session's (a PR's reader: it may carry a query). */
 function mountSessionTerminal(container, { sessionId, path = null, onEnd, base = BASE, focus = true } = {}) {
@@ -101,10 +127,15 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
       scrollback: 1000,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       fontSize: 13,
+      linkHandler: {
+        activate: openTerminalLink,
+        allowNonHttpProtocols: false,
+      },
     });
     fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new Unicode11Addon.Unicode11Addon());
+    term.loadAddon(new WebLinksAddon.WebLinksAddon(openTerminalLink, { urlRegex: TERMINAL_URL }));
     term.unicode.activeVersion = '11';
     term.open(container);
     // On macOS Cmd+K opens the session search even here; every other key, Ctrl+K (readline's kill-line) included, is the agent's.

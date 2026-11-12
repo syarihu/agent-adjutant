@@ -10,17 +10,19 @@ The board terminal (`adj server`, resident boards only) renders a tmux session w
 | `@xterm/xterm` | 6.0.0 | `lib/xterm.js`, `css/xterm.css` | https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz | `908e66e04af6c8dc6b00dd3b54de088e2e81e5ed866284fd6c2fb3c2d1c7a3f6` |
 | `@xterm/addon-fit` | 0.11.0 | `lib/addon-fit.js` | https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz | `26003b4517a132b64e4ff228fd88a5fda3fff5e606c76093f6dcff772e9ecec0` |
 | `@xterm/addon-unicode11` | 0.9.0 | `lib/addon-unicode11.js` | https://registry.npmjs.org/@xterm/addon-unicode11/-/addon-unicode11-0.9.0.tgz | `b665667792f916873fe946ba98cc98a1a742af08e163fb66e1c0809c120ca42e` |
+| `@xterm/addon-web-links` | 0.12.0 | `lib/addon-web-links.js` | https://registry.npmjs.org/@xterm/addon-web-links/-/addon-web-links-0.12.0.tgz | `bf463cfff1af4bb1903509830c62ed06bcd0589039f15ea5fba71d7bae5a86da` |
 
 Each is the `latest` dist-tag on the npm registry. The addons declare no `peerDependencies`
 at these versions; they are the releases published alongside `@xterm/xterm` 6.0.0.
 
 The files are the UMD builds from the tarballs, byte for byte, except that the final
 `//# sourceMappingURL=...` line is removed (the `.map` files are not vendored). Each UMD build
-defines a global (`Terminal`, `FitAddon`, `Unicode11Addon`), so the server serves the three
-scripts concatenated as one `xterm.js`, prefixed with the license notice.
+defines a global (`Terminal`, `FitAddon`, `Unicode11Addon`, `WebLinksAddon`), so the server
+serves the four scripts concatenated as one `xterm.js`, prefixed with the license notice.
 
-`LICENSE`, `LICENSE.addon-fit` and `LICENSE.addon-unicode11` are the `LICENSE` files of the
-respective packages, verbatim. The MIT notice is also emitted at the top of the served script.
+`LICENSE`, `LICENSE.addon-fit`, `LICENSE.addon-unicode11` and `LICENSE.addon-web-links` are the
+`LICENSE` files of the respective packages, verbatim. The MIT notice is also emitted at the top
+of the served script.
 
 ## Updating
 

@@ -84,19 +84,22 @@ pub(super) const UI_HTML: &str = concat!(
 );
 
 /// The terminal the board opens on a tmux session, served only by the resident server and only
-/// when a page asks for it: xterm.js and the two addons it is used with, as one script. The
+/// when a page asks for it: xterm.js and the addons it is used with, as one script. The
 /// license notice comes first, as the licenses ask for it to travel with the code (the files
 /// themselves are documented in `src/ui/vendor/xterm/README.md`).
 const XTERM_JS: &str = concat!(
     "/*! xterm.js - MIT License\n",
     include_str!("../../ui/vendor/xterm/LICENSE"),
     "\n@xterm/addon-fit and @xterm/addon-unicode11: Copyright (c) 2019, The xterm.js authors\n",
+    "@xterm/addon-web-links: Copyright (c) 2017, The xterm.js authors\n",
     "(https://github.com/xtermjs/xterm.js), under the same license.\n*/\n",
     include_str!("../../ui/vendor/xterm/xterm.js"),
     "\n",
     include_str!("../../ui/vendor/xterm/addon-fit.js"),
     "\n",
     include_str!("../../ui/vendor/xterm/addon-unicode11.js"),
+    "\n",
+    include_str!("../../ui/vendor/xterm/addon-web-links.js"),
 );
 
 const XTERM_CSS: &str = concat!(
