@@ -12,7 +12,7 @@ use crate::task::{self, Checked, PrState};
 
 /// `refresh`'s answer as the MCP tool and the board hand it on: sorted by what happened, so
 /// a reader finds what changed without going through what did not.
-pub fn refresh_json(checked: &[Checked]) -> Value {
+pub fn refresh_json(refreshed: &task::Refreshed) -> Value {
     let entry = |c: &Checked| {
         let mut out = json!({
             "id": c.task.id,
@@ -32,7 +32,12 @@ pub fn refresh_json(checked: &[Checked]) -> Value {
         out
     };
     let with = |pick: fn(&Checked) -> bool| -> Vec<Value> {
-        checked.iter().filter(|c| pick(c)).map(entry).collect()
+        refreshed
+            .checked
+            .iter()
+            .filter(|c| pick(c))
+            .map(entry)
+            .collect()
     };
     json!({
         "done": with(|c| c.moved),
@@ -43,7 +48,29 @@ pub fn refresh_json(checked: &[Checked]) -> Value {
         "skipped": with(|c| c.state == PrState::Merged && !c.moved && c.failed.is_none()),
         // Merged, but the record could not be moved. `error` says why.
         "failed": with(|c| c.failed.is_some()),
+        "warnings": refreshed.warnings.iter().map(refresh_warning).collect::<Vec<_>>(),
     })
+}
+
+/// What a transport says for a warning `task::create` returned.
+pub fn create_warning(warning: &task::CreateWarning) -> String {
+    match warning {
+        task::CreateWarning::IssueUnread { why } => format!("could not read the issue: {why}"),
+    }
+}
+
+/// The warnings of `task::create` as the JSON answers carry them: one string each.
+pub fn create_warnings_json(warnings: &[task::CreateWarning]) -> Value {
+    json!(warnings.iter().map(create_warning).collect::<Vec<_>>())
+}
+
+/// What a transport says for a warning `task::refresh` returned.
+pub fn refresh_warning(warning: &task::RefreshWarning) -> String {
+    match warning {
+        task::RefreshWarning::SummaryNotKept { id, why } => {
+            format!("could not keep the PR summary of {id}: {why}")
+        }
+    }
 }
 
 /// What a caller that kept a record is told. Said, because the procedure it follows has
@@ -437,5 +464,45 @@ mod tests {
         );
         assert_eq!(json["checks"][1]["fix"], serde_json::Value::Null);
         assert_eq!(json["checks"][1]["message"], "gh found");
+    }
+
+    #[test]
+    fn a_refresh_answer_lists_the_summaries_it_could_not_keep() {
+        let refreshed = crate::task::Refreshed {
+            checked: vec![],
+            warnings: vec![crate::task::RefreshWarning::SummaryNotKept {
+                id: "t1".to_string(),
+                why: "disk full".to_string(),
+            }],
+        };
+        let json = refresh_json(&refreshed);
+        assert_eq!(
+            json["warnings"],
+            serde_json::json!(["could not keep the PR summary of t1: disk full"])
+        );
+        let empty = refresh_json(&crate::task::Refreshed {
+            checked: vec![],
+            warnings: vec![],
+        });
+        assert_eq!(empty["warnings"], serde_json::json!([]));
+        assert_eq!(empty["done"], serde_json::json!([]));
+        assert_eq!(empty["open"], serde_json::json!([]));
+        assert_eq!(empty["closed"], serde_json::json!([]));
+        assert_eq!(empty["unreadable"], serde_json::json!([]));
+        assert_eq!(empty["skipped"], serde_json::json!([]));
+        assert_eq!(empty["failed"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_create_warning_is_worded_as_the_cli_has_always_said_it() {
+        let warning = crate::task::CreateWarning::IssueUnread {
+            why: "no gh".to_string(),
+        };
+        assert_eq!(create_warning(&warning), "could not read the issue: no gh");
+        assert_eq!(
+            create_warnings_json(std::slice::from_ref(&warning)),
+            serde_json::json!(["could not read the issue: no gh"])
+        );
+        assert_eq!(create_warnings_json(&[]), serde_json::json!([]));
     }
 }

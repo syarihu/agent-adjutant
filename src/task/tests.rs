@@ -892,12 +892,15 @@ fn a_new_task_takes_no_field_outside_new_task() {
             ..NewTask::default()
         }
     );
-    let (task, handed) = create(&ctx, new, true).unwrap();
+    let created = create(&ctx, new, true).unwrap();
+    let task = created.task;
+    let handed = created.handed;
     assert!(task.pr.is_none());
     assert!(task.relayed.is_empty());
     assert!(task.issue_snapshot.is_none());
     assert!(task.extra.is_empty());
     assert!(handed.is_none());
+    assert!(created.warnings.is_empty());
     let text =
         std::fs::read_to_string(dir(&ctx.state, &ctx.repo.slug).join(format!("{}.json", task.id)))
             .unwrap();
@@ -1494,7 +1497,7 @@ fn refreshed(ctx: &crate::registry::Context, id: &str, status: PrStatus) -> Task
     } else {
         PrState::Open
     };
-    let mut checked = apply(ctx, vec![task], vec![(state, Some(status))]);
+    let mut checked = apply(ctx, vec![task], vec![(state, Some(status))]).checked;
     checked.remove(0).task
 }
 
@@ -2069,7 +2072,9 @@ fn a_new_request_that_needs_reading_is_held_and_not_checked_for_a_kind() {
         status: Status::Queued,
         ..NewTask::default()
     };
-    let (task, handed) = create(&ctx, new, false).unwrap();
+    let created = create(&ctx, new, false).unwrap();
+    let task = created.task;
+    let handed = created.handed;
     assert!(task.needs_reading);
     assert!(!task.auto_start);
     assert_eq!(task.title, "https://github.com/acme/widget/issues/9");
@@ -2292,7 +2297,7 @@ fn a_new_task_takes_and_checks_its_after() {
         "an entry that cannot be quoted was written"
     );
     let new = with(json!(["ALPHA-21", "ALPHA-21"])).unwrap();
-    let (task, _) = create(&ctx, new, false).unwrap();
+    let task = create(&ctx, new, false).unwrap().task;
     assert_eq!(task.after, vec!["ALPHA-21"]);
 }
 
@@ -2330,4 +2335,71 @@ fn an_update_sets_replaces_and_clears_after_and_a_refused_one_writes_nothing() {
     assert!(cleared.after.is_empty());
     let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
     assert!(!text.contains("\"after\""), "{text}");
+}
+
+#[test]
+fn a_task_whose_issue_cannot_be_read_is_created_with_a_warning() {
+    let (sandbox, mut ctx) = hub();
+    ctx.repo.main = sandbox
+        .state()
+        .join("no-checkout")
+        .to_string_lossy()
+        .to_string();
+    let new = NewTask {
+        kind: Kind::Start,
+        issue_url: Some("https://github.com/acme/widget/issues/9".to_string()),
+        body: String::new(),
+        status: Status::Backlog,
+        ..NewTask::default()
+    };
+    let created = create(&ctx, new, false).expect("create should succeed");
+    assert_eq!(created.task.title, "acme/widget#9");
+    assert!(created.task.title_pending);
+    assert_eq!(created.warnings.len(), 1);
+    match &created.warnings[0] {
+        CreateWarning::IssueUnread { why } => assert!(!why.is_empty()),
+    }
+    assert!(created.handed.is_none());
+}
+
+#[test]
+fn a_pr_summary_that_cannot_be_kept_is_returned_as_a_warning() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.pr = Some("https://github.com/acme/widget/pull/7".to_string());
+    let outcome = apply(
+        &ctx,
+        vec![task.clone()],
+        vec![(PrState::Open, Some(pr("open", "none", 0, 1)))],
+    );
+    assert_eq!(outcome.checked.len(), 1);
+    assert_eq!(outcome.checked[0].task.id, task.id);
+    assert_eq!(outcome.checked[0].task.pr_status, task.pr_status);
+    assert_eq!(outcome.warnings.len(), 1);
+    match &outcome.warnings[0] {
+        RefreshWarning::SummaryNotKept { id, why } => {
+            assert_eq!(id, &task.id);
+            assert!(!why.is_empty());
+        }
+    }
+}
+
+#[test]
+fn a_finished_pr_state_that_cannot_be_kept_is_returned_as_a_warning() {
+    let (_sandbox, ctx) = hub();
+    let mut task = sample();
+    task.status = Status::Done;
+    task.pr = Some("https://github.com/acme/widget/pull/7".to_string());
+    let warnings = record_finished(
+        &ctx,
+        vec![task.clone()],
+        vec![(PrState::Merged, Some(pr("merged", "none", 0, 0)))],
+    );
+    assert_eq!(warnings.len(), 1);
+    match &warnings[0] {
+        RefreshWarning::SummaryNotKept { id, why } => {
+            assert_eq!(id, &task.id);
+            assert!(!why.is_empty());
+        }
+    }
 }

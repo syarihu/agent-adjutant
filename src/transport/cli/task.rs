@@ -83,12 +83,21 @@ pub fn add(args: &TaskAddArgs) -> Result<(), String> {
         );
         hand_over = false;
     }
-    let (task, handed) = create(&ctx, new, hand_over)?;
-    let task = snapshot_if_started(&ctx, task, true);
+    let created = create(&ctx, new, hand_over)?;
+    for warning in &created.warnings {
+        eprintln!("{}", crate::transport::wording::create_warning(warning));
+    }
+    let warnings = crate::transport::wording::create_warnings_json(&created.warnings);
+    let handed = created.handed;
+    let task = snapshot_if_started(&ctx, created.task, true);
     if args.json {
         println!(
             "{}",
-            json!({ "task": task, "handed": handed.as_ref().map(crate::mail::Handed::from) })
+            json!({
+                "task": task,
+                "handed": handed.as_ref().map(crate::mail::Handed::from),
+                "warnings": warnings,
+            })
         );
         return Ok(());
     }
@@ -334,16 +343,19 @@ pub fn fetch_issue_cmd(args: &TaskFetchIssueArgs) -> Result<(), String> {
 
 pub fn refresh_cmd(args: &TaskRefreshArgs) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
-    let checked = refresh(&ctx)?;
+    let refreshed = refresh(&ctx)?;
+    for warning in &refreshed.warnings {
+        eprintln!("{}", crate::transport::wording::refresh_warning(warning));
+    }
     if args.json {
-        println!("{}", refresh_json(&checked));
+        println!("{}", refresh_json(&refreshed));
         return Ok(());
     }
-    if checked.is_empty() {
+    if refreshed.checked.is_empty() {
         println!("No task is waiting on a pull request.");
         return Ok(());
     }
-    for c in &checked {
+    for c in &refreshed.checked {
         let what = match (&c.state, c.moved) {
             _ if c.failed.is_some() => format!(
                 "merged, but the record could not be moved: {}",

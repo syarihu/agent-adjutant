@@ -419,8 +419,9 @@ mod tests {
             status: task::Status::Pr,
             ..Default::default()
         };
-        let (created, _) =
-            task::create(&ctx, new_task, false).expect("task creation should succeed");
+        let created = task::create(&ctx, new_task, false)
+            .expect("task creation should succeed")
+            .task;
         let task_id = created.id;
 
         let req = RemoveRequest {
@@ -475,7 +476,7 @@ mod tests {
             ],
             main.path(),
         );
-        let (created, _) = task::create(
+        let created = task::create(
             &ctx,
             task::NewTask {
                 title: Some("Merged PR task".to_string()),
@@ -486,7 +487,8 @@ mod tests {
             },
             false,
         )
-        .expect("task creation should succeed");
+        .expect("task creation should succeed")
+        .task;
 
         let outcome = remove(
             &ctx,

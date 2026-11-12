@@ -908,6 +908,9 @@ async function refreshPrs(e) {
     if (data.failed?.length) {
       note(`${line}: マージ済みだが完了に移せなかったタスク`, true, data.failed.map(t => `${t.id} (${t.error})`).join(' / '));
     }
+    if (data.warnings?.length) {
+      note(`${line}: 記録に残せなかった PR の状態`, true, data.warnings.join(' / '));
+    }
     await refresh();
   } catch (err) {
     note(`${line} → ${err.message}`, true);

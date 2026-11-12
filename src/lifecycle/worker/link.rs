@@ -237,7 +237,9 @@ fn make(
     }
     new.status = Status::Dispatched;
     new.worktree = Some(worktree.to_string());
-    let (created, _) = task::create(ctx, new, false)?;
+    // A warning that the issue could not be read is dropped: the record keeps the issue's
+    // reference as its title (`title_pending`), which the board shows and the next read replaces.
+    let created = task::create(ctx, new, false)?.task;
     done.push(Done::Created(created.id.clone()));
     Ok(created)
 }

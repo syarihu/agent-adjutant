@@ -246,7 +246,7 @@ fn made(ctx: &crate::registry::Context, title: &str) -> task::Task {
         title: Some(title.to_string()),
         ..NewTask::default()
     };
-    task::create(ctx, new, false).unwrap().0
+    task::create(ctx, new, false).unwrap().task
 }
 
 /// A link whose worker record cannot be written takes its task writes back: a task naming a
