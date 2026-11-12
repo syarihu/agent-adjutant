@@ -42,6 +42,7 @@ const setup = () => {
     FitAddon: { FitAddon: class { fit() {} } },
     Unicode11Addon: { Unicode11Addon: class {} },
     WebLinksAddon: { WebLinksAddon: class {} },
+    TERMINAL_URL: /x/,
     openTerminalLink() {},
     WebSocket: FakeSocket,
     ResizeObserver: class { observe() {} disconnect() {} },

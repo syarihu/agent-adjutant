@@ -72,6 +72,10 @@ function terminalEndText(code, reason) {
    addon. A URL that tmux broke across two screen lines is not joined (xterm only joins lines it
    wrapped itself), and when tmux has the mouse on, the click also reaches tmux, where it only
    selects the pane. */
+// The addon's own expression with one balanced pair of parentheses allowed inside, so a URL such
+// as a Wikipedia title (`/wiki/Rust_(programming_language)`) is not cut at its `(`. A `)` with no
+// `(` before it in the URL, as in `(see https://…)`, still ends it.
+const TERMINAL_URL = /(https?|HTTPS?):\/\/(?:[^\s"'!*(){}|\\^<>`]|\([^\s"'!*(){}|\\^<>`]*\))*(?:[^\s"':,.!?{}|\\^~\[\]`()<>]|\([^\s"'!*(){}|\\^<>`]*\))/;
 function terminalLinkOpens(event, uri, mac = IS_MAC) {
   const modifier = mac ? !!event?.metaKey : !!event?.ctrlKey;
   if (!modifier || !uri) return false;
@@ -131,7 +135,7 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
     fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new Unicode11Addon.Unicode11Addon());
-    term.loadAddon(new WebLinksAddon.WebLinksAddon(openTerminalLink));
+    term.loadAddon(new WebLinksAddon.WebLinksAddon(openTerminalLink, { urlRegex: TERMINAL_URL }));
     term.unicode.activeVersion = '11';
     term.open(container);
     // On macOS Cmd+K opens the session search even here; every other key, Ctrl+K (readline's kill-line) included, is the agent's.

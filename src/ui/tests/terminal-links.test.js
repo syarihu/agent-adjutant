@@ -10,6 +10,9 @@ const vm = require('node:vm');
 const src = fs.readFileSync(path.join(__dirname, '..', 'terminal.js'), 'utf8');
 const fns = src.match(/function terminalLinkOpens[\s\S]*?\nfunction openTerminalLink[\s\S]*?\n\}\n/);
 assert.ok(fns, 'terminalLinkOpens / openTerminalLink not found in terminal.js');
+const urlBlock = src.match(/^const TERMINAL_URL = .*;$/m);
+assert.ok(urlBlock, 'TERMINAL_URL not found in terminal.js');
+const TERMINAL_URL = vm.runInContext(`${urlBlock[0]}; TERMINAL_URL`, vm.createContext({}));
 const mount = src.match(/function mountSessionTerminal[\s\S]*?\n\}\n(?=\n\/\* A terminal is offered)/);
 assert.ok(mount, 'mountSessionTerminal not found in terminal.js');
 
@@ -57,6 +60,21 @@ test('a link is opened in a tab of its own with no opener, and only when the cli
   assert.deepStrictEqual(opened, [[url, '_blank', 'noopener,noreferrer']]);
 });
 
+test('a URL keeps one balanced pair of parentheses, and drops what only ends the sentence around it', () => {
+  const found = text => (text.match(TERMINAL_URL) || [])[0];
+  assert.strictEqual(found('see https://en.wikipedia.org/wiki/Rust_(programming_language) here'),
+    'https://en.wikipedia.org/wiki/Rust_(programming_language)');
+  assert.strictEqual(found('https://example.com/a_(b)_c'), 'https://example.com/a_(b)_c');
+  assert.strictEqual(found('(see https://example.com/a)'), 'https://example.com/a');
+  assert.strictEqual(found('[PR](https://github.com/o/r/pull/1)'), 'https://github.com/o/r/pull/1');
+  assert.strictEqual(found('at https://example.com/a.'), 'https://example.com/a');
+  assert.strictEqual(found('"https://example.com/q?x=1"'), 'https://example.com/q?x=1');
+  // A long run with no closing parenthesis is matched in linear time.
+  const started = Date.now();
+  found(`https://example.com/${'('.repeat(1) + 'a'.repeat(5000)}`);
+  assert.ok(Date.now() - started < 200);
+});
+
 test('the terminal hands both plain URLs and OSC 8 links to the same opener', async () => {
   let options = null;
   const addons = [];
@@ -73,7 +91,7 @@ test('the terminal hands both plain URLs and OSC 8 links to the same opener', as
     write() {}
     dispose() {}
   }
-  class WebLinks { constructor(handler) { this.handler = handler; } }
+  class WebLinks { constructor(handler, options) { this.handler = handler; this.options = options; } }
   const ctx = vm.createContext({
     loadXterm: () => Promise.resolve(),
     Terminal: FakeTerminal,
@@ -81,6 +99,7 @@ test('the terminal hands both plain URLs and OSC 8 links to the same opener', as
     FitAddon: { FitAddon: class { fit() {} } },
     Unicode11Addon: { Unicode11Addon: class {} },
     WebLinksAddon: { WebLinksAddon: WebLinks },
+    TERMINAL_URL,
     openTerminalLink: (...a) => calls.push(a),
     WebSocket: class { static OPEN = 1; send() {} close() {} },
     ResizeObserver: class { observe() {} disconnect() {} },
@@ -100,6 +119,7 @@ test('the terminal hands both plain URLs and OSC 8 links to the same opener', as
   options.linkHandler.activate(cmd, url, { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } });
   const web = addons.find(a => a instanceof WebLinks);
   assert.ok(web, 'the web-links addon is loaded');
+  assert.strictEqual(web.options.urlRegex, TERMINAL_URL);
   web.handler(cmd, url);
   assert.deepStrictEqual(calls.map(c => c.slice(0, 2)), [[cmd, url], [cmd, url]]);
 });
