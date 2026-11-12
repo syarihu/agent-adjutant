@@ -1339,8 +1339,8 @@ fn the_terminal_assets_are_only_served_by_the_resident_server() {
     assert!(kind.starts_with("text/javascript"));
     assert!(js.starts_with("/*! xterm.js - MIT License"));
     assert!(js.contains("Permission is hereby granted"));
-    // The library and both addons come in the one script, each defining its global.
-    for global in ["Terminal", "FitAddon", "Unicode11Addon"] {
+    // The library and addons come in the one script, each defining its global.
+    for global in ["Terminal", "FitAddon", "Unicode11Addon", "WebLinksAddon"] {
         assert!(js.contains(global), "{global}");
     }
     assert!(!js.contains("sourceMappingURL"));

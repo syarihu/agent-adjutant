@@ -41,6 +41,8 @@ const setup = () => {
     IS_MAC: false,
     FitAddon: { FitAddon: class { fit() {} } },
     Unicode11Addon: { Unicode11Addon: class {} },
+    WebLinksAddon: { WebLinksAddon: class {} },
+    openTerminalLink() {},
     WebSocket: FakeSocket,
     ResizeObserver: class { observe() {} disconnect() {} },
     TextEncoder,

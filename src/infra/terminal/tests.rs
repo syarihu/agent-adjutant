@@ -1910,7 +1910,7 @@ fn the_watch_scripts_address_only_the_board_session() {
 #[test]
 fn the_attach_command_is_gated_on_the_tmux_version() {
     assert_eq!(
-        board_attach_args(Some("adj-test"), "adjboard-1-2", true),
+        board_attach_args(Some("adj-test"), "adjboard-1-2", true, false),
         [
             "-u",
             "-L",
@@ -1924,7 +1924,7 @@ fn the_attach_command_is_gated_on_the_tmux_version() {
         ]
     );
     assert_eq!(
-        board_attach_args(Some("/tmp/t/sock"), "adjboard-1-2", false),
+        board_attach_args(Some("/tmp/t/sock"), "adjboard-1-2", false, false),
         [
             "-u",
             "-S",
@@ -1936,7 +1936,7 @@ fn the_attach_command_is_gated_on_the_tmux_version() {
         ]
     );
     assert_eq!(
-        board_attach_args(None, "adjboard-1-2", true),
+        board_attach_args(None, "adjboard-1-2", true, false),
         [
             "-u",
             "attach-session",
@@ -1947,9 +1947,26 @@ fn the_attach_command_is_gated_on_the_tmux_version() {
             "=adjboard-1-2"
         ]
     );
+    // The hyperlinks feature is the client's own, given before the command.
+    assert_eq!(
+        board_attach_args(Some("adj-test"), "adjboard-1-2", true, true),
+        [
+            "-u",
+            "-T",
+            "hyperlinks",
+            "-L",
+            "adj-test",
+            "attach-session",
+            "-E",
+            "-f",
+            "active-pane",
+            "-t",
+            "=adjboard-1-2"
+        ]
+    );
     // tmux removing a session itself crashes the server, so it is never asked to.
-    for active_pane in [true, false] {
-        let args = board_attach_args(None, "x", active_pane);
+    for (active_pane, hyperlinks) in [(true, true), (false, false)] {
+        let args = board_attach_args(None, "x", active_pane, hyperlinks);
         assert!(!args.iter().any(|a| a.contains("destroy-unattached")));
     }
 }

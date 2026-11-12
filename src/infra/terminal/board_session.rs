@@ -174,11 +174,24 @@ pub fn board_detach_script(socket: Option<&str>, name: &str) -> String {
 /// session's environment alone; `active-pane` (tmux 3.3 and later) keeps the client from
 /// resizing panes it is not looking at.
 ///
+/// `hyperlinks` (tmux 3.4 and later) gives this client's terminal the `hyperlinks` feature with
+/// `-T`: tmux passes an OSC 8 link on only to a client whose terminal has it, and the board's
+/// xterm.js opens them. It is set on this client alone, so the person's `terminal-features`
+/// and their own clients are left as they are.
+///
 /// The session option `destroy-unattached` is deliberately not set: tmux removing the session
 /// itself crashes the server (seen on 3.4, 3.5 and 3.7 on Linux), so removal is left to
 /// `board_release_script` and `board_sweep_script`.
-pub fn board_attach_args(socket: Option<&str>, name: &str, active_pane: bool) -> Vec<String> {
+pub fn board_attach_args(
+    socket: Option<&str>,
+    name: &str,
+    active_pane: bool,
+    hyperlinks: bool,
+) -> Vec<String> {
     let mut args = vec!["-u".to_string()];
+    if hyperlinks {
+        args.extend(["-T".to_string(), "hyperlinks".to_string()]);
+    }
     args.extend(tmux_socket_args(socket));
     args.push("attach-session".to_string());
     args.push("-E".to_string());
