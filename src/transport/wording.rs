@@ -52,6 +52,19 @@ pub const RECORDED: &str = "Kept as a record: nobody is asked to answer it. Do n
                         with your work. If a person sends it back, the answer arrives in \
                         `adj outbox`.";
 
+/// What `adj tell`, `adjutant_tell` and `adj gate answer` say when they leave a message for a
+/// worker that is running but was not woken.
+pub const WORKER_RUNNING: &str =
+    "The worker is running; it will read this the next time it checks its outbox.";
+
+/// What `adj tell` and `adjutant_tell` say when they leave a message for a worker that is not
+/// running.
+pub const WORKER_NOT_RUNNING: &str =
+    "The worker is not running; it will read this the next time it starts.";
+
+/// Why opening a worktree in the editor was refused, as the CLI and the board both say it.
+pub const IDE_NOT_SET: &str = "ide is not set: put your editor command in the config's ide key";
+
 /// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
 /// branch on it the same way whichever it used.
 pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
@@ -344,6 +357,26 @@ mod tests {
             tmux_backend: fatal,
             checked_at: 42,
         }
+    }
+
+    #[test]
+    fn the_shared_worker_sentences_keep_their_words() {
+        assert_eq!(
+            WORKER_RUNNING,
+            "The worker is running; it will read this the next time it checks its outbox."
+        );
+        assert_eq!(
+            WORKER_NOT_RUNNING,
+            "The worker is not running; it will read this the next time it starts."
+        );
+    }
+
+    #[test]
+    fn the_ide_refusal_keeps_its_words() {
+        assert_eq!(
+            IDE_NOT_SET,
+            "ide is not set: put your editor command in the config's ide key"
+        );
     }
 
     #[test]

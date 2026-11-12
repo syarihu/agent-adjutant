@@ -83,7 +83,7 @@ fn with_body(request: &mut GateRequest, body: String) -> Result<(), String> {
     Ok(())
 }
 
-use crate::transport::wording::{RECORDED, open_json};
+use crate::transport::wording::{RECORDED, WORKER_RUNNING, open_json};
 
 pub fn list(args: &GateListArgs) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
@@ -165,9 +165,7 @@ pub fn answer_cmd(args: &GateAnswerArgs) -> Result<(), String> {
     match &told.reached {
         crate::mail::Reached::Woken => println!("Woke the worker."),
         crate::mail::Reached::Running { wake } => {
-            println!(
-                "The worker is running; it will read this the next time it checks its outbox."
-            );
+            println!("{WORKER_RUNNING}");
             if let crate::mail::NotWoken::Held { why: Some(note) } = wake {
                 println!("{}", super::wake_note_sentence(note));
             }
