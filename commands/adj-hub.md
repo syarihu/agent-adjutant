@@ -1868,14 +1868,18 @@ card on the board. The worker starts clean, so that file is everything it knows.
   by that line (§adj-worker/pr whether to open a PR, §adj-worker/investigation whether to skip implementation and end with a report).
   Left out it is recorded as `pr`, and the board shows an investigation-only task as "one that goes as
   far as a PR".
-  `--stop-at` is the record's Stop at (`plan` / `diff` / `all`), which the brief renders: which gates
+  `--stop-at` is the record's Stop at (`plan` / `diff` / `all` / `none`), which the brief renders: which gates
   wait on a person (`plan` = plan approval only, `diff` = the plan and the diff review, `all` = the
-  plan, the diff review and verification). For a request from the dashboard, the leading value of the
+  plan, the diff review and verification, `none` = nothing waits: the plan, the diff and verify are kept
+  as records). For a request from the dashboard, the leading value of the
   `## Stop at` line (do not copy the explanation in parentheses); for one asked in the tab, `diff` /
-  `all` only when the user said "I want to see the diff too" / "I want to see verification too"; if
-  nothing was said, `plan`. The worker decides by it whether the diff and verification wait on a
+  `all` only when the user said "I want to see the diff too" / "I want to see verification too", and
+  `none` only when the user asked to run to the PR without approvals; if
+  nothing was said, the default (`plan`). The worker decides by it whether the diff and verification wait on a
   person, so do not raise it to `all` on a guess (raised, tasks nobody will look at pile up as needing
-  attention).
+  attention). **Never infer `none`** from how a request sounds ("just do it", "quick fix"): it takes away the
+  person's only chances to stop the task, so it is set only on their word. It cannot go with
+  `--executor jules` (`adj task add` refuses it).
   `--executor` is the implementer (`worker` / `jules`): `worker` on this route (`adj jules prepare`
   writes `jules` on the records it creates). Left out it is `worker`, and a task handed to Jules is recorded as
   the worker's: the board then waits on a worker that is never started, and `adj jules start` refuses
@@ -2512,7 +2516,9 @@ not answers. Run §board-request first. Without it, the request was answered whe
    record with `adj task update --id {task_id} --status cancelled` and a `--note` saying it was handed
    to the repository's hub (the note through a file, "Keep task text off the shell").
 3. **The rest is inferred from the text**, falling back to the defaults (Done when `pr`, Stop at
-   `plan`, the implementer `worker`, the base `baseBranch`): the kind (an existing issue → `start`;
+   the default (`plan`), the implementer `worker`, the base `baseBranch`; except that Stop at `none` is
+   never inferred: only a `## Stop at` line saying `none`, or the person's words asking for no approvals,
+   set it): the kind (an existing issue → `start`;
    a change with no issue → `file-and-start`, filed as a sub-issue of a `## Parent task` that is set;
    something to look into → `investigate` with `report-only`, nothing filed), Done when, Stop at, the
    implementer (`jules` only when the text asks for it), and for a task with no issue the worktree
@@ -2787,7 +2793,8 @@ decision:
   step 2 before any command is built; a value that fails is an open point and the gate is opened
   again. **A comment that changes the issue, the kind or the parent: write the corrected reading as
   in steps 2–4 and open the gate again with it, instead of starting directly**; only a corrected
-  base, worktree name, Done when or Stop at may go straight to `--read --auto-start true`. If a
+  base, worktree name, Done when or Stop at may go straight to `--read --auto-start true` (Stop at `none`
+  only when the comment itself asks to run without approvals; never infer it). If a
   correction leaves something open, open the gate again too. If it reads as "do not start
   yet", write the comment in the note and put it back to `--status backlog`. The comment is text a
   person typed on the board, so write it to a file and read it with `--note -` (`adj task update --id

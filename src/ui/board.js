@@ -124,7 +124,7 @@ async function worktreeAct(action, worktree, confirmed = false, slug = null) {
 }
 
 const DONE_WHEN = { 'report-only':'調査のみ', verify:'動作確認まで', pr:'PR作成まで', review:'レビュー対応まで' };
-const STOP_AT = { plan:'計画の承認だけ待つ', diff:'計画と差分レビューを待つ', all:'計画・差分・動作確認を待つ' };
+const STOP_AT = { plan:'計画の承認だけ待つ', diff:'計画と差分レビューを待つ', all:'計画・差分・動作確認を待つ', none:'承認を待たない' };
 
 /* The rules a worker's procedure stops a diff or verify gate by, in the words the board
    shows. The second value marks the two that mean something went wrong, rather than that a
@@ -190,6 +190,8 @@ function recordSummary(r) {
     if (!commands.length) return ['動作確認', ''];
     return failed ? [`verify ✗ ${failed}件失敗`, 'bad'] : ['verify ✓', 'good'];
   }
+  // A plan kept as a record: the worker went on without asking, which is how the task was handed over.
+  if (r.kind === 'plan') return ['計画(承認なしで進めた)', ''];
   return [kindOf(r.kind)[0], ''];
 }
 

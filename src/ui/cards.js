@@ -86,6 +86,13 @@ function openCardTask(task, el) {
   onBoard(slug, () => openTaskDetail((state.tasks || []).find(t => t.id === task.id) || task, el));
 }
 
+/* A task handed over with Stop at none: nothing on it waits for approval, so the card says so up
+   front rather than leaving a person to wonder why no gate ever opens. Empty for any other. */
+function stopAtPillHtml(task) {
+  if (task.stopAt !== 'none') return '';
+  return `<span class="m3-pill pill-neutral" title="計画・差分・動作確認は記録として残るだけで、承認は待たない"><span class="material-symbols-outlined" style="font-size:12px;">fast_forward</span>承認なし</span>`;
+}
+
 function agentCard(task) {
   const el = document.createElement('div');
   // A card of a parent-task hub on the repository's board: read from that hub's records, so
@@ -181,6 +188,7 @@ function agentCard(task) {
   if (task.executor === 'jules' && !task.jules) {
     metaBadges.push(`<span class="m3-pill pill-purple" title="計画の承認後に Jules へ渡す"><span class="material-symbols-outlined" style="font-size:12px;">smart_toy</span>Jules</span>`);
   }
+  if (stopAtPillHtml(task)) metaBadges.push(stopAtPillHtml(task));
   if (!task.autoStart && task.status !== 'done') {
     metaBadges.push(`<span class="m3-pill pill-warn" title="着手前に確認が必要"><span class="material-symbols-outlined" style="font-size:12px;">lock</span>要着手確認</span>`);
   }

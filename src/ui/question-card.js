@@ -46,7 +46,7 @@ function questionAskHtml(g, ctx = {}) {
 
 /* 「前に決まっていること」: only on a diff or verify card, and only when the plan it carries out was answered with a choice or a comment. */
 function questionEarlierHtml(g, ctx = {}) {
-  const plan = ctx.task?.approvedPlan;
+  const plan = planOfTask(ctx.task);
   if (!['diff', 'verify'].includes(g.kind) || !plan) return '';
   const comment = String(plan.comment ?? '').trim();
   const choice = plan.choice ? (plan.choices || []).find(c => c.id === plan.choice) : null;
@@ -178,7 +178,7 @@ function qcPlanHtml(g, ctx, body) {
   // A diff or verify gate opens after the work, and no worker marks the approved steps done yet: until one does, every one reads as done.
   const allDone = after && approved && steps.length > 0 && !steps.some(x => 'done' in x);
   let h = '';
-  if (approved) h += '<div class="qc-note">計画は承認済み</div>';
+  if (approved) h += `<div class="qc-note">${ctx.planIsRecord ? '計画は承認なしで記録' : '計画は承認済み'}</div>`;
   if (steps.length) h += qcStepsHtml(steps, allDone);
   if (decidedIsPlan) h += `<div class="body">${md(g.decided)}</div>`;
   if (planDecided) h += `<div class="body">${md(planDecided)}</div>`;

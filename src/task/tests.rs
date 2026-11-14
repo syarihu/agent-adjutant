@@ -596,6 +596,83 @@ fn the_request_body_says_where_the_task_stops() {
     );
 }
 
+#[test]
+fn none_is_a_stop_point_that_round_trips_and_is_said_in_the_request() {
+    assert_eq!(StopAt::parse("none"), Ok(StopAt::Nothing));
+    for stop_at in [StopAt::Plan, StopAt::Diff, StopAt::All, StopAt::Nothing] {
+        assert_eq!(StopAt::parse(stop_at.as_str()), Ok(stop_at));
+        // The record is written with the same word.
+        assert_eq!(
+            serde_json::to_value(stop_at).unwrap(),
+            json!(stop_at.as_str())
+        );
+    }
+    assert_eq!(StopAt::default(), StopAt::Plan);
+    let mut task = sample();
+    task.stop_at = StopAt::Nothing;
+    assert!(
+        render_request(&task).contains("## Stop at       none (wait for nothing"),
+        "{}",
+        render_request(&task)
+    );
+}
+
+#[test]
+fn stop_at_none_is_refused_with_jules_where_either_half_is_written() {
+    let (_sandbox, ctx) = hub();
+    let new = NewTask {
+        body: "x".to_string(),
+        stop_at: StopAt::Nothing,
+        executor: Executor::Jules,
+        ..NewTask::default()
+    };
+    let Err(err) = create(&ctx, new, false) else {
+        panic!("a task with stop-at none and jules was created");
+    };
+    assert!(
+        err.contains("stop-at none cannot go with executor jules"),
+        "{err}"
+    );
+    assert!(list(&ctx.state, &ctx.repo.slug).is_empty());
+
+    // Changing only one of the two is checked against the other as the record has it.
+    let mut jules = sample();
+    jules.executor = Executor::Jules;
+    save(&ctx, &jules).unwrap();
+    let patch = TaskPatch {
+        stop_at: Some(StopAt::Nothing),
+        ..TaskPatch::default()
+    };
+    let err = update(&ctx, &jules.id, &patch, false).expect_err("refused");
+    assert!(err.contains("stop-at none"), "{err}");
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &jules.id).unwrap().stop_at,
+        StopAt::Plan
+    );
+
+    let mut none = sample();
+    none.id = "none-task".to_string();
+    none.stop_at = StopAt::Nothing;
+    save(&ctx, &none).unwrap();
+    let patch = TaskPatch {
+        executor: Some(Executor::Jules),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &none.id, &patch, false).is_err());
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &none.id).unwrap().executor,
+        Executor::Worker
+    );
+
+    // Both at once, or an unrelated change, is not held to it when the pair is fine.
+    let patch = TaskPatch {
+        stop_at: Some(StopAt::Diff),
+        executor: Some(Executor::Jules),
+        ..TaskPatch::default()
+    };
+    assert!(update(&ctx, &none.id, &patch, false).is_ok());
+}
+
 /// The brief and the request say it in these words, and the worker matches on them.
 #[test]
 fn done_when_prose_is_what_the_request_says() {
@@ -957,11 +1034,11 @@ fn a_stop_point_left_blank_is_the_default_and_anything_unknown_is_refused() {
     );
     assert_eq!(
         NewTask::from_json(&json!({"stopAt": "verify"})).unwrap_err(),
-        "no such stop point: verify (plan, diff or all)"
+        "no such stop point: verify (plan, diff, all or none)"
     );
     assert_eq!(
         StopAt::parse("verify").unwrap_err(),
-        "no such stop point: verify (plan, diff or all)"
+        "no such stop point: verify (plan, diff, all or none)"
     );
     assert_eq!(
         NewTask::from_json(&json!({"stopAt": 1})).unwrap_err(),

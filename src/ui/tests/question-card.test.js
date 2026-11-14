@@ -389,3 +389,15 @@ test('a gate with an HTML report shows 「レポートを開く」 once; a quick
   const quick = { id: 'g3', kind: 'question', title: 'q', focus: '片付ける？', quick: true, choices: [{ id: 'a', label: 'A' }], report: 'r.html' };
   assert.equal(count(all(card(quick)), 'data-qc-open="html-report"'), 0);
 });
+
+test('a plan kept as a record (Stop at none) is not called approved; an approved one still is', () => {
+  const record = { ...planGate, wait: false, decision: undefined };
+  const g = { id: 'd9', kind: 'verify', title: 'V', wait: true, options: [], focus: 'f' };
+  assert.equal(vm.runInContext('planOfTask', ctx)({ records: [record] }), record);
+  const kept = card(g, { task: { ...task, records: [record] }, plan: record, planIsRecord: true });
+  assert.ok(kept.body.includes('Fix tick'));
+  assert.ok(kept.body.includes('計画は承認なしで記録') && !kept.body.includes('承認済み'));
+  const approved = { ...planGate, wait: false, decision: 'approve' };
+  const shown = card(g, { task: { ...task, approvedPlan: approved }, plan: approved });
+  assert.ok(shown.body.includes('計画は承認済み') && !shown.body.includes('承認なしで記録'));
+});

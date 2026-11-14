@@ -60,6 +60,8 @@ impl DoneWhen {
 /// the diff or the check depends on the task, and the worker has no way to tell.
 ///
 /// Each step includes the one before it: nobody asks to look at the check but not the diff.
+/// `Nothing` is the step before the first: no gate waits, and the plan, the diff and the
+/// check are all kept as records.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StopAt {
@@ -70,6 +72,10 @@ pub enum StopAt {
     Diff,
     /// The plan, the diff and the check.
     All,
+    /// Nothing waits: the plan, the diff and the check are kept as records. A check that failed
+    /// and could not be fixed still stops the worker, since there is nothing to carry on with.
+    #[serde(rename = "none")]
+    Nothing,
 }
 
 impl StopAt {
@@ -80,7 +86,12 @@ impl StopAt {
             "plan" => StopAt::Plan,
             "diff" => StopAt::Diff,
             "all" => StopAt::All,
-            _ => return Err(format!("no such stop point: {text} (plan, diff or all)")),
+            "none" => StopAt::Nothing,
+            _ => {
+                return Err(format!(
+                    "no such stop point: {text} (plan, diff, all or none)"
+                ));
+            }
         })
     }
 
@@ -89,6 +100,7 @@ impl StopAt {
             StopAt::Plan => "plan",
             StopAt::Diff => "diff",
             StopAt::All => "all",
+            StopAt::Nothing => "none",
         }
     }
 }
@@ -968,6 +980,8 @@ pub fn render_request(task: &Task) -> String {
             StopAt::Plan => "wait for plan approval only",
             StopAt::Diff => "wait for plan approval and the diff review",
             StopAt::All => "wait for plan approval, the diff review and verification",
+            StopAt::Nothing =>
+                "wait for nothing: the plan, the diff and verify are kept as records",
         }
     ));
     // Only when it is not the worker, so a request reads the way it always has for the tasks

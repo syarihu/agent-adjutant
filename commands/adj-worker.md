@@ -56,8 +56,9 @@ what to tell them, not the words to use.
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
   holds the results, and removal goes through the hub's cleanup alone (§done says how to ask).
 - The task, the parent task, the base branch, Done when, Stop at, the Language and the `verify`
-  commands are in `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all`) is one
-  of the rules that decides whether the diff and the verification wait on a person (§wait-or-record). A brief without that line is read as `plan`.
+  commands are in `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all` / `none`)
+  is one of the rules that decides whether the diff and the verification wait on a person
+  (§wait-or-record); for `none` see below. A brief without that line is read as the default (`plan`).
 - **Do not miss what the hub sends you.** Messages from the hub are read with `adjutant_outbox`
   (they pile up in this worktree's `.claude/adjutant-outbox.md`, one `##` heading each). Direct
   messages between agents are not used because only some coding agents have them; a file stays
@@ -93,6 +94,31 @@ what to tell them, not the words to use.
   task, the branch, the base, Done when, Stop at, the Copilot review line, the Language line and
   `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
   output. The schema is the distributed `config.example.json`.
+
+## When Stop at is `none`
+
+A person asked for the task to run to the end with no approvals: the plan, the diff and verify are
+`"wait": false` records. **This table wins over any section that says otherwise.**
+
+| Where | With `none` |
+| --- | --- |
+| The plan (§plan) | Open it as a `"wait": false` record (with `problem`, `goal`, `steps`), then §implement. |
+| Research `## Open questions` (§tools); self-review entry gate | Do not ask. Take the likelier reading (write it in the plan record's `decided` / `unsure`); take the recommended option (`continue`). |
+| The diff and verify (§self-review, §verify) | Records. What a round limit, no progress, `unsure` or `manual-check` would have stopped on stays in the record (a must `open` in `findings`, `unsure`, `manual`) and in the PR body's notes. |
+| `verify` failed, could not fix | **Still waits** where it failed (diff or verify): `stoppedBy: ["verify-failed"]`. |
+| PR body approval (`skills.createPr` / `skills.prStyle`) | Do not ask. Add a notes part with the row above. |
+| Copilot review `ask` (§pr); which findings to address | Do not ask. Take the recommended option (request it; all `must`). |
+| Giving up on a bot's review | Carry on; say so in the final report. |
+| Offer to mark the PR ready (`gh pr ready`) | Do it. |
+| Offer to save to lk | Do not save; list the candidates in the final report. |
+| The final report | List each confirmation you answered yourself. |
+
+Still asked: a missing Base branch line, a failed `adj pr check-base`, a gate that waits while the
+dashboard is `down`, drafts of replies to human reviewers, cleaning up the worktree (§done), and the `result` gate of an investigation-only task.
+
+A record sent back with `changes` is a person's only brake: read `adjutant_outbox` after opening
+each record and at each phase change (§gate-answer). If `adj gate open` refuses the plan record
+(an older binary does), tell the user and open the plan as a waiting gate.
 
 ## Appendix — Which agent does what
 
@@ -165,11 +191,12 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
    and do not open another plan gate — skip steps 2 and 3 and go on to §implement. It was approved on the
    board as it is written.
 2. Read the code and make an ordered implementation plan.
-3. Show the plan and get it approved before implementing. If asked to change it, change it and
-   confirm again.
+3. Show the plan and get it approved before implementing (unless Stop at is `none`, below). If asked
+   to change it, change it and confirm again.
    **Show it as `kind: "plan"` following §gate.**
    **The approval is taken by this session**; sub-agents cannot talk to the user.
-   **The plan always waits, whatever Stop at says.** Write "what is wrong now" in `problem` and
+   **The plan waits, whatever Stop at says, except for `none`:** then open it with `"wait": false`
+   and go straight on to §implement (see "When Stop at is `none`"). Write "what is wrong now" in `problem` and
    "what things look like when this is done" in `goal`, one to three sentences each, from the
    request and the issue read in step 1. The board's overview shows these, so do not restate the
    steps of the plan.
@@ -194,7 +221,8 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
   art as one research result. Dozens of files of exploration stay out of your context. When it
   comes back:
   1. Show `## Requirements` and `## Acceptance criteria` to the user in a few lines.
-  2. If `## Open questions` is not empty, **ask a person here**. The agent cannot ask. Do not carry
+  2. If `## Open questions` is not empty, **ask a person here** (not when Stop at is `none`: take the
+     likelier reading, as "When Stop at is `none`" says). The agent cannot ask. Do not carry
      them into the plan unresolved. Ask as `kind: "question"` following §gate: put **only what needs deciding** in `focus` (required: a gate that waits is refused
      without it), and list the options in `choices` if there are any. **This is the question asked most often.** Buried in a tab, it stalls for hours
      while the board shows the task as in progress.
@@ -251,7 +279,8 @@ the procedure in `skills.commit` in the config if there is one (if not, as Conve
 without a prefix; match the language of the message to the repository's recent commits).
 
 **Once committed, put the diff on the board as `kind: "diff"`.** Whether it waits on a person or is
-kept as a record and you carry on is decided by the rules in §wait-or-record. **Always
+kept as a record and you carry on is decided by the rules in §wait-or-record (with Stop at `none`,
+a record unless `verify` failed and could not be fixed). **Always
 open one or the other** — carry on without opening a record and nothing says what was reviewed.
 Either way, put the number of rounds, the `verify` result and the lines changed in `facts`,
 `git diff {base ref}...HEAD` in `diff`, the breakdown per round in `reviewRounds`, and the findings
@@ -271,7 +300,8 @@ reported here.
 
 Put the verification on the board as `kind: "verify"`. As in §self-review, whether it waits on a person or is
 kept as a record is decided by the rules in §wait-or-record, and **one or the other is
-always opened**.
+always opened**. With Stop at `none` it is a record, except that a `verify` that failed and could not
+be fixed still waits (`stoppedBy: ["verify-failed"]`; see "When Stop at is `none`").
 
 - Put each `verify` command in `commands`, with its result, how long it took and its output (the
   tail if long). The result of the run after §self-review converged can be used as it is. If you touched the
@@ -319,7 +349,8 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    default branch. Ask the user.** On the route where the hub writes a brief without creating the
    worktree (handing over an existing worktree), nobody has filled that line.
 3. If the config has `skills.createPr`, call it (the title, body, draft and template are its
-   business). Pass it the worktree path, the task's URL, the config's `draftPr` (default `true` =
+   business; with Stop at `none` it is not to ask for approval of the body, and the body gets the
+   notes part from "When Stop at is `none`"). Pass it the worktree path, the task's URL, the config's `draftPr` (default `true` =
    open as a draft) and **the base branch from step 2**. The base is not left to createPr because
    it has no way to know what the hub chose — the decision is written only in the brief. Without
    createPr, open it yourself with `gh pr create --base '<the branch name from step 2>'` (without
@@ -349,9 +380,10 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
      If `request` was approved or chosen, request it in step 7; if `skip`, skip step 7.
    - `always` — request it in step 7 without asking.
    - `never` — do not ask and do not request it. Skip step 7.
+   With Stop at `none`, `ask` is not asked: take `request`.
    If the line is missing, `-`, or any value other than these three, treat it as `ask`. A brief the
    hub did not write this line into (such as handing over an existing worktree) then still asks
-   before requesting, as before.
+   before requesting, as before (with Stop at `none`, that `ask` too takes `request`).
    `reviewBots` says which bots' reviews to wait for; whether to request one is decided by this
    line alone.
 7. To request it, `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`.
@@ -394,7 +426,7 @@ gh pr view <n> -R <codeRepo> --json reviews \
 
 Match against the logins in `reviewBots`. Unlike `gh api .../reviews`, this `.author.login` **has
 no `[bot]` suffix**, so do not compare for an exact match. Every 60 seconds; give up after 10
-minutes and tell the user. After a push (step 5), wait for the count to go past what it was
+minutes and tell the user (with Stop at `none`, do not ask: carry on and say so in the final report). After a push (step 5), wait for the count to go past what it was
 before the push, not merely for one review to exist. Skip this wait only when no bot is going to
 review. Keep the phase at `pr-bots` while you wait, and set `adj phase --set review` once the
 review is in (or you gave up) and you start working through the comments.
@@ -420,7 +452,7 @@ review is in (or you gave up) and you start working through the comments.
    them, and `sections`: the unresolved list, one section per severity (this one is not `quick`:
    it offers a custom selection, so the person needs the list on the board),
    `choices`: e.g. `[{"id": "must", "label": "Address all must findings", "recommended": true}, {"id": "all", "label": "Address all findings (must and want)"}, {"id": "custom", "label": "Custom selection (specify in comment / Other)"}]`).
-   Default: all `must`.
+   Default: all `must`. (With Stop at `none` do not open it: address all `must`.)
    Include the items the agent flagged as **suspected false positives** in the sections, but mark them — Copilot is
    confidently wrong often enough that auto-fixing its findings is how a clean file acquires a bug.
 4. Fix the approved comments **yourself** (`Edit`). If you handed the implementation to another
@@ -436,8 +468,9 @@ review is in (or you gave up) and you start working through the comments.
      in the PR body rather than in the thread.
    - **Human reviewers may be replied to.** Then first read `skills.commentStyle` from the config
      if there is one, show a draft, and post only once it is approved. Do not let an agent post it.
-7. Loop back to step 2 until nothing is unresolved (run `adj phase --set review` again when a new
-   round starts), then offer to mark the PR ready for review (`gh pr ready <n>`). Keep the phase
+7. Loop back to step 2 until nothing is unresolved (with Stop at `none`: until no `must` is; list
+   the findings left unaddressed in the final report) (run `adj phase --set review` again when a new
+   round starts), then offer to mark the PR ready for review (`gh pr ready <n>`; with Stop at `none`, just do it). Keep the phase
    as `pr` (`adj phase --set pr`) while waiting for the next review round.
    **Do not end a turn in `pr-bots`.** It says you are the one waiting for the bots, so the card
    stays on the agents' side (unless the PR itself is the person's turn) and is never flagged, even
@@ -809,6 +842,8 @@ this shape:
 - A `changes` whose `## gate` line says `record` is **a record a person sent back after you had
   moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
   through §self-review again (opening a new gate or record). The record that was sent back stays as it is.
+- A `changes` whose `## gate` line says `record` and names a **plan** record (Stop at `none`): fix the
+  plan, open the plan record again, and bring the implementation in line with it.
 - A `changes` that carries a `## From       AI 下読み …` line is **the person's instruction, chosen from a second reader's notes**: a separate, read-only reader read your PR, and the person kept the points that follow
   (`(AI)` marks a point the reader wrote; the rest the person wrote) and sent them to you. Fix them as you would a record that was sent back, and put the fixed diff through §self-review again.
   The line numbers are of the sha named on that line: if you have pushed since, find the place again before editing. If an `(AI)` point looks wrong, do not skip it silently: say so in `unsure` of the next gate you open.
@@ -824,7 +859,7 @@ this shape:
 <!-- section: wait-or-record -->
 ## Appendix — Wait or record (diff and verify)
 
-`plan` **always waits**, whatever Stop at says. `diff` (§self-review) and `verify` (§verify) wait if even one of
+`plan` waits, whatever Stop at says, except that with `none` it is a record. `diff` (§self-review) and `verify` (§verify) wait if even one of
 the rules below applies, and are kept as a `"wait": false` record and carried on past if none
 does. **Either way, one of a gate or a record is always opened.** Carrying on without opening one
 is not allowed.
@@ -835,18 +870,23 @@ is not allowed.
 | `verify-failed` | `verify` failed and you could not fix it | diff / verify |
 | `manual-check` | `manual` holds something only a person can check (a change on screen and the like) | verify |
 | `unsure` | There is something to write in `unsure` | diff / verify |
-| `stop-at` | The brief's Stop at includes this gate (`diff`: the diff; `all`: the diff and verify) | diff / verify |
+| `stop-at` | The brief's Stop at includes this gate (`diff`: the diff; `all`: the diff and verify; `none` includes no gate) | diff / verify |
+
+With Stop at `none` no rule above stops a gate except `verify-failed`: the other rules are not
+reasons to wait, and what they would have said stays in the record (see "When Stop at is `none`").
+The bullets below about stopping are for every other Stop at.
 
 - **When it waits, put every rule that applied in `stoppedBy`.** The board shows it as "why it
   stopped". A person looks at the reasons and decides whether it is theirs to look at.
 - **Do not swallow things to keep `unsure` empty.** If you were unsure somewhere, write it and
-  stop. Leaving it out because you want a record turns the rule inside out. When self-review
+  stop (with Stop at `none`: write it and carry on). Leaving it out because you want a record turns the rule inside out. When self-review
   stopped on "no progress" with a must left, or stopped early at the entry gate's "fix once" or
   "do not fix" with a must left, write the remaining must here as well. A record is never made
-  while a valid must remains.
+  while a valid must remains (unless Stop at is `none`: then it is a record with the must left
+  `open` in `findings`).
 - **Do not stop for a reason that is not a rule.** "Just to be safe" is not a rule. Whether a person
   wants to look was decided by whoever handed the task over, in Stop at. Conversely, do not make a
-  record when a rule applies.
+  record when a rule applies (unless Stop at is `none`).
 - A record can still be read on the board and sent back with `changes` (§gate-answer).
 
 <!-- section: review-loop -->
@@ -900,7 +940,8 @@ Run round 1 first, show the results in order of severity (High → Medium → Lo
   - **Fix once** (choice: `once`) → fix once, re-review once, and stop.
   - **Do not fix** (choice: `skip`) → skip and move on.
   - In either of the last two, if a valid must is left, stop the diff gate in §self-review on `unsure`
-    (§wait-or-record).
+    (§wait-or-record). With Stop at `none` nothing is asked here (take `continue`), as "When Stop at is
+    `none`" says.
 
 ### One round
 
@@ -936,10 +977,12 @@ Stop when any one holds:
   only wrong ones come back). "No findings" is merely the easy case.
 - **Round limit**: `selfReviewRounds` (default 5). Report "stopped after N rounds" and what remains.
   If a valid must remains, stop the diff gate in §self-review on `round-limit` and ask there whether to go on
-  (put the remaining must in `findings` as `open`).
+  (put the remaining must in `findings` as `open`). With Stop at `none`, do not stop: keep the diff as a
+  record with the must left `open`, and list it in the PR body's notes.
 - **No progress**: a valid finding survived your own fix round untouched, or two findings started
   going back and forth (fixing A brings B back, and vice versa). Another round will not help. Write
-  the remaining must in `unsure`, and stop the diff gate in §self-review on `unsure` to hand it to the user.
+  the remaining must in `unsure`, and stop the diff gate in §self-review on `unsure` to hand it to the user
+  (with Stop at `none`, keep it as a record and list it in the PR body's notes).
 
 ### Final report
 
@@ -954,7 +997,8 @@ Self-review: converged in 3 rounds (engine: R1-2 Claude / R3 codex)
   Open want / scope: <finding>
 ```
 
-The reasons for false positives can be reused. Offer to save them to lk (`lk add … --scope user`).
+The reasons for false positives can be reused. Offer to save them to lk (`lk add … --scope user`);
+with Stop at `none`, do not save, and list them in the final report.
 Later reviews, and codex reading lk directly, stop raising the same false positives.
 
 ### Choosing the review engine (switching on 5h / 7d headroom)

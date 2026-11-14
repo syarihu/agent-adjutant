@@ -56,8 +56,10 @@ impl Kind {
     /// Whether a gate of this kind may be kept as a record instead of waited on.
     ///
     /// Only the two a worker opens after its own checks have run: the review and the check
-    /// can have nothing in them for a person. A plan always waits, and the hub's and the
-    /// question kinds exist to be answered.
+    /// can have nothing in them for a person. A plan waits too, except for a task whose Stop at
+    /// is none; that is decided from the task, in `open`, not by the kind, because the rules
+    /// that follow from this answer (a waiting gate names why, a stop rule applies) are not
+    /// meant for a plan. The hub's and the question kinds exist to be answered.
     pub fn can_be_recorded(self) -> bool {
         matches!(self, Kind::Diff | Kind::Verify)
     }

@@ -8,7 +8,7 @@ use super::{cwd_param, cwd_property, hub_property, repo_property, resolve_repo, 
 pub(super) fn definition() -> Value {
     json!({
         "name": "adjutant_gate_open",
-        "description": "Put something in front of a person on the board, the same as `adj gate open`: the arguments are the gate's payload. By default the gate waits — end your turn and read `adjutant_outbox` when woken; `server` says whether a board is up to see it at all, and when it is `down` ask in your own tab instead. With `wait: false` (diff and verify only) it is kept as a record: nobody is asked, and you go on with your work. A gate that waits needs `focus`, a plan needs `steps`, a result needs `sections` or a body, and a `quick` gate needs `choices` and nothing to read; one that lacks what it needs is refused and nothing is written.",
+        "description": "Put something in front of a person on the board, the same as `adj gate open`: the arguments are the gate's payload. By default the gate waits — end your turn and read `adjutant_outbox` when woken; `server` says whether a board is up to see it at all, and when it is `down` ask in your own tab instead. With `wait: false` (diff and verify, and a plan of a task whose Stop at is none) it is kept as a record: nobody is asked, and you go on with your work. A gate that waits needs `focus`, a plan needs `steps`, a result needs `sections` or a body, and a `quick` gate needs `choices` and nothing to read; one that lacks what it needs is refused and nothing is written.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -17,7 +17,7 @@ pub(super) fn definition() -> Value {
                 "task": { "type": "string", "description": "The task record id from the brief, when there is one." },
                 "worktree": { "type": "string", "description": "Where the answer goes. Default: the worktree `cwd` is in." },
                 "openedBy": { "type": "string", "enum": ["worker", "hub"], "description": "For the hub only; a worker leaves it out. plan only: `hub` when the hub opens the plan of a task handed to Jules, so the answer reaches the hub's inbox rather than the worktree's outbox. Needs task. Default: worker." },
-                "wait": { "type": "boolean", "description": "false to keep a diff or verify gate as a record instead of waiting on it. Default: true." },
+                "wait": { "type": "boolean", "description": "false to keep a diff or verify gate (or a plan, for a task whose Stop at is none) as a record instead of waiting on it. Default: true." },
                 "facts": { "type": "array", "items": { "type": "string" }, "description": "True whatever is decided: rounds run, tests passed, lines changed." },
                 "focus": { "type": "string", "description": "Required when the gate waits: the question, enough to answer from alone." },
                 "decided": { "type": "string", "description": "What is settled. Shown folded away. Not the plan's steps." },
