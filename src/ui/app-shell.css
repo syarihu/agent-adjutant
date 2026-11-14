@@ -86,3 +86,18 @@
 [data-shell="app"] #display-app .app-opacity { display: flex; align-items: center; gap: 8px; }
 [data-shell="app"] #display-app .app-opacity input[type="range"] { flex: 1; }
 [data-shell="app"] #display-app .app-opacity output { min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The title bar: the app's window draws none over the page, so the page runs up to the top edge, under the traffic lights.
+   `--app-titlebar` (set by the app's init script, 0 in full screen) is how tall the title bar is in the page's pixels, and
+   the app lays a transparent strip that tall over the top to move the window by. Everything starts below it, except the
+   rail: it runs up under the strip and the traffic lights, with its own entries starting below them. */
+[data-shell="app"] body { padding-top: var(--app-titlebar, 0px); }
+[data-shell="app"] #nav-rail {
+  margin-top: calc(-1 * var(--app-titlebar, 0px));
+  height: calc(100% + var(--app-titlebar, 0px));
+  padding-top: calc(12px + var(--app-titlebar, 0px));
+}
+/* On a narrow window (a large page zoom) the docked panel floats from the top (shell.css): from below the strip here. */
+@media (max-width: 720px) {
+  [data-shell="app"] body:not(.panel-pop) #task-panel { top: var(--app-titlebar, 0px); }
+}
