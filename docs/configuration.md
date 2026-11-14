@@ -111,3 +111,14 @@ A config that sets only `terminal.spawn` keeps its own spawn, but focus, close a
   - Sessions waiting on permission prompts or user questions for more than a few seconds
   - Newly opened gates
   - Note: Notifications are suppressed if a web board tab is open and actively polling.
+
+---
+
+## Who Merges a Worker's PR (`merge`)
+
+`merge` is set per repository (or under `defaults`):
+
+- `"person"` (default): the person merges the PR a worker opens. A worker that has finished asks its hub to clean up the worktree, and that request waits for the person's answer.
+- `"hub"`: the hub merges it. When the worker says the PR is ready (no open `must` finding, `verify` passed, review bots handled), it sends `done` without the cleanup gate and the hub merges once the PR is open and not a draft, its checks have passed, it is `CLEAN` against its base, and nothing has been added to it since the `done` was sent. It merges with a merge commit (`gh pr merge --merge`), then removes the worktree. Anything it cannot settle itself (a review still owed, a merge GitHub refuses, checks still pending after 30 minutes) is left for the person; what the worker can fix (red CI, a late review) is sent back to it.
+
+The hub reads `merge` from its own config, not from what a worker writes. Any other value is reported in `warnings` and treated as `"person"`.

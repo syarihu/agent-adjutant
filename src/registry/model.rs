@@ -331,8 +331,9 @@ pub(super) fn append_phase(record: &mut WorkerRecord, phase: &str, at: i64) {
 
 /// The steps a worker says it is in. A fixed list so the board can show them in order and a
 /// typo is refused rather than shown as a phase of its own. `pr-bots` is a PR waiting on review
-/// bots, which nobody has to act on; `pr` is one handed to human reviewers.
-pub const PHASES: [&str; 8] = [
+/// bots, which nobody has to act on; `pr` is one handed to human reviewers; `merge` is one the
+/// worker has handed to the hub to merge (`merge: hub`), and the worker has nothing left to do.
+pub const PHASES: [&str; 9] = [
     "plan",
     "implement",
     "self-review",
@@ -341,6 +342,7 @@ pub const PHASES: [&str; 8] = [
     "pr-bots",
     "review",
     "report",
+    "merge",
 ];
 
 /// What is kept of the agent's last message of a turn (`lastMessage`): a paragraph or two, line

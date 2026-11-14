@@ -37,10 +37,11 @@ in `agentColOf` ([#809](https://github.com/syarihu/agent-adjutant/issues/809) sp
 4. The phase `self-review` / `verify` → `ai`.
 5. With a PR (or status `pr`): `prStatus.state` `merged` → `done`; an open PR with `prStatus.review`
    `approved` → `merge` (the review decides, so CI pending or failed does not move it); `prStatus.review`
-   `required`, or the phase `review` → `rev`; otherwise → `ai` (the bots and CI are still reading, or
+   `required`, or the phase `review` → `rev`; an open PR whose worker is in the phase `merge` (it handed the
+   PR to the hub to merge, `merge: hub`) → `merge`, unless a person's turn put it in `me` by rule 2; otherwise → `ai` (the bots and CI are still reading, or
    a draft that does not wait on the person). It is the review that decides, not `prTurn === 'checks'`:
    CI pending outranks the review in `prTurn`, which would move a card between columns on every push.
-6. The phase `pr` / `report` with no PR yet → `ai`; the phase `review` with no PR → `rev`; anything
+6. The phase `pr` / `report` with no PR yet → `ai`; the phase `merge` → `merge`; the phase `review` with no PR → `rev`; anything
    else → `work`.
 
 A Jules task (`executor` is `jules`, or it has a `julesSession`) follows rule 2, then, once it has a
@@ -49,7 +50,7 @@ PR, rule 5; before that, `COMPLETED` → `ai`, a Jules state of `QUEUED` / `PLAN
 else an open `diff` or `verify` gate → `ai`, else `work`.
 
 A worker with no card (a bare session) goes by `AGENT_COL_OF_PHASE` (`plan` and `implement` →
-`work`; `self-review`, `verify`, `pr`, `pr-bots` and `report` → `ai`; `review` → `rev`), or `work`
+`work`; `self-review`, `verify`, `pr`, `pr-bots` and `report` → `ai`; `review` → `rev`; `merge` → `merge`), or `work`
 when it has no phase (`bareCol` in `src/ui/board.js`); never `me`, which is for cards. Only the
 coverage of the phases is tested on the Rust side (every phase has an entry in
 `AGENT_COL_OF_PHASE`); the precedence above is covered by `src/ui/tests/board-stages.test.js`.
@@ -118,7 +119,7 @@ use it are unaffected. Each fact's value is one word, or absent.
 |---|---|---|
 | `status` | `backlog`, `queued`, `dispatched`, `pr`, `done`, `cancelled` | `task::Status` |
 | `step` | `plan`, `implement`, `self-review`, `pr` | Derived (below) |
-| `phase` | `plan`, `implement`, `self-review`, `verify`, `pr`, `pr-bots`, `review`, `report` | The worker row's phase (`registry::PHASES`) |
+| `phase` | `plan`, `implement`, `self-review`, `verify`, `pr`, `pr-bots`, `review`, `report`, `merge` | The worker row's phase (`registry::PHASES`) |
 | `executor` | `worker`, `jules` | `task::Executor` (`jules` also when there is a `julesSession`) |
 | `jules` | Jules's state, lower case with `_` as `-` (`IN_PROGRESS` is `in-progress`); an open set, which the layout check does not hold to a list | The Jules session, for a Jules task |
 | `work` | `implement`, `investigate`, `design`, and any added in config | The task's new `work` field ([below](#what-kind-of-work-a-task-is)) |

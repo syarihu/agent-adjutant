@@ -7,7 +7,7 @@
    running is read this way: with no row the window's activity says nothing, since a resize redraws it. */
 const IDLE_AFTER_SECS = 60;
 /* The phases at which a worker that is gone has finished rather than stopped (see stuckOf). */
-const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report'];
+const FINISHED_PHASES = ['pr', 'pr-bots', 'review', 'report', 'merge'];
 /* What a `permission` session is called where it is drawn from its own session. The ledger's
    `waiting` also covers other dialogs the agent asks, so it is 許可待ち only with a request to
    say what is asked; the tables below hold the neutral word, for where there is no session. */

@@ -176,6 +176,7 @@ pub fn write_brief(ctx: &Context, request: &BriefRequest) -> Result<Brief, Strin
                     .filter(|note| !note.trim().is_empty())
                     .unwrap_or_else(|| "-".to_string()),
                 copilot_review: ctx.settings.copilot_review.as_str().to_string(),
+                merge: ctx.settings.merge.as_str().to_string(),
                 language,
                 verify: ctx.settings.verify.clone(),
             })

@@ -29,6 +29,32 @@ impl CopilotReview {
     }
 }
 
+/// Who merges the PR a worker opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Merge {
+    Person,
+    Hub,
+}
+
+impl Merge {
+    /// How the brief writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Merge::Person => "person",
+            Merge::Hub => "hub",
+        }
+    }
+
+    /// Anything but "hub" is `Person`, so a typo never hands the merge to the hub;
+    /// `resolve_from_value` warns about it.
+    fn read(value: Option<&Value>) -> Self {
+        match value.and_then(Value::as_str) {
+            Some("hub") => Merge::Hub,
+            _ => Merge::Person,
+        }
+    }
+}
+
 /// Which engine reads the diff in a self-review round.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewEngine {
@@ -150,11 +176,13 @@ pub struct Settings {
     /// to it in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Skipped when serialising, with the four below: the resolved `config` printed next to
+    /// Skipped when serialising, with the five below: the resolved `config` printed next to
     /// `settings` already carries these keys, and a second copy would be two answers to one
     /// question (see the note on `ide` in `defaults.rs`).
     #[serde(skip)]
     pub copilot_review: CopilotReview,
+    #[serde(skip)]
+    pub merge: Merge,
     /// Commands the worker runs before it reports. Empty for an unregistered repo.
     #[serde(skip)]
     pub verify: Vec<String>,
@@ -177,6 +205,7 @@ impl Settings {
         sources: &[Value],
     ) {
         self.copilot_review = CopilotReview::read(resolved.get("copilotReview"));
+        self.merge = Merge::read(resolved.get("merge"));
         self.verify = resolved
             .get("verify")
             .and_then(Value::as_array)
@@ -221,6 +250,7 @@ impl Default for Settings {
             jules_key: Hook::default(),
             language: None,
             copilot_review: CopilotReview::Ask,
+            merge: Merge::Person,
             verify: Vec::new(),
             review_engine: ReviewEngine::Auto,
             issue_keys: serde_json::Map::new(),

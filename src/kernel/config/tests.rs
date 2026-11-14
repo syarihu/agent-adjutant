@@ -151,6 +151,45 @@ fn copilot_review_is_set_per_repo_over_defaults() {
 }
 
 #[test]
+fn merge_defaults_to_person_and_is_set_per_repo() {
+    let (config, _, _) = resolve(
+        json!({"repos": {"acme/app": {"taskSource": "github", "issueRepo": "acme/app",
+               "issueKeys": {"acme/app": "WID"}, "ide": "code"}}}),
+        "acme/app",
+    );
+    assert_eq!(config.unwrap()["merge"], "person");
+
+    let (config, _, warnings) = resolve(
+        json!({
+            "defaults": {"merge": "person"},
+            "repos": {"acme/app": {"taskSource": "github", "issueRepo": "acme/app",
+                "issueKeys": {"acme/app": "WID"}, "ide": "code", "merge": "hub"}}
+        }),
+        "acme/app",
+    );
+    assert_eq!(config.unwrap()["merge"], "hub");
+    assert!(!warnings.iter().any(|w| w.contains("merge ")));
+}
+
+#[test]
+fn an_unknown_merge_value_is_reported() {
+    for value in [json!("hubb"), json!(true)] {
+        let (_, _, warnings) = resolve(
+            json!({"repos": {"acme/app": {"taskSource": "github", "issueRepo": "acme/app",
+                   "issueKeys": {"acme/app": "WID"}, "ide": "code",
+                   "merge": value}}}),
+            "acme/app",
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("merge") && w.contains("treated as person")),
+            "no warning for {value}: {warnings:?}"
+        );
+    }
+}
+
+#[test]
 fn an_unknown_copilot_review_value_is_reported() {
     for value in [json!("alway"), json!(true)] {
         let (_, _, warnings) = resolve(
@@ -1077,6 +1116,27 @@ fn an_unknown_copilot_review_value_is_read_as_ask() {
         "acme/app",
     );
     assert_eq!(settings.copilot_review, CopilotReview::Ask);
+}
+
+#[test]
+fn merge_is_read_as_hub_only_when_it_says_hub() {
+    for (value, expected) in [
+        (json!("hub"), Merge::Hub),
+        (json!("person"), Merge::Person),
+        (json!("Hub"), Merge::Person),
+        (json!("hubb"), Merge::Person),
+        (json!(true), Merge::Person),
+    ] {
+        let (_, settings, _) = resolve(
+            json!({"repos": {"acme/app": app(json!({"merge": value}))}}),
+            "acme/app",
+        );
+        assert_eq!(settings.merge, expected, "{value}");
+    }
+    let (_, settings, _) = resolve(json!({"repos": {"acme/app": app(json!({}))}}), "acme/app");
+    assert_eq!(settings.merge, Merge::Person);
+    assert_eq!(Merge::Hub.as_str(), "hub");
+    assert_eq!(Merge::Person.as_str(), "person");
 }
 
 #[test]
