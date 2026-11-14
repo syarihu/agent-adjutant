@@ -95,6 +95,7 @@ test('the terminal hands both plain URLs and OSC 8 links to the same opener', as
   const ctx = vm.createContext({
     loadXterm: () => Promise.resolve(),
     Terminal: FakeTerminal,
+    appShellTerminalOptions: () => ({}),
     IS_MAC: true,
     FitAddon: { FitAddon: class { fit() {} } },
     Unicode11Addon: { Unicode11Addon: class {} },
