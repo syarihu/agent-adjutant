@@ -1,7 +1,9 @@
 //! The app's own settings file, `settings.json` in the app config directory.
 //!
-//! Keys: `adjPath` (the `adj` to run), `translucency` ("off" | "weak" | "strong"), `shortcut`
-//! (the global shortcut; `null` or "" turns it off) and `zoom` (the board's page zoom, 1 is 100%).
+//! Keys: `adjPath` (the `adj` to run), `background` ("material" | "none"), `opacity` (the board's
+//! surfaces, 0.3 to 1), `shortcut` (the global shortcut; `null` or "" turns it off) and `zoom` (the
+//! board's page zoom, 1 is 100%). The older `translucency` ("off" | "weak" | "strong") is read for
+//! the opacity while `opacity` is not there yet, and is left in the file as it is.
 //! Read leniently: a key that is missing or malformed falls back to its default, so a hand edit
 //! never keeps the app from starting.
 
@@ -16,43 +18,60 @@ use tauri::{AppHandle, Manager};
 
 pub const DEFAULT_SHORTCUT: &str = "Control+Alt+Super+B";
 
+/// What the window shows behind the board's surfaces.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Level {
-    Off,
-    Weak,
-    Strong,
+pub enum Background {
+    /// The macOS material (vibrancy): whatever is behind the window is blurred.
+    Material,
+    /// No effect: the windows behind show as they are.
+    Clear,
 }
 
-impl Level {
-    pub const ALL: [Level; 3] = [Level::Off, Level::Weak, Level::Strong];
+impl Background {
+    pub const ALL: [Background; 2] = [Background::Material, Background::Clear];
 
     pub fn key(self) -> &'static str {
         match self {
-            Level::Off => "off",
-            Level::Weak => "weak",
-            Level::Strong => "strong",
+            Background::Material => "material",
+            Background::Clear => "none",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Level::Off => "なし",
-            Level::Weak => "弱",
-            Level::Strong => "強",
+            Background::Material => "マテリアル（ぼかし）",
+            Background::Clear => "ぼかしなし",
         }
     }
 
-    /// How opaque the board's big surfaces stay; 1 is the browser's look.
-    pub fn alpha(self) -> f64 {
-        match self {
-            Level::Off => 1.0,
-            Level::Weak => 0.82,
-            Level::Strong => 0.55,
-        }
+    pub fn from_key(key: &str) -> Option<Background> {
+        Background::ALL.into_iter().find(|b| b.key() == key)
     }
+}
 
-    pub fn from_key(key: &str) -> Option<Level> {
-        Level::ALL.into_iter().find(|level| level.key() == key)
+/// How opaque the board's big surfaces stay (`--app-alpha`); 1 is the browser's look. Below the
+/// minimum, text over the windows behind (with no blur in between) can no longer be read.
+pub const MIN_OPACITY: f64 = 0.3;
+pub const MAX_OPACITY: f64 = 1.0;
+pub const DEFAULT_OPACITY: f64 = 0.82;
+
+/// An opacity from the file or the page: a number outside the range is brought back to its
+/// nearest end, and anything that is not a finite number is the default.
+pub fn clamp_opacity(opacity: f64) -> f64 {
+    if opacity.is_finite() {
+        opacity.clamp(MIN_OPACITY, MAX_OPACITY)
+    } else {
+        DEFAULT_OPACITY
+    }
+}
+
+/// The opacity the three fixed levels of the old `translucency` key stood for.
+fn legacy_opacity(level: &str) -> Option<f64> {
+    match level {
+        "off" => Some(1.0),
+        "weak" => Some(0.82),
+        "strong" => Some(0.55),
+        _ => None,
     }
 }
 
@@ -96,7 +115,8 @@ pub fn zoom_out(zoom: f64) -> f64 {
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub adj_path: Option<String>,
-    pub translucency: Level,
+    pub background: Background,
+    pub opacity: f64,
     pub shortcut: Option<String>,
     pub zoom: f64,
 }
@@ -141,11 +161,20 @@ fn from_map(map: &Map<String, Value>) -> Settings {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned);
-    let translucency = map
-        .get("translucency")
+    let background = map
+        .get("background")
         .and_then(Value::as_str)
-        .and_then(Level::from_key)
-        .unwrap_or(Level::Weak);
+        .and_then(Background::from_key)
+        .unwrap_or(Background::Material);
+    // An opacity that is not a number (null included) counts as not there, so the old level still stands in.
+    let opacity = match map.get("opacity").and_then(Value::as_f64) {
+        Some(opacity) => clamp_opacity(opacity),
+        None => map
+            .get("translucency")
+            .and_then(Value::as_str)
+            .and_then(legacy_opacity)
+            .unwrap_or(DEFAULT_OPACITY),
+    };
     let shortcut = match map.get("shortcut") {
         None => Some(DEFAULT_SHORTCUT.to_owned()),
         Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_owned()),
@@ -158,15 +187,21 @@ fn from_map(map: &Map<String, Value>) -> Settings {
         .map_or(1.0, clamp_zoom);
     Settings {
         adj_path,
-        translucency,
+        background,
+        opacity,
         shortcut,
         zoom,
     }
 }
 
 /// Each save writes its one key back and leaves every other key as the person wrote it.
-pub fn save_translucency(app: &AppHandle, level: Level) -> Result<(), String> {
-    save_key(app, "translucency", Value::String(level.key().into()))
+pub fn save_background(app: &AppHandle, background: Background) -> Result<(), String> {
+    save_key(app, "background", Value::String(background.key().into()))
+}
+
+pub fn save_opacity(app: &AppHandle, opacity: f64) -> Result<(), String> {
+    let value = serde_json::Number::from_f64(opacity).ok_or("不透明度が数値ではありません")?;
+    save_key(app, "opacity", Value::Number(value))
 }
 
 pub fn save_zoom(app: &AppHandle, zoom: f64) -> Result<(), String> {
@@ -206,7 +241,8 @@ mod tests {
     #[test]
     fn defaults_when_empty() {
         let s = parse("{}");
-        assert_eq!(s.translucency, Level::Weak);
+        assert_eq!(s.background, Background::Material);
+        assert_eq!(s.opacity, DEFAULT_OPACITY);
         assert_eq!(s.shortcut.as_deref(), Some(DEFAULT_SHORTCUT));
         assert_eq!(s.adj_path, None);
         assert_eq!(s.zoom, 1.0);
@@ -244,9 +280,65 @@ mod tests {
 
     #[test]
     fn malformed_values_fall_back() {
-        let s = parse(r#"{"translucency": "lots", "adjPath": 3}"#);
-        assert_eq!(s.translucency, Level::Weak);
+        let s = parse(r#"{"background": "glass", "translucency": "lots", "adjPath": 3}"#);
+        assert_eq!(s.background, Background::Material);
+        assert_eq!(s.opacity, DEFAULT_OPACITY);
         assert_eq!(s.adj_path, None);
+    }
+
+    #[test]
+    fn background_is_read() {
+        assert_eq!(
+            parse(r#"{"background": "none"}"#).background,
+            Background::Clear
+        );
+        assert_eq!(
+            parse(r#"{"background": "material"}"#).background,
+            Background::Material
+        );
+        assert_eq!(
+            parse(r#"{"background": 1}"#).background,
+            Background::Material
+        );
+    }
+
+    #[test]
+    fn opacity_is_read_and_kept_in_range() {
+        assert_eq!(parse(r#"{"opacity": 0.6}"#).opacity, 0.6);
+        assert_eq!(parse(r#"{"opacity": 1}"#).opacity, 1.0);
+        assert_eq!(parse(r#"{"opacity": 0.1}"#).opacity, MIN_OPACITY);
+        assert_eq!(parse(r#"{"opacity": 5}"#).opacity, MAX_OPACITY);
+        for bad in [r#""half""#, "null", "true", "[1]"] {
+            assert_eq!(
+                parse(&format!(r#"{{"opacity": {bad}}}"#)).opacity,
+                DEFAULT_OPACITY,
+                "{bad}"
+            );
+        }
+        assert_eq!(clamp_opacity(f64::NAN), DEFAULT_OPACITY);
+        assert_eq!(clamp_opacity(f64::INFINITY), DEFAULT_OPACITY);
+    }
+
+    #[test]
+    fn the_old_translucency_level_stands_in_until_opacity_is_saved() {
+        assert_eq!(parse(r#"{"translucency": "off"}"#).opacity, 1.0);
+        assert_eq!(parse(r#"{"translucency": "weak"}"#).opacity, 0.82);
+        assert_eq!(parse(r#"{"translucency": "strong"}"#).opacity, 0.55);
+        // An opacity that is not a number is not there.
+        assert_eq!(
+            parse(r#"{"translucency": "strong", "opacity": null}"#).opacity,
+            0.55
+        );
+        // Once the slider has saved an opacity, the old level no longer counts.
+        assert_eq!(
+            parse(r#"{"translucency": "strong", "opacity": 0.9}"#).opacity,
+            0.9
+        );
+        // The old level never chose the background: the material stays.
+        assert_eq!(
+            parse(r#"{"translucency": "off"}"#).background,
+            Background::Material
+        );
     }
 
     #[test]

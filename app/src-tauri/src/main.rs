@@ -2,8 +2,8 @@
 //!
 //! The board is the resident server's own page, loaded into the window straight over http: its
 //! token and its Origin checks only hold for the server's own origin. The app finds (or starts)
-//! the server, keeps the window on it, and adds what a browser tab cannot: vibrancy, native
-//! notifications, a Dock badge and a global shortcut.
+//! the server, keeps the window on it, and adds what a browser tab cannot: a translucent window
+//! (with or without the macOS material behind it), native notifications, a Dock badge and a global shortcut.
 
 // No console window for a release build on every platform that has one.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -22,7 +22,7 @@ use std::{
 };
 
 use serde::Serialize;
-use settings::Level;
+use settings::Background;
 use tauri::{
     AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
@@ -60,8 +60,8 @@ struct AppState {
     status: Mutex<Status>,
     /// The one port the window may show: the board server's. Anything else is the browser's.
     port: Mutex<Option<u16>>,
-    level: Mutex<Level>,
-    translucency_items: Mutex<Vec<(Level, CheckMenuItem<tauri::Wry>)>>,
+    appearance: Mutex<Appearance>,
+    background_items: Mutex<Vec<(Background, CheckMenuItem<tauri::Wry>)>>,
     /// The page zoom the window shows the board at, 1 being 100%.
     zoom: Mutex<f64>,
     discovering: AtomicBool,
@@ -71,6 +71,39 @@ struct AppState {
     /// Notifications shown and not yet clicked (see `MAX_WAITING`), and the next number to give.
     waiting: Mutex<Vec<(i32, Instant)>>,
     next_notification: AtomicI32,
+}
+
+/// What the window shows behind the board, and how opaque the board's surfaces stay over it.
+#[derive(Clone, Copy)]
+struct Appearance {
+    background: Background,
+    opacity: f64,
+}
+
+/// The appearance as the page reads it (shell.js and the board's display settings).
+#[derive(Clone, Serialize)]
+struct AppearanceView {
+    background: &'static str,
+    alpha: f64,
+    #[serde(rename = "minAlpha")]
+    min_alpha: f64,
+    #[serde(rename = "maxAlpha")]
+    max_alpha: f64,
+}
+
+impl Appearance {
+    fn view(self) -> AppearanceView {
+        AppearanceView {
+            background: self.background.key(),
+            alpha: self.opacity,
+            min_alpha: settings::MIN_OPACITY,
+            max_alpha: settings::MAX_OPACITY,
+        }
+    }
+
+    fn json(self) -> String {
+        serde_json::to_string(&self.view()).expect("the appearance serialises")
+    }
 }
 
 fn set_status(app: &AppHandle, state: Phase, message: impl Into<String>) {
@@ -196,6 +229,23 @@ fn zoom(app: AppHandle, direction: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The board's display settings (app-appearance.js): either half of the appearance, or both. The
+/// slider sends every step as it moves with `persist` false, and the last one with it true, so the
+/// file is written once per drag. A background is always saved. A save that fails is reported to
+/// the page, which shows it; what the window shows has changed all the same.
+#[tauri::command]
+fn set_appearance(
+    app: AppHandle,
+    background: Option<String>,
+    opacity: Option<f64>,
+    persist: bool,
+) -> Result<AppearanceView, String> {
+    let background = background
+        .map(|key| Background::from_key(&key).ok_or("unknown background"))
+        .transpose()?;
+    change_appearance(&app, background, opacity, persist).map(Appearance::view)
+}
+
 // ── Window ──
 
 fn show_main(app: &AppHandle) {
@@ -220,16 +270,79 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
-fn shell_script(alpha: f64) -> String {
-    SHELL_JS.replace("__ALPHA__", &alpha.to_string())
+fn shell_script(appearance: Appearance) -> String {
+    SHELL_JS.replace("__APPEARANCE__", &appearance.json())
 }
 
-/// Puts the translucency on the page that is showing (a page that is not the board ignores it).
-fn apply_translucency(window: &WebviewWindow, level: Level) {
+/// The window effect behind the page: the material blurs what is behind the window, and with no
+/// effect the transparent window shows it as it is. Switched on the open window, no new one needed.
+fn effects(background: Background) -> Option<tauri::utils::config::WindowEffectsConfig> {
+    match background {
+        Background::Material => Some(
+            EffectsBuilder::new()
+                .effect(Effect::UnderWindowBackground)
+                .state(EffectState::Active)
+                .build(),
+        ),
+        Background::Clear => None,
+    }
+}
+
+fn apply_background(window: &WebviewWindow, background: Background) {
+    if let Err(e) = window.set_effects(effects(background)) {
+        eprintln!("background: {e}");
+    }
+}
+
+/// Puts the appearance on the page that is showing (a page that is not the board ignores it).
+fn apply_appearance(window: &WebviewWindow, appearance: Appearance) {
     let _ = window.eval(format!(
         "window.__adjShell && window.__adjShell({})",
-        level.alpha()
+        appearance.json()
     ));
+}
+
+/// Changes the background, the opacity or both, from the menu or the board, and shows it: the
+/// window's effect (when the background changed), the menu's check marks and the page. The lock is
+/// held throughout, as in `change_zoom`, so that two changes at once save and show in one order.
+/// A background is saved even when it is the one already shown, so that choosing it again retries
+/// a save that failed. The change is shown whether or not it could be saved, and a failed save
+/// comes back as the error.
+fn change_appearance(
+    app: &AppHandle,
+    background: Option<Background>,
+    opacity: Option<f64>,
+    persist: bool,
+) -> Result<Appearance, String> {
+    let state = app.state::<AppState>();
+    let mut appearance = state.appearance.lock().unwrap();
+    let window = app.get_webview_window(MAIN);
+    let mut saved = Ok(());
+    if let Some(background) = background {
+        if background != appearance.background {
+            appearance.background = background;
+            for (b, item) in state.background_items.lock().unwrap().iter() {
+                let _ = item.set_checked(*b == background);
+            }
+            if let Some(window) = &window {
+                apply_background(window, background);
+            }
+        }
+        saved = settings::save_background(app, background);
+    }
+    if let Some(opacity) = opacity {
+        appearance.opacity = settings::clamp_opacity(opacity);
+        if persist && saved.is_ok() {
+            saved = settings::save_opacity(app, appearance.opacity);
+        }
+    }
+    if let Some(window) = &window {
+        apply_appearance(window, *appearance);
+    }
+    if let Err(e) = &saved {
+        eprintln!("settings: {e}");
+    }
+    saved.map(|()| *appearance)
 }
 
 /// Puts the page zoom on the window. WebKit keeps it on the view across loads, and it is put on
@@ -313,7 +426,7 @@ fn badge_count(title: &str) -> Option<i64> {
     digits.parse::<i64>().ok().filter(|n| *n > 0)
 }
 
-fn create_window(app: &AppHandle, level: Level, zoom: f64) -> tauri::Result<()> {
+fn create_window(app: &AppHandle, appearance: Appearance, zoom: f64) -> tauri::Result<()> {
     let notification = NOTIFICATION_JS.replace(
         "__PERMISSION__",
         app.notification()
@@ -321,22 +434,20 @@ fn create_window(app: &AppHandle, level: Level, zoom: f64) -> tauri::Result<()> 
             .map(permission_word)
             .unwrap_or("default"),
     );
-    let script = format!("{}\n{}", shell_script(level.alpha()), notification);
+    let script = format!("{}\n{}", shell_script(appearance), notification);
 
     let on_navigation = app.clone();
     let on_new_window = app.clone();
-    let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
         .title("Adjutant")
         .inner_size(1440.0, 900.0)
         .min_inner_size(900.0, 600.0)
         .transparent(true)
-        .background_color(Color(0, 0, 0, 0))
-        .effects(
-            EffectsBuilder::new()
-                .effect(Effect::UnderWindowBackground)
-                .state(EffectState::Active)
-                .build(),
-        )
+        .background_color(Color(0, 0, 0, 0));
+    if let Some(effects) = effects(appearance.background) {
+        builder = builder.effects(effects);
+    }
+    let window = builder
         // A board in a window nobody is looking at must go on reading the server's events.
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(script)
@@ -456,28 +567,29 @@ fn watch_server(app: &AppHandle) {
 
 // ── Menu ──
 
-fn build_menu(app: &AppHandle, level: Level) -> tauri::Result<Menu<tauri::Wry>> {
+fn build_menu(app: &AppHandle, background: Background) -> tauri::Result<Menu<tauri::Wry>> {
     // The default menu keeps App / Edit / Window, so that Cmd+C, V, X, A and Z reach the page.
     let menu = Menu::default(app)?;
-    let items = Level::ALL
+    // Only the background: the opacity is a slider in the board's display settings.
+    let items = Background::ALL
         .into_iter()
-        .map(|l| {
+        .map(|b| {
             CheckMenuItem::with_id(
                 app,
-                format!("translucency:{}", l.key()),
-                l.label(),
+                format!("background:{}", b.key()),
+                b.label(),
                 true,
-                l == level,
+                b == background,
                 None::<&str>,
             )
-            .map(|item| (l, item))
+            .map(|item| (b, item))
         })
         .collect::<tauri::Result<Vec<_>>>()?;
-    let submenu = Submenu::with_id(app, "translucency", "透過", true)?;
+    let submenu = Submenu::with_id(app, "background", "背景", true)?;
     for (_, item) in &items {
         submenu.append(item)?;
     }
-    *app.state::<AppState>().translucency_items.lock().unwrap() = items;
+    *app.state::<AppState>().background_items.lock().unwrap() = items;
 
     // As in a browser. Cmd++ (the key that types +) is caught by the page: see the `zoom` command.
     let zoom_items = [
@@ -524,25 +636,27 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         change_zoom(app, change);
         return;
     }
-    let Some(level) = event
+    let Some(background) = event
         .id()
         .as_ref()
-        .strip_prefix("translucency:")
-        .and_then(Level::from_key)
+        .strip_prefix("background:")
+        .and_then(Background::from_key)
     else {
         return;
     };
-    let state = app.state::<AppState>();
-    *state.level.lock().unwrap() = level;
-    for (l, item) in state.translucency_items.lock().unwrap().iter() {
-        let _ = item.set_checked(*l == level);
+    // A check item flips its own mark when clicked: clicking the one already chosen would clear
+    // it, so the marks are put back even when nothing else changes.
+    for (b, item) in app
+        .state::<AppState>()
+        .background_items
+        .lock()
+        .unwrap()
+        .iter()
+    {
+        let _ = item.set_checked(*b == background);
     }
-    if let Err(e) = settings::save_translucency(app, level) {
-        eprintln!("settings: {e}");
-    }
-    if let Some(window) = app.get_webview_window(MAIN) {
-        apply_translucency(&window, level);
-    }
+    // A failed save is already logged, and the menu has nowhere to show it.
+    let _ = change_appearance(app, Some(background), None, true);
 }
 
 fn register_shortcut(app: &AppHandle, shortcut: Option<&str>) {
@@ -602,7 +716,8 @@ fn main() {
             notification_permission,
             request_notification_permission,
             focus_window,
-            zoom
+            zoom,
+            set_appearance
         ])
         .on_menu_event(on_menu_event)
         // The page's process died (memory pressure, a crash): nothing is loaded any more, and the
@@ -637,10 +752,10 @@ fn main() {
                 payload.event(),
                 PageLoadEvent::Started | PageLoadEvent::Finished
             ) {
-                let level = *webview
+                let appearance = *webview
                     .app_handle()
                     .state::<AppState>()
-                    .level
+                    .appearance
                     .lock()
                     .unwrap();
                 let zoom = *webview
@@ -650,7 +765,7 @@ fn main() {
                     .lock()
                     .unwrap();
                 if let Some(window) = webview.app_handle().get_webview_window(webview.label()) {
-                    apply_translucency(&window, level);
+                    apply_appearance(&window, appearance);
                     apply_zoom(&window, zoom);
                 }
             }
@@ -664,8 +779,11 @@ fn main() {
                     message: String::new(),
                 }),
                 port: Mutex::new(None),
-                level: Mutex::new(loaded.translucency),
-                translucency_items: Mutex::new(vec![]),
+                appearance: Mutex::new(Appearance {
+                    background: loaded.background,
+                    opacity: loaded.opacity,
+                }),
+                background_items: Mutex::new(vec![]),
                 zoom: Mutex::new(loaded.zoom),
                 discovering: AtomicBool::new(false),
                 loaded: AtomicBool::new(false),
@@ -678,8 +796,15 @@ fn main() {
             handle
                 .notification()
                 .on_action(move |performed| on_notification_action(&for_clicks, performed))?;
-            handle.set_menu(build_menu(&handle, loaded.translucency)?)?;
-            create_window(&handle, loaded.translucency, loaded.zoom)?;
+            handle.set_menu(build_menu(&handle, loaded.background)?)?;
+            create_window(
+                &handle,
+                Appearance {
+                    background: loaded.background,
+                    opacity: loaded.opacity,
+                },
+                loaded.zoom,
+            )?;
             register_shortcut(&handle, loaded.shortcut.as_deref());
             connect(&handle);
             watch_server(&handle);

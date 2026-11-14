@@ -64,7 +64,7 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 `app/` holds a small Tauri app that puts the board in its own macOS window. It needs macOS 14 or later. It finds the resident server (`adj server status --json`), starts it with `adj server start --no-open` if it is not running, and loads the board's own URL, token included. It never stops the server; quitting the app leaves it running.
 
-- **What it adds**: a translucent window (vibrancy), native notifications, the number of items waiting on you as the Dock badge, and a global shortcut (default `Ctrl+Option+Cmd+B`) that shows or hides the window. A second launch focuses the running window, and the window remembers its size and position. The red button hides the window; `Cmd+Q` quits.
+- **What it adds**: a translucent window, native notifications, the number of items waiting on you as the Dock badge, and a global shortcut (default `Ctrl+Option+Cmd+B`) that shows or hides the window. A second launch focuses the running window, and the window remembers its size and position. The red button hides the window; `Cmd+Q` quits.
 - **Links**: only the board's own address stays in the window. Every other link, `target="_blank"` and `window.open` opens in the default browser.
 - **Build and install**: needs a Rust toolchain. `make app` installs the Tauri CLI 2 first when `cargo tauri` is missing (`cargo install tauri-cli --version '^2' --locked`, also run on its own by `make app-deps`) and leaves an installed 2.x alone. A Tauri CLI of another major version is not replaced: `make app` stops and prints the command that replaces it. The app is not signed, so open it the first time with right-click → Open.
 
@@ -78,12 +78,14 @@ To start the resident server automatically across logins, create a LaunchAgent a
   | Key | Meaning |
   |---|---|
   | `adjPath` | The `adj` to run. By default the app asks your login shell for `adj`, then tries `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. |
-  | `translucency` | `"off"`, `"weak"` (default) or `"strong"`. Also in the menu: 表示 → 透過. |
+  | `background` | What shows behind the board: `"material"` (default; the macOS material, which blurs the windows behind) or `"none"` (no effect; they show as they are). Also in the menu: 表示 → 背景. |
+  | `opacity` | How opaque the board's surfaces stay over it, from `0.3` to `1` (opaque); the default is `0.82`. A number outside that range is brought back to the nearest end. While it is not set, the older `translucency` key is read in its place (`"off"` is 1, `"weak"` 0.82, `"strong"` 0.55). |
   | `shortcut` | The global shortcut, such as `"Control+Alt+Super+B"`. `null` or `""` turns it off. |
   | `zoom` | The board's page zoom, `1` (default) being 100%, kept when you zoom with `Cmd+=` (or `Cmd++`), `Cmd+-` and `Cmd+0`, or in the menu: 表示 → 拡大 / 縮小 / 実際のサイズ. The shortcuts move through 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 and 300%. A number outside 0.5–3 is brought back to the nearest end, and anything that is not a positive number is 100%. |
 
 - **Notifications**: while the app is open, the board's notifications are native ones, and the server's own `notification` command stays quiet (the page tells the server that it rings). When the app is closed, the server rings as before. Native notifications are tracked so that a click can come back to the page, which costs the app a waiting thread per notification; it therefore shows at most 20 that have gone unclicked for less than 10 minutes, and refuses further ones until some are clicked or age out (the server does not ring for those either). Clicking a native notification brings the window to the front (even if it was hidden) and does what a click on the browser's notification does. The app cannot read whether macOS allows its notifications: if you block them in System Settings, the server's own command stays silent too while the app is open.
-- **In a browser**: nothing changes. The app-only styles apply only to the page the app loads.
+- **Window settings on the board**: in the app, the board's display settings (表示の設定) have a section 「アプリのウィンドウ」: the background, 「マテリアル（ぼかし）」 or 「ぼかしなし」, and an opacity slider that takes effect as it moves and is saved once the value is set (when a drag is let go, or at each arrow key). Both go to `settings.json` above.
+- **In a browser**: nothing changes. The app-only styles apply only to the page the app loads, and the display settings show no app section.
 
 ---
 
