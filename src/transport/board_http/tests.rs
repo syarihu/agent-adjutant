@@ -2335,7 +2335,7 @@ fn board_with_report(
         "worktree": wt.to_string_lossy(), "report": "report.html",
     }))
     .unwrap();
-    let (gate, _) = crate::gate::open(&ctx, request).unwrap();
+    let (gate, _, _) = crate::gate::open(&ctx, request).unwrap();
     let server = crate::board::Server {
         ctx,
         token: "secret".to_string(),

@@ -14,7 +14,11 @@ use crate::registry::Context;
 ///
 /// With `"wait": false` the gate is kept as a record instead: written beside the open queue
 /// rather than in it, so it asks nobody for anything, and the caller goes on with its work.
-pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String> {
+///
+/// For a plan opened with a `task`, the plan is also written to the task's record (see
+/// `write_plan`). The third part is the reason when that write failed: the gate stands either
+/// way, so the failure is reported rather than returned as an error.
+pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool, Option<String>), String> {
     let kind = request.kind;
     let has_task = request
         .task
@@ -199,10 +203,44 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
         }
         return Err(e);
     }
+    let warning = write_plan(ctx, &gate);
     Ok((
         gate,
         crate::registry::running(&ctx.state, &ctx.repo).is_some(),
+        warning,
     ))
+}
+
+/// Write a plan gate's plan to its task's record, as the plan of record. Runs after the gate is
+/// saved and with no gate lock held, so it takes only the task's lock. Best effort, as
+/// `task::note_gate_answered` is: the gate is what the person is asked, and a task that is
+/// missing or unwritable must not undo it. The failure comes back as a warning for the opener
+/// to say. Nothing is written, and nothing said, for a gate with no task.
+fn write_plan(ctx: &Context, gate: &Gate) -> Option<String> {
+    if gate.kind != Kind::Plan {
+        return None;
+    }
+    let id = gate.task.as_deref().filter(|t| !t.trim().is_empty())?;
+    let patch = crate::task::TaskPatch {
+        plan: Some(Some(crate::task::PlanInput {
+            problem: gate.problem.clone(),
+            goal: gate.goal.clone(),
+            steps: gate
+                .steps
+                .iter()
+                .map(|step| crate::task::PlanStep {
+                    text: step.text.clone(),
+                    detail: step.detail.clone(),
+                    extra: serde_json::Map::new(),
+                })
+                .collect(),
+            decided: gate.decided.clone(),
+            unsure: gate.unsure.clone(),
+            gate: Some(gate.id.clone()),
+        })),
+        ..Default::default()
+    };
+    crate::task::update(ctx, id, &patch, false).err()
 }
 
 /// What the board needs in a gate to show it, refused before an ID is claimed so that a
@@ -213,12 +251,17 @@ fn check_content(request: &GateRequest) -> Result<(), String> {
     if request.wait && request.focus.is_none() {
         return Err("a gate that waits needs focus: the question the person answers".to_string());
     }
-    if kind == Kind::Plan && request.steps.is_empty() {
-        return Err("a plan gate needs steps: the plan, one step each".to_string());
-    }
-    for (at, step) in request.steps.iter().enumerate() {
-        if step.text.trim().is_empty() {
-            return Err(format!("step {} has no text", at + 1));
+    if kind == Kind::Plan {
+        // The check `adj task update --plan` makes, so the two cannot drift.
+        crate::task::check_plan_steps(
+            "a plan gate",
+            request.steps.iter().map(|s| s.text.as_str()),
+        )?;
+    } else {
+        for (at, step) in request.steps.iter().enumerate() {
+            if step.text.trim().is_empty() {
+                return Err(format!("step {} has no text", at + 1));
+            }
         }
     }
     for (at, section) in request.sections.iter().enumerate() {

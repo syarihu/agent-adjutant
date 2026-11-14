@@ -14,7 +14,7 @@ pub(super) fn definition() -> Value {
             "properties": {
                 "kind": { "type": "string", "enum": ["plan", "diff", "verify", "dispatch", "issue", "question", "result"] },
                 "title": { "type": "string", "description": "What this is, in one line. Most of what the board shows." },
-                "task": { "type": "string", "description": "The task record id from the brief, when there is one." },
+                "task": { "type": "string", "description": "The task record id from the brief, when there is one. A plan with a task also writes the plan to that task's record (the plan of record, shown on the board); if that write fails the gate still opens and `warnings` says so." },
                 "worktree": { "type": "string", "description": "Where the answer goes. Default: the worktree `cwd` is in." },
                 "openedBy": { "type": "string", "enum": ["worker", "hub"], "description": "For the hub only; a worker leaves it out. plan only: `hub` when the hub opens the plan of a task handed to Jules, so the answer reaches the hub's inbox rather than the worktree's outbox. Needs task. Default: worker." },
                 "wait": { "type": "boolean", "description": "false to keep a diff or verify gate (or a plan, for a task whose Stop at is none) as a record instead of waiting on it. Default: true." },
@@ -71,6 +71,7 @@ pub(in crate::transport::mcp) fn call(args: &Value) -> Result<Value, String> {
             .ok_or("not inside a worktree: pass worktree or cwd")?;
         fields.insert("worktree".to_string(), json!(here));
     }
-    let (gate, served) = gate_open_payload(&ctx, crate::gate::GateRequest::from_json(&payload)?)?;
-    Ok(gate_open_json(&ctx, &gate, served))
+    let (gate, served, plan_error) =
+        gate_open_payload(&ctx, crate::gate::GateRequest::from_json(&payload)?)?;
+    Ok(gate_open_json(&ctx, &gate, served, plan_error.as_deref()))
 }

@@ -548,7 +548,7 @@ fn open_drops_keys_the_gate_does_not_know() {
         &json!({"kind": "question", "title": "q", "focus": "f", "worktree": "/tmp/wt", "futureField": 1}),
     )
     .unwrap();
-    let (gate, _) = open(&ctx, request).unwrap();
+    let (gate, _, _) = open(&ctx, request).unwrap();
     assert!(gate.extra.is_empty());
     let stored = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
     assert!(stored.extra.is_empty());
@@ -574,7 +574,7 @@ fn an_open_payload_cannot_carry_a_decision() {
         "answers": [{"decision": "approve", "answeredAt": "20260101T000000Z"}],
     }))
     .unwrap();
-    let (gate, _) = open(&ctx, request).unwrap();
+    let (gate, _, _) = open(&ctx, request).unwrap();
     let stored = load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).unwrap();
     for g in [&gate, &stored] {
         assert!(g.decision.is_none() && g.choice.is_none());
@@ -644,7 +644,7 @@ fn absent_options_fall_back_to_the_kinds_defaults() {
         &json!({"kind": "question", "title": "q", "focus": "f", "worktree": "/tmp/wt"}),
     )
     .unwrap();
-    let (gate, _) = open(&ctx, request).unwrap();
+    let (gate, _, _) = open(&ctx, request).unwrap();
     assert_eq!(gate.options, Kind::Question.default_options());
 }
 
@@ -654,7 +654,7 @@ fn absent_options_fall_back_to_the_kinds_defaults() {
 fn open_payload(ctx: &Context, payload: serde_json::Value) -> Result<Gate, String> {
     let mut payload = payload;
     payload["worktree"] = json!("/tmp/wt");
-    open(ctx, GateRequest::from_json(&payload)?).map(|(gate, _)| gate)
+    open(ctx, GateRequest::from_json(&payload)?).map(|(gate, _, _)| gate)
 }
 
 fn left_behind(ctx: &Context) -> usize {
@@ -1426,7 +1426,10 @@ fn with_report(
     (wt, payload)
 }
 
-fn open_report(ctx: &Context, payload: &serde_json::Value) -> Result<(Gate, bool), String> {
+fn open_report(
+    ctx: &Context,
+    payload: &serde_json::Value,
+) -> Result<(Gate, bool, Option<String>), String> {
     open(ctx, GateRequest::from_json(payload)?)
 }
 
@@ -1451,7 +1454,7 @@ fn a_report_is_copied_when_the_gate_opens_and_only_its_file_name_is_kept() {
         &[(".claude/report.html", "<p>日本語</p>".as_bytes())],
         json!(".claude/report.html"),
     );
-    let (gate, _) = open_report(&ctx, &payload).unwrap();
+    let (gate, _, _) = open_report(&ctx, &payload).unwrap();
     assert_eq!(gate.report.as_deref(), Some("report.html"));
     let copy = dir_of(&ctx, Shelf::Open)
         .join("reports")
@@ -1475,7 +1478,7 @@ fn an_absolute_report_path_is_read_as_it_is() {
     let elsewhere = sandbox.state().join("elsewhere.html");
     std::fs::write(&elsewhere, "<p>x</p>").unwrap();
     let (_, payload) = with_report(&sandbox, &[], json!(elsewhere.to_string_lossy()));
-    let (gate, _) = open_report(&ctx, &payload).unwrap();
+    let (gate, _, _) = open_report(&ctx, &payload).unwrap();
     assert_eq!(gate.report.as_deref(), Some("elsewhere.html"));
 }
 
@@ -1556,4 +1559,110 @@ fn only_a_gate_id_can_name_a_report() {
     }
     assert!(report::valid_id("20260922T041233Z-diff"));
     assert!(report::valid_id("20260922T041233Z-diff-record-2"));
+}
+
+// ── the plan of record ──
+
+/// A task to open a plan for, stopping at `stop_at`.
+fn plan_task(ctx: &Context, stop_at: crate::task::StopAt) -> String {
+    let new = crate::task::NewTask {
+        body: "x".to_string(),
+        stop_at,
+        status: crate::task::Status::Dispatched,
+        ..crate::task::NewTask::default()
+    };
+    crate::task::create(ctx, new, false).unwrap().task.id
+}
+
+fn plan_payload(task: Option<&str>) -> serde_json::Value {
+    let mut payload = json!({
+        "kind": "plan", "title": "plan", "focus": "ok?", "worktree": "/tmp/wt",
+        "problem": "p", "goal": "g", "decided": "d", "unsure": "u",
+        "steps": ["first", {"text": "second", "detail": "in a.rs"}],
+    });
+    if let Some(task) = task {
+        payload["task"] = json!(task);
+    }
+    payload
+}
+
+fn stored_plan(ctx: &Context, id: &str) -> Option<crate::task::TaskPlan> {
+    crate::task::get(&ctx.state, &ctx.repo.slug, id)
+        .unwrap()
+        .plan
+}
+
+#[test]
+fn a_plan_gate_opened_with_a_task_writes_the_plan_to_the_task() {
+    let (_sandbox, ctx) = hub();
+    let id = plan_task(&ctx, crate::task::StopAt::Plan);
+    let (gate, _, warning) = open_report(&ctx, &plan_payload(Some(&id))).unwrap();
+    assert_eq!(warning, None);
+    let plan = stored_plan(&ctx, &id).unwrap();
+    assert_eq!(plan.gate.as_deref(), Some(gate.id.as_str()));
+    assert_eq!(plan.revision, 1);
+    assert_eq!(plan.problem.as_deref(), Some("p"));
+    assert_eq!(plan.goal.as_deref(), Some("g"));
+    assert_eq!(plan.decided.as_deref(), Some("d"));
+    assert_eq!(plan.unsure.as_deref(), Some("u"));
+    assert_eq!(plan.steps.len(), 2);
+    assert_eq!(plan.steps[1].detail.as_deref(), Some("in a.rs"));
+
+    // The next plan gate rewrites it.
+    let (second, _, _) = open_report(&ctx, &plan_payload(Some(&id))).unwrap();
+    let plan = stored_plan(&ctx, &id).unwrap();
+    assert_eq!(plan.revision, 2);
+    assert_eq!(plan.gate.as_deref(), Some(second.id.as_str()));
+}
+
+#[test]
+fn a_plan_record_under_stop_at_none_writes_the_plan_too() {
+    let (_sandbox, ctx) = hub();
+    let id = plan_task(&ctx, crate::task::StopAt::Nothing);
+    let mut payload = plan_payload(Some(&id));
+    payload["wait"] = json!(false);
+    let (record, _, warning) = open_report(&ctx, &payload).unwrap();
+    assert!(!record.wait);
+    assert_eq!(warning, None);
+    let plan = stored_plan(&ctx, &id).unwrap();
+    assert_eq!(plan.gate.as_deref(), Some(record.id.as_str()));
+}
+
+#[test]
+fn a_plan_the_hub_opens_writes_the_plan_too() {
+    let (_sandbox, ctx) = hub();
+    let id = plan_task(&ctx, crate::task::StopAt::Plan);
+    let mut payload = plan_payload(Some(&id));
+    payload["openedBy"] = json!("hub");
+    let (gate, _, _) = open_report(&ctx, &payload).unwrap();
+    assert!(gate.answered_by_hub());
+    assert_eq!(
+        stored_plan(&ctx, &id).unwrap().gate.as_deref(),
+        Some(gate.id.as_str())
+    );
+}
+
+#[test]
+fn a_plan_without_a_task_and_other_gates_write_nothing() {
+    let (_sandbox, ctx) = hub();
+    let id = plan_task(&ctx, crate::task::StopAt::Plan);
+    let (_, _, warning) = open_report(&ctx, &plan_payload(None)).unwrap();
+    assert_eq!(warning, None);
+    let (_, _, warning) = open_report(
+        &ctx,
+        &json!({"kind": "question", "title": "q", "focus": "f", "worktree": "/tmp/wt", "task": id}),
+    )
+    .unwrap();
+    assert_eq!(warning, None);
+    assert_eq!(stored_plan(&ctx, &id), None);
+}
+
+#[test]
+fn a_plan_that_cannot_be_written_still_opens_the_gate_with_a_warning() {
+    let (_sandbox, ctx) = hub();
+    let (gate, _, warning) = open_report(&ctx, &plan_payload(Some("no-such-task"))).unwrap();
+    let why = warning.expect("a warning");
+    assert!(why.contains("no-such-task"), "{why}");
+    // The gate stands.
+    assert!(load(&ctx.state, &ctx.repo.slug, Shelf::Open, &gate.id).is_ok());
 }

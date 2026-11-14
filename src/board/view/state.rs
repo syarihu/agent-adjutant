@@ -650,8 +650,9 @@ pub(super) fn split_main(main: &str, listed: Vec<Worktree>) -> (Option<String>, 
 /// of the diff) and the plan a person approved (`approvedPlan`, whose
 /// `answeredAt` is when).
 ///
-/// Joined here rather than written onto the task record: a record belongs to the gate
-/// directory, and a copy on the task would be a second place for it that can disagree.
+/// Still joined, though the plan of record is the task's own `plan`: the gate keeps its own copy
+/// of what the person was shown and answered, and a record belongs to the gate directory, so
+/// the task does not carry a second copy of it that can disagree.
 /// A finished task gets neither — nobody reads its card for them, and the archive only grows.
 pub fn with_records(
     tasks: Vec<task::Task>,

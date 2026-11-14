@@ -98,6 +98,41 @@ pub fn update_checked(
             field.clone_from(value);
         }
     }
+    // Blank strings are absent, as on the gate. The revision counts from what is stored, under
+    // the lock, so two writers do not both become revision 2.
+    match &patch.plan {
+        Some(Some(input)) => {
+            let blank = |v: &Option<String>| {
+                v.as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            };
+            let previous = task.plan.take();
+            task.plan = Some(TaskPlan {
+                problem: blank(&input.problem),
+                goal: blank(&input.goal),
+                steps: input
+                    .steps
+                    .iter()
+                    .map(|step| PlanStep {
+                        text: step.text.clone(),
+                        detail: blank(&step.detail),
+                        extra: step.extra.clone(),
+                    })
+                    .collect(),
+                decided: blank(&input.decided),
+                unsure: blank(&input.unsure),
+                revision: previous.as_ref().map_or(0, |p| p.revision) + 1,
+                gate: blank(&input.gate),
+                updated_at: store::stamp(),
+                // Keys a newer binary put on the plan stay through a rewrite.
+                extra: previous.map(|p| p.extra).unwrap_or_default(),
+            });
+        }
+        Some(None) => task.plan = None,
+        None => {}
+    }
     if let Some(after) = &patch.after {
         task.after = normalize_after(after.clone());
     }

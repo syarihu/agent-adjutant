@@ -1368,6 +1368,9 @@ pub(crate) struct TaskUpdateArgs {
     /// Handover instruction for the agent when queued ('' clears it, - reads stdin)
     #[arg(long)]
     pub(crate) instruction: Option<String>,
+    /// The plan of record, as JSON {problem, goal, steps: [{text, detail} | "text"], decided, unsure} (- reads stdin, '' clears it)
+    #[arg(long)]
+    pub(crate) plan: Option<String>,
     /// Whether the hub may start it without asking first
     #[arg(long, value_name = "true|false")]
     pub(crate) auto_start: Option<bool>,

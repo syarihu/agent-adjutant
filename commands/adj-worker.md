@@ -102,7 +102,7 @@ A person asked for the task to run to the end with no approvals: the plan, the d
 
 | Where | With `none` |
 | --- | --- |
-| The plan (§plan) | Open it as a `"wait": false` record (with `problem`, `goal`, `steps`), then §implement. |
+| The plan (§plan) | Open it as a `"wait": false` record (with `task`, `problem`, `goal`, `steps`), then §implement. |
 | Research `## Open questions` (§tools); self-review entry gate | Do not ask. Take the likelier reading (write it in the plan record's `decided` / `unsure`); take the recommended option (`continue`). |
 | The diff and verify (§self-review, §verify) | Records. What a round limit, no progress, `unsure` or `manual-check` would have stopped on stays in the record (a must `open` in `findings`, `unsure`, `manual`) and in the PR body's notes. |
 | `verify` failed, could not fix | **Still waits** where it failed (diff or verify): `stoppedBy: ["verify-failed"]`. |
@@ -189,7 +189,7 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
    **If the brief's Handover note says the plan was already approved and names its file** (a task
    first planned for Jules and switched to a worker), read that file as the plan: do not plan again
    and do not open another plan gate — skip steps 2 and 3 and go on to §implement. It was approved on the
-   board as it is written.
+   board as it is written. The hub's plan gate already wrote it to the task record: do not rewrite it.
 2. Read the code and make an ordered implementation plan.
 3. Show the plan and get it approved before implementing (unless Stop at is `none`, below). If asked
    to change it, change it and confirm again.
@@ -205,6 +205,11 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
    in the code in `sections` (a heading that fits each block, and `stage: "plan"` for a block that
    belongs with the plan, such as a fix), and in `decided` only what is already settled, not the
    steps. `focus` is the one question to answer before you implement.
+   **Open it with `task`** (the brief's task record id): that also writes the plan to the task record,
+   which is the plan the board shows. A plan you change later (after a `changes`, or while implementing)
+   is rewritten by opening the next plan gate or record with `task`, or with
+   `adj task update --id <id> --plan -` (JSON on stdin: `problem`, `goal`, `steps` of `{text, detail}`,
+   `decided`, `unsure`). If the open result's `warnings` says it was not written, run that.
 
 <!-- section: tools -->
 ### Tools you may use
@@ -843,7 +848,8 @@ this shape:
   moved on**. Break off what you are doing, fix it as the comment says, and put the fixed diff
   through §self-review again (opening a new gate or record). The record that was sent back stays as it is.
 - A `changes` whose `## gate` line says `record` and names a **plan** record (Stop at `none`): fix the
-  plan, open the plan record again, and bring the implementation in line with it.
+  plan, open the plan record again (which rewrites the task's plan too), and bring the implementation in
+  line with it.
 - A `changes` that carries a `## From       AI 下読み …` line is **the person's instruction, chosen from a second reader's notes**: a separate, read-only reader read your PR, and the person kept the points that follow
   (`(AI)` marks a point the reader wrote; the rest the person wrote) and sent them to you. Fix them as you would a record that was sent back, and put the fixed diff through §self-review again.
   The line numbers are of the sha named on that line: if you have pushed since, find the place again before editing. If an `(AI)` point looks wrong, do not skip it silently: say so in `unsure` of the next gate you open.

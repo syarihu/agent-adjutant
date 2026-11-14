@@ -106,8 +106,23 @@ pub fn add(args: &TaskAddArgs) -> Result<(), String> {
     Ok(())
 }
 
-pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
-    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+/// `--plan`'s value as the patch holds it: `-` is stdin and anything else the JSON itself; an
+/// empty one clears the plan, since a command line has no way to say `null`.
+fn plan_arg(value: &str) -> Result<Option<task::PlanInput>, String> {
+    plan_from_text(&super::dash_is_stdin(value)?)
+}
+
+fn plan_from_text(json: &str) -> Result<Option<task::PlanInput>, String> {
+    if json.trim().is_empty() {
+        return Ok(None);
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("--plan is not JSON: {e}"))?;
+    task::PlanInput::from_json(&parsed).map(Some)
+}
+
+/// Only one flag can take stdin: whichever read second would get nothing.
+fn check_shared_stdin(args: &TaskUpdateArgs) -> Result<(), String> {
     // `--note -` reads it from stdin: a note is often text from elsewhere — an error, a
     // comment typed on the board — and does not belong inside quotes on a command line.
     // `--title -` shares stdin with the others: whichever read second would get nothing. The
@@ -119,6 +134,23 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
     {
         return Err("--title - cannot be combined with --note - or --instruction -".into());
     }
+    // The same for `--plan -`, which is JSON that would otherwise be read out of the middle of
+    // the note's text.
+    if args.plan.as_deref() == Some("-")
+        && [&args.note, &args.instruction, &args.title]
+            .iter()
+            .any(|v| v.as_deref() == Some("-"))
+    {
+        return Err(
+            "--plan - cannot be combined with --note -, --instruction - or --title -".into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
+    let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;
+    check_shared_stdin(args)?;
     let note = args.note.as_deref().map(super::dash_is_stdin).transpose()?;
     let title = args
         .title
@@ -130,6 +162,7 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
         .as_deref()
         .map(super::dash_is_stdin)
         .transpose()?;
+    let plan = args.plan.as_deref().map(plan_arg).transpose()?;
     // Trimmed, and blank is no change, as the board's JSON has always been read.
     fn word(v: Option<&str>) -> Option<&str> {
         v.map(str::trim).filter(|s| !s.is_empty())
@@ -172,6 +205,7 @@ pub fn update_cmd(args: &TaskUpdateArgs) -> Result<(), String> {
         jules_by: None,
         note: text(note.as_deref()),
         instruction: text(instruction.as_deref()),
+        plan,
         parked: None,
     };
     // A request is never the kind that only tells an existing worktree something.

@@ -416,19 +416,25 @@ function parentRowHtml(task) {
 }
 
 /* Where the problem and the goal came from: the plan's own words when the worker wrote them,
-   otherwise the request as it was handed over. */
+   otherwise the request as it was handed over. `plan` is a plan gate, or the task's own plan
+   (`fromRecord`, set by `overviewTab`), which no gate card stands for. */
 function planSourceOf(task, plan) {
   const issue = httpUrl(task.issueUrl);
   const source = issue
     ? `Issue <a href="${esc(issue)}" target="_blank" rel="noopener noreferrer">${esc(issue)}</a>`
     : task.issueUrl ? `Issue ${esc(task.issueUrl)}` : '依頼文';
-  return { source, fromPlan: plan && `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの` };
+  return { source, fromPlan: plan && (plan.fromRecord
+    ? `タスクの計画（第${esc(plan.revision)}版）— worker が${source}を読んで書いたもの`
+    : `計画「${esc(plan.title)}」— worker が${source}を読んで書いたもの`) };
 }
+
+/* The gate a card's expand button names: none for the task's own plan, which is no gate's. */
+const gateOfPlan = plan => plan && !plan.fromRecord ? plan : null;
 
 function problemCardHtml(task, plan) {
   const { source, fromPlan } = planSourceOf(task, plan);
   const hasProblem = !!(plan?.problem || task.body);
-  let h = `<div class="panel"${hasProblem ? expandAttrs('problem', plan?.problem ? plan : null) : ''}>${hasProblem ? expandBtnHtml('問題') : ''}<h3>問題</h3>`;
+  let h = `<div class="panel"${hasProblem ? expandAttrs('problem', plan?.problem ? gateOfPlan(plan) : null) : ''}>${hasProblem ? expandBtnHtml('問題') : ''}<h3>問題</h3>`;
   if (plan?.problem) h += `<div class="body">${md(plan.problem)}</div><div class="source">出典: ${fromPlan}</div>`;
   else if (task.body) h += `<div class="body">${md(task.body)}</div><div class="source">出典: 渡したときの依頼文（計画に problem がまだ無い）</div>`;
   else h += `<div style="color:var(--muted)">まだ書かれていない${task.issueUrl ? ` — ${source}` : ''}</div>`;
@@ -449,7 +455,7 @@ function issueBodyCardHtml(task) {
 }
 
 function goalCardHtml(task, plan) {
-  let h = `<div class="panel"${plan?.goal ? expandAttrs('goal', plan) : ''}>${plan?.goal ? expandBtnHtml('ゴール') : ''}<h3>ゴール</h3>`;
+  let h = `<div class="panel"${plan?.goal ? expandAttrs('goal', gateOfPlan(plan)) : ''}>${plan?.goal ? expandBtnHtml('ゴール') : ''}<h3>ゴール</h3>`;
   if (plan?.goal) h += `<div class="body">${md(plan.goal)}</div><div class="source">出典: ${planSourceOf(task, plan).fromPlan}</div>`;
   else h += `<div style="color:var(--muted)">計画に goal がまだ無い</div>`;
   return h + `</div>`;
@@ -466,7 +472,7 @@ function instructionCardHtml(task) {
 /* The plan itself: its title, who approved it, the other plans to pick from. `plan` is null
    when none has come out yet. */
 function planHeadCardHtml(plan, plans, opts = {}) {
-  let h = `<div class="panel"${plan ? expandAttrs('plan', plan) : ''}>${plan ? expandBtnHtml('計画') : ''}<h3>計画</h3>`;
+  let h = `<div class="panel"${plan ? expandAttrs('plan', plan) : ''}>${plan ? expandBtnHtml('計画') : ''}<h3>${esc(opts.heading || '計画')}</h3>`;
   if (!plan) return h + `<div style="color:var(--muted)">計画はまだ出ていない</div></div>`;
   // Who approved it: a plan gate is answered only by a person, on the board or with
   // `adj gate answer`; the gate does not record which one.
@@ -477,7 +483,8 @@ function planHeadCardHtml(plan, plans, opts = {}) {
         (plan.comment ? ` <span style="color:var(--md-sys-color-on-surface-variant)">— ${esc(plan.comment)}</span>` : '')
       : gateStatusHtml(plan)}</div>`;
   // `opts.chips` false leaves out the row that picks another plan, for a page that cannot pick; `opts.focus` false
-  // the focus, for a page that has it as a card of its own.
+  // the focus, for a page that has it as a card of its own; `opts.heading` renames the card, for a page where the task's
+  // own plan is the 計画.
   if (plans.length > 1 && opts.chips !== false) {
     h += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
       `<span style="color:var(--muted);font-size:12px">計画 ${plans.length}件:</span>` +
@@ -488,16 +495,19 @@ function planHeadCardHtml(plan, plans, opts = {}) {
   return h + `</div>`;
 }
 
-/* What the plan gate carried beside its head, ending in the part a person acts on. */
-function planGateCardsHtml(plan) {
+/* What the plan gate carried beside its head, ending in the part a person acts on. `opts.body`
+   false leaves out the steps, the unsure and the decided, which the task's own plan card already
+   shows when this gate is the one that wrote it. */
+function planGateCardsHtml(plan, opts = {}) {
   if (!plan) return '';
+  const body = opts.body !== false;
   let h = '';
   if (plan.facts?.length) h += `<div class="panel"${expandAttrs('facts', plan)}>${expandBtnHtml('事実')}<h3>事実</h3><ul>${plan.facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
-  h += sectionsCardsHtml(plan, 'found') + stepsCardHtml(plan) + sectionsCardsHtml(plan, 'plan');
+  h += sectionsCardsHtml(plan, 'found') + (body ? stepsCardHtml(plan) : '') + sectionsCardsHtml(plan, 'plan');
   h += reportCardHtml(plan);
   h += choicesHtml(plan, isWaiting(plan));
-  if (plan.unsure) h += `<div class="panel"${expandAttrs('unsure', plan)}>${expandBtnHtml('迷っていること')}<h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
-  if (plan.decided) h += `<div class="panel"${expandAttrs('decided', plan)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
+  if (body && plan.unsure) h += `<div class="panel"${expandAttrs('unsure', plan)}>${expandBtnHtml('迷っていること')}<h3>迷っていること</h3><div class="body">${md(plan.unsure)}</div></div>`;
+  if (body && plan.decided) h += `<div class="panel"${expandAttrs('decided', plan)}>${expandBtnHtml('決定事項')}<h3>決定事項</h3><div class="body">${md(plan.decided)}</div></div>`;
   return h + actHtml(plan);
 }
 
@@ -546,13 +556,71 @@ function detailsKvHtml(task, opts = {}) {
   return `<div class="panel"><h3>詳細</h3><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
 }
 
-/* `opts` is what `detailsKvHtml` takes: the task panel's `panel` and `handForm`. */
+/* Where the task's own plan stands against the gates: written by the approved gate, by one still
+   waiting, by a record that asked nobody, by no gate at all (`--plan`), or by a gate that was
+   not approved (sent back, turned down, or no longer to be found). */
+function planApprovalOf(task, all) {
+  const id = task.plan?.gate;
+  if (!id) return ['nogate', 'ゲートなしで書いた計画', ''];
+  const g = all.find(x => x.kind === 'plan' && x.id === id);
+  // `approvedPlan` is left off a finished task, whose gates come from its history instead: the gate itself says it was
+  // approved, by the same decisions `gateShownIn` counts.
+  if (task.approvedPlan?.id === id || (g && ['approve', 'choice'].includes(g.decision))) return ['approved', '承認済み', 'good'];
+  if (g && g.wait !== false && isWaiting(g)) return ['waiting', '承認待ち', 'warn'];
+  if (g && g.wait === false) return ['recorded', '承認なしで記録', ''];
+  return ['unapproved', '未承認', ''];
+}
+
+/* The plan of record: the task's `plan`, its steps in order, and whether anybody approved it.
+   Nothing when the task has none; the plan gate's own cards (what was asked and answered) are
+   drawn beside it. */
+function taskPlanCardHtml(task, all) {
+  const plan = task.plan;
+  if (!plan) return '';
+  const [mark, text, tone] = planApprovalOf(task, all);
+  const icon = { approved: 'check_circle', waiting: 'hourglass_empty', recorded: 'edit_note', nogate: 'edit_note', unapproved: 'radio_button_unchecked' }[mark];
+  const color = { good: 'var(--md-sys-color-success)', warn: 'var(--md-sys-color-warning)' }[tone] || 'var(--md-sys-color-outline)';
+  let h = `<div class="panel" data-task-plan="${mark}"><h3>計画</h3>` +
+    `<div><span class="state ${tone}" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:${color};">${icon}</span><span>${text}</span></span></div>`;
+  if (plan.steps?.length) {
+    h += `<ol class="steps">${plan.steps.map(x => `<li>${esc(x.text)}${x.detail ? `<div class="step-detail">${esc(x.detail)}</div>` : ''}</li>`).join('')}</ol>`;
+  }
+  if (plan.unsure) h += `<h4 class="sec-heading">迷っていること</h4><div class="body">${md(plan.unsure)}</div>`;
+  if (plan.decided) h += `<details class="decided"><summary>決定事項</summary><div class="body">${md(plan.decided)}</div></details>`;
+  return h + `<div class="source">第${esc(plan.revision)}版 · 更新 ${esc(when(plan.updatedAt))}（${esc(ago(plan.updatedAt))}）</div></div>`;
+}
+
+/* The task's own plan marked as such for `problemCardHtml` and `goalCardHtml`; null when it has none. Shared by the panel's
+   overview and the 「拡大」 dialog, so both read the plan from the same place. */
+function ownPlanOf(task) {
+  return task.plan ? { ...task.plan, fromRecord: true } : null;
+}
+
+/* The problem the overview's 問題 card shows from a plan, if any: the plan is chosen first (the task's own, else the gate shown) and
+   its fields are never mixed with another's, so a task plan with no problem is none even when an older gate has one. */
+function planProblemShown(task, all, pick) {
+  return (ownPlanOf(task) || gateShownIn(task, 'overview', all, pick))?.problem;
+}
+
+/* Whether `gate` is the one that wrote the task's plan. It says the same steps, unsure and decided, so those are drawn once; another
+   gate (picked from the chips, or older) may say something else and keeps them. */
+function planWrittenBy(task, gate) {
+  return !!task.plan && !!gate && task.plan.gate === gate.id;
+}
+
+/* `opts` is what `detailsKvHtml` takes: the task panel's `panel` and `handForm`. The plan is read from one place: the task's
+   own `plan` when it has one (problem and goal included, so the gate does not repeat them), else the plan gate being shown,
+   which for a record written before the task had a `plan` is `planOfTask`'s plan or a plan still waiting. */
 function overviewTab(task, all, pick, opts = {}) {
   const plans = all.filter(g => g.kind === 'plan');
-  const plan = gateShownIn(task, 'overview', all, pick);
-  return problemCardHtml(task, plan) + issueBodyCardHtml(task) + goalCardHtml(task, plan) +
+  const gate = gateShownIn(task, 'overview', all, pick);
+  const own = ownPlanOf(task);
+  const same = planWrittenBy(task, gate);
+  return problemCardHtml(task, own || gate) + issueBodyCardHtml(task) + goalCardHtml(task, own || gate) +
     (opts.handForm ? '' : instructionCardHtml(task)) +
-    planHeadCardHtml(plan, plans) + planGateCardsHtml(plan) + detailsKvHtml(task, opts);
+    taskPlanCardHtml(task, all) +
+    (own && !gate ? '' : planHeadCardHtml(gate, plans, own ? { heading: '計画のゲート' } : {})) +
+    planGateCardsHtml(gate, { body: !same }) + detailsKvHtml(task, opts);
 }
 
 function reviewTab(task, all, pick) {

@@ -54,7 +54,7 @@ load([
   'const gateRef = g => g._slug ? `${g._slug}/${g.id}` : g.id;',
   'const DECISION = { approve: "承認した", changes: "差し戻した" };',
   'const renderDiff = d => esc(d);',
-  cst(tvSrc, 'diffPending'),
+  cst(tvSrc, 'diffPending'), cst(tvSrc, 'gateOfPlan'),
   cut(tvSrc, /^const DIFF_LOADING = [^\n]*\n/m),
   cst(tvSrc, 'isWaiting'),
   cut(utilSrc, /^let viewData = null;\nconst stateNow = [^\n]*\nfunction withViewState[\s\S]*?\n\}\n/m),
@@ -66,7 +66,7 @@ load([
   fn(tvSrc, 'gateHeadHtml'), fn(tvSrc, 'gateStatusHtml'),
   ...['framesHtml', 'factsCardHtml', 'focusCardHtml', 'unsureCardHtml', 'stepsCardHtml', 'sectionsCardsHtml', 'reportCardHtml', 'filesTableHtml',
     'diffCardHtml', 'planSourceOf', 'problemCardHtml', 'issueBodyCardHtml', 'goalCardHtml',
-    'instructionCardHtml', 'planHeadCardHtml', 'planGateCardsHtml', 'detailsKvHtml', 'overviewTab',
+    'instructionCardHtml', 'planHeadCardHtml', 'planGateCardsHtml', 'detailsKvHtml', 'planApprovalOf', 'taskPlanCardHtml', 'ownPlanOf', 'planProblemShown', 'planWrittenBy', 'overviewTab',
     'reviewTab', 'checkTab', 'gateDetailHtml'].map(n => fn(tvSrc, n)),
   cut(decSrc, /^const OUTCOME = [^\n]*\n/m),
   ...['cardDialogWaiting'].map(n => cst(dlgSrc, n)),
@@ -134,6 +134,88 @@ test('overviewTab is its cards in order, with and without a plan, a hand-over fo
     assert.strictEqual(call('overviewTab', t, all, {}, opts), expected);
   }
   wait([]);
+});
+
+const ownPlan = { problem: 'own <problem>', goal: 'own goal', steps: [{ text: 'first <b>', detail: 'in a.rs' }, { text: 'second' }],
+  decided: 'chose A', unsure: 'maybe B', revision: 2, gate: 'p-1', updatedAt: 'u1' };
+const mark = (t, all) => (call('taskPlanCardHtml', t, all).match(/data-task-plan="(\w+)"/) || [])[1];
+const count = (h, text) => h.split(text).length - 1;
+
+test('overviewTab reads the plan from the task when it has one: no duplicate problem or goal, steps in order', () => {
+  const t = { ...task, plan: ownPlan, approvedPlan: plan };
+  wait([]);
+  const h = call('overviewTab', t, [plan], {}, {});
+  // The problem and the goal come from the task's plan, once, not from the gate.
+  assert.strictEqual(count(h, 'own &lt;problem>'), 1);
+  assert.strictEqual(count(h, 'own goal'), 1);
+  assert.ok(!h.includes('<p>prob</p>') && !h.includes('<p>goal</p>'));
+  assert.ok(h.includes('第2版') && h.includes('when(u1)'));
+  assert.ok(h.includes('タスクの計画（第2版）'));
+  // Steps are escaped, in order, with their detail; unsure shown, decided folded.
+  assert.ok(h.indexOf('first &lt;b&gt;') < h.indexOf('second'));
+  assert.ok(h.includes('in a.rs'));
+  assert.ok(h.includes('<details class="decided"><summary>決定事項</summary>'));
+  assert.ok(h.includes('maybe B'));
+  // The gate that wrote it does not repeat the steps, the unsure or the decided; its head stays.
+  assert.strictEqual(count(h, 'maybe B'), 1);
+  assert.strictEqual(count(h, 'chose A'), 1);
+  assert.strictEqual(count(h, 'class="steps"'), 1);
+  assert.ok(h.includes('計画のゲート') && h.includes('plan focus'));
+});
+
+test('another gate than the one that wrote the task plan keeps its own steps', () => {
+  const t = { ...task, plan: { ...ownPlan, gate: 'p-9' } };
+  wait([]);
+  const h = call('overviewTab', t, [plan], {}, {});
+  assert.strictEqual(count(h, 'class="steps"'), 1); // the gate has no steps in this fixture
+  const withSteps = { ...plan, steps: [{ text: 'gate step' }] };
+  const h2 = call('overviewTab', t, [withSteps], {}, {});
+  assert.strictEqual(count(h2, 'class="steps"'), 2);
+  assert.ok(h2.includes('gate step'));
+});
+
+test('a task without a plan draws the overview from the plan gate as before', () => {
+  wait([]);
+  const h = call('overviewTab', task, [plan], {}, {});
+  assert.ok(!h.includes('data-task-plan'));
+  assert.ok(h.includes('<p>prob</p>') && h.includes('<p>goal</p>'));
+  assert.ok(!h.includes('計画のゲート'));
+  // No plan at all: today's empty state.
+  const none = call('overviewTab', task, [], {}, {});
+  assert.ok(none.includes('計画はまだ出ていない'));
+});
+
+test('a task plan written by hand has no gate card of its own', () => {
+  const t = { ...task, plan: { ...ownPlan, gate: undefined } };
+  wait([]);
+  const h = call('overviewTab', t, [], {}, {});
+  assert.strictEqual(mark(t, []), 'nogate');
+  assert.ok(h.includes('ゲートなしで書いた計画'));
+  assert.ok(!h.includes('計画はまだ出ていない') && !h.includes('計画のゲート'));
+});
+
+test('the approval mark follows the plan gate that wrote the task plan', () => {
+  const t = gate => ({ ...task, plan: { ...ownPlan, gate } });
+  // Approved: the approved plan's id.
+  wait([]);
+  assert.strictEqual(mark({ ...t('p-1'), approvedPlan: plan }, [plan]), 'approved');
+  assert.ok(call('taskPlanCardHtml', { ...t('p-1'), approvedPlan: plan }, [plan]).includes('承認済み'));
+  // Waiting now.
+  wait([plan2]);
+  assert.strictEqual(mark(t('p-2'), [plan2]), 'waiting');
+  assert.ok(call('taskPlanCardHtml', t('p-2'), [plan2]).includes('承認待ち'));
+  wait([]);
+  // Kept as a record under Stop at none.
+  const record = { id: 'r-1', kind: 'plan', wait: false, openedAt: 'o' };
+  assert.strictEqual(mark(t('r-1'), [record]), 'recorded');
+  assert.ok(call('taskPlanCardHtml', t('r-1'), [record]).includes('承認なしで記録'));
+  // Answered but not approved, and a gate nobody can find.
+  const sentBack = { id: 'p-3', kind: 'plan', decision: 'changes', openedAt: 'o' };
+  assert.strictEqual(mark(t('p-3'), [sentBack]), 'unapproved');
+  assert.strictEqual(mark(t('gone'), []), 'unapproved');
+  assert.ok(call('taskPlanCardHtml', t('gone'), []).includes('未承認'));
+  // A task with no plan draws nothing.
+  assert.strictEqual(call('taskPlanCardHtml', task, [plan]), '');
 });
 
 test('detailsKvHtml: the panel leaves the Issue and PR to its top, the dialog options bring them back', () => {
@@ -534,4 +616,69 @@ test('a result gate offering ack, ask and task has three buttons with the result
   // A gate stored with the old two options keeps them.
   Object.assign(dockCtx, { __g: { ...g, options: ['ack', 'ask'] } });
   assert.ok(!vm.runInContext('gateDockHtml(__g)', dockCtx).includes('data-act="task"'));
+});
+
+test('the dialog reads the plan from the task too: a plan with no gate, and a plan that differs from an older gate', () => {
+  const planGroup = (t, all) => {
+    wait(all.filter(g => g.id === 'p-2'));
+    const g = JSON.parse(JSON.stringify(call('cardDialogTaskGroups', t, all))).find(x => x.key === 'plan');
+    wait([]);
+    return g;
+  };
+  const text = g => g.cards.map(c => c.html).join('');
+  // Only task.plan: no 「計画はまだ出ていない」, the plan card with its mark, problem and goal once.
+  const byHand = planGroup({ ...task, plan: { ...ownPlan, gate: undefined } }, []);
+  const hand = text(byHand);
+  assert.ok(!hand.includes('計画はまだ出ていない'));
+  assert.ok(hand.includes('data-task-plan="nogate"') && hand.includes('first &lt;b&gt;'));
+  assert.strictEqual(count(hand, 'own &lt;problem>'), 1);
+  assert.strictEqual(count(hand, 'own goal'), 1);
+  assert.ok(!byHand.cards.some(c => c.key === 'plan:head'));
+  // task.plan differs from an older gate: the plan is the task's, the gate stays as what was asked.
+  const older = { ...plan, steps: [{ text: 'older step' }] };
+  const both = planGroup({ ...task, plan: { ...ownPlan, gate: 'p-9' } }, [older]);
+  const h = text(both);
+  assert.strictEqual(count(h, 'own goal'), 1);
+  assert.ok(!h.includes('<p>prob</p>') && !h.includes('<p>goal</p>'));
+  assert.ok(h.includes('older step') && h.includes('first &lt;b&gt;'));
+  assert.ok(both.cards.some(c => c.key === 'plan:head' && c.label === '計画のゲート'));
+  // The gate that wrote the plan does not repeat the steps.
+  const same = planGroup({ ...task, plan: { ...ownPlan, gate: 'p-1' } }, [{ ...plan, steps: [{ text: 'gate step' }] }]);
+  assert.ok(!text(same).includes('gate step'));
+});
+
+test('a finished task whose approvedPlan the board left off is still 承認済み from the approved gate in its history', () => {
+  const done = { ...task, status: 'done', plan: ownPlan };
+  assert.strictEqual(mark(done, [plan]), 'approved');
+  assert.strictEqual(mark(done, [{ ...plan, decision: 'choice' }]), 'approved');
+  assert.strictEqual(mark(done, [{ ...plan, decision: 'changes' }]), 'unapproved');
+});
+
+test('the task detail marks the task plan by planApprovalOf, never by an unrelated open plan gate', () => {
+  load([fn(read('task-detail-view.js'), 'detailPlanOf'), cst(read('task-detail.js'), 'tdMuted'), fn(read('task-detail.js'), 'tdPlanHtml')].join('\n'));
+  const waitingOld = { ...plan, id: 'p-old', decision: undefined, answeredAt: undefined };
+  const t = { ...task, plan: { ...ownPlan, gate: undefined } };
+  wait([waitingOld]);
+  const shown = call('detailPlanOf', t, waitingOld, [waitingOld]);
+  assert.strictEqual(call('isWaiting', shown), false);
+  const html = call('tdPlanHtml', shown, call('isWaiting', shown));
+  assert.ok(html.includes('ゲートなしで書いた計画') && !html.includes('承認待ち'));
+  // Its content is the task's, not the gate's.
+  assert.strictEqual(shown.goal, 'own goal');
+  // A finished task's approved gate in history: 承認済み.
+  wait([]);
+  const done = { ...task, status: 'done', plan: ownPlan };
+  assert.ok(call('tdPlanHtml', call('detailPlanOf', done, plan, [plan]), false).includes('承認済み'));
+  // No task plan: the gate as it was.
+  assert.strictEqual(call('detailPlanOf', task, plan, [plan]), plan);
+});
+
+test('the request card follows the plan the overview picked: a steps-only task plan is no problem even beside an older gate that has one', () => {
+  wait([]);
+  const stepsOnly = { ...task, plan: { steps: [{ text: 'implement' }], revision: 1, updatedAt: 'u' } };
+  assert.ok(!call('planProblemShown', stepsOnly, [plan], {}));
+  const h = call('overviewTab', stepsOnly, [plan], {}, {});
+  assert.ok(h.includes('thing') && !h.includes('<p>prob</p>'));
+  assert.strictEqual(call('planProblemShown', { ...task, plan: ownPlan }, [plan], {}), 'own <problem>');
+  assert.strictEqual(call('planProblemShown', task, [plan], {}), 'prob');
 });

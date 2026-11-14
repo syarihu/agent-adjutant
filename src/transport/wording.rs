@@ -94,8 +94,14 @@ pub const IDE_NOT_SET: &str = "ide is not set: put your editor command in the co
 
 /// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
 /// branch on it the same way whichever it used.
-pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
+///
+/// `plan_error` is why the plan could not be written to the task's record, when a plan was opened
+/// with a task and that failed: the gate stands, and `warnings` says what to do about the plan.
+pub fn open_json(ctx: &Context, gate: &Gate, served: bool, plan_error: Option<&str>) -> Value {
     let mut out = json!({ "gate": gate, "server": if served { "up" } else { "down" } });
+    if let Some(why) = plan_error {
+        out["warnings"] = json!([plan_not_written(gate, why)]);
+    }
     if !gate.wait {
         out["wait"] = json!(false);
         out["note"] = json!(RECORDED);
@@ -123,6 +129,16 @@ pub fn open_json(ctx: &Context, gate: &Gate, served: bool) -> Value {
         }
     }
     out
+}
+
+/// What a transport says when a plan gate was opened but the task's record could not take the
+/// plan.
+pub fn plan_not_written(gate: &Gate, why: &str) -> String {
+    let id = gate.task.as_deref().unwrap_or_default();
+    format!(
+        "the plan gate is open, but the plan could not be written to task {id}: {why} \
+         (write it with `adj task update --id {id} --plan -`)"
+    )
 }
 
 /// A wake note as a sentence for the person at the terminal.
@@ -384,6 +400,18 @@ mod tests {
             tmux_backend: fatal,
             checked_at: 42,
         }
+    }
+
+    #[test]
+    fn an_unwritten_plan_says_which_task_and_how_to_write_it() {
+        let gate: Gate = serde_json::from_value(json!({
+            "id": "g1", "kind": "plan", "worktree": "/tmp/wt", "task": "t1",
+            "title": "plan", "openedAt": "20260101T000000Z",
+        }))
+        .unwrap();
+        let said = plan_not_written(&gate, "no such task");
+        assert!(said.contains("task t1: no such task"), "{said}");
+        assert!(said.contains("adj task update --id t1 --plan -"), "{said}");
     }
 
     #[test]

@@ -91,6 +91,11 @@ fixtures.
 - `task`: task records, one file per task, and their operations (`create`, `update`, `edit`,
   `remove`, `get`, `list`, `next`, `hand_over`, `refresh`, `write_brief`, ...), plus the GitHub
   reads behind them, and `check_pr_base`, which moves a worktree's PR onto its brief's Base branch, and `collect`, which collects the Dashboard's and a parent task's rows from the github-family task sources. It does not wake or type into a terminal itself; it hands a message to `mail`.
+  A record's `plan` is the worker's plan of record: `gate::open` writes it through `task::update` when a plan
+  gate or record is opened with a `task` (after the gate is saved, best effort like `note_gate_answered`: a
+  failure comes back as a warning and the gate stands), and `adj task update --plan` writes or clears it.
+  Only the latest is kept, with a `revision`; the gate keeps its own copy, what the person was shown and
+  answered. `task::check_plan_steps` is the one check of its steps, shared with the gate's content check.
   A record's `after` lists the sibling tasks (same parent) it comes after without being stacked on
   them; the parents view in `board::view` resolves each entry against that parent's children and
   drops the ones that name nothing there or would close a loop. The same view takes a child's base
