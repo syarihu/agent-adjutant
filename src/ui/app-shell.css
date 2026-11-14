@@ -1,29 +1,70 @@
 /* ── The desktop app (app/src-tauri): translucent surfaces over the window's vibrancy ──
    Everything here is scoped to `[data-shell="app"]`, which only the app stamps on <html> (its init script), so a browser
-   renders none of it. `--app-alpha` (1 = opaque, the level なし) is the app's own setting: the surfaces that fill the window
-   are mixed down to that opacity so the macOS blur behind it shows through. Only the big surfaces are covered; cards,
-   dialogs and menus stay opaque so that text on them keeps its contrast. */
-[data-shell="app"],
-[data-shell="app"] body { background: transparent; }
+   renders none of it. `--app-alpha` (1 = opaque, the level なし) is the app's own setting.
 
-[data-shell="app"] body {
-  background: color-mix(in srgb, var(--md-sys-color-surface) calc(var(--app-alpha, 1) * 100%), transparent);
+   The window is painted once: `body` fills it with the page's surface mixed down to `--app-alpha`, and nothing that fills
+   the window paints a second layer over it, or the two would stack (two layers at 0.82 let 3% through, not 18%). So:
+   - a surface of the page's own colour (`--md-sys-color-surface`) is transparent here: body's fill already is that colour;
+   - a surface a step apart (the rail, the list column, the board's columns, the docked task panel) is `--app-veil`, a thin
+     wash of the ink that lifts it off the page as `surface-container-low` does, without covering what is behind;
+   - a head that stays put while rows scroll under it is transparent and blurs what passes beneath it.
+   Cards, dialogs, menus and other floating surfaces keep their own opaque colours, so that text on them keeps its contrast.
+   A new surface that fills the window takes one of the three above; with `--app-alpha` at 0.5, a sweep for elements whose
+   computed background is opaque and covers more than a sliver of the window finds any that were missed. */
+[data-shell="app"] {
+  --app-fill: color-mix(in srgb, var(--md-sys-color-surface) calc(var(--app-alpha, 1) * 100%), transparent);
+  /* 3.5% of the ink over the surface is about `surface-container-low` in both themes (4% in dark, 2.5% in light). */
+  --app-veil: color-mix(in srgb, var(--md-sys-color-on-surface) 3.5%, transparent);
+  --app-blur: blur(16px);
+  background: transparent;
 }
+[data-shell="app"] body { background: var(--app-fill); }
+
 [data-shell="app"] #nav-rail,
-[data-shell="app"] #side-list {
-  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
-}
+[data-shell="app"] #side-list,
+[data-shell="app"] .col { background: var(--app-veil); }
 /* The popped-out panel floats over the page, so it stays opaque; docked, it is a column like the others. */
-[data-shell="app"] body:not(.panel-pop) #task-panel {
-  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
-}
-[data-shell="app"] .col {
-  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
-}
-/* `.col.attention` (board.css) tints a column that waits on the person; the rule above would paint over it, so it is mixed
-   down from its own colour. */
+[data-shell="app"] body:not(.panel-pop) #task-panel { background: var(--app-veil); }
+/* `.col.attention` (board.css) tints a column that waits on the person: the same tint, laid over the veil. */
 [data-shell="app"] .col.attention {
-  background: color-mix(in srgb,
-    color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface-container-low))
-    calc(var(--app-alpha, 1) * 100%), transparent);
+  background:
+    linear-gradient(color-mix(in srgb, var(--md-sys-color-warning-container) 18%, transparent) 0 0),
+    var(--app-veil);
+}
+
+/* いまの仕事 and レビュー: the middle column is the page's colour. */
+[data-shell="app"] .wk-term { background: transparent; }
+/* What stands in for a terminal not running yet: a step apart in the middle column, the panel's own colour in the panel. */
+[data-shell="app"] .tp-term-ph { background: var(--app-veil); }
+[data-shell="app"] #task-panel .tp-term-ph { background: transparent; }
+/* The terminal keeps its dark backdrop (its text is light in both themes), mixed down like the rest; xterm itself paints
+   nothing over it here (appShellTerminalOptions in terminal.js). The backdrop lies over the window's fill, so it ends up a
+   little denser than the page around it. In the light theme that fill is light and would wash the text out, so the
+   backdrop goes halfway from the level to opaque there; in the dark theme the fill is as dark as the backdrop and the level
+   is used as it is (the selectors are tokens.css's). */
+[data-shell="app"] {
+  --app-term-alpha: calc((1 + var(--app-alpha, 1)) / 2);
+}
+@media (prefers-color-scheme: dark) {
+  [data-shell="app"]:where(:not([data-theme="light"])) { --app-term-alpha: var(--app-alpha, 1); }
+}
+[data-shell="app"][data-theme="dark"] { --app-term-alpha: var(--app-alpha, 1); }
+[data-shell="app"] .adj-terminal {
+  background: color-mix(in srgb, #101014 calc(var(--app-term-alpha) * 100%), transparent);
+}
+
+/* The board's list layout: its heads stay put while the rows scroll under them. */
+[data-shell="app"] .list-head,
+[data-shell="app"] .stage-head {
+  background: transparent;
+  -webkit-backdrop-filter: var(--app-blur);
+  backdrop-filter: var(--app-blur);
+}
+[data-shell="app"] .stage-head.attention {
+  background: color-mix(in srgb, var(--md-sys-color-warning-container) 18%, transparent);
+}
+[data-shell="app"] .parent-head {
+  background: var(--app-veil);
+  -webkit-backdrop-filter: var(--app-blur);
+  backdrop-filter: var(--app-blur);
 }

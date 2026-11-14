@@ -38,6 +38,7 @@ const setup = () => {
   const ctx = vm.createContext({
     loadXterm: () => Promise.resolve(),
     Terminal: FakeTerminal,
+    appShellTerminalOptions: () => ({}),
     IS_MAC: false,
     FitAddon: { FitAddon: class { fit() {} } },
     Unicode11Addon: { Unicode11Addon: class {} },
