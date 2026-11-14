@@ -210,7 +210,7 @@ fn the_merge_follows_the_brief() {
     // With Stop at `none` the cleanup is still asked, except when the hub merges.
     let core = flow(parts(find("adj-worker").unwrap()).0);
     assert!(
-        core.contains("not when the brief's \"Merge by\" is `hub`"),
+        core.contains("not for a PR under Merge by `hub`"),
         "the Stop at none list still asks for the cleanup under hub: {core}"
     );
     assert!(

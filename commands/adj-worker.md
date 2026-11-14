@@ -111,7 +111,7 @@ A person asked for the task to run to the end with no approvals: the plan, the d
 | The final report | List each confirmation you answered yourself. |
 
 Still asked: a missing Base branch line, a failed `adj pr check-base`, a gate that waits while the
-dashboard is `down`, drafts of replies to human reviewers, cleaning up the worktree (§done; not when the brief's "Merge by" is `hub`), and the `result` gate of an investigation-only task.
+dashboard is `down`, drafts of replies to human reviewers, cleaning up the worktree (§done; not for a PR under Merge by `hub`), and the `result` gate of an investigation-only task.
 
 A record sent back with `changes` is a person's only brake: read `adjutant_outbox` after opening
 each record and at each phase change (§gate-answer). If `adj gate open` refuses the plan record
@@ -650,6 +650,7 @@ not anything you write. Your part is to say whether the PR is ready and then sto
    ## Ready to merge         yes
    ## Head                   {git rev-parse HEAD: the pushed head the self-review and verify saw}
    ## Open must              0
+   ## Read up to             {the created time (UTC, ISO 8601) of the newest review or comment on the PR you read and dealt with}
    ## Review bots            {bot}: handled | no findings | rate limited | not started   (one line per bot)
    ```
 

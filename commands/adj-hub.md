@@ -1450,9 +1450,10 @@ repository than the PR's.
 
 1. **Find the PR from the header, not the body.** The header's `worktree` (the same one §cleanup-one step 1
    checks against `adj worktree ls`, with the branch it has) gives the branch, and
-   `adj task list --worktree '<header worktree>' --json` gives the task record and its `pr` (a URL: the
-   number is at its end). No record, or a record with no `pr`: you cannot tell which PR it is, so do not
-   merge; tell the person.
+   `adj task list --worktree '<header worktree>' --json` lists the task records there. Take the one
+   with status `pr` and a `pr` (a URL: the number is at its end); a worktree can also hold finished
+   (`done`, `cancelled`) records, which are not this PR's. None, or more than one: you cannot tell which PR
+   it is, so do not merge; tell the person.
 2. **Read the PR once**:
 
    ```bash
@@ -1478,8 +1479,11 @@ repository than the PR's.
      background where your agent can, and go on with the inbox), then read the PR again. A PR with no
      checks has nothing to wait for. Every check must have passed: a failure is red CI.
    - `mergeStateStatus` is `CLEAN`.
-   - No review, review comment or comment on the PR was created after the time the `done` was sent (the
-     message's `at` header), except by the worker itself.
+   - No review, review comment or comment on the PR was created after the body's `## Read up to` (the
+     newest review or comment the worker had read and dealt with), except by the worker itself. A finding
+     posted between the worker's last read and its `done` is newer than that line, so it comes back to the
+     worker. A body without `## Read up to` is compared with the `done`'s `at` header instead, and is a
+     person's to decide when anything sits before it unanswered.
    - Neither are there review comments (inline ones and replies in their threads, which `reviews` and
      `comments` leave out) created after it:
      `gh api --paginate repos/<codeRepo>/pulls/<n>/comments --jq '.[] | [.created_at, .user.login] | @tsv'`.
