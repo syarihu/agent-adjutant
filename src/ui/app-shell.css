@@ -8,10 +8,12 @@
    - a surface of the page's own colour (`--md-sys-color-surface`) is transparent here: body's fill already is that colour;
    - a surface a step apart (the rail, the list column, the board's columns, the docked task panel) is `--app-veil`, a thin
      wash of the ink that lifts it off the page as `surface-container-low` does, without covering what is behind;
-   - a head that stays put while rows scroll under it is transparent and blurs what passes beneath it.
+   - a head that stays put while rows scroll under it is transparent and blurs what passes beneath it, but only over the
+     material; over no material nothing blurs the rows, so it is a fill that hides them (the one deliberate second layer).
    Cards, dialogs, menus and other floating surfaces keep their own opaque colours, so that text on them keeps its contrast.
-   A new surface that fills the window takes one of the three above; with `--app-alpha` at 0.5, a sweep for elements whose
-   computed background is opaque and covers more than a sliver of the window finds any that were missed. */
+   A new surface that fills the window takes one of the three above (the heads over no material aside); with `--app-alpha`
+   at 0.5, a sweep for elements whose computed background is opaque and covers more than a sliver of the window finds any
+   that were missed. */
 [data-shell="app"] {
   --app-fill: color-mix(in srgb, var(--md-sys-color-surface) calc(var(--app-alpha, 1) * 100%), transparent);
   /* 3.5% of the ink over the surface is about `surface-container-low` in both themes (4% in dark, 2.5% in light). */
@@ -58,24 +60,42 @@
 /* xterm.css paints the viewport, a layer over the whole terminal, black whatever the theme says. */
 [data-shell="app"] .adj-terminal .xterm-viewport { background-color: transparent; }
 
-/* The board's list layout: its heads stay put while the rows scroll under them. While the window is translucent they are
-   see-through and blur what passes beneath; at 100% (`--app-solid` 1) they are the browser's opaque heads again, since the
-   page behind them is opaque too and rows must not show through. */
+/* The board's list layout: its heads stay put while the rows scroll under them. Over the material they are see-through and
+   blur what passes beneath (`data-app-background`, which app-appearance.js mirrors from the setting); at 100% (`--app-solid`
+   1) they are the browser's opaque heads again, since the page behind them is opaque too and rows must not show through.
+   Over no material nothing blurs the rows passing under a head, so it has to hide them: these are the one deliberate second
+   layer over the window's fill, at `--app-head-alpha` at the least. */
 [data-shell="app"] {
   --app-solid: clamp(0, (var(--app-alpha, 1) - 0.99) * 100, 1);
+  /* Dense enough that a row passing under a head does not read through its text, while the window still shows a little. */
+  --app-head-alpha: 0.85;
+  --app-head-fill: calc(max(var(--app-solid), var(--app-head-alpha)) * 100%);
 }
 [data-shell="app"] .list-head,
 [data-shell="app"] .stage-head {
+  background: color-mix(in srgb, var(--md-sys-color-surface) var(--app-head-fill), transparent);
+}
+/* `.stage-head.attention` (board.css) tints the head: the same tint, laid over its fill. */
+[data-shell="app"] .stage-head.attention {
+  background:
+    linear-gradient(color-mix(in srgb, var(--md-sys-color-warning-container) 18%, transparent) 0 0),
+    color-mix(in srgb, var(--md-sys-color-surface) var(--app-head-fill), transparent);
+}
+[data-shell="app"] .parent-head {
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) var(--app-head-fill), transparent);
+}
+[data-shell="app"][data-app-background="material"] .list-head,
+[data-shell="app"][data-app-background="material"] .stage-head {
   background: color-mix(in srgb, var(--md-sys-color-surface) calc(var(--app-solid) * 100%), transparent);
   -webkit-backdrop-filter: var(--app-blur);
   backdrop-filter: var(--app-blur);
 }
-[data-shell="app"] .stage-head.attention {
+[data-shell="app"][data-app-background="material"] .stage-head.attention {
   background: color-mix(in srgb,
     color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface)) calc(var(--app-solid) * 100%),
     color-mix(in srgb, var(--md-sys-color-warning-container) 18%, transparent));
 }
-[data-shell="app"] .parent-head {
+[data-shell="app"][data-app-background="material"] .parent-head {
   background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-solid) * 100%), var(--app-veil));
   -webkit-backdrop-filter: var(--app-blur);
   backdrop-filter: var(--app-blur);

@@ -23,8 +23,11 @@ function page({ shell = null, appearance, tauri = true } = {}) {
   const output = { textContent: '' };
   const section = { hidden: true, querySelectorAll: () => radios };
   const style = {};
+  const attrs = {};
   const root = {
-    getAttribute: name => (name === 'data-shell' ? shell : null),
+    getAttribute: name => (name === 'data-shell' ? shell : (name in attrs ? attrs[name] : null)),
+    setAttribute: (name, value) => { attrs[name] = String(value); },
+    removeAttribute: name => { delete attrs[name]; },
     style: { setProperty: (k, v) => { style[k] = v; } },
   };
   const error = { hidden: true, textContent: '' };
@@ -37,7 +40,7 @@ function page({ shell = null, appearance, tauri = true } = {}) {
   const doc = { documentElement: root, getElementById: id => byId[id] || null };
   const ctx = vm.createContext({ document: doc, window: win, console });
   vm.runInContext(src, ctx);
-  return { section, radios, slider, output, style, win, calls, error };
+  return { section, radios, slider, output, style, win, calls, error, root };
 }
 
 const APP = { background: 'material', alpha: 0.82, minAlpha: 0.3, maxAlpha: 1 };
@@ -152,4 +155,28 @@ test('a save that fails is shown, and a later save that goes through clears it',
   p.slider.fire('change');
   await settle();
   assert.strictEqual(p.error.hidden, true);
+});
+
+test('the background is mirrored onto the page for the board styles, at startup and on every change', () => {
+  const bg = p => p.root.getAttribute('data-app-background');
+  assert.strictEqual(bg(page({ shell: 'app', appearance: APP })), 'material');
+  assert.strictEqual(bg(page({ shell: 'app', appearance: { ...APP, background: 'none' } })), 'none');
+  const p = page({ shell: 'app', appearance: APP });
+  p.win.fire('adj-appearance', { detail: { ...APP, background: 'none' } });
+  assert.strictEqual(bg(p), 'none');
+  p.win.fire('adj-appearance', { detail: { ...APP, background: 'material' } });
+  assert.strictEqual(bg(p), 'material');
+});
+
+test('an app that cannot send changes still mirrors its background', () => {
+  const p = page({ shell: 'app', appearance: APP, tauri: false });
+  assert.strictEqual(p.root.getAttribute('data-app-background'), 'material');
+  assert.strictEqual(p.section.hidden, true);
+});
+
+test('a browser gets no background attribute, and an unknown value takes it off', () => {
+  assert.strictEqual(page({ appearance: APP }).root.getAttribute('data-app-background'), null);
+  const p = page({ shell: 'app', appearance: APP });
+  p.win.fire('adj-appearance', { detail: { ...APP, background: 'glass' } });
+  assert.strictEqual(p.root.getAttribute('data-app-background'), null);
 });

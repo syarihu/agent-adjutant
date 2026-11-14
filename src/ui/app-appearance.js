@@ -11,9 +11,24 @@ function appAppearanceSupported(root, win) {
 
 const appAppearancePercent = alpha => Math.round(Number(alpha) * 100);
 
+// The board's styles need the background too (app-shell.css blurs its sticky heads only over the material), and an older
+// app that cannot send changes still has the appearance, so this does not wait for `appAppearanceSupported`. Anything but
+// a known value takes the attribute off, which the styles read as no material.
+function mirrorAppBackground(root, appearance) {
+  if (!root?.setAttribute) return;
+  const background = appearance && typeof appearance === 'object' ? appearance.background : null;
+  if (root.getAttribute('data-shell') === 'app' && (background === 'material' || background === 'none')) {
+    root.setAttribute('data-app-background', background);
+  } else {
+    root.removeAttribute('data-app-background');
+  }
+}
+
 function setupAppAppearance(doc, win) {
-  const section = doc.getElementById('display-app');
   const root = doc.documentElement;
+  mirrorAppBackground(root, win.__adjAppearance);
+  win.addEventListener('adj-appearance', e => mirrorAppBackground(root, e.detail || win.__adjAppearance));
+  const section = doc.getElementById('display-app');
   if (!section || !appAppearanceSupported(root, win)) return false;
   const slider = doc.getElementById('display-app-opacity');
   const output = doc.getElementById('display-app-opacity-value');
