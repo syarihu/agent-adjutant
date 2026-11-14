@@ -60,6 +60,31 @@ To start the resident server automatically across logins, create a LaunchAgent a
 - Unload: `launchctl bootout gui/$(id -u)/adj.server`
 - Restart: `launchctl kickstart -k gui/$(id -u)/adj.server` (Do not run `adj server restart` under `KeepAlive`, as it can race with launchd).
 
+### Native app (macOS)
+
+`app/` holds a small Tauri app that puts the board in its own macOS window. It needs macOS 14 or later. It finds the resident server (`adj server status --json`), starts it with `adj server start --no-open` if it is not running, and loads the board's own URL, token included. It never stops the server; quitting the app leaves it running.
+
+- **What it adds**: a translucent window (vibrancy), native notifications, the number of items waiting on you as the Dock badge, and a global shortcut (default `Ctrl+Option+Cmd+B`) that shows or hides the window. A second launch focuses the running window, and the window remembers its size and position. The red button hides the window; `Cmd+Q` quits.
+- **Links**: only the board's own address stays in the window. Every other link, `target="_blank"` and `window.open` opens in the default browser.
+- **Build and install**: needs a Rust toolchain and the Tauri CLI. The app is not signed, so open it the first time with right-click → Open.
+
+  ```bash
+  cargo install tauri-cli --version '^2' --locked
+  make app            # builds app/src-tauri/target/release/bundle/macos/Adjutant.app
+  make app-install    # copies it to /Applications
+  ```
+
+- **Settings**: `settings.json` in `~/Library/Application Support/dev.syarihu.adjutant/`. Missing or malformed keys fall back to the defaults.
+
+  | Key | Meaning |
+  |---|---|
+  | `adjPath` | The `adj` to run. By default the app asks your login shell for `adj`, then tries `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. |
+  | `translucency` | `"off"`, `"weak"` (default) or `"strong"`. Also in the menu: 表示 → 透過. |
+  | `shortcut` | The global shortcut, such as `"Control+Alt+Super+B"`. `null` or `""` turns it off. |
+
+- **Notifications**: while the app is open, the board's notifications are native ones, and the server's own `notification` command stays quiet (the page tells the server that it rings). When the app is closed, the server rings as before. Native notifications are tracked so that a click can come back to the page, which costs the app a waiting thread per notification; it therefore shows at most 20 that have gone unclicked for less than 10 minutes, and refuses further ones until some are clicked or age out (the server does not ring for those either). Clicking a native notification brings the window to the front (even if it was hidden) and does what a click on the browser's notification does. The app cannot read whether macOS allows its notifications: if you block them in System Settings, the server's own command stays silent too while the app is open.
+- **In a browser**: nothing changes. The app-only styles apply only to the page the app loads.
+
 ---
 
 ## Views

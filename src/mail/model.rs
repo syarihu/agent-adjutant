@@ -303,10 +303,7 @@ pub fn should_wake_hub(from: &str, hub_name: &str, kind: &str, subject: &str) ->
         return false;
     }
     let first_line = subject.lines().next().unwrap_or("").trim();
-    if has_bracketed_tag(first_line, "[ack") {
-        return false;
-    }
-    true
+    !has_bracketed_tag(first_line, "[ack")
 }
 
 /// What became of a message left for a hub or a worker.

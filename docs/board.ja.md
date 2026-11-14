@@ -60,6 +60,31 @@ adj server restart [--port <port>] [--open]
 - 停止: `launchctl bootout gui/$(id -u)/adj.server`
 - 再起動: `launchctl kickstart -k gui/$(id -u)/adj.server`（`KeepAlive` の配下では `adj server restart` を使わないでください。launchd の自動再起動と競合します）
 
+### ネイティブアプリ（macOS）
+
+`app/` に、ボードを専用の macOS ウィンドウで開く小さな Tauri アプリがあります。macOS 14 以降が必要です。常駐サーバーを探し（`adj server status --json`）、動いていなければ `adj server start --no-open` で起動してから、トークン付きのボード自身の URL を読み込みます。サーバーを止めることはなく、アプリを終了してもサーバーは動き続けます。
+
+- **ブラウザにない機能**: 半透明のウィンドウ（vibrancy）、ネイティブ通知、確認待ちの件数の Dock バッジ、ウィンドウを出し入れするグローバルショートカット（既定は `Ctrl+Option+Cmd+B`）。2つ目を起動すると動いているウィンドウが前に出て、ウィンドウは大きさと位置を覚えます。赤いボタンはウィンドウを隠すだけで、終了は `Cmd+Q` です。
+- **リンク**: ウィンドウに残るのはボード自身のアドレスだけです。ほかのリンク、`target="_blank"`、`window.open` は既定のブラウザで開きます。
+- **ビルドとインストール**: Rust と Tauri CLI が必要です。アプリは署名していないので、初回は右クリック → 開く で起動します。
+
+  ```bash
+  cargo install tauri-cli --version '^2' --locked
+  make app            # app/src-tauri/target/release/bundle/macos/Adjutant.app を作る
+  make app-install    # /Applications にコピーする
+  ```
+
+- **設定**: `~/Library/Application Support/dev.syarihu.adjutant/` の `settings.json`。キーが無い、または値が不正なときは既定値になります。
+
+  | キー | 意味 |
+  |---|---|
+  | `adjPath` | 実行する `adj`。既定ではログインシェルに `adj` を尋ね、次に `~/.cargo/bin`、`/opt/homebrew/bin`、`/usr/local/bin` を探します。 |
+  | `translucency` | `"off"`、`"weak"`（既定）、`"strong"`。メニューの 表示 → 透過 でも変えられます。 |
+  | `shortcut` | グローバルショートカット。例: `"Control+Alt+Super+B"`。`null` か `""` で無効になります。 |
+
+- **通知**: アプリを開いているあいだは、ボードの通知がネイティブ通知になり、サーバー側の `notification` コマンドは鳴りません（ページが「自分が鳴らす」とサーバーに伝えるため）。アプリを閉じているときは、これまでどおりサーバーが鳴らします。クリックをページに戻すため、ネイティブ通知は1件ごとにアプリ側で待機スレッドを1つ使います。そのため、クリックされないまま 10 分たっていない通知は 20 件までしか出さず、それを超える分は、クリックされるか 10 分たつまで出ません（サーバー側の通知コマンドも鳴りません）。ネイティブ通知をクリックすると、隠れていたウィンドウも含めて前に出て、ブラウザの通知をクリックしたときと同じ動作をします。macOS がこのアプリの通知を許可しているかどうかはアプリから読めません。システム設定で通知をブロックすると、アプリを開いているあいだはサーバー側の通知コマンドも鳴らなくなります。
+- **ブラウザで使うとき**: 何も変わりません。アプリ専用のスタイルは、アプリが読み込んだページにだけ効きます。
+
 ---
 
 ## 画面構成と主なビュー

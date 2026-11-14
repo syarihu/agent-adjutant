@@ -1,0 +1,29 @@
+/* ── The desktop app (app/src-tauri): translucent surfaces over the window's vibrancy ──
+   Everything here is scoped to `[data-shell="app"]`, which only the app stamps on <html> (its init script), so a browser
+   renders none of it. `--app-alpha` (1 = opaque, the level なし) is the app's own setting: the surfaces that fill the window
+   are mixed down to that opacity so the macOS blur behind it shows through. Only the big surfaces are covered; cards,
+   dialogs and menus stay opaque so that text on them keeps its contrast. */
+[data-shell="app"],
+[data-shell="app"] body { background: transparent; }
+
+[data-shell="app"] body {
+  background: color-mix(in srgb, var(--md-sys-color-surface) calc(var(--app-alpha, 1) * 100%), transparent);
+}
+[data-shell="app"] #nav-rail,
+[data-shell="app"] #side-list {
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
+}
+/* The popped-out panel floats over the page, so it stays opaque; docked, it is a column like the others. */
+[data-shell="app"] body:not(.panel-pop) #task-panel {
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
+}
+[data-shell="app"] .col {
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
+}
+/* `.col.attention` (board.css) tints a column that waits on the person; the rule above would paint over it, so it is mixed
+   down from its own colour. */
+[data-shell="app"] .col.attention {
+  background: color-mix(in srgb,
+    color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface-container-low))
+    calc(var(--app-alpha, 1) * 100%), transparent);
+}

@@ -1,4 +1,9 @@
 /target
+
+# The macOS app (app/src-tauri) is its own crate; tauri-build writes gen/ and permissions/ from build.rs.
+/app/src-tauri/target
+/app/src-tauri/gen
+/app/src-tauri/permissions
 /.idea
 
 # Config
