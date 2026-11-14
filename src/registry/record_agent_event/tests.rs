@@ -819,14 +819,18 @@ fn a_row_whose_start_time_differs_is_swept_unless_it_matches_or_was_never_read()
         ps_started: started.map(str::to_string),
         ..row_of(id, Some(5), Some(T0))
     };
-    put(root, &with("recycled", Some("Old")));
-    put(root, &with("same", Some("New")));
+    put(root, &with("recycled", Some("Thu Jan  1 00:00:00 2026")));
+    put(root, &with("same", Some("Thu Jan  1 00:00:09 2026")));
+    put(root, &with("unreadable", Some("Old")));
     put(root, &with("unanchored", None));
     put(root, &with("blank", Some("  ")));
-    let table = ProcessTable::fixed(Some(HashMap::from([(5, "New".to_string())])));
+    let table = ProcessTable::fixed(Some(HashMap::from([(
+        5,
+        "Thu Jan  1 00:00:09 2026".to_string(),
+    )])));
     sweep_with(root, &table, HookEvent::SessionStart);
     assert!(!exists(root, "recycled"));
-    for kept in ["same", "unanchored", "blank"] {
+    for kept in ["same", "unanchored", "blank", "unreadable"] {
         assert!(exists(root, kept), "{kept}");
     }
 }

@@ -455,6 +455,7 @@ pub fn mcp_in(
 pub fn ps_started(pid: u32) -> String {
     let out = Command::new("ps")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .env("LC_ALL", "C")
         .output()
         .unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_string()

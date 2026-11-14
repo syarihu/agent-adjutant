@@ -23,10 +23,15 @@ pub(super) enum Answer {
 }
 
 pub(super) fn ps_answer(pid: u32, field: &str) -> Answer {
-    let Ok(out) = Command::new("ps")
-        .args(["-o", &format!("{field}="), "-p", &pid.to_string()])
-        .output()
-    else {
+    let mut ps = Command::new("ps");
+    ps.args(["-o", &format!("{field}="), "-p", &pid.to_string()]);
+    if field == "lstart" {
+        // The start time is written in the caller's locale, and a record written under one
+        // reads as another process under the next. `command` is left alone: the C locale makes
+        // macOS `ps` escape every non-ASCII byte of it.
+        ps.env("LC_ALL", "C");
+    }
+    let Ok(out) = ps.output() else {
         return Answer::CannotTell;
     };
     if !out.status.success() {
@@ -48,7 +53,8 @@ fn ps_field(pid: u32, field: &str) -> Option<String> {
     }
 }
 
-/// When the process started, as the system reports it. Compared as an opaque string.
+/// When the process started, as the system reports it, in the C locale. Records written by an
+/// older version may hold the writer's locale instead, so compare with `same_start`.
 pub fn ps_started(pid: u32) -> Option<String> {
     ps_field(pid, "lstart").filter(|s| !s.is_empty())
 }
@@ -118,8 +124,10 @@ impl ProcessTable {
 /// Every process's start time, from one `ps`. `None` when `ps` cannot be run or fails, which
 /// the single-pid call reads as "cannot tell" as well.
 fn process_starts() -> Option<HashMap<u32, String>> {
+    // The C locale, for the same reason as in `ps_answer`.
     let out = Command::new("ps")
         .args(["-A", "-o", "pid=,lstart="])
+        .env("LC_ALL", "C")
         .output()
         .ok()?;
     out.status
@@ -129,9 +137,9 @@ fn process_starts() -> Option<HashMap<u32, String>> {
 
 /// The pid and start time of each line of `ps -A -o pid=,lstart=`.
 ///
-/// The start time is the rest of the line, trimmed: it holds spaces of its own, and a
-/// localized day name can be multi-byte. Trimmed because that is what the single-pid call's
-/// answer is, and the two are compared to the same recorded string.
+/// The start time is the rest of the line, trimmed: it holds spaces of its own. Trimmed because
+/// that is what the single-pid call's answer is, and the two are compared to the same recorded
+/// string.
 pub(super) fn parse_process_starts(output: &str) -> HashMap<u32, String> {
     output
         .lines()
@@ -186,7 +194,9 @@ pub(super) fn process_matches_with(
     started: Option<&str>,
 ) -> bool {
     match started {
-        Some(started) => table.started(pid).as_deref() == Some(started),
+        Some(started) => table
+            .started(pid)
+            .is_some_and(|now| same_start(&now, started) == Sameness::Same),
         None => match expect_in_command {
             Some(name) => ps_field(pid, "command").is_some_and(|c| c.contains(name)),
             None => ps_field(pid, "command").is_some(),
@@ -267,7 +277,11 @@ pub(super) fn holder(path: &Path) -> Liveness {
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match recorded {
             // Same pid, different start time: the pid was recycled onto something else.
-            Some(recorded) if started != recorded => Liveness::Gone,
+            Some(recorded) => match same_start(&started, recorded) {
+                Sameness::Same => Liveness::Alive,
+                Sameness::Different => Liveness::Gone,
+                Sameness::CannotTell => Liveness::CannotTell,
+            },
             // Nothing to compare, so nothing here says this pid was recycled — and this
             // answer is the one that decides whether a name is free to take. The trade is
             // deliberate: an anchorless record over a pid that is alive but unrelated makes
@@ -277,7 +291,7 @@ pub(super) fn holder(path: &Path) -> Liveness {
             // this protocol exists to prevent. It is the same trade `close` makes on the
             // worker side: what cannot be established is left alone, and a person finishes
             // the job.
-            _ => Liveness::Alive,
+            None => Liveness::Alive,
         },
     }
 }
@@ -291,8 +305,12 @@ pub fn hub_process_liveness(pid: u32, started: Option<&str>) -> Liveness {
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(now) => match started.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(recorded) if recorded != now => Liveness::Gone,
-            _ => Liveness::Alive,
+            Some(recorded) => match same_start(&now, recorded) {
+                Sameness::Same => Liveness::Alive,
+                Sameness::Different => Liveness::Gone,
+                Sameness::CannotTell => Liveness::CannotTell,
+            },
+            None => Liveness::Alive,
         },
     }
 }
@@ -316,10 +334,13 @@ pub fn worker_liveness_with(table: &ProcessTable, worker: &WorkerIdentity) -> Li
         Answer::NoSuchProcess => Liveness::Gone,
         Answer::CannotTell => Liveness::CannotTell,
         Answer::Said(started) => match &worker.started {
-            Some(recorded) if &started == recorded => Liveness::Alive,
-            // Same pid, another start time: the pid has been handed to something else, and
-            // the worker that recorded it is gone.
-            Some(_) => Liveness::Gone,
+            Some(recorded) => match same_start(&started, recorded) {
+                Sameness::Same => Liveness::Alive,
+                // Same pid, another start time: the pid has been handed to something else,
+                // and the worker that recorded it is gone.
+                Sameness::Different => Liveness::Gone,
+                Sameness::CannotTell => Liveness::CannotTell,
+            },
             // Something is running under that pid and nothing says it is this worker. The
             // pid alone would answer `Alive` for whatever inherited the number, and this
             // answer is what closes a tab and clears a worktree — so it is the same
@@ -349,7 +370,7 @@ pub(super) fn agent_session_dead(row: &AgentSession, table: &ProcessTable, now: 
             Answer::NoSuchProcess => true,
             Answer::CannotTell => false,
             Answer::Said(started) => match anchor_of(row.ps_started.as_deref()) {
-                Some(recorded) => recorded != started,
+                Some(recorded) => same_start(&started, recorded) == Sameness::Different,
                 None => quiet(row, now),
             },
         },
@@ -361,5 +382,237 @@ fn quiet(row: &AgentSession, now: i64) -> bool {
     match row.last_event_at.or(row.created_at) {
         Some(seen) => now - seen >= QUIET_ROW_SECS,
         None => true,
+    }
+}
+
+/// Whether two start times name the same moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Sameness {
+    Same,
+    Different,
+    /// At least one side is in a form that cannot be read as a start time.
+    CannotTell,
+}
+
+/// Are these two `ps` start times the same moment?
+///
+/// Records are written in the C locale, but one written by an older version holds whatever
+/// locale its writer ran in (`日 11/15 02:40:41 2026`, `Do 15 Nov 02:40:41 2026`), and the
+/// process it names is still running. Those cannot be parsed for want of knowing every locale's
+/// layout, so they are read by their numbers, and by which number is which: every layout `ps`
+/// has writes the year in full and the time as hour, minute, second side by side, and what is
+/// left is the day, with the month too where it is a number (its order against the day is not
+/// known, so the two are compared as a pair). An unreadable side is `CannotTell`, never
+/// `Different`, so that a caller which acts on a mismatch does not act on a locale it could
+/// not read.
+pub(crate) fn same_start(a: &str, b: &str) -> Sameness {
+    let (a, b) = (a.trim(), b.trim());
+    if a == b {
+        return Sameness::Same;
+    }
+    let (Some(ka), Some(kb)) = (StartKey::of(a), StartKey::of(b)) else {
+        return Sameness::CannotTell;
+    };
+    if ka.year != kb.year || ka.time != kb.time {
+        return Sameness::Different;
+    }
+    match (&ka.date, &kb.date) {
+        (Date::Full { .. }, Date::Full { .. }) => Sameness::Different,
+        (Date::Full { day, month }, Date::Numbers(n))
+        | (Date::Numbers(n), Date::Full { day, month }) => {
+            let same = match n.as_slice() {
+                [only] => only == day,
+                [x, y] => {
+                    let mut pair = [*day, *month];
+                    pair.sort_unstable();
+                    [*x, *y] == pair
+                }
+                _ => false,
+            };
+            verdict(same)
+        }
+        (Date::Numbers(x), Date::Numbers(y)) if x.len() == y.len() => verdict(x == y),
+        (Date::Numbers(_), Date::Numbers(_)) => Sameness::CannotTell,
+    }
+}
+
+fn verdict(same: bool) -> Sameness {
+    if same {
+        Sameness::Same
+    } else {
+        Sameness::Different
+    }
+}
+
+/// A start time with its fields told apart as far as they can be.
+struct StartKey {
+    year: u64,
+    /// Hour, minute, second.
+    time: (u64, u64, u64),
+    date: Date,
+}
+
+enum Date {
+    /// The C form, which names its month.
+    Full { day: u64, month: u64 },
+    /// Another locale's: the day, or the day and the month in an unknown order (sorted).
+    Numbers(Vec<u64>),
+}
+
+impl StartKey {
+    fn of(text: &str) -> Option<StartKey> {
+        if let Some(key) = c_form(text) {
+            return Some(key);
+        }
+        let mut nums = vec![];
+        let mut run = String::new();
+        for ch in text.chars().chain(std::iter::once(' ')) {
+            if ch.is_ascii_digit() {
+                run.push(ch);
+            } else if !run.is_empty() {
+                nums.push(run.parse::<u64>().ok()?);
+                run.clear();
+            }
+        }
+        // A year is written out in full by every locale `ps` has; a two-digit one is not read.
+        let mut years = nums
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| (1000..=9999).contains(*n));
+        let (at, year) = years.next().map(|(i, n)| (i, *n))?;
+        if years.next().is_some() {
+            return None;
+        }
+        nums.remove(at);
+        if !(4..=5).contains(&nums.len()) {
+            return None;
+        }
+        let time = nums.split_off(nums.len() - 3);
+        let time = (time[0], time[1], time[2]);
+        nums.sort_unstable();
+        Some(StartKey {
+            year,
+            time,
+            date: Date::Numbers(nums),
+        })
+    }
+}
+
+/// `Sun Nov 15 02:40:41 2026`, the one layout `ps -o lstart=` has in the C locale (the day is
+/// padded with a space).
+fn c_form(text: &str) -> Option<StartKey> {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let bytes = text.as_bytes();
+    if bytes.len() != 24 || !text.is_ascii() {
+        return None;
+    }
+    let digit = |i: usize| bytes[i].is_ascii_digit();
+    let layout = bytes[3] == b' '
+        && bytes[7] == b' '
+        && (bytes[8] == b' ' || digit(8))
+        && digit(9)
+        && bytes[10] == b' '
+        && [11, 12, 14, 15, 17, 18, 20, 21, 22, 23]
+            .iter()
+            .all(|i| digit(*i))
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b' ';
+    if !layout || !DAYS.contains(&&text[0..3]) {
+        return None;
+    }
+    let month = MONTHS.iter().position(|m| *m == &text[4..7])? as u64 + 1;
+    let number = |range: std::ops::Range<usize>| text[range].trim().parse::<u64>().ok();
+    Some(StartKey {
+        year: number(20..24)?,
+        time: (number(11..13)?, number(14..16)?, number(17..19)?),
+        date: Date::Full {
+            day: number(8..10)?,
+            month,
+        },
+    })
+}
+
+#[cfg(test)]
+mod same_start_tests {
+    use super::*;
+
+    const C: &str = "Thu Mar  5 15:07:09 2026";
+
+    fn check(other: &str, want: Sameness) {
+        assert_eq!(same_start(C, other), want, "{other:?}");
+        assert_eq!(same_start(other, C), want, "{other:?}");
+    }
+
+    #[test]
+    fn equal_strings_are_the_same_whatever_they_say() {
+        assert_eq!(same_start("A", "A"), Sameness::Same);
+        assert_eq!(
+            same_start("whenever it was", " whenever it was\n"),
+            Sameness::Same
+        );
+        assert_eq!(same_start(C, C), Sameness::Same);
+    }
+
+    #[test]
+    fn a_locale_other_than_c_is_read_by_its_numbers() {
+        for other in [
+            "木  3/ 5 15:07:09 2026",
+            "2026년  3월  5일 목요일 15시 07분 09초",
+            "чт  5 марта 2026 15:07:09",
+            "Do  5 Mär 15:07:09 2026",
+            "Thu 5 Mar 15:07:09 2026",
+            "Thu 05 Mar 15:07:09 2026",
+            "05/03/2026 15:07:09 Thu",
+        ] {
+            check(other, Sameness::Same);
+        }
+    }
+
+    #[test]
+    fn a_day_that_is_also_the_month_is_still_the_same() {
+        assert_eq!(
+            same_start("Mi 11 Nov 10:42:31 2026", "Wed Nov 11 10:42:31 2026"),
+            Sameness::Same
+        );
+        assert_eq!(
+            same_start("水 11/11 10:42:31 2026", "Wed Nov 11 10:42:31 2026"),
+            Sameness::Same
+        );
+    }
+
+    #[test]
+    fn another_moment_is_different() {
+        check("木  3/ 5 15:07:10 2026", Sameness::Different);
+        check("木  3/ 5 15:09:07 2026", Sameness::Different);
+        check("木  3/ 5 07:15:09 2026", Sameness::Different);
+        check("Thu Mar  5 15:09:07 2026", Sameness::Different);
+        assert_eq!(
+            same_start("Thu Mar  5 15:07:09 2026", "Thu Mar  5 15:09:07 2026"),
+            Sameness::Different
+        );
+        check("木  4/ 5 15:07:09 2026", Sameness::Different);
+        check("Do  5 Mär 15:07:09 2025", Sameness::Different);
+        check("Thu Mar  5 15:07:10 2026", Sameness::Different);
+        assert_eq!(
+            same_start("木  3/ 5 15:07:09 2026", "木  3/ 5 15:07:10 2026"),
+            Sameness::Different
+        );
+    }
+
+    #[test]
+    fn what_cannot_be_read_cannot_be_told() {
+        check("", Sameness::CannotTell);
+        check("long ago", Sameness::CannotTell);
+        check("پنجشنبه ۵ مارس ۱۵:۰۷:۰۹ ۲۰۲۶", Sameness::CannotTell);
+        check("5 3 26 15:07:09", Sameness::CannotTell);
+        check("Thu 3 15:07:09 2026 1 2 3", Sameness::CannotTell);
+        assert_eq!(
+            same_start("木  3/ 5 15:07:09 2026", "Do  5 Mär 15:07:09 2026"),
+            Sameness::CannotTell
+        );
     }
 }

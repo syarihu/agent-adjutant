@@ -262,6 +262,7 @@ fn a_running_worker_gets_woken_the_same_way_a_hub_does() {
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     let started = Command::new("ps")
         .args(["-o", "lstart=", "-p", &std::process::id().to_string()])
+        .env("LC_ALL", "C")
         .output()
         .unwrap();
     std::fs::write(

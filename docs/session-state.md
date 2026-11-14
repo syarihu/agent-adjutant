@@ -80,7 +80,7 @@ keys this binary does not know are kept in `other`, as `WorkerRecord.other` does
 | `pendingStatus` | A `done` or `failed` held back while sub-agents run |
 | `cwd`, `worktree` | The payload's `cwd` and its `git rev-parse --show-toplevel` (absent outside git; the row is still written) |
 | `configDir` | `CLAUDE_CONFIG_DIR` from the hook's environment, else the default: which account the session runs as |
-| `pid`, `psStarted` | The agent's process (`CLAUDE_PID` in the hook's environment) and its start time, for the join and for liveness |
+| `pid`, `psStarted` | The agent's process (`CLAUDE_PID` in the hook's environment) and its start time, for the join and for liveness. The start time is written in the C locale form (`Sun Nov 15 02:40:41 2026`); one written by an older version in another locale is compared by its numbers |
 | `createdAt`, `updatedAt` | `updatedAt` moves only when `status` changes, so tool activity does not reset "how long in this state" |
 | `lastEventAt` | The "seen alive" mark. Moves with any other change, and on its own at most once a minute |
 | `activity` | The tool in use (`Edit: src/lib.rs`) |

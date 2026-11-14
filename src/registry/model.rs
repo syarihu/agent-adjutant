@@ -507,7 +507,7 @@ pub struct AgentSession {
     pub config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
-    /// The agent process's start time as `ps` prints it, opaque like every other `psStarted`.
+    /// The agent process's start time as `ps` prints it in the C locale; a row from an older version may be in the writer's, which `same_start` reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ps_started: Option<String>,
     /// Epoch seconds, as are the other times here.

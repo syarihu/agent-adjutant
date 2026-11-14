@@ -82,11 +82,31 @@ fn of_two_rows_for_one_process_the_one_seen_last_wins() {
 #[test]
 fn a_reused_pid_is_not_the_same_agent() {
     let dir = tempfile::tempdir().unwrap();
+    let (old, now) = ("Thu Jan  1 00:00:00 2026", "Thu Jan  1 00:00:09 2026");
     // The row is from an earlier process 5; the one running now started at another time.
-    put(dir.path(), &row("stale", Some(5), Some("Old"), 10));
-    assert_eq!(find(dir.path(), None, Some(5), Some("A")), None);
+    put(dir.path(), &row("stale", Some(5), Some(old), 10));
+    let table = ProcessTable::fixed(Some(HashMap::from([(5, now.to_string())])));
+    let identity = AgentIdentity {
+        session_id: None,
+        pid: Some(5),
+        ps_started: Some(now),
+    };
+    assert!(
+        agent_session_of(dir.path(), &table, &identity)
+            .unwrap()
+            .is_none()
+    );
     // And the row is not alive in the table, so the id does not find it either.
-    assert_eq!(find(dir.path(), Some("stale"), None, None), None);
+    let by_id = AgentIdentity {
+        session_id: Some("stale"),
+        pid: None,
+        ps_started: None,
+    };
+    assert!(
+        agent_session_of(dir.path(), &table, &by_id)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
