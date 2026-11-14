@@ -189,7 +189,9 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
    **If the brief's Handover note says the plan was already approved and names its file** (a task
    first planned for Jules and switched to a worker), read that file as the plan: do not plan again
    and do not open another plan gate — skip steps 2 and 3 and go on to §implement. It was approved on the
-   board as it is written. The hub's plan gate already wrote it to the task record: do not rewrite it.
+   board as it is written. The hub's plan gate already wrote it to the task record: do not rewrite it,
+   unless `adj task show --id <id>` has no `plan` (that write is best effort); then write that file's plan
+   with `adj task update --id <id> --plan -`, as below.
 2. Read the code and make an ordered implementation plan.
 3. Show the plan and get it approved before implementing (unless Stop at is `none`, below). If asked
    to change it, change it and confirm again.
@@ -205,11 +207,12 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
    in the code in `sections` (a heading that fits each block, and `stage: "plan"` for a block that
    belongs with the plan, such as a fix), and in `decided` only what is already settled, not the
    steps. `focus` is the one question to answer before you implement.
-   **Open it with `task`** (the brief's task record id): that also writes the plan to the task record,
+   **Open it with `task`** when the brief's Task record is not `-`: that also writes the plan to the task record,
    which is the plan the board shows. A plan you change later (after a `changes`, or while implementing)
    is rewritten by opening the next plan gate or record with `task`, or with
    `adj task update --id <id> --plan -` (JSON on stdin: `problem`, `goal`, `steps` of `{text, detail}`,
-   `decided`, `unsure`). If the open result's `warnings` says it was not written, run that.
+   `decided`, `unsure`). If the open result's `warnings` says it was not written, run that. With no task
+   record there is nothing to write it to: leave `task` out.
 
 <!-- section: tools -->
 ### Tools you may use

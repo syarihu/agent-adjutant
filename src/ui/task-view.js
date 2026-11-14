@@ -581,7 +581,7 @@ function taskPlanCardHtml(task, all) {
   const icon = { approved: 'check_circle', waiting: 'hourglass_empty', recorded: 'edit_note', nogate: 'edit_note', unapproved: 'radio_button_unchecked' }[mark];
   const color = { good: 'var(--md-sys-color-success)', warn: 'var(--md-sys-color-warning)' }[tone] || 'var(--md-sys-color-outline)';
   let h = `<div class="panel" data-task-plan="${mark}"><h3>計画</h3>` +
-    `<div><span class="state ${tone}" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:16px;color:${color};">${icon}</span><span>${text}</span></span></div>`;
+    `<div><span class="state ${tone}" style="display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;color:${color};">${icon}</span><span>${text}</span></span></div>`;
   if (plan.steps?.length) {
     h += `<ol class="steps">${plan.steps.map(x => `<li>${esc(x.text)}${x.detail ? `<div class="step-detail">${esc(x.detail)}</div>` : ''}</li>`).join('')}</ol>`;
   }
