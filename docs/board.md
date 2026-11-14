@@ -66,10 +66,9 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 - **What it adds**: a translucent window (vibrancy), native notifications, the number of items waiting on you as the Dock badge, and a global shortcut (default `Ctrl+Option+Cmd+B`) that shows or hides the window. A second launch focuses the running window, and the window remembers its size and position. The red button hides the window; `Cmd+Q` quits.
 - **Links**: only the board's own address stays in the window. Every other link, `target="_blank"` and `window.open` opens in the default browser.
-- **Build and install**: needs a Rust toolchain and the Tauri CLI. The app is not signed, so open it the first time with right-click → Open.
+- **Build and install**: needs a Rust toolchain. `make app` installs the Tauri CLI 2 first when `cargo tauri` is missing (`cargo install tauri-cli --version '^2' --locked`, also run on its own by `make app-deps`) and leaves an installed 2.x alone. A Tauri CLI of another major version is not replaced: `make app` stops and prints the command that replaces it. The app is not signed, so open it the first time with right-click → Open.
 
   ```bash
-  cargo install tauri-cli --version '^2' --locked
   make app            # builds app/src-tauri/target/release/bundle/macos/Adjutant.app
   make app-install    # copies it to /Applications
   ```

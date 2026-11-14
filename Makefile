@@ -1,4 +1,4 @@
-.PHONY: help install restart reinstall check app app-install
+.PHONY: help install restart reinstall check app-deps app app-install
 .DEFAULT_GOAL := help
 
 # One root for both install and restart, so restart runs the binary install just wrote and not
@@ -13,7 +13,8 @@ help:
 	@echo "make restart    restart the resident server (INSTALL_ROOT=<dir> or ADJ=<path> picks the adj)"
 	@echo "make reinstall  install, then restart the server on the new binary"
 	@echo "make check      everything a PR has to pass"
-	@echo "make app        build the macOS app (app/src-tauri; needs: cargo install tauri-cli --version '^2' --locked)"
+	@echo "make app-deps   install the Tauri CLI 2 with cargo if cargo tauri is missing"
+	@echo "make app        build the macOS app (app/src-tauri; runs app-deps first)"
 	@echo "make app-install  copy the built app to /Applications"
 
 install:
@@ -43,7 +44,20 @@ APP_DIR := app/src-tauri
 APP_TARGET ?= $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(APP_DIR)/target)
 APP_BUNDLE := $(APP_TARGET)/release/bundle/macos/Adjutant.app
 
-app:
+# Installs the Tauri CLI only when cargo cannot find one. One of another major version is left as it
+# is and reported: cargo install would replace it for every project on the machine, not just this one.
+TAURI_CLI_INSTALL := cargo install tauri-cli --version '^2' --locked
+
+app-deps:
+	@version=$$(cargo tauri --version 2>/dev/null) || version=; \
+	case "$$version" in \
+	"tauri-cli 2."*) ;; \
+	"") echo "Tauri CLI not found; installing it: $(TAURI_CLI_INSTALL)"; $(TAURI_CLI_INSTALL) ;; \
+	*) echo "make app needs Tauri CLI 2, but cargo tauri is $$version."; \
+	   echo "Replace it with: $(TAURI_CLI_INSTALL) --force"; exit 1 ;; \
+	esac
+
+app: app-deps
 	cd "$(APP_DIR)" && cargo tauri build --bundles app
 
 # Checked before /Applications is touched: a missing build must not cost the installed copy.
