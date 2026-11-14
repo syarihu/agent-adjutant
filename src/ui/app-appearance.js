@@ -18,6 +18,12 @@ function setupAppAppearance(doc, win) {
   const slider = doc.getElementById('display-app-opacity');
   const output = doc.getElementById('display-app-opacity-value');
   const radios = [...section.querySelectorAll('input[name="display-app-background"]')];
+  const error = doc.getElementById('display-app-error');
+  const showError = message => {
+    if (!error) return;
+    error.textContent = message;
+    error.hidden = !message;
+  };
 
   // Changes go to the app one at a time, and steps of a drag that pile up while one is on its way are folded into the
   // latest: the app answers each by putting the result back on the page (`adj-appearance`).
@@ -30,8 +36,11 @@ function setupAppAppearance(doc, win) {
       next = null;
       try {
         await win.__TAURI_INTERNALS__.invoke('set_appearance', args);
+        // A step that is not saved says nothing about whether the last save went through.
+        if (args.persist || args.background) showError('');
       } catch (e) {
-        console.warn('set_appearance', e);
+        // The window already shows the change; it is only not kept for the next start.
+        showError(`設定を保存できませんでした（${e}）。次にアプリを起動したときには戻ります`);
       }
     }
     sending = false;

@@ -231,7 +231,8 @@ fn zoom(app: AppHandle, direction: String) -> Result<(), String> {
 
 /// The board's display settings (app-appearance.js): either half of the appearance, or both. The
 /// slider sends every step as it moves with `persist` false, and the last one with it true, so the
-/// file is written once per drag. A change of background is always saved.
+/// file is written once per drag. A background is always saved. A save that fails is reported to
+/// the page, which shows it; what the window shows has changed all the same.
 #[tauri::command]
 fn set_appearance(
     app: AppHandle,
@@ -242,7 +243,7 @@ fn set_appearance(
     let background = background
         .map(|key| Background::from_key(&key).ok_or("unknown background"))
         .transpose()?;
-    Ok(change_appearance(&app, background, opacity, persist).view())
+    change_appearance(&app, background, opacity, persist).map(Appearance::view)
 }
 
 // ── Window ──
@@ -304,42 +305,44 @@ fn apply_appearance(window: &WebviewWindow, appearance: Appearance) {
 /// Changes the background, the opacity or both, from the menu or the board, and shows it: the
 /// window's effect (when the background changed), the menu's check marks and the page. The lock is
 /// held throughout, as in `change_zoom`, so that two changes at once save and show in one order.
+/// A background is saved even when it is the one already shown, so that choosing it again retries
+/// a save that failed. The change is shown whether or not it could be saved, and a failed save
+/// comes back as the error.
 fn change_appearance(
     app: &AppHandle,
     background: Option<Background>,
     opacity: Option<f64>,
     persist: bool,
-) -> Appearance {
+) -> Result<Appearance, String> {
     let state = app.state::<AppState>();
     let mut appearance = state.appearance.lock().unwrap();
     let window = app.get_webview_window(MAIN);
-    if let Some(background) = background
-        && background != appearance.background
-    {
-        appearance.background = background;
-        for (b, item) in state.background_items.lock().unwrap().iter() {
-            let _ = item.set_checked(*b == background);
+    let mut saved = Ok(());
+    if let Some(background) = background {
+        if background != appearance.background {
+            appearance.background = background;
+            for (b, item) in state.background_items.lock().unwrap().iter() {
+                let _ = item.set_checked(*b == background);
+            }
+            if let Some(window) = &window {
+                apply_background(window, background);
+            }
         }
-        if let Err(e) = settings::save_background(app, background) {
-            eprintln!("settings: {e}");
-        }
-        if let Some(window) = &window {
-            apply_background(window, background);
-        }
+        saved = settings::save_background(app, background);
     }
     if let Some(opacity) = opacity {
         appearance.opacity = settings::clamp_opacity(opacity);
-    }
-    if opacity.is_some()
-        && persist
-        && let Err(e) = settings::save_opacity(app, appearance.opacity)
-    {
-        eprintln!("settings: {e}");
+        if persist && saved.is_ok() {
+            saved = settings::save_opacity(app, appearance.opacity);
+        }
     }
     if let Some(window) = &window {
         apply_appearance(window, *appearance);
     }
-    *appearance
+    if let Err(e) = &saved {
+        eprintln!("settings: {e}");
+    }
+    saved.map(|()| *appearance)
 }
 
 /// Puts the page zoom on the window. WebKit keeps it on the view across loads, and it is put on
@@ -652,7 +655,8 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     {
         let _ = item.set_checked(*b == background);
     }
-    change_appearance(app, Some(background), None, true);
+    // A failed save is already logged, and the menu has nowhere to show it.
+    let _ = change_appearance(app, Some(background), None, true);
 }
 
 fn register_shortcut(app: &AppHandle, shortcut: Option<&str>) {

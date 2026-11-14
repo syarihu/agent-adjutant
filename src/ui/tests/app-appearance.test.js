@@ -27,14 +27,17 @@ function page({ shell = null, appearance, tauri = true } = {}) {
     getAttribute: name => (name === 'data-shell' ? shell : null),
     style: { setProperty: (k, v) => { style[k] = v; } },
   };
-  const byId = { 'display-app': section, 'display-app-opacity': slider, 'display-app-opacity-value': output };
+  const error = { hidden: true, textContent: '' };
+  const byId = {
+    'display-app': section, 'display-app-opacity': slider, 'display-app-opacity-value': output, 'display-app-error': error,
+  };
   const win = new FakeTarget();
   if (appearance) win.__adjAppearance = appearance;
   if (tauri) win.__TAURI_INTERNALS__ = { invoke: async (cmd, args) => { calls.push([cmd, args]); } };
   const doc = { documentElement: root, getElementById: id => byId[id] || null };
   const ctx = vm.createContext({ document: doc, window: win, console });
   vm.runInContext(src, ctx);
-  return { section, radios, slider, output, style, win, calls };
+  return { section, radios, slider, output, style, win, calls, error };
 }
 
 const APP = { background: 'material', alpha: 0.82, minAlpha: 0.3, maxAlpha: 1 };
@@ -131,4 +134,22 @@ test('steps sent while one is on its way fold into the latest, and its echoes do
   assert.deepStrictEqual(calls, [{ opacity: 0.81, persist: false }, { opacity: 0.79, persist: true }]);
   release();
   await settle();
+});
+
+test('a save that fails is shown, and a later save that goes through clears it', async () => {
+  const p = page({ shell: 'app', appearance: APP });
+  p.win.__TAURI_INTERNALS__.invoke = async () => { throw 'disk full'; };
+  p.radios[1].checked = true;
+  p.radios[1].fire('change');
+  await settle();
+  assert.strictEqual(p.error.hidden, false);
+  assert.match(p.error.textContent, /保存できませんでした.*disk full/);
+  p.win.__TAURI_INTERNALS__.invoke = async () => {};
+  p.slider.value = '70';
+  p.slider.fire('input');
+  await settle();
+  assert.strictEqual(p.error.hidden, false, 'a step that is not saved leaves the error up');
+  p.slider.fire('change');
+  await settle();
+  assert.strictEqual(p.error.hidden, true);
 });
