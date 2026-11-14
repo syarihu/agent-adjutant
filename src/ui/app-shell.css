@@ -40,10 +40,10 @@
 [data-shell="app"] .tp-term-ph { background: var(--app-veil); }
 [data-shell="app"] #task-panel .tp-term-ph { background: transparent; }
 /* The terminal keeps its dark backdrop (its text is light in both themes), mixed down like the rest; xterm paints
-   nothing over it here (appShellTerminalOptions in terminal.js, and the viewport rule below). The backdrop lies over the window's fill, so it ends up a
-   little denser than the page around it. In the light theme that fill is light and would wash the text out, so the
-   backdrop goes halfway from the level to opaque there; in the dark theme the fill is as dark as the backdrop and the level
-   is used as it is (the selectors are tokens.css's). */
+   nothing over it here (appShellTerminalOptions in terminal.js, and the viewport rule below). The backdrop lies over the
+   window's fill, so it ends up a little denser than the page around it. In the light theme that fill is light and would
+   wash the text out, so the backdrop goes halfway from the level to opaque there; in the dark theme the fill is as dark as
+   the backdrop and the level is used as it is (the selectors are tokens.css's). */
 [data-shell="app"] {
   --app-term-alpha: calc((1 + var(--app-alpha, 1)) / 2);
 }

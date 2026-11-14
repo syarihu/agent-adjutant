@@ -27,9 +27,10 @@ function loadXterm(base = BASE) {
    its own, so the window's translucency shows through it; its dark backdrop is the container's,
    mixed down to `--app-alpha` there (app-shell.css, which also clears the black xterm.css gives
    the viewport). The DOM renderer takes the theme's background as it is; `allowTransparency` is
-   what the canvas and WebGL renderers would need, so it is set for them. The cursor's accent defaults to the background, which would
-   leave the character under a block cursor invisible, so it is given xterm's default black. A
-   browser gets no options from here and renders as it always did. */
+   what the canvas and WebGL renderers would need, so it is set for them. The cursor's accent
+   defaults to the background, which would leave the character under a block cursor invisible, so
+   it is given xterm's default black. A browser gets no options from here and renders as it always
+   did. */
 function appShellTerminalOptions(root = document.documentElement) {
   if (root?.getAttribute('data-shell') !== 'app') return {};
   return { allowTransparency: true, theme: { background: 'rgba(0, 0, 0, 0)', cursorAccent: '#000000' } };
