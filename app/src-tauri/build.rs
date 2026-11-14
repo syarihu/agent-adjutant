@@ -8,6 +8,7 @@ fn main() {
         "notification_permission",
         "request_notification_permission",
         "focus_window",
+        "title_bar_double_click",
         "zoom",
         "set_appearance",
     ];

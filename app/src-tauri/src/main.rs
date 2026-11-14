@@ -10,6 +10,7 @@
 
 mod adj;
 mod settings;
+mod title_bar;
 
 use std::{
     net::{SocketAddr, TcpStream},
@@ -23,6 +24,8 @@ use std::{
 
 use serde::Serialize;
 use settings::Background;
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 use tauri::{
     AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
@@ -71,6 +74,8 @@ struct AppState {
     /// Notifications shown and not yet clicked (see `MAX_WAITING`), and the next number to give.
     waiting: Mutex<Vec<(i32, Instant)>>,
     next_notification: AtomicI32,
+    /// Whether the window was last seen in full screen, so that only a change is put on the page.
+    fullscreen: AtomicBool,
 }
 
 /// What the window shows behind the board, and how opaque the board's surfaces stay over it.
@@ -220,6 +225,26 @@ fn focus_window(app: AppHandle) {
     show_main(&app);
 }
 
+/// A double-click on the page's drag strip (shell.js), where the title bar was: what System Settings
+/// says a double-click on a title bar does. Async, so that reading the setting stays off the main thread.
+#[tauri::command]
+async fn title_bar_double_click(window: WebviewWindow) {
+    let done = match title_bar::double_click() {
+        title_bar::DoubleClick::Zoom => {
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize()
+            } else {
+                window.maximize()
+            }
+        }
+        title_bar::DoubleClick::Minimize => window.minimize(),
+        title_bar::DoubleClick::Nothing => Ok(()),
+    };
+    if let Err(e) = done {
+        eprintln!("title bar: {e}");
+    }
+}
+
 /// Cmd++ from the board's page (shell.js): a menu accelerator names a physical key, so it cannot
 /// say "the key that types +" on every keyboard layout, and the page catches that one instead.
 #[tauri::command]
@@ -270,8 +295,54 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
-fn shell_script(appearance: Appearance) -> String {
-    SHELL_JS.replace("__APPEARANCE__", &appearance.json())
+fn shell_script(appearance: Appearance, frame: Frame) -> String {
+    SHELL_JS
+        .replace("__APPEARANCE__", &appearance.json())
+        .replace("__FRAME__", &frame.json())
+}
+
+/// What the page needs to know of the window to lay out the strip under the title bar (shell.js):
+/// whether it is in full screen, where the system draws no title bar, and the page zoom, which
+/// scales the page but not the title bar.
+#[derive(Clone, Copy, Serialize)]
+struct Frame {
+    fullscreen: bool,
+    zoom: f64,
+}
+
+impl Frame {
+    fn json(self) -> String {
+        serde_json::to_string(&self).expect("the frame serialises")
+    }
+}
+
+/// Puts the window's frame on the page that is showing (any page of the app's: the strip is on all).
+fn apply_frame(window: &WebviewWindow, zoom: f64) {
+    let fullscreen = window.is_fullscreen().unwrap_or(false);
+    window
+        .app_handle()
+        .state::<AppState>()
+        .fullscreen
+        .store(fullscreen, Ordering::SeqCst);
+    let frame = Frame { fullscreen, zoom };
+    let _ = window.eval(format!(
+        "window.__adjFrame && window.__adjFrame({})",
+        frame.json()
+    ));
+}
+
+/// A resize, which is also how entering and leaving full screen arrive: puts the frame on the page
+/// when full screen changed.
+fn on_resized(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN) else {
+        return;
+    };
+    let state = app.state::<AppState>();
+    let fullscreen = window.is_fullscreen().unwrap_or(false);
+    if fullscreen != state.fullscreen.load(Ordering::SeqCst) {
+        let zoom = *state.zoom.lock().unwrap();
+        apply_frame(&window, zoom);
+    }
 }
 
 /// The window effect behind the page: the material blurs what is behind the window, and with no
@@ -390,6 +461,7 @@ fn change_zoom(app: &AppHandle, change: Zoom) {
     }
     if let Some(window) = app.get_webview_window(MAIN) {
         apply_zoom(&window, *zoom);
+        apply_frame(&window, *zoom);
     }
 }
 
@@ -434,7 +506,11 @@ fn create_window(app: &AppHandle, appearance: Appearance, zoom: f64) -> tauri::R
             .map(permission_word)
             .unwrap_or("default"),
     );
-    let script = format!("{}\n{}", shell_script(appearance), notification);
+    let frame = Frame {
+        fullscreen: false,
+        zoom,
+    };
+    let script = format!("{}\n{}", shell_script(appearance, frame), notification);
 
     let on_navigation = app.clone();
     let on_new_window = app.clone();
@@ -444,6 +520,14 @@ fn create_window(app: &AppHandle, appearance: Appearance, zoom: f64) -> tauri::R
         .min_inner_size(900.0, 600.0)
         .transparent(true)
         .background_color(Color(0, 0, 0, 0));
+    // The board runs up to the top edge, under the traffic lights, over the same background; the
+    // title stays the window's name (the Window menu, Mission Control) without being drawn.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
     if let Some(effects) = effects(appearance.background) {
         builder = builder.effects(effects);
     }
@@ -716,6 +800,7 @@ fn main() {
             notification_permission,
             request_notification_permission,
             focus_window,
+            title_bar_double_click,
             zoom,
             set_appearance
         ])
@@ -767,6 +852,7 @@ fn main() {
                 if let Some(window) = webview.app_handle().get_webview_window(webview.label()) {
                     apply_appearance(&window, appearance);
                     apply_zoom(&window, zoom);
+                    apply_frame(&window, zoom);
                 }
             }
         })
@@ -790,6 +876,7 @@ fn main() {
                 navigated_at: Mutex::new(Instant::now()),
                 waiting: Mutex::new(vec![]),
                 next_notification: AtomicI32::new(1),
+                fullscreen: AtomicBool::new(false),
             });
             // Before any notification is shown: only those shown after a handler exists report clicks.
             let for_clicks = handle.clone();
@@ -825,6 +912,11 @@ fn main() {
                 let _ = window.hide();
             }
         }
+        RunEvent::WindowEvent {
+            event: WindowEvent::Resized(_),
+            label,
+            ..
+        } if label == MAIN => on_resized(app),
         // A click on the Dock icon, or on a notification, activates the app.
         RunEvent::Reopen { .. } => show_main(app),
         _ => {}
