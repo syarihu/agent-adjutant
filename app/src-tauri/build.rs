@@ -8,6 +8,7 @@ fn main() {
         "notification_permission",
         "request_notification_permission",
         "focus_window",
+        "zoom",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()

@@ -29,4 +29,15 @@
     wait.observe(document, { childList: true });
   }
   document.addEventListener('DOMContentLoaded', () => apply(window.__adjAlpha));
+
+  // Cmd++ zooms in, as Cmd+= does. The menu's shortcut names a physical key (=), so the key that
+  // types + (Shift+= on a US keyboard, Shift+; on a Japanese one) is caught here, before the page.
+  if (window.__TAURI_INTERNALS__) {
+    window.addEventListener('keydown', event => {
+      if (event.key !== '+' || !event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      window.__TAURI_INTERNALS__.invoke('zoom', { direction: 'in' }).catch(() => {});
+    }, true);
+  }
 })();
