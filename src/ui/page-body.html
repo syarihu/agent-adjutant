@@ -283,6 +283,16 @@
         <label><input type="checkbox" id="display-use-reviews" aria-describedby="display-help"> レビュー依頼を使う</label>
         <span class="note" id="display-help">オフにすると、画面左の「レビュー」と件数、同期の古さを示す印、レビュー依頼のデスクトップ通知を隠し、一覧の取得を止めます。タスク自身の「AI 下読み」には影響しません。設定はこのブラウザにのみ保存されます</span>
       </fieldset>
+      <fieldset class="field notify-kinds" id="display-app" aria-describedby="display-app-help" hidden>
+        <legend>アプリのウィンドウ</legend>
+        <label><input type="radio" name="display-app-background" value="material"> マテリアル（ぼかし）</label>
+        <label><input type="radio" name="display-app-background" value="none"> ぼかしなし</label>
+        <label class="app-opacity">不透明度
+          <input type="range" id="display-app-opacity" min="30" max="100" step="1" aria-describedby="display-app-help">
+          <output id="display-app-opacity-value" for="display-app-opacity"></output>
+        </label>
+        <span class="note" id="display-app-help">マテリアルは macOS の半透明の素材で、後ろのウィンドウをぼかします。ぼかしなしでは後ろのウィンドウがそのまま見えます。不透明度を下げるほどボードの面が透けます。設定はアプリに保存され、背景はメニューの「表示」→「背景」からも切り替えられます</span>
+      </fieldset>
     </div>
     <div class="foot">
       <button type="button" class="btn-m3-text" data-dialog-close="display-dialog">閉じる</button>

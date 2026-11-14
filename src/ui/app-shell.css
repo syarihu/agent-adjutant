@@ -1,6 +1,7 @@
-/* ── The desktop app (app/src-tauri): translucent surfaces over the window's vibrancy ──
+/* ── The desktop app (app/src-tauri): translucent surfaces over the window's background ──
    Everything here is scoped to `[data-shell="app"]`, which only the app stamps on <html> (its init script), so a browser
-   renders none of it. `--app-alpha` (1 = opaque, the level なし) is the app's own setting.
+   renders none of it. `--app-alpha` (1 = opaque) is the app's own setting: the opacity slider in the display settings
+   (app-appearance.js). Behind the page the window has the macOS material (blurred) or no effect at all, as chosen there.
 
    The window is painted once: `body` fills it with the page's surface mixed down to `--app-alpha`, and nothing that fills
    the window paints a second layer over it, or the two would stack (two layers at 0.82 let 3% through, not 18%). So:
@@ -42,8 +43,8 @@
 /* The terminal keeps its dark backdrop (its text is light in both themes), mixed down like the rest; xterm paints
    nothing over it here (appShellTerminalOptions in terminal.js, and the viewport rule below). The backdrop lies over the
    window's fill, so it ends up a little denser than the page around it. In the light theme that fill is light and would
-   wash the text out, so the backdrop goes halfway from the level to opaque there; in the dark theme the fill is as dark as
-   the backdrop and the level is used as it is (the selectors are tokens.css's). */
+   wash the text out, so the backdrop goes halfway from the opacity to opaque there; in the dark theme the fill is as dark as
+   the backdrop and the opacity is used as it is (the selectors are tokens.css's). */
 [data-shell="app"] {
   --app-term-alpha: calc((1 + var(--app-alpha, 1)) / 2);
 }
@@ -58,7 +59,7 @@
 [data-shell="app"] .adj-terminal .xterm-viewport { background-color: transparent; }
 
 /* The board's list layout: its heads stay put while the rows scroll under them. While the window is translucent they are
-   see-through and blur what passes beneath; at なし (`--app-solid` 1) they are the browser's opaque heads again, since the
+   see-through and blur what passes beneath; at 100% (`--app-solid` 1) they are the browser's opaque heads again, since the
    page behind them is opaque too and rows must not show through. */
 [data-shell="app"] {
   --app-solid: clamp(0, (var(--app-alpha, 1) - 0.99) * 100, 1);
@@ -79,3 +80,9 @@
   -webkit-backdrop-filter: var(--app-blur);
   backdrop-filter: var(--app-blur);
 }
+
+/* The display settings' row for the app's opacity (app-appearance.js): the slider takes the room between the label and
+   the value. The section itself is hidden in a browser. */
+[data-shell="app"] #display-app .app-opacity { display: flex; align-items: center; gap: 8px; }
+[data-shell="app"] #display-app .app-opacity input[type="range"] { flex: 1; }
+[data-shell="app"] #display-app .app-opacity output { min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
