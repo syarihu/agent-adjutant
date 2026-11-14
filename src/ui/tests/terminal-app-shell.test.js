@@ -36,3 +36,20 @@ test('the app gets a terminal with a transparent background and a visible block 
 test('the terminal is created with them', () => {
   assert.match(src, /new Terminal\(\{[\s\S]*?\.\.\.appShellTerminalOptions\(\),[\s\S]*?\}\);/);
 });
+
+/* The stylesheet is the app's alone: a rule a browser could match would change how the board looks there. */
+const css = fs.readFileSync(path.join(__dirname, '..', 'app-shell.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const selectors = [...css.matchAll(/([^{}]+)\{/g)]
+  .map(m => m[1].trim())
+  .filter(s => !s.startsWith('@'))
+  .flatMap(s => s.split(',').map(part => part.trim()));
+
+test('every rule in app-shell.css is scoped to the app', () => {
+  assert.ok(selectors.length > 0);
+  for (const s of selectors) assert.ok(s.startsWith('[data-shell="app"]'), `unscoped selector: ${s}`);
+});
+
+test('the app clears the black xterm.css gives the terminal viewport', () => {
+  assert.ok(selectors.includes('[data-shell="app"] .adj-terminal .xterm-viewport'));
+  assert.match(css, /\.adj-terminal \.xterm-viewport \{ background-color: transparent; \}/);
+});

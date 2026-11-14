@@ -25,6 +25,8 @@
 [data-shell="app"] .col { background: var(--app-veil); }
 /* The popped-out panel floats over the page, so it stays opaque; docked, it is a column like the others. */
 [data-shell="app"] body:not(.panel-pop) #task-panel { background: var(--app-veil); }
+/* Its head sits a step above the panel (`surface-container` over `-low`): a second veil over the panel's. */
+[data-shell="app"] body:not(.panel-pop) #task-panel .tp-head { background: var(--app-veil); }
 /* `.col.attention` (board.css) tints a column that waits on the person: the same tint, laid over the veil. */
 [data-shell="app"] .col.attention {
   background:
@@ -37,8 +39,8 @@
 /* What stands in for a terminal not running yet: a step apart in the middle column, the panel's own colour in the panel. */
 [data-shell="app"] .tp-term-ph { background: var(--app-veil); }
 [data-shell="app"] #task-panel .tp-term-ph { background: transparent; }
-/* The terminal keeps its dark backdrop (its text is light in both themes), mixed down like the rest; xterm itself paints
-   nothing over it here (appShellTerminalOptions in terminal.js). The backdrop lies over the window's fill, so it ends up a
+/* The terminal keeps its dark backdrop (its text is light in both themes), mixed down like the rest; xterm paints
+   nothing over it here (appShellTerminalOptions in terminal.js, and the viewport rule below). The backdrop lies over the window's fill, so it ends up a
    little denser than the page around it. In the light theme that fill is light and would wash the text out, so the
    backdrop goes halfway from the level to opaque there; in the dark theme the fill is as dark as the backdrop and the level
    is used as it is (the selectors are tokens.css's). */
@@ -52,19 +54,28 @@
 [data-shell="app"] .adj-terminal {
   background: color-mix(in srgb, #101014 calc(var(--app-term-alpha) * 100%), transparent);
 }
+/* xterm.css paints the viewport, a layer over the whole terminal, black whatever the theme says. */
+[data-shell="app"] .adj-terminal .xterm-viewport { background-color: transparent; }
 
-/* The board's list layout: its heads stay put while the rows scroll under them. */
+/* The board's list layout: its heads stay put while the rows scroll under them. While the window is translucent they are
+   see-through and blur what passes beneath; at なし (`--app-solid` 1) they are the browser's opaque heads again, since the
+   page behind them is opaque too and rows must not show through. */
+[data-shell="app"] {
+  --app-solid: clamp(0, (var(--app-alpha, 1) - 0.99) * 100, 1);
+}
 [data-shell="app"] .list-head,
 [data-shell="app"] .stage-head {
-  background: transparent;
+  background: color-mix(in srgb, var(--md-sys-color-surface) calc(var(--app-solid) * 100%), transparent);
   -webkit-backdrop-filter: var(--app-blur);
   backdrop-filter: var(--app-blur);
 }
 [data-shell="app"] .stage-head.attention {
-  background: color-mix(in srgb, var(--md-sys-color-warning-container) 18%, transparent);
+  background: color-mix(in srgb,
+    color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface)) calc(var(--app-solid) * 100%),
+    color-mix(in srgb, var(--md-sys-color-warning-container) 18%, transparent));
 }
 [data-shell="app"] .parent-head {
-  background: var(--app-veil);
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-solid) * 100%), var(--app-veil));
   -webkit-backdrop-filter: var(--app-blur);
   backdrop-filter: var(--app-blur);
 }
