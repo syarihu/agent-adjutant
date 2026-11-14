@@ -66,10 +66,9 @@ adj server restart [--port <port>] [--open]
 
 - **ブラウザにない機能**: 半透明のウィンドウ（vibrancy）、ネイティブ通知、確認待ちの件数の Dock バッジ、ウィンドウを出し入れするグローバルショートカット（既定は `Ctrl+Option+Cmd+B`）。2つ目を起動すると動いているウィンドウが前に出て、ウィンドウは大きさと位置を覚えます。赤いボタンはウィンドウを隠すだけで、終了は `Cmd+Q` です。
 - **リンク**: ウィンドウに残るのはボード自身のアドレスだけです。ほかのリンク、`target="_blank"`、`window.open` は既定のブラウザで開きます。
-- **ビルドとインストール**: Rust と Tauri CLI が必要です。アプリは署名していないので、初回は右クリック → 開く で起動します。
+- **ビルドとインストール**: Rust が必要です。`cargo tauri` が見つからないとき、`make app` は先に Tauri CLI 2 を入れます（`cargo install tauri-cli --version '^2' --locked`。`make app-deps` で単独でも実行できます）。入っている 2.x はそのまま使います。ほかのメジャーバージョンの Tauri CLI は置き換えず、`make app` は置き換えるためのコマンドを表示して止まります。アプリは署名していないので、初回は右クリック → 開く で起動します。
 
   ```bash
-  cargo install tauri-cli --version '^2' --locked
   make app            # app/src-tauri/target/release/bundle/macos/Adjutant.app を作る
   make app-install    # /Applications にコピーする
   ```
