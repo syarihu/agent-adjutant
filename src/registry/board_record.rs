@@ -24,7 +24,13 @@ pub(crate) fn live_at(path: &Path) -> Option<(u32, u16)> {
         .and_then(|text| serde_json::from_str(&text).ok())?;
     let pid = record.get("pid").and_then(Value::as_u64)? as u32;
     let started = record.get("psStarted").and_then(Value::as_str);
-    if ps_started(pid).as_deref() != started {
+    // A start time that cannot be told apart is read as the same process: removing the record
+    // of a live server on a guess is the worse mistake.
+    let still_it = match (ps_started(pid), started) {
+        (Some(now), Some(recorded)) => same_start(&now, recorded) != Sameness::Different,
+        (now, recorded) => now.as_deref() == recorded,
+    };
+    if !still_it {
         return None;
     }
     let port = record

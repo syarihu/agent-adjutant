@@ -405,7 +405,11 @@ pub fn stop_resident(root: &Path, restarting: bool) -> Result<Option<(u32, u16)>
     // The process this record named, not whatever the record names by now: a supervisor may
     // already have started the next one.
     let still_there = || match &started {
-        Some(started) => crate::registry::ps_started(pid).as_deref() == Some(started.as_str()),
+        // A start time that cannot be told apart counts as still there: the wait then ends in
+        // the timeout below rather than in a claim that a live server stopped.
+        Some(started) => crate::registry::ps_started(pid).is_some_and(|now| {
+            crate::registry::same_start(&now, started) != crate::registry::Sameness::Different
+        }),
         None => live_resident(root).is_some_and(|(p, _)| p == pid),
     };
     while still_there() {

@@ -197,6 +197,18 @@ fn status(adj: &str) -> Result<ServerStatus, String> {
     })
 }
 
+/// The URL of a server that turned out to be running after `adj server start` failed, or the
+/// failure if none is.
+fn url_after_failed_start(status: Option<ServerStatus>, failure: &str) -> Result<String, String> {
+    match status {
+        Some(ServerStatus {
+            running: true,
+            url: Some(url),
+        }) => Ok(url),
+        _ => Err(format!("adj server start が失敗しました\n{failure}")),
+    }
+}
+
 /// The board's root URL (with its token): the running resident server's, started first if it is not running.
 pub fn discover(configured: Option<&str>) -> Result<String, String> {
     let adj = find_adj(configured)?;
@@ -207,13 +219,14 @@ pub fn discover(configured: Option<&str>) -> Result<String, String> {
         return Ok(url);
     }
 
-    let started = run_login_shell(&format!("{} server start --no-open", quote(&adj)))?;
-    if !started.ok {
-        return Err(format!(
-            "adj server start が失敗しました\n{}",
-            started.text()
-        ));
-    }
+    let started = match run_login_shell(&format!("{} server start --no-open", quote(&adj))) {
+        Ok(ran) if ran.ok => ran,
+        // A start that failed, or could not be run or timed out, may still have found a server
+        // already there, which is all that was wanted: it is asked once more before the failure
+        // is reported.
+        Ok(ran) => return url_after_failed_start(status(&adj).ok(), &ran.text()),
+        Err(e) => return url_after_failed_start(status(&adj).ok(), &e),
+    };
     let since = Instant::now();
     loop {
         let now = status(&adj)?;
@@ -235,6 +248,33 @@ pub fn discover(configured: Option<&str>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_start_is_forgiven_only_when_a_server_is_running() {
+        let up = || ServerStatus {
+            running: true,
+            url: Some("http://127.0.0.1:1/?token=t".to_owned()),
+        };
+        assert_eq!(
+            url_after_failed_start(Some(up()), "boom").unwrap(),
+            "http://127.0.0.1:1/?token=t"
+        );
+        for status in [
+            None,
+            Some(ServerStatus {
+                running: false,
+                url: None,
+            }),
+            Some(ServerStatus {
+                running: true,
+                url: None,
+            }),
+        ] {
+            let err = url_after_failed_start(status, "boom").unwrap_err();
+            assert!(err.contains("adj server start が失敗しました"), "{err}");
+            assert!(err.contains("boom"), "{err}");
+        }
+    }
 
     #[test]
     fn json_is_read_between_the_markers_whatever_the_shell_printed() {

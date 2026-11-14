@@ -593,6 +593,41 @@ fn a_record_of_a_process_that_is_gone_reads_as_not_running_to_restart() {
 }
 
 #[test]
+fn a_record_written_in_another_locale_still_names_the_live_server() {
+    let fixture = Fixture::new(QUIET);
+    let _stop = Detached(&fixture);
+    fixture.ok(&["server", "start", "--no-open", "--port", "0"]);
+    let record_path = fixture.state.join("server.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+    let pid = record["pid"].as_u64().unwrap();
+
+    // What an older version wrote when it ran under another locale.
+    let localized = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .env("LC_ALL", "ja_JP.UTF-8")
+        .output()
+        .unwrap();
+    let localized = String::from_utf8_lossy(&localized.stdout)
+        .trim()
+        .to_string();
+    if localized.is_empty() || localized == record["psStarted"].as_str().unwrap() {
+        // No such locale here, so `ps` has only the one way of writing it.
+        return;
+    }
+    record["psStarted"] = serde_json::json!(localized);
+    std::fs::write(&record_path, record.to_string()).unwrap();
+
+    let out = fixture
+        .command(["server", "status", "--json"])
+        .env("LC_ALL", "C")
+        .output()
+        .unwrap();
+    let status: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(status["running"], true, "{status}");
+}
+
+#[test]
 fn a_board_follows_its_address_when_the_checkout_changes() {
     let fixture = Fixture::new(QUIET);
     let resident = Resident::start(&fixture);

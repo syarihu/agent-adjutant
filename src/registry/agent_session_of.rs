@@ -40,9 +40,11 @@ pub fn agent_session_of(
         return Ok(None);
     };
     // Newest first, so the first match is the one the process is on now.
-    Ok(agent_sessions_with(root, table)?
-        .into_iter()
-        .find(|row| row.pid == Some(pid) && anchor_of(row.ps_started.as_deref()) == Some(started)))
+    Ok(agent_sessions_with(root, table)?.into_iter().find(|row| {
+        row.pid == Some(pid)
+            && anchor_of(row.ps_started.as_deref())
+                .is_some_and(|recorded| same_start(recorded, started) == Sameness::Same)
+    }))
 }
 
 /// The row of the agent a hub is running, from what the hub saved and recorded. `None` when it
