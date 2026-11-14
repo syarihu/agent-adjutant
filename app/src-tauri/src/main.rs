@@ -518,6 +518,15 @@ fn main() {
             focus_window
         ])
         .on_menu_event(on_menu_event)
+        // The page's process died (memory pressure, a crash): nothing is loaded any more, and the
+        // window shows blank. Find the server and load the page again.
+        .on_web_content_process_terminate(|webview| {
+            let app = webview.app_handle();
+            app.state::<AppState>()
+                .loaded
+                .store(false, Ordering::SeqCst);
+            connect(app);
+        })
         .on_page_load(|webview, payload| {
             // The page's load, for watch_server. Started is the main frame committing: from then
             // on the board's document is this new one, so it is unloaded until Finished, which a

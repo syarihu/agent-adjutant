@@ -165,18 +165,28 @@ struct ServerStatus {
     url: Option<String>,
 }
 
+const BEGIN: &str = "__ADJ_BEGIN__";
+const END: &str = "__ADJ_END__";
+
+/// The JSON `adj server status --json` printed between the markers: a login shell's start-up files
+/// may print anything before it, braces included, and so may be read as it.
+fn json_between_markers(stdout: &str) -> Option<Value> {
+    let from = stdout.rfind(BEGIN)? + BEGIN.len();
+    let rest = &stdout[from..];
+    let body = &rest[..rest.find(END)?];
+    serde_json::from_str::<Value>(body.trim())
+        .ok()
+        .filter(Value::is_object)
+}
+
 /// `adj server status --json` prints JSON and exits 1 when the server is down, so stdout is read
-/// whatever the exit code; a shell's start-up noise before the first `{` is skipped.
+/// whatever the exit code.
 fn status(adj: &str) -> Result<ServerStatus, String> {
-    let ran = run_login_shell(&format!("{} server status --json", quote(adj)))?;
-    let start = ran
-        .stdout
-        .find('{')
-        .ok_or_else(|| format!("adj server status の出力を読めません\n{}", ran.text()))?;
-    let value = serde_json::Deserializer::from_str(&ran.stdout[start..])
-        .into_iter::<Value>()
-        .next()
-        .and_then(Result::ok)
+    let ran = run_login_shell(&format!(
+        "printf '\\n{BEGIN}\\n'; {} server status --json; printf '\\n{END}\\n'",
+        quote(adj)
+    ))?;
+    let value = json_between_markers(&ran.stdout)
         .ok_or_else(|| format!("adj server status の出力を読めません\n{}", ran.text()))?;
     Ok(ServerStatus {
         running: value
@@ -219,5 +229,22 @@ pub fn discover(configured: Option<&str>) -> Result<String, String> {
             ));
         }
         thread::sleep(Duration::from_millis(400));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_is_read_between_the_markers_whatever_the_shell_printed() {
+        let out = format!(
+            "motd {{ not json }}\n{BEGIN}\n{{\"running\": true, \"url\": \"http://127.0.0.1:1/?token=t\"}}\n{END}\n"
+        );
+        let v = json_between_markers(&out).unwrap();
+        assert_eq!(v["running"], true);
+        assert!(json_between_markers("{\"running\": true}").is_none());
+        assert!(json_between_markers(&format!("{BEGIN}\nnot json\n{END}")).is_none());
+        assert!(json_between_markers(&format!("{BEGIN}\n[1]\n{END}")).is_none());
     }
 }

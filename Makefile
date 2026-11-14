@@ -37,12 +37,17 @@ check:
 	./scripts/check-test-leaks.sh cargo test
 
 # The macOS app is its own crate, outside the root package, so none of the targets above build it.
+# CARGO_TARGET_DIR, when set, is where cargo puts the build: give it as an absolute path, since it
+# is read here from the repository root and by cargo from app/src-tauri.
 APP_DIR := app/src-tauri
-APP_BUNDLE := $(APP_DIR)/target/release/bundle/macos/Adjutant.app
+APP_TARGET ?= $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(APP_DIR)/target)
+APP_BUNDLE := $(APP_TARGET)/release/bundle/macos/Adjutant.app
 
 app:
 	cd "$(APP_DIR)" && cargo tauri build --bundles app
 
+# Checked before /Applications is touched: a missing build must not cost the installed copy.
 app-install: app
+	test -d "$(APP_BUNDLE)" || { echo "no app at $(APP_BUNDLE)"; exit 1; }
 	rm -rf /Applications/Adjutant.app
 	cp -R "$(APP_BUNDLE)" /Applications/Adjutant.app

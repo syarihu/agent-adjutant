@@ -20,3 +20,10 @@
 [data-shell="app"] .col {
   background: color-mix(in srgb, var(--md-sys-color-surface-container-low) calc(var(--app-alpha, 1) * 100%), transparent);
 }
+/* `.col.attention` (board.css) tints a column that waits on the person; the rule above would paint over it, so it is mixed
+   down from its own colour. */
+[data-shell="app"] .col.attention {
+  background: color-mix(in srgb,
+    color-mix(in srgb, var(--md-sys-color-warning-container) 18%, var(--md-sys-color-surface-container-low))
+    calc(var(--app-alpha, 1) * 100%), transparent);
+}

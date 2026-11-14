@@ -4,7 +4,11 @@
 //! (the global shortcut; `null` or "" turns it off). Read leniently: a key that is missing or
 //! malformed falls back to its default, so a hand edit never keeps the app from starting.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Manager};
@@ -65,19 +69,30 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
         .map(|dir| dir.join("settings.json"))
 }
 
-fn read_map(app: &AppHandle) -> Map<String, Value> {
-    path(app)
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|value| match value {
-            Value::Object(map) => Some(map),
-            _ => None,
-        })
-        .unwrap_or_default()
+/// The file as an object. A file that is not there is an empty one; one that is there and cannot
+/// be read or is not an object is an error, so that a save never overwrites what it could not read.
+fn read_map(app: &AppHandle) -> Result<Map<String, Value>, String> {
+    let Some(file) = path(app) else {
+        return Ok(Map::new());
+    };
+    parse_file(&file)
+}
+
+fn parse_file(file: &Path) -> Result<Map<String, Value>, String> {
+    let text = match fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Map::new()),
+        Err(e) => return Err(format!("{}: {e}", file.display())),
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => Err(format!("{}: not a JSON object", file.display())),
+        Err(e) => Err(format!("{}: {e}", file.display())),
+    }
 }
 
 pub fn load(app: &AppHandle) -> Settings {
-    from_map(&read_map(app))
+    from_map(&read_map(app).unwrap_or_default())
 }
 
 fn from_map(map: &Map<String, Value>) -> Settings {
@@ -109,7 +124,7 @@ fn from_map(map: &Map<String, Value>) -> Settings {
 /// not know) as the person wrote it.
 pub fn save_translucency(app: &AppHandle, level: Level) -> Result<(), String> {
     let file = path(app).ok_or("設定ディレクトリが見つかりません")?;
-    let mut map = read_map(app);
+    let mut map = read_map(app)?;
     map.insert("translucency".into(), Value::String(level.key().into()));
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -152,6 +167,24 @@ mod tests {
                 .as_deref(),
             Some("Control+Alt+K")
         );
+    }
+
+    #[test]
+    fn an_unreadable_file_is_an_error_and_a_missing_one_is_empty() {
+        let dir =
+            std::env::temp_dir().join(format!("adjutant-app-settings-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        assert!(parse_file(&dir.join("missing.json")).unwrap().is_empty());
+        let broken = dir.join("broken.json");
+        fs::write(&broken, "{ not json").unwrap();
+        assert!(parse_file(&broken).is_err());
+        let array = dir.join("array.json");
+        fs::write(&array, "[1]").unwrap();
+        assert!(parse_file(&array).is_err());
+        let fine = dir.join("fine.json");
+        fs::write(&fine, r#"{"adjPath": "/x"}"#).unwrap();
+        assert_eq!(parse_file(&fine).unwrap().len(), 1);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
