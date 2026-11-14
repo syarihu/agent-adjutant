@@ -48,13 +48,16 @@ pub fn open_cmd(args: &GateOpenArgs) -> Result<(), String> {
     if let Some(body) = body {
         with_body(&mut request, body)?;
     }
-    let (gate, served) = open(&ctx, request)?;
+    let (gate, served, plan_error) = open(&ctx, request)?;
 
     if args.json {
-        println!("{}", open_json(&ctx, &gate, served));
+        println!("{}", open_json(&ctx, &gate, served, plan_error.as_deref()));
         return Ok(());
     }
     println!("{} — {}", gate.id, gate.title);
+    if let Some(why) = &plan_error {
+        eprintln!("{}", plan_not_written(&gate, why));
+    }
     if !gate.wait {
         println!("{RECORDED}");
     } else if served && gate.answered_by_hub() {
@@ -83,7 +86,7 @@ fn with_body(request: &mut GateRequest, body: String) -> Result<(), String> {
     Ok(())
 }
 
-use crate::transport::wording::{RECORDED, WORKER_RUNNING, open_json};
+use crate::transport::wording::{RECORDED, WORKER_RUNNING, open_json, plan_not_written};
 
 pub fn list(args: &GateListArgs) -> Result<(), String> {
     let ctx = crate::registry::context(args.repo.as_deref(), args.hub.as_deref())?;

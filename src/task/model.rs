@@ -478,6 +478,11 @@ pub struct Task {
     /// Handover instruction for the agent when queued.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
+    /// The worker's plan, the plan of record: written when a plan gate or record is opened
+    /// with this task, and by `adj task update --plan`. The gate keeps its own copy (what the
+    /// person was shown and answered); this is the one the task view reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<TaskPlan>,
     /// When a gate for this task was last answered or closed. The board counts the worker's
     /// time in a phase from here when it is later than the phase's start: waiting on a person
     /// is not the worker being stuck. Kept on the record, written as the gate is answered, so
@@ -570,6 +575,152 @@ pub struct Park {
 pub struct ParkRequest {
     pub reason: String,
     pub text: Option<String>,
+}
+
+/// The worker's plan as the task record keeps it. Only the latest is kept, with how many times
+/// it was written: the earlier ones live in the answered gates, and keeping them twice would let
+/// two histories disagree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<PlanStep>,
+    /// Settled; shown folded away, as on the gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided: Option<String>,
+    /// Where the worker's confidence ran out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsure: Option<String>,
+    /// How many times it was written: 1 for the first, one more for every rewrite.
+    #[serde(default)]
+    pub revision: u32,
+    /// The plan gate or record that wrote it. Absent for a plan written by hand
+    /// (`--plan`); the board compares it with the approved plan's id for the approval mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
+    /// When it was written (`store::stamp`, UTC). The server's to write, never taken from a
+    /// caller's JSON.
+    #[serde(default)]
+    pub updated_at: String,
+    /// Keys this binary does not know, kept like `Task.extra`.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// One step of a plan, in order. The task's own type: `task` cannot name `gate`'s `Step`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStep {
+    #[serde(default)]
+    pub text: String,
+    /// A line under the step: the file it touches, a sub-point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Keys this binary does not know, kept like `Task.extra`.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What a caller says when it writes the plan. `revision` and `updatedAt` are `update`'s to
+/// write.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanInput {
+    pub problem: Option<String>,
+    pub goal: Option<String>,
+    pub steps: Vec<PlanStep>,
+    pub decided: Option<String>,
+    pub unsure: Option<String>,
+    /// The gate or record this plan is the copy of, when there is one.
+    pub gate: Option<String>,
+}
+
+impl PlanInput {
+    /// Read the plan `adj task update --plan` was given: `{"problem", "goal", "steps", "decided",
+    /// "unsure"}`, each step either `{"text", "detail"}` or a bare string (its text). A value of
+    /// the wrong type is refused by name rather than read as absent, so a plan with a mistyped
+    /// `steps` does not become an empty one. Keys it does not name are ignored; the gate is the
+    /// command's to say, not the caller's. Whether there are steps is `TaskPatch::check`'s.
+    pub fn from_json(input: &serde_json::Value) -> Result<PlanInput, String> {
+        use serde_json::Value;
+        let object = input
+            .as_object()
+            .ok_or_else(|| format!("a plan has to be an object, not {input}"))?;
+        let text = |key: &str| -> Result<Option<String>, String> {
+            match object.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::String(v)) => Ok(Some(v.clone())),
+                Some(other) => Err(format!("plan {key} has to be a string, not {other}")),
+            }
+        };
+        let steps = match object.get("steps") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .enumerate()
+                .map(|(at, item)| plan_step(at + 1, item))
+                .collect::<Result<_, _>>()?,
+            Some(other) => return Err(format!("plan steps has to be a list, not {other}")),
+        };
+        Ok(PlanInput {
+            problem: text("problem")?,
+            goal: text("goal")?,
+            steps,
+            decided: text("decided")?,
+            unsure: text("unsure")?,
+            gate: None,
+        })
+    }
+}
+
+/// One step as a request words it: a string (its text), or an object with `text` and `detail`.
+fn plan_step(number: usize, item: &serde_json::Value) -> Result<PlanStep, String> {
+    use serde_json::Value;
+    match item {
+        Value::String(text) => Ok(PlanStep {
+            text: text.clone(),
+            detail: None,
+            extra: Default::default(),
+        }),
+        Value::Object(fields) => {
+            let field = |key: &str| match fields.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(Value::String(v)) => Ok(Some(v.clone())),
+                Some(other) => Err(format!(
+                    "step {number} {key} has to be a string, not {other}"
+                )),
+            };
+            Ok(PlanStep {
+                text: field("text")?.unwrap_or_default(),
+                detail: field("detail")?,
+                extra: Default::default(),
+            })
+        }
+        other => Err(format!(
+            "step {number} has to be a string or an object, not {other}"
+        )),
+    }
+}
+
+/// Refuse a plan with no step, or a step with no text. The one check behind both `TaskPatch::check`
+/// and a plan gate's content check, so the two cannot drift. `subject` names what is being
+/// checked in the first message ("a plan gate", "a plan").
+pub fn check_plan_steps<'a>(
+    subject: &str,
+    texts: impl ExactSizeIterator<Item = &'a str>,
+) -> Result<(), String> {
+    if texts.len() == 0 {
+        return Err(format!("{subject} needs steps: the plan, one step each"));
+    }
+    for (at, text) in texts.enumerate() {
+        if text.trim().is_empty() {
+            return Err(format!("step {} has no text", at + 1));
+        }
+    }
+    Ok(())
 }
 
 impl Task {
@@ -731,6 +882,10 @@ pub struct TaskPatch {
     pub jules_by: Option<Option<String>>,
     pub note: Option<Option<String>>,
     pub instruction: Option<Option<String>>,
+    /// `Some(Some(_))` writes the plan (checked by `check`; `update` sets the revision and the
+    /// time), `Some(None)` clears it. Set from the command line or by a plan gate being opened;
+    /// the board never sends it, like `kind`.
+    pub plan: Option<Option<PlanInput>>,
     /// `Some(Some(_))` parks the task, `Some(None)` takes the park back. Checked by `check`;
     /// `update` stamps when it was parked.
     pub parked: Option<Option<ParkRequest>>,
@@ -798,6 +953,7 @@ impl TaskPatch {
             jules_by: text_field(input, "julesBy")?,
             note: text_field(input, "note")?,
             instruction: text_field(input, "instruction")?,
+            plan: None,
             parked: match input.get("parked") {
                 None => None,
                 Some(Value::Null) => Some(None),
@@ -851,6 +1007,9 @@ impl TaskPatch {
         }
         if let Some(Some(park)) = &self.parked {
             check_park(&park.reason, park.text.as_deref())?;
+        }
+        if let Some(Some(plan)) = &self.plan {
+            check_plan_steps("a plan", plan.steps.iter().map(|s| s.text.as_str()))?;
         }
         Ok(())
     }

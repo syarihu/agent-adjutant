@@ -43,6 +43,15 @@ function taskDetailClean(html, byId, frame = true) {
   return box.innerHTML;
 }
 
+/* The plan the 概要 shows: the task's own plan when it has one, and then nothing of a gate: its content, and where it stands
+   (`approval`, from `planApprovalOf` like the panel's, never from whichever gate happens to be shown), so it cannot contradict
+   the overview. Else the plan gate shown, as before. */
+function detailPlanOf(task, gate, all) {
+  if (!task.plan) return gate;
+  const { problem, goal, steps, decided, unsure } = task.plan;
+  return { id: '', kind: 'plan', title: '計画', problem, goal, steps, decided, unsure, approval: planApprovalOf(task, all) };
+}
+
 /* The head and the body of the detail of `task`, as the page has it now. */
 function taskDetailParts(task) {
   const all = gatesOf(task);
@@ -56,7 +65,7 @@ function taskDetailParts(task) {
   });
   const ctx = {
     isWaiting: isWait,
-    plan: gateShownIn(task, 'overview', all, {}),
+    plan: detailPlanOf(task, gateShownIn(task, 'overview', all, {}), all),
     issueNumber: task.issueUrl ? issueNumberOf(task.issueUrl) : '',
     nowText,
     waiting,

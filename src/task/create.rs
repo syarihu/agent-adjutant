@@ -248,6 +248,7 @@ pub fn create(ctx: &Context, new: NewTask, hand: bool) -> Result<Created, String
         relay_rounds: 0,
         note: None,
         instruction: None,
+        plan: None,
         gate_answered_at: None,
         // Only a fetch writes the snapshot, and only `create` knows the title came from the
         // issue URL because the issue could not be read.

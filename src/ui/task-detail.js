@@ -110,7 +110,8 @@ function tdPlanHtml(plan, waiting) {
   let h = steps.length
     ? `<ol class="td-steps">${steps.map(x => `<li>${esc(x.text)}${x.detail ? `<div class="tp-muted">${esc(x.detail)}</div>` : ''}</li>`).join('')}</ol>`
     : `<div>${esc(plan.title || '')}</div>${tdMuted('手順は書かれていません')}`;
-  const status = waiting ? '承認待ち'
+  // The task's own plan says where it stands itself (`approval`: [mark, text]); a gate's is read from the gate.
+  const status = plan.approval ? plan.approval[1] : waiting ? '承認待ち'
     : ['approve', 'choice'].includes(plan.decision) ? `承認済み（${when(plan.answeredAt)}）`
     : plan.decision === 'changes' ? '差し戻し済み' : '';
   if (status) h += tdMuted(status);

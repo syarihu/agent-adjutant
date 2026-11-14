@@ -325,6 +325,7 @@ fn a_task(id: &str, status: task::Status) -> task::Task {
         relay_rounds: 0,
         note: None,
         instruction: None,
+        plan: None,
         gate_answered_at: None,
         issue_snapshot: None,
         title_pending: false,

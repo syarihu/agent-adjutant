@@ -35,6 +35,7 @@ impl Task {
             relay_rounds: 0,
             note: None,
             instruction: None,
+            plan: None,
             gate_answered_at: None,
             issue_snapshot: None,
             title_pending: false,
@@ -2479,4 +2480,155 @@ fn a_finished_pr_state_that_cannot_be_kept_is_returned_as_a_warning() {
             assert!(!why.is_empty());
         }
     }
+}
+
+fn plan_input(steps: &[&str]) -> PlanInput {
+    PlanInput {
+        problem: Some("p".to_string()),
+        goal: Some("g".to_string()),
+        steps: steps
+            .iter()
+            .map(|text| PlanStep {
+                text: text.to_string(),
+                detail: None,
+                extra: serde_json::Map::new(),
+            })
+            .collect(),
+        ..PlanInput::default()
+    }
+}
+
+fn plan_patch(input: PlanInput) -> TaskPatch {
+    TaskPatch {
+        plan: Some(Some(input)),
+        ..TaskPatch::default()
+    }
+}
+
+#[test]
+fn a_record_without_a_plan_deserializes_with_none_and_writes_none() {
+    let value = serde_json::to_value(sample()).unwrap();
+    assert!(value.get("plan").is_none(), "{value}");
+    let task: Task = serde_json::from_value(value).unwrap();
+    assert_eq!(task.plan, None);
+}
+
+#[test]
+fn a_plan_without_steps_or_with_a_blank_step_is_refused_before_any_write() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let err = update(&ctx, &task.id, &plan_patch(plan_input(&[])), false).unwrap_err();
+    assert_eq!(err, "a plan needs steps: the plan, one step each");
+    let err = update(&ctx, &task.id, &plan_patch(plan_input(&["a", "  "])), false).unwrap_err();
+    assert_eq!(err, "step 2 has no text");
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &task.id).unwrap().plan,
+        None
+    );
+}
+
+#[test]
+fn writing_the_plan_counts_revisions_stamps_the_time_and_clears() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    let mut input = plan_input(&["first", "second"]);
+    input.steps[1].detail = Some(" ".to_string());
+    input.unsure = Some("  ".to_string());
+    input.gate = Some("20260101T000000Z-plan".to_string());
+    let (first, _) = update(&ctx, &task.id, &plan_patch(input), false).unwrap();
+    let plan = first.plan.unwrap();
+    assert_eq!(plan.revision, 1);
+    assert!(!plan.updated_at.is_empty());
+    assert_eq!(plan.gate.as_deref(), Some("20260101T000000Z-plan"));
+    // Blank strings are absent.
+    assert_eq!(plan.unsure, None);
+    assert_eq!(plan.steps[1].detail, None);
+
+    let (second, _) = update(&ctx, &task.id, &plan_patch(plan_input(&["only"])), false).unwrap();
+    let plan = second.plan.unwrap();
+    assert_eq!(plan.revision, 2);
+    assert_eq!(plan.steps.len(), 1);
+    // Written by hand: no gate.
+    assert_eq!(plan.gate, None);
+    assert_eq!(
+        get(&ctx.state, &ctx.repo.slug, &task.id)
+            .unwrap()
+            .plan
+            .unwrap()
+            .revision,
+        2
+    );
+
+    let clear = TaskPatch {
+        plan: Some(None),
+        ..TaskPatch::default()
+    };
+    let (cleared, _) = update(&ctx, &task.id, &clear, false).unwrap();
+    assert_eq!(cleared.plan, None);
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    assert!(!text.contains("\"plan\":"), "{text}");
+    // Writing again starts over at 1.
+    let (again, _) = update(&ctx, &task.id, &plan_patch(plan_input(&["x"])), false).unwrap();
+    assert_eq!(again.plan.unwrap().revision, 1);
+}
+
+#[test]
+fn an_update_that_does_not_name_the_plan_keeps_it() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    save(&ctx, &task).unwrap();
+    update(&ctx, &task.id, &plan_patch(plan_input(&["a"])), false).unwrap();
+    let note = TaskPatch {
+        note: Some(Some("n".to_string())),
+        ..TaskPatch::default()
+    };
+    let (after, _) = update(&ctx, &task.id, &note, false).unwrap();
+    assert_eq!(after.plan.unwrap().revision, 1);
+}
+
+#[test]
+fn the_board_json_cannot_write_the_plan() {
+    let patch = TaskPatch::from_json(&json!({"plan": {"steps": ["a"]}})).unwrap();
+    assert_eq!(patch.plan, None);
+}
+
+#[test]
+fn keys_this_binary_does_not_know_survive_inside_the_plan_and_a_rewrite() {
+    let (_sandbox, ctx) = hub();
+    let task = sample();
+    let mut raw = serde_json::to_value(&task).unwrap();
+    raw["plan"] = json!({
+        "steps": [{"text": "a", "futureStep": 1}],
+        "revision": 3,
+        "updatedAt": "20260101T000000Z",
+        "futurePlan": {"n": 1},
+    });
+    std::fs::create_dir_all(dir(&ctx.state, &ctx.repo.slug)).unwrap();
+    std::fs::write(record_path(&ctx, &task.id), raw.to_string()).unwrap();
+
+    let loaded = get(&ctx.state, &ctx.repo.slug, &task.id).unwrap();
+    save(&ctx, &loaded).unwrap();
+    let text = std::fs::read_to_string(record_path(&ctx, &task.id)).unwrap();
+    let back: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(back["plan"]["futurePlan"], json!({"n": 1}));
+    assert_eq!(back["plan"]["steps"][0]["futureStep"], json!(1));
+    assert_eq!(back["plan"]["updatedAt"], json!("20260101T000000Z"));
+
+    // An old binary's view of the record (no `plan` field) keeps it through `extra`.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Old {
+        id: String,
+        #[serde(flatten)]
+        extra: serde_json::Map<String, serde_json::Value>,
+    }
+    let old: Old = serde_json::from_value(back.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&old).unwrap()["plan"], back["plan"]);
+
+    // A rewrite moves the revision on and keeps the plan-level keys.
+    let (rewritten, _) = update(&ctx, &task.id, &plan_patch(plan_input(&["b"])), false).unwrap();
+    let plan = rewritten.plan.unwrap();
+    assert_eq!(plan.revision, 4);
+    assert_eq!(plan.extra["futurePlan"], json!({"n": 1}));
 }

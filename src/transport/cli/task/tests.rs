@@ -109,3 +109,74 @@ fn a_task_not_handed_over_is_described_by_where_it_is() {
         assert_eq!(not_handed_line(status, "hub"), None, "{}", status.as_str());
     }
 }
+
+fn update_args(extra: &[&str]) -> TaskUpdateArgs {
+    use clap::Parser;
+    let mut argv = vec!["adj", "task", "update", "--id", "t"];
+    argv.extend_from_slice(extra);
+    use super::super::args::{Cli, Commands, TaskAction};
+    match Cli::try_parse_from(argv).unwrap().command {
+        Commands::Task { action } => match *action {
+            TaskAction::Update(args) => args,
+            _ => panic!("not a task update"),
+        },
+        _ => panic!("not a task command"),
+    }
+}
+
+#[test]
+fn a_plan_is_read_with_object_and_bare_string_steps() {
+    let plan = plan_from_text(
+        r#"{"problem":"p","goal":"g","steps":["first",{"text":"second","detail":"d"}],"decided":" ","unsure":"u"}"#,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(plan.problem.as_deref(), Some("p"));
+    assert_eq!(plan.steps.len(), 2);
+    assert_eq!(plan.steps[0].text, "first");
+    assert_eq!(plan.steps[0].detail, None);
+    assert_eq!(plan.steps[1].detail.as_deref(), Some("d"));
+    assert_eq!(plan.unsure.as_deref(), Some("u"));
+    assert_eq!(plan.gate, None);
+}
+
+#[test]
+fn an_empty_plan_argument_clears_the_plan() {
+    assert_eq!(plan_from_text("").unwrap(), None);
+    assert_eq!(plan_from_text("  ").unwrap(), None);
+}
+
+#[test]
+fn a_plan_of_the_wrong_shape_is_refused_by_name() {
+    for (json, expect) in [
+        ("not json", "--plan is not JSON"),
+        ("[1]", "a plan has to be an object"),
+        (r#"{"steps": 5}"#, "plan steps has to be a list"),
+        (
+            r#"{"steps": [5]}"#,
+            "step 1 has to be a string or an object",
+        ),
+        (
+            r#"{"steps": ["a", {"text": 3}]}"#,
+            "step 2 text has to be a string",
+        ),
+        (
+            r#"{"steps": ["a"], "goal": 3}"#,
+            "plan goal has to be a string",
+        ),
+    ] {
+        let err = plan_from_text(json).unwrap_err();
+        assert!(err.contains(expect), "{json}: {err}");
+    }
+}
+
+#[test]
+fn plan_from_stdin_cannot_share_stdin_with_another_flag() {
+    for other in ["--note", "--instruction", "--title"] {
+        let err = check_shared_stdin(&update_args(&["--plan", "-", other, "-"])).unwrap_err();
+        assert!(err.starts_with("--plan - cannot be combined"), "{err}");
+    }
+    // Only one of them reading stdin is fine, and so is an inline plan beside a `-` note.
+    check_shared_stdin(&update_args(&["--plan", "-", "--note", "x"])).unwrap();
+    check_shared_stdin(&update_args(&["--plan", "{}", "--note", "-"])).unwrap();
+}

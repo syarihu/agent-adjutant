@@ -484,7 +484,8 @@ function cardDialogTaskGroups(task, all) {
       card(k('sections'), '調べたこと', sectionsCardsHtml(g), { wide: true, expand: at('sections', g) }),
       // A plan's steps are in the plan group.
       g.kind === 'plan' ? null : card(k('steps'), '計画の手順', stepsCardHtml(g), { expand: at('steps', g) }),
-      card(k('unsure'), '迷っていること', unsureCardHtml(g), { expand: at('unsure', g) }),
+      // The plan card has the unsure of the plan this gate wrote.
+      planWrittenBy(task, g) ? null : card(k('unsure'), '迷っていること', unsureCardHtml(g), { expand: at('unsure', g) }),
       card(k('report'), '報告', reportCardHtml(g), { expand: at('report', g) }),
       card(k('choices'), '選択肢', choicesHtml(g, true), { wide: true, expand: at('choices', g) }),
     ];
@@ -513,17 +514,24 @@ function cardDialogTaskGroups(task, all) {
   ] : [];
 
   // 4. the plan, and what it answers
+  // Read from the same place as the panel's overview: the task's own plan when it has one, else the plan gate shown.
   const plan = gateShownIn(task, 'overview', all, {}, data);
+  const own = ownPlanOf(task);
+  const source = own || plan;
+  const written = planWrittenBy(task, plan);
   const planCards = [
     card('plan:issue', 'Issue の本文', issueBodyCardHtml(task), { wide: true, expand: ['issue', null] }),
-    card('plan:problem', '問題', problemCardHtml(task, plan), { expand: ['problem', plan?.problem ? gateRef(plan) : null] }),
+    card('plan:problem', '問題', problemCardHtml(task, source), { expand: ['problem', !own && plan?.problem ? gateRef(plan) : null] }),
     // The problem shows the request itself while the plan has none of its own.
-    card('plan:request', '依頼内容', task.body && plan?.problem
+    card('plan:request', '依頼内容', task.body && source?.problem
       ? `<div class="panel"${expandAttrs('request')}>${expandBtnHtml('依頼内容')}<h3>依頼内容</h3><div class="body">${md(task.body)}</div></div>` : '', { expand: ['request', null] }),
-    card('plan:goal', 'ゴール', goalCardHtml(task, plan), { expand: ['goal', plan?.goal ? gateRef(plan) : null] }),
-    card('plan:head', '計画', planHeadCardHtml(plan, all.filter(g => g.kind === 'plan'), { chips: false, focus: false }), { expand: at('plan', plan) }),
-    card('plan:steps', '計画の手順', plan ? stepsCardHtml(plan) : '', { expand: at('steps', plan) }),
-    card('plan:decided', '決定事項', plan ? decidedHtml(plan) : '', { expand: at('decided', plan) }),
+    card('plan:goal', 'ゴール', goalCardHtml(task, source), { expand: ['goal', !own && plan?.goal ? gateRef(plan) : null] }),
+    // The task's plan with its approval mark; the gate's head stays as what was asked and answered.
+    card('plan:own', '計画', taskPlanCardHtml(task, all), { wide: true }),
+    own && !plan ? null : card('plan:head', own ? '計画のゲート' : '計画', planHeadCardHtml(plan, all.filter(g => g.kind === 'plan'), { chips: false, focus: false, ...(own ? { heading: '計画のゲート' } : {}) }), { expand: at('plan', plan) }),
+    // The plan card has them when this gate wrote the plan.
+    card('plan:steps', '計画の手順', plan && !written ? stepsCardHtml(plan) : '', { expand: at('steps', plan) }),
+    card('plan:decided', '決定事項', plan && !written ? decidedHtml(plan) : '', { expand: at('decided', plan) }),
   ];
 
   // 5. the gates answered: one wide block for each, a heading over its parts
@@ -533,7 +541,7 @@ function cardDialogTaskGroups(task, all) {
       part(factsCardHtml(g)), part(focusCardHtml(g)), part(sectionsCardsHtml(g), true),
       // The plan shown in the plan group has its steps there.
       part(g === plan ? '' : stepsCardHtml(g)),
-      part(unsureCardHtml(g)), part(reportCardHtml(g)),
+      part(planWrittenBy(task, g) ? '' : unsureCardHtml(g)), part(reportCardHtml(g)),
       part(choicesHtml(g, false), true),
       ...(g.kind === 'verify' ? [part(commandsCardHtml(g), true), part(manualCardHtml(g)), part(runHtml(g))]
         : g.kind === 'diff' && g !== gR ? [part(roundsCardHtml(g), true), part(findingsCardHtml(g), true), part(filesTableHtml(g), true), part(diffCardHtml(g), true)] : []),

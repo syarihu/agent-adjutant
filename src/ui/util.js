@@ -309,9 +309,12 @@ const KINDS = {
 };
 const kindOf = k => KINDS[k] || [k, '#898781'];
 
-/* The plan a task is being worked to: the one a person approved or, for a task that stops at
-   none (nobody approves anything), the latest plan its worker kept as a record. `approvedPlan`
-   is only ever set by an approval, so reading it alone leaves such a task with no plan. */
+/* The plan gate or record a task is being worked to: the one a person approved or, for a task that
+   stops at none (nobody approves anything), the latest plan its worker kept as a record.
+   `approvedPlan` is only ever set by an approval, so reading it alone leaves such a task with no
+   plan. This is the gate's own copy, what the person was shown and answered. The plan of record
+   is the task's `plan`, which the board's overview reads first; this is what it falls back on for
+   a task written before there was one, and what the question dialogs quote. */
 const planOfTask = task => task?.approvedPlan
   || (task?.records || []).filter(r => r.kind === 'plan' && r.wait === false)
     .sort((a, b) => (a.openedAt || '').localeCompare(b.openedAt || '') || (+(/-(\d+)$/.exec(a.id)?.[1] || 1)) - (+(/-(\d+)$/.exec(b.id)?.[1] || 1)))
