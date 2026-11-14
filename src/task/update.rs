@@ -68,6 +68,11 @@ pub fn update_checked(
     if let Some(stop_at) = patch.stop_at {
         task.stop_at = stop_at;
     }
+    // The pair as it will be stored, so changing only one of the two is checked against the
+    // other as the record has it. A patch touching neither is not held to it.
+    if patch.executor.is_some() || patch.stop_at.is_some() {
+        create::check_stop_at_executor(task.stop_at, task.executor)?;
+    }
     // A title the hub read from the issue is the title for good: a pending one (made from
     // the URL) has nothing left to wait for.
     if let Some(title) = patch.title.as_deref().and_then(one_line_title) {

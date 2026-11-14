@@ -1207,8 +1207,8 @@ pub(crate) struct TaskAddArgs {
     /// report-only | verify | pr | review
     #[arg(long, default_value = "pr")]
     pub(crate) done_when: String,
-    /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify)
-    #[arg(long, default_value = "plan")]
+    /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify) | none (nothing waits; they are kept as records). Blank is the default (plan)
+    #[arg(long, default_value = "")]
     pub(crate) stop_at: String,
     /// Who implements once the plan is approved: worker | jules
     #[arg(long, default_value = "worker")]
@@ -1347,7 +1347,7 @@ pub(crate) struct TaskUpdateArgs {
     /// What counts as done: report-only | verify | pr | review
     #[arg(long)]
     pub(crate) done_when: Option<String>,
-    /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify)
+    /// Which gates wait on a person: plan | diff (plan and diff) | all (plan, diff and verify) | none (nothing waits; they are kept as records)
     #[arg(long)]
     pub(crate) stop_at: Option<String>,
     /// The issue the task works on, as a URL ('' clears it)

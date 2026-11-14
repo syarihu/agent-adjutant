@@ -48,10 +48,17 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
     }
 
     if !request.wait && !kind.can_be_recorded() {
-        return Err(format!(
-            "a {} gate cannot be kept as a record; only diff and verify can",
-            kind.as_str()
-        ));
+        // A plan is the one exception, and only for a task whose Stop at says nothing waits.
+        // Read off the task's own record rather than taken from the request: the worker is
+        // the one asking to skip the wait, so its say-so cannot be what permits it.
+        if kind == Kind::Plan {
+            check_plan_record(ctx, &request)?;
+        } else {
+            return Err(format!(
+                "a {} gate cannot be kept as a record; only diff, verify and, for a task that stops at none, plan can",
+                kind.as_str()
+            ));
+        }
     }
     // A diff or verify gate that waits does so because a rule fired, and the board shows
     // which. One that names none leaves a person looking at a stop nobody can explain.
@@ -66,7 +73,7 @@ pub fn open(ctx: &Context, request: GateRequest) -> Result<(Gate, bool), String>
     if !request.stopped_by.is_empty() {
         if !kind.can_be_recorded() {
             return Err(format!(
-                "a {} gate always waits; stoppedBy is for diff and verify",
+                "a {} gate has no stop rules; stoppedBy is for diff and verify",
                 kind.as_str()
             ));
         }
@@ -249,6 +256,36 @@ fn check_content(request: &GateRequest) -> Result<(), String> {
                 "a quick gate carries nothing to read: drop {field} or quick"
             ));
         }
+    }
+    Ok(())
+}
+
+/// Whether a plan may be kept as a record: the task it is for stops at `none`, and a worker
+/// is the one opening it. Fails closed: a task that cannot be found or read, a hub as opener
+/// (a plan the hub opens is Jules' and waits) and every other Stop at refuse.
+fn check_plan_record(ctx: &Context, request: &GateRequest) -> Result<(), String> {
+    if request.opened_by == Opener::Hub {
+        return Err(
+            "a plan the hub opens waits for an answer; it cannot be kept as a record".to_string(),
+        );
+    }
+    // The id as it will be stored, not trimmed: the board ties a record to its task by the
+    // exact id, so one that passes only once trimmed would be a record no task shows.
+    let id = request
+        .task
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+        .ok_or(
+            "a plan gate cannot be kept as a record without the task it is for; only a task whose Stop at is none can",
+        )?;
+    let task = crate::task::get(&ctx.state, &ctx.repo.slug, id).map_err(|why| {
+        format!("a plan gate cannot be kept as a record: task {id} could not be checked for Stop at none: {why}")
+    })?;
+    if task.stop_at != crate::task::StopAt::Nothing {
+        return Err(format!(
+            "a plan gate cannot be kept as a record: only a task whose Stop at is none can, and task {id} stops at {}",
+            task.stop_at.as_str()
+        ));
     }
     Ok(())
 }

@@ -22,7 +22,7 @@ function world() {
     stateNow: () => ctx.state,
     TODO_BOARD_FRESH_MS: 1000, answeredGates: new Set(), manualChecked: new Set(),
     registerView() {}, dialogStack: { isOpen: () => w.open, layerEl: () => layer, has: () => false, push() {}, closeAll() {} },
-    taskForGate: () => w.task, gateKey: g => `${g._slug || ''}/${g.id}`, issueNumberOf: () => '',
+    taskForGate: () => w.task, planOfTask: t => t?.approvedPlan || null, gateKey: g => `${g._slug || ''}/${g.id}`, issueNumberOf: () => '',
     questionCardHtml: (g, c) => { w.drawn.push(c.read); return { head: '', body: `BODY ${c.read ? c.read.madeAt : 'none'}`, foot: '' }; },
     boardApi: (base, url) => new Promise((resolve, reject) => { w.gets.push({ base, url }); w.pending.push({ resolve, reject }); }),
   });

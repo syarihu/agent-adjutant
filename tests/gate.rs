@@ -281,8 +281,9 @@ fn a_record_is_kept_without_waiting_and_an_answer_to_it_reaches_the_outbox() {
 }
 
 #[test]
-fn a_plan_cannot_be_kept_as_a_record() {
-    // A plan always waits: nothing is written before a person has seen it.
+fn a_plan_cannot_be_kept_as_a_record_unless_its_task_stops_at_none() {
+    // A plan waits: nothing is written before a person has seen it. The exception is a task
+    // handed over with Stop at none, which the record of the task says and the payload cannot.
     let fixture = Fixture::new(QUIET);
     let payload_file = fixture.repo.join("gate.json");
     std::fs::write(
@@ -307,8 +308,97 @@ fn a_plan_cannot_be_kept_as_a_record() {
 }
 
 #[test]
+fn a_plan_is_kept_as_a_record_only_for_a_task_that_stops_at_none() {
+    let fixture = Fixture::new(QUIET);
+    let add = |extra: &[&str]| {
+        let mut args = vec!["task", "add", "--body", "x", "--json"];
+        args.extend_from_slice(extra);
+        fixture.json(&args)["task"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let none = add(&["--stop-at", "none"]);
+    let plan = add(&[]);
+    let open = |payload: serde_json::Value| {
+        let file = fixture.repo.join("gate.json");
+        let mut payload = payload;
+        payload["kind"] = serde_json::json!("plan");
+        payload["wait"] = serde_json::json!(false);
+        payload["title"] = serde_json::json!("計画");
+        payload["problem"] = serde_json::json!("困っていること");
+        payload["goal"] = serde_json::json!("終わった状態");
+        payload["steps"] = serde_json::json!([{ "text": "実装する" }]);
+        payload["worktree"] = serde_json::json!(fixture.repo.to_str().unwrap());
+        std::fs::write(&file, payload.to_string()).unwrap();
+        fixture.cmd(&["gate", "open", "--file", file.to_str().unwrap(), "--json"])
+    };
+
+    let out = open(serde_json::json!({ "task": none }));
+    assert!(out.status.success(), "{out:?}");
+    let opened: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(opened["gate"]["wait"], false, "{opened}");
+    assert_eq!(opened["gate"]["kind"], "plan", "{opened}");
+    // Kept beside the queue: nobody is asked.
+    assert!(
+        fixture
+            .json(&["gate", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    for (payload, says) in [
+        (serde_json::json!({ "task": plan }), "stops at plan"),
+        (serde_json::json!({}), "without the task it is for"),
+        (
+            serde_json::json!({ "task": "no-such-task" }),
+            "could not be checked",
+        ),
+        // Stored as given, so an id that matches only once trimmed would tie the record to
+        // no task on the board.
+        (
+            serde_json::json!({ "task": format!(" {none} ") }),
+            "could not be checked",
+        ),
+        (
+            serde_json::json!({ "task": none, "openedBy": "hub" }),
+            "the hub opens waits",
+        ),
+        (
+            serde_json::json!({ "task": none, "stoppedBy": ["stop-at"] }),
+            "a plan gate has no stop rules",
+        ),
+    ] {
+        let out = open(payload.clone());
+        assert!(!out.status.success(), "{payload}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(says),
+            "{payload}: {out:?}"
+        );
+    }
+
+    // A plan that waits still takes no stop rules, whatever its task says.
+    let file = fixture.repo.join("gate.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({ "kind": "plan", "task": none, "title": "計画", "focus": "どうするか",
+            "steps": [{ "text": "実装する" }], "stoppedBy": ["stop-at"],
+            "worktree": fixture.repo.to_str().unwrap() })
+        .to_string(),
+    )
+    .unwrap();
+    let out = fixture.cmd(&["gate", "open", "--file", file.to_str().unwrap()]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("a plan gate has no stop rules"),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn only_a_diff_or_verify_gate_that_waits_says_what_stopped_it() {
-    // The board shows why a worker stopped. A plan always stops, and a record did not stop
+    // The board shows why a worker stopped. A plan has no stop rules, and a record did not stop
     // anything, so a reason on either is a payload contradicting itself.
     let fixture = Fixture::new(QUIET);
     let open = |payload: serde_json::Value| {

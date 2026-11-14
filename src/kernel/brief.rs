@@ -295,7 +295,7 @@ pub fn render_task(brief: &TaskBrief) -> String {
         label::STOP_AT,
         &brief.stop_at,
         Some(
-            "(which gates wait on a person. `plan` is plan approval only, `diff` the plan and the diff review,\n`all` the plan, the diff review and verification)",
+            "(which gates wait on a person. `plan` is plan approval only, `diff` the plan and the diff review,\n`all` the plan, the diff review and verification, `none` nothing waits)",
         ),
     );
     line(

@@ -151,6 +151,8 @@ fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
         "`unsure`",
         "`stop-at`",
         "Stop at",
+        "When Stop at is `none`",
+        "`stoppedBy: [\"verify-failed\"]`",
         "`problem`",
         "`goal`",
         "`steps`",
@@ -161,6 +163,33 @@ fn the_worker_procedure_says_when_diff_and_verify_wait_and_its_examples_open() {
     ] {
         assert!(text.contains(needle), "adj-worker.md does not say {needle}");
     }
+
+    // Every section that carries an unconditional rule about what waits points at the one table
+    // for Stop at `none`, so the exception is not lost where a worker is reading.
+    let section = |id: &str| {
+        let start = text.find(&format!("<!-- section: {id} -->")).unwrap();
+        let rest = &text[start + 1..];
+        &text[start..start + 1 + rest.find("<!-- section:").unwrap_or(rest.len())]
+    };
+    for id in [
+        "plan",
+        "wait-or-record",
+        "review-loop",
+        "verify",
+        "gate-answer",
+    ] {
+        assert!(
+            section(id).contains("`none`"),
+            "§{id} does not say what Stop at `none` changes"
+        );
+    }
+    assert!(
+        !text.contains("always waits, whatever Stop at says"),
+        "adj-worker.md still says a plan always waits"
+    );
+    let core = &text[..text.find("<!-- section:").unwrap()];
+    assert!(core.contains("## When Stop at is `none`"));
+    assert!(core.contains("(`plan` / `diff` / `all` / `none`)"));
 
     // Every `adj gate open` example, opened as written. serde drops a key it does not know,
     // so a misspelt field would open without complaint and vanish; each key has to come back.

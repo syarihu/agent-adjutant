@@ -443,6 +443,44 @@ fn a_task_carries_the_stop_point_it_was_handed_over_with() {
     assert_eq!(plain["task"]["stopAt"], "plan");
     let all = fixture.json(&["task", "add", "--body", "x", "--stop-at", "all", "--json"]);
     assert_eq!(all["task"]["stopAt"], "all");
+    let none = fixture.json(&["task", "add", "--body", "x", "--stop-at", "none", "--json"]);
+    assert_eq!(none["task"]["stopAt"], "none");
+    // Nothing said, and a blank value, are the default.
+    let blank = fixture.json(&["task", "add", "--body", "x", "--stop-at", "", "--json"]);
+    assert_eq!(blank["task"]["stopAt"], "plan");
+
+    // Nothing waits, so a task Jules plans for (the hub opens that plan and it waits) is refused,
+    // on add and on update whichever half is changed.
+    let out = fixture.cmd(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--stop-at",
+        "none",
+        "--executor",
+        "jules",
+    ]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("stop-at none cannot go with executor jules"),
+        "{out:?}"
+    );
+    let id = none["task"]["id"].as_str().unwrap().to_string();
+    let out = fixture.cmd(&["task", "update", "--id", &id, "--executor", "jules"]);
+    assert!(!out.status.success(), "{out:?}");
+    let jules = fixture.json(&[
+        "task",
+        "add",
+        "--body",
+        "x",
+        "--executor",
+        "jules",
+        "--json",
+    ]);
+    let id = jules["task"]["id"].as_str().unwrap().to_string();
+    let out = fixture.cmd(&["task", "update", "--id", &id, "--stop-at", "none"]);
+    assert!(!out.status.success(), "{out:?}");
 
     // Queued, so the hub is told where it stops as well as the record holding it.
     fixture.ok(&["task", "add", "--body", "x", "--stop-at", "diff", "--queue"]);

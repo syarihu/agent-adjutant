@@ -80,6 +80,20 @@ pub(super) fn check_typed(new: &NewTask) -> Result<(), String> {
         check_parent(parent)?;
     }
     check_after(&new.after)?;
+    check_stop_at_executor(new.stop_at, new.executor)?;
+    Ok(())
+}
+
+/// Stop at `none` promises that nothing waits on a person, and a task handed to Jules cannot
+/// keep it: the hub opens Jules' plan itself and it waits for an answer. Refused where either
+/// half is written, so the two never meet on a record.
+pub(super) fn check_stop_at_executor(stop_at: StopAt, executor: Executor) -> Result<(), String> {
+    if stop_at == StopAt::Nothing && executor == Executor::Jules {
+        return Err(
+            "stop-at none cannot go with executor jules: the plan Jules works from is opened by the hub and waits for an answer"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 

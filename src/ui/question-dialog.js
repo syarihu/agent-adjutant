@@ -150,7 +150,9 @@ function questionCtxOf(g) {
   const url = task?.issueUrl || snap?.url || '';
   return {
     task,
-    plan: g.kind === 'plan' ? g : task?.approvedPlan || null,
+    plan: g.kind === 'plan' ? g : planOfTask(task),
+    // The plan a card carries out is one a person approved, unless the task stops at none: then it is a record nobody approved.
+    planIsRecord: g.kind !== 'plan' && !task?.approvedPlan && !!planOfTask(task),
     // The AI 下読み of the task's PR (a diff gate only): null until it has been read, and when there is none that backs the diff.
     read: questionReadOf(g, task),
     nwo: board?.nwo || '',
