@@ -18,7 +18,6 @@
     if (!root) return;
     const height = frame.fullscreen ? 0 : TITLE_BAR_HEIGHT / (frame.zoom || 1);
     root.style.setProperty('--app-titlebar', `${height}px`);
-    root.toggleAttribute('data-fullscreen', !!frame.fullscreen);
     if (strip) strip.hidden = !!frame.fullscreen;
   };
   window.__adjFrame = next => {
