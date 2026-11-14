@@ -1,0 +1,33 @@
+[package]
+name = "adjutant-app"
+version = "0.1.0"
+edition = "2024"
+description = "Native macOS window around the agent-adjutant board"
+license = "MIT"
+repository = "https://github.com/syarihu/agent-adjutant"
+publish = false
+
+# Its own workspace root: this crate is built by `make app` with the Tauri toolchain and is kept
+# out of the root package, so `cargo test` and `cargo install` at the root never compile Tauri.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api: a transparent window (the vibrancy shows through it) needs it on macOS.
+tauri = { version = "2.12", features = ["macos-private-api"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# The app is a thin shell: size matters more than peak speed.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

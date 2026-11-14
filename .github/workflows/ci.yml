@@ -21,3 +21,24 @@ jobs:
 
       - name: Check
         run: make check
+
+  # The macOS app (app/src-tauri) is not part of the root package, so `make check` never sees it.
+  # Lint only: bundling the .app is a local `make app`.
+  app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app/src-tauri
+
+      - name: Format
+        run: cargo fmt --check
+        working-directory: app/src-tauri
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: app/src-tauri

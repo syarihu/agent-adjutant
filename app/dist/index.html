@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adjutant</title>
+<style>
+  :root { color-scheme: light dark; --ink: #1a1c20; --muted: #5b5f68; --accent: #005ac1; --on-accent: #fff; --box: rgba(255,255,255,.7); --line: rgba(0,0,0,.12); }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e2e2e9; --muted: #a9acb6; --accent: #a8c7fa; --on-accent: #002d68; --box: rgba(30,32,38,.7); --line: rgba(255,255,255,.14); } }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  /* Transparent: the window's vibrancy is the background. */
+  body { background: transparent; color: var(--ink); font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; display: grid; place-items: center; padding: 24px; -webkit-user-select: none; user-select: none; }
+  main { max-width: 560px; width: 100%; background: var(--box); border: 1px solid var(--line); border-radius: 14px; padding: 24px 28px; }
+  h1 { font-size: 17px; margin-bottom: 8px; }
+  p { color: var(--muted); }
+  pre { margin-top: 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; -webkit-user-select: text; user-select: text; }
+  button { margin-top: 16px; font: inherit; border: 0; border-radius: 999px; padding: 6px 18px; background: var(--accent); color: var(--on-accent); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">サーバーに接続しています…</h1>
+  <p id="lead">常駐サーバーの状態を確かめています。起動していなければ起動します。</p>
+  <pre id="message" hidden></pre>
+  <button id="retry" type="button" hidden>再試行</button>
+</main>
+<script>
+  // This page is local to the app; the board itself is the server's own page, loaded straight over http.
+  const $ = id => document.getElementById(id);
+  const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
+
+  function draw(status) {
+    const failed = status.state === 'error';
+    $('title').textContent = failed ? 'ボードに接続できません' : 'サーバーに接続しています…';
+    $('lead').textContent = failed
+      ? 'adj の常駐サーバーを見つけられないか、起動できませんでした。'
+      : '常駐サーバーの状態を確かめています。起動していなければ起動します。';
+    $('message').hidden = !failed || !status.message;
+    $('message').textContent = status.message || '';
+    $('retry').hidden = !failed;
+    $('retry').disabled = false;
+  }
+
+  async function poll() {
+    try { draw(await invoke('get_status')); } catch (e) { draw({ state: 'error', message: String(e) }); }
+  }
+
+  $('retry').addEventListener('click', async () => {
+    $('retry').disabled = true;
+    try { await invoke('retry'); } catch (e) { /* the next poll shows what happened */ }
+    poll();
+  });
+
+  poll();
+  // Discovery runs off the main thread and navigates the window away when it succeeds; until then, look again.
+  setInterval(poll, 700);
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "board",
+  "description": "The board, served over loopback http: native notifications and bringing the window to the front, nothing else",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
+  },
+  "permissions": [
+    "allow-notify",
+    "allow-notification-permission",
+    "allow-request-notification-permission",
+    "allow-focus-window"
+  ]
+}
