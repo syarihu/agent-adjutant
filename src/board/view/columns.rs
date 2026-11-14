@@ -40,7 +40,7 @@ impl HumanCol {
 ///
 /// A finished task waits on nothing. While Jules is working the ball is Jules's, whatever the
 /// PR says; once it is not, the PR's turn decides, unless the session failed, when the task is
-/// decided as a worker task is: a worker in a phase other than `pr` or `pr-bots` is at work,
+/// decided as a worker task is: a worker in a phase other than `pr`, `pr-bots` or `merge` is at work,
 /// otherwise the PR's turn decides, and a turn that says nothing leaves it to the phase (`pr`)
 /// or, with no worker row, the status (`pr`).
 pub fn waits_on_person(

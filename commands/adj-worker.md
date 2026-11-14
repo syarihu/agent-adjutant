@@ -23,14 +23,13 @@ what to tell them, not the words to use.
 
 - **Run `adj phase --set <phase>` once each time you enter a section.** It shows on the board's card
   where the task is now and how long it has been there (too long and the card turns red as stuck).
-  Forgetting it does not stop the work, but the card looks stuck in the previous section. The value
+  Forgetting it leaves the card looking stuck in the previous section. The value
   is one of `plan` / `implement` / `self-review` / `verify` / `pr` / `pr-bots` / `review` /
-  `report`; each section says which one to set at its start. `pr-bots` and `pr` both mean the PR
+  `report` / `merge`; each section says which one to set at its start. `pr-bots` and `pr` both mean the PR
   is open, and differ in who it waits on: `pr-bots` is review bots, which a person has nothing to
   do for, so the card stays on the agents' side (unless the PR itself becomes the person's turn:
   changes requested, approved, failing CI); `pr` is human reviewers, and the card waits on a
-  person. `pr-bots` is only for while you are waiting for the bots: never end with the card left
-  in it.
+  person. Never end a turn in `pr-bots` (§review-comments). `merge`: a PR handed to the hub to merge (brief's "Merge by" `hub`, §done).
 - The current cwd is that worktree. Plain `git` and relative paths are fine. `git -C <absolute
   path>` is not needed.
 - **Do not use `EnterWorktree`.** You are already inside.
@@ -38,16 +37,15 @@ what to tell them, not the words to use.
   in. Sub-agents work in the current cwd too.
 - **Never touch the person's tmux server.** You run inside the person's own tmux, so `$TMUX` and
   `$TMUX_PANE` name their real server, and while `$TMUX` is set tmux ignores `TMUX_TMPDIR`. When
-  you run tmux against an isolated server (checking a change against a test tmux, for example),
-  run **every** command for it, the cleanup included, as
+  you run tmux against an isolated server, run **every** command for it, the cleanup included, as
   `env -u TMUX -u TMUX_PANE TMUX_TMPDIR=<dir> tmux …`, or name the server with `tmux -L <name> …`
   / `tmux -S <path> …`; the cleanup is then
   `env -u TMUX -u TMUX_PANE TMUX_TMPDIR=<dir> tmux kill-server`. Never run `kill-server` or
   `kill-session` against any server but that isolated one: with only `TMUX_TMPDIR` set, it kills
-  the person's server, and with it the hub and every agent running in it, with no sign of why.
+  the person's server, and with it the hub and every agent running in it.
 - **Do not hand the implementation back to the hub.** Do everything up to the final report
   yourself, and **give that report to the user at this tab**. The hub only hands work out; results
-  sent to it have nowhere to go (and the same report shows up in two places). You send the hub
+  sent to it have nowhere to go. You send the hub
   only three things on your own: a bug **outside this task**, through the `adj-report` procedure
   (§outside-bug), a request to clean up (§done), and an investigation result the person answered `task` on,
   which goes through `adj-report` too (§investigation). **Answering the hub with `kind: answer` when it asks with
@@ -55,7 +53,7 @@ what to tell them, not the words to use.
   filing stalls until you answer).
 - If you are asked at the end of a session whether to keep or remove the worktree, **keep it**. It
   holds the results, and removal goes through the hub's cleanup alone (§done says how to ask).
-- The task, the parent task, the base branch, Done when, Stop at, the Language and the `verify`
+- The task, the parent task, the base branch, Done when, Stop at, Merge by, the Language and the `verify`
   commands are in `.claude/task-brief.md`. Read it first. Stop at (`plan` / `diff` / `all` / `none`)
   is one of the rules that decides whether the diff and the verification wait on a person
   (§wait-or-record); for `none` see below. A brief without that line is read as the default (`plan`).
@@ -91,8 +89,7 @@ what to tell them, not the words to use.
   `reviewBots` / `ide` / `draftPr` / `verify` / `taskSources[].projectFields`. **`taskSources` is
   always an array**, and **which source's `projectFields`** is decided by "the board the brief's URL
   repo sits on = the source that has `projectFields`". The brief carries only the task, the parent
-  task, the branch, the base, Done when, Stop at, the Copilot review line, the Language line and
-  `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
+  task, the branch, the base, Done when, Stop at, the Copilot review, Merge by and Language lines and `verify`, so **take everything else from here yourself.** `repo` (= `<codeRepo>`) is in the same
   output. The schema is the distributed `config.example.json`.
 
 ## When Stop at is `none`
@@ -114,7 +111,7 @@ A person asked for the task to run to the end with no approvals: the plan, the d
 | The final report | List each confirmation you answered yourself. |
 
 Still asked: a missing Base branch line, a failed `adj pr check-base`, a gate that waits while the
-dashboard is `down`, drafts of replies to human reviewers, cleaning up the worktree (§done), and the `result` gate of an investigation-only task.
+dashboard is `down`, drafts of replies to human reviewers, cleaning up the worktree (§done; not when the brief's "Merge by" is `hub`), and the `result` gate of an investigation-only task.
 
 A record sent back with `changes` is a person's only brake: read `adjutant_outbox` after opening
 each record and at each phase change (§gate-answer). If `adj gate open` refuses the plan record
@@ -149,7 +146,7 @@ Fetch a section with `adj skill adj-worker --section <id>` (or `adjutant_skill` 
 - found a bug outside the task, or about to hand over for verification (the stock-take) → §outside-bug
 - outbox first line `[question {id}]` or `[ack]` after a report → §outside-bug
 - about to propose splitting this task into several → §outside-bug
-- about to send `kind: done` / asked whether to clean up → §done
+- about to send `kind: done` / asked whether to clean up (with Merge by `hub`: ready to merge) → §done
 - outbox `[linked {id}]` → this index again: the section matching where the work stands
 
 <!-- section: plan -->
@@ -397,12 +394,16 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
 7. To request it, `mcp__claude_ai_GitHub_Remote_MCP__request_copilot_review`.
    Fallback: `gh api repos/<codeRepo>/pulls/<n>/requested_reviewers -X POST -f
    'reviewers[]=Copilot'`
-8. Print the PR's URL. If a bot is going to review it (Copilot was requested, or `reviewBots`
+8. **When the brief's "Merge by" is `hub`, mark the PR ready (`gh pr ready <n>`) without asking** (a
+   draft cannot be merged, and the person has already chosen that the hub merges it). With Merge by
+   `person`, or no such line, whether to mark it ready is asked or left as §review-comments says.
+   Print the PR's URL. If a bot is going to review it (Copilot was requested, or `reviewBots`
    names a bot the repository runs by itself — Copilot listed there counts only when it was
    requested), run `adj phase --set pr-bots` and go straight on to the wait for it in §review-comments: with the PR
    recorded, a card in `pr` waits on a person, and until review bots have had their say there is
    nothing for a person to do. If no bot is going to review it, the PR is
-   people's to review now: `adj phase --set pr`. **If you stop here instead of waiting, set
+   people's to review now: `adj phase --set pr` (with the brief's "Merge by" `hub`, do step 9, then
+   go on to §done's "When the hub merges" instead). **If you stop here instead of waiting, set
    `adj phase --set pr` first** — a card left in `pr-bots` never reaches people on the board.
 9. If the task source has an **In Review** state, move it there. The hub already moved it to In
    Progress when it started. For `github-project`, pass that source's
@@ -411,7 +412,7 @@ Only when the brief's Done when is "up to a PR", or the user asked for one direc
    hand does harm, and leaving the key out is how that is said.
 
 **Afterwards**: once review (§review-comments) is done too and this worktree is no longer needed, ask for cleanup
-with §done.
+with §done (when the brief's "Merge by" is `hub`, §done has the hub merge the PR first).
 
 <!-- section: review-comments -->
 ## 6. Handle review comments
@@ -479,7 +480,9 @@ review is in (or you gave up) and you start working through the comments.
 7. Loop back to step 2 until nothing is unresolved (with Stop at `none`: until no `must` is; list
    the findings left unaddressed in the final report) (run `adj phase --set review` again when a new
    round starts), then offer to mark the PR ready for review (`gh pr ready <n>`; with Stop at `none`, just do it). Keep the phase
-   as `pr` (`adj phase --set pr`) while waiting for the next review round.
+   as `pr` (`adj phase --set pr`) while waiting for the next review round. With the brief's "Merge by"
+   `hub`, once the bots are done do §pr step 9 if it has not been done, then go on to §done's "When the hub
+   merges" instead of waiting in `pr`.
    **Do not end a turn in `pr-bots`.** It says you are the one waiting for the bots, so the card
    stays on the agents' side (unless the PR itself is the person's turn) and is never flagged, even
    once your tab is closed. Left behind, a PR waiting on people never reaches them on the board. Whenever you stop waiting for the
@@ -585,6 +588,11 @@ fix, so there is no diff to review and no PR to open.
 Only the hub can remove a worktree (you cannot remove the ground you stand on). **This is how you
 ask the hub.**
 
+**Read the brief's "Merge by" line first** (`person` or `hub`: who merges the PR). With `person`, or a
+brief without the line, follow this section as it stands. With `hub`, and a task that ended in a PR (whatever its Done when says), the hub
+merges the PR and cleans up afterwards: follow "When the hub merges" below instead, which has no
+cleanup gate. For any other task under `hub` (no PR), this section applies as written.
+
 - **First check that no gate is still open** (`adj gate list`). If one remains, a person has not
   read it yet, so it is too early to ask for cleanup. Come back once it is closed.
 - **Check for yourself before asking.** `git status --short` (uncommitted changes) and
@@ -621,6 +629,42 @@ ask the hub.**
   this tab" and end the turn.
 - If the tab is not closed and the hub's `adjutant_tell` wakes you instead, something tripped its
   safety checks and the worktree was kept. Fix what it says and send again from the top.
+
+### When the hub merges (the brief's "Merge by" is `hub`, and the task ended in a PR)
+
+The person chose, per repository, that the hub merges the PR once you say it is ready, so there is
+no cleanup gate: the merge is the hub's, and the hub's own `adjutant_config` is what lets it merge,
+not anything you write. Your part is to say whether the PR is ready and then stop.
+
+1. **No gate is still open** (`adj gate list`), and `git status --short` and
+   `git log --branches --not --remotes` are empty. Deal with what you can; if you cannot, it is not ready.
+2. **Ready means all of these**: no `must` finding is left open, neither from the self-review (the diff record's `findings`, §self-review) nor from review comments (§review-comments), `verify` passed on the
+   head you pushed (§verify), and every review bot that was going to review has been handled (its
+   findings addressed, or it said nothing to address).
+3. **Ready: do not open the cleanup gate.** Send `adjutant_send` with `kind` `done` **once**, `cwd` this
+   worktree's absolute path (the hub finds the worktree by that header), `subject`
+   `<key> ready to merge: PR #<n>` (the brief's Task line gives the key; without one, the task's title). The
+   body is the lines of the ordinary `done` above plus these:
+
+   ```
+   ## Ready to merge         yes
+   ## Head                   {git rev-parse HEAD: the pushed head the self-review and verify saw}
+   ## Open must              0
+   ## Review bots            {bot}: handled | no findings | rate limited | not started   (one line per bot)
+   ```
+
+   `## Review bots` has one line per bot that was going to review the PR, by §pr step 8's rule (a bot in
+   `reviewBots` the repository runs by itself, and Copilot only when it was requested); write `none` when no bot was:
+   `handled` (its findings were addressed), `no findings`, `rate limited`, or `not started` (it never reviewed).
+   Say what is true; the hub refuses to merge while one is `rate limited` or `not started`.
+   Then `adj phase --set merge` and end the turn without waiting: tell the person at this tab that the PR
+   was handed to the hub to merge.
+4. **Not ready: do not send `done`.** Run `adj phase --set report`, tell the person at this tab why (an open
+   `must`, a failed `verify`, a bot finding left, something unpushed), and let them decide. Once they have
+   been dealt with, come back to step 1 of this subsection (not to the cleanup gate above).
+5. **If the hub wakes you** (a late review or comment, red CI, the branch behind its base), the PR was not merged and the worktree
+   is kept. Do what its message says, `adj phase --set review` (or `pr-bots` while waiting for a bot) while you do, push, run
+   `verify` again, and start again from step 1 (the new push may bring new reviews, so steps 1–2 hold again before another `done`).
 
 <!-- section: gate -->
 ## Appendix — Show a person and wait (gate)

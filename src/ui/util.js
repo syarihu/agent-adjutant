@@ -293,7 +293,7 @@ function afterText(titles) {
 
 /* What `adj phase --set` writes, in the words a card shows. */
 const PHASE_LABEL = { plan:'計画', implement:'実装', 'self-review':'セルフレビュー', verify:'動作確認',
-                      pr:'PR', 'pr-bots':'bot待ち', review:'レビュー対応', report:'報告' };
+                      pr:'PR', 'pr-bots':'bot待ち', review:'レビュー対応', report:'報告', merge:'マージ待ち' };
 
 /* Gate kinds take categorical slots in a fixed order, never cycled. Each one ships with a
    label beside the dot: the colour is a landmark, never the carrier. */

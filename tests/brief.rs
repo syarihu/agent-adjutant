@@ -93,6 +93,7 @@ fn a_task_brief_is_written_from_the_record_and_the_config() {
         "- Stop at: diff\n",
         "- Handover note: Look at the retry first\n",
         "- Copilot review: ask\n",
+        "- Merge by: person\n",
         "- Verify commands:\n  - cargo test\n",
     ] {
         assert!(brief.contains(line), "no {line:?} in:\n{brief}");

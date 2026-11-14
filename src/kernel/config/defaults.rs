@@ -14,6 +14,9 @@ pub fn builtin_defaults() -> Map<String, Value> {
         // Separate from `reviewBots`, which names the reviews to wait for, not whether to
         // ask for one.
         "copilotReview": "ask",
+        // Who merges the PR a worker opens. `person` leaves it to the person, as it always
+        // was; `hub` lets the hub merge it once the worker reports it ready.
+        "merge": "person",
         "issueKeys": {},
         "verify": [],
         "postCreate": [],

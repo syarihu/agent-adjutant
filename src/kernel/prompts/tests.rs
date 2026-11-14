@@ -162,6 +162,125 @@ fn the_copilot_review_request_follows_the_brief() {
     // The writer's side of the label is held by the label tests in `transport::cli::task`.
 }
 
+/// Who merges the PR is decided by the brief's "Merge by" line, which the hub fills from `merge`.
+/// The worker has to cover both values, read a missing line as `person` (a brief the hub did not
+/// write this line into must not hand the merge to anyone), and under `hub` skip the cleanup gate,
+/// whose answer would otherwise have to come from a person who has already delegated the merge.
+#[test]
+fn the_merge_follows_the_brief() {
+    let raw = find("adj-worker").unwrap().raw_content;
+    let done = flow(&section(raw, "## 9. "));
+    assert!(
+        done.contains("the brief's \"Merge by\" line"),
+        "the done step does not say which brief line decides the merge: {done}"
+    );
+    for value in ["`person`", "`hub`"] {
+        assert!(
+            done.contains(value),
+            "the done step does not branch on {value}: {done}"
+        );
+    }
+    assert!(
+        done.contains("a brief without the line, follow this section as it stands"),
+        "the done step does not say what a missing line means: {done}"
+    );
+    assert!(
+        done.contains("do not open the cleanup gate") && done.contains("## Ready to merge yes"),
+        "the hub route still opens the cleanup gate or sends no ready line: {done}"
+    );
+    assert!(
+        done.contains("## Head ") && done.contains("## Review bots "),
+        "the hub route does not send the head and the bots' state: {done}"
+    );
+    // A PR that is not ready is the person's to hear about; it is never sent as `done`.
+    assert!(
+        done.contains("Not ready: do not send `done`"),
+        "the hub route sends a PR that is not ready: {done}"
+    );
+
+    // A draft cannot be merged, so the PR step marks it ready under `hub` without asking.
+    let pr = flow(&section(raw, "## 5. "));
+    assert!(
+        pr.contains(
+            "brief's \"Merge by\" is `hub`, mark the PR ready (`gh pr ready <n>`) without asking"
+        ),
+        "the PR step does not mark the PR ready under hub: {pr}"
+    );
+
+    // With Stop at `none` the cleanup is still asked, except when the hub merges.
+    let core = flow(parts(find("adj-worker").unwrap()).0);
+    assert!(
+        core.contains("not when the brief's \"Merge by\" is `hub`"),
+        "the Stop at none list still asks for the cleanup under hub: {core}"
+    );
+    assert!(
+        core.contains("`merge`") && core.contains("`report` / `merge`"),
+        "the phase list does not name merge: {core}"
+    );
+
+    // The writer's side of the label is held by the label tests in `transport::cli::task`.
+}
+
+/// The hub merges only when its own `adjutant_config` says `merge: "hub"`. The `done` body is a
+/// worker's claim: a body that says it is ready, or names `hub`, must not decide a merge.
+#[test]
+fn the_hub_merge_is_decided_by_the_config_and_not_by_the_done_body() {
+    let hub = find("adj-hub").unwrap();
+    let cleanup = parts(hub)
+        .1
+        .into_iter()
+        .find(|s| s.id == "cleanup-one")
+        .expect("no cleanup-one section");
+    let cleanup = flow(cleanup.text);
+    assert!(
+        cleanup.contains("Read `merge` in your own `adjutant_config`"),
+        "cleanup-one does not read merge from the hub's config: {cleanup}"
+    );
+    assert!(
+        cleanup.contains("Nothing in the `done` body decides this"),
+        "cleanup-one lets the done body decide: {cleanup}"
+    );
+    assert!(
+        cleanup.contains("§hub-merge"),
+        "cleanup-one never reaches hub-merge: {cleanup}"
+    );
+
+    let merge = parts(hub)
+        .1
+        .into_iter()
+        .find(|s| s.id == "hub-merge")
+        .expect("no hub-merge section");
+    let raw_merge = merge.text;
+    let merge = flow(raw_merge);
+    // The PR comes from the header's worktree and the task record, never from the body.
+    assert!(
+        merge.contains("Find the PR from the header, not the body"),
+        "hub-merge takes the PR from the body: {merge}"
+    );
+    // Every `gh` call names the repository: the hub's checkout may be another one.
+    for line in raw_merge
+        .lines()
+        .filter(|l| l.trim_start().starts_with("gh "))
+    {
+        assert!(line.contains("--repo <codeRepo>"), "no --repo in `{line}`");
+    }
+    assert!(
+        raw_merge
+            .contains("gh pr merge <n> --repo <codeRepo> --merge --match-head-commit <headRefOid>"),
+        "hub-merge does not merge with a merge commit pinned to the head: {merge}"
+    );
+    assert!(
+        merge.contains("Never `--delete-branch`") && merge.contains("`state` is `MERGED`"),
+        "hub-merge deletes the branch or trusts an exit code: {merge}"
+    );
+    // The index sends a `done` there.
+    let index = flow(parts(hub).0);
+    assert!(
+        index.contains("§hub-merge"),
+        "the index of triggers does not name hub-merge: {index}"
+    );
+}
+
 /// A worker runs inside a pane of the person's own tmux server, so `$TMUX` and `$TMUX_PANE` are
 /// set in its environment. When `$TMUX` is set, tmux talks to that server and ignores
 /// `TMUX_TMPDIR`. A worker cleaning up a test server with bare `tmux kill-server` would kill

@@ -61,7 +61,7 @@ const at = (task, data = {}) => agentColOf(task, { gates: [], workers: [], ...da
 test('the seven stages are in the order of the person first, and every phase has a stage', () => {
   assert.deepEqual(AGENT_COLUMNS.map(c => c.id), ['me', 'merge', 'rev', 'ai', 'work', 'before', 'done']);
   assert.deepEqual(AGENT_COLUMNS.map(c => c.label), ['セルフレビュー', 'マージ待ち', 'コードレビュー待ち', 'AIレビュー', '計画・実装', '着手前', '完了']);
-  for (const phase of ['plan', 'implement', 'self-review', 'verify', 'pr', 'pr-bots', 'review', 'report']) {
+  for (const phase of ['plan', 'implement', 'self-review', 'verify', 'pr', 'pr-bots', 'review', 'report', 'merge']) {
     assert.ok(AGENT_COLUMNS.some(c => c.id === AGENT_COL_OF_PHASE[phase]), phase);
   }
 });
@@ -137,6 +137,18 @@ test('CI pending does not move a card: the stage follows the review, not prTurn'
   assert.equal(at(pending('other-reviewer'), w), 'rev');
 });
 
+test('a worker that handed its open PR to the hub to merge is マージ待ち; a person\'s turn still outranks it', () => {
+  const pr = (extra = {}, prStatus = {}) => t('1', { pr: 'https://x/pull/1', prStatus: { state: 'open', review: 'none', ...prStatus }, ...extra });
+  const w = { workers: [worker('1', 'merge')] };
+  assert.equal(at(pr(), w), 'merge');
+  assert.equal(at(pr({ prTurn: 'checks' }, { ci: { pass: 1, fail: 0, pending: 2 } }), w), 'merge');
+  // Changes requested or CI failed is the person's turn, as it is in pr / pr-bots.
+  assert.equal(at(pr({ waitsOnPerson: true, prTurn: 'changes' }, { review: 'changes' }), w), 'me');
+  // Merged is 完了; with no PR read yet the phase alone says マージ待ち.
+  assert.equal(at(pr({}, { state: 'merged' }), w), 'done');
+  assert.equal(at(t('1'), w), 'merge');
+});
+
 test('a pr or report phase with no PR yet is AIレビュー; nothing to go by is 計画・実装', () => {
   assert.equal(at(t('1'), { workers: [worker('1', 'pr')] }), 'ai');
   assert.equal(at(t('1'), { workers: [worker('1', 'report')] }), 'ai');
@@ -158,12 +170,13 @@ test('a Jules task with a PR is read like any other, and before it by its sessio
 
 test('a session with no task is never in セルフレビュー', () => {
   const bareCol = vm.runInContext(`(${read('board.js').match(/^const bareCol = [\s\S]*?\n\};/m)[0].replace(/^const bareCol = /, '').replace(/;$/, '')})`, ctx);
-  for (const phase of ['plan', 'implement', 'self-review', 'verify', 'pr', 'pr-bots', 'report', 'review', undefined, 'unknown']) {
+  for (const phase of ['plan', 'implement', 'self-review', 'verify', 'pr', 'pr-bots', 'report', 'review', 'merge', undefined, 'unknown']) {
     assert.notEqual(bareCol({ phase }), 'me', String(phase));
   }
   assert.equal(bareCol({ phase: 'plan' }), 'work');
   assert.equal(bareCol({ phase: 'verify' }), 'ai');
   assert.equal(bareCol({ phase: 'review' }), 'rev');
+  assert.equal(bareCol({ phase: 'merge' }), 'merge');
   assert.equal(bareCol({ phase: undefined }), 'work');
 });
 

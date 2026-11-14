@@ -870,7 +870,13 @@ fn a_pr_waits_on_a_person_by_its_turn_and_then_by_the_worker_phase() {
     let failed = pr("open", "none", 1, 0);
     let closed = pr("closed", "none", 0, 0);
     for person in [&changes, &approved, &failed, &closed] {
-        for phase in [None, Some(Some("pr")), Some(Some("pr-bots")), Some(None)] {
+        for phase in [
+            None,
+            Some(Some("pr")),
+            Some(Some("pr-bots")),
+            Some(Some("merge")),
+            Some(None),
+        ] {
             // A worker with no phase is not handing over anything.
             let expected = phase != Some(None);
             assert_eq!(waits(person, phase), expected, "{person:?} {phase:?}");
@@ -884,7 +890,12 @@ fn a_pr_waits_on_a_person_by_its_turn_and_then_by_the_worker_phase() {
         pr("open", "none", 0, 2),
         pr("merged", "approved", 0, 0),
     ] {
-        for phase in [None, Some(Some("pr")), Some(Some("pr-bots"))] {
+        for phase in [
+            None,
+            Some(Some("pr")),
+            Some(Some("pr-bots")),
+            Some(Some("merge")),
+        ] {
             assert!(!waits(&other, phase), "{other:?} {phase:?}");
         }
     }
@@ -892,6 +903,8 @@ fn a_pr_waits_on_a_person_by_its_turn_and_then_by_the_worker_phase() {
     for undecided in [pr("draft", "none", 0, 0), pr("open", "none", 0, 0)] {
         assert!(waits(&undecided, Some(Some("pr"))));
         assert!(!waits(&undecided, Some(Some("pr-bots"))));
+        // Handed to the hub to merge: nobody's turn to read, so it is not the person's.
+        assert!(!waits(&undecided, Some(Some("merge"))));
         assert!(waits(&undecided, None));
     }
     assert!(pr_waits_on_person(Status::Pr, true, None, Some(Some("pr"))));
@@ -1328,6 +1341,7 @@ fn write_brief_writes_a_task_from_the_record_and_the_settings() {
     ctx.settings.task_sources = vec![json!({"type": "github", "issueRepo": "acme/widget"})];
     ctx.settings.verify = vec!["cargo test".to_string()];
     ctx.settings.copilot_review = crate::kernel::config::CopilotReview::Never;
+    ctx.settings.merge = crate::kernel::config::Merge::Hub;
     let mut task = sample();
     task.issue_url = Some("https://github.com/acme/widget/issues/12".to_string());
     task.done_when = DoneWhen::Review;
@@ -1366,6 +1380,7 @@ fn write_brief_writes_a_task_from_the_record_and_the_settings() {
     assert!(text.contains("- Base branch: origin/main"), "{text}");
     assert!(text.contains("- Done when: up to a PR"), "{text}");
     assert!(text.contains("- Copilot review: never"), "{text}");
+    assert!(text.contains("- Merge by: hub"), "{text}");
     assert!(text.contains("cargo test"), "{text}");
 }
 
@@ -1483,6 +1498,44 @@ fn an_unknown_copilot_review_is_written_as_ask() {
     .unwrap();
     let text = std::fs::read_to_string(&written.path).unwrap();
     assert!(text.contains("- Copilot review: ask"), "{text}");
+}
+
+#[test]
+fn an_unknown_merge_is_written_as_person() {
+    let sandbox = crate::testing::Sandbox::new(r#"{"repos": {"acme/widget": {"merge": "hubb"}}}"#);
+    let repo = crate::kernel::identity::RepoInfo {
+        main: "/tmp/acme-widget".to_string(),
+        nwo: "acme/widget".to_string(),
+        repo: "widget".to_string(),
+        hub: None,
+        slug: "acme-widget".to_string(),
+        hub_name: "adjutant-acme-widget".to_string(),
+        nwo_source: "dirname",
+    };
+    let ctx = crate::registry::context_at(repo, sandbox.state()).unwrap();
+    let mut task = sample();
+    task.done_when = DoneWhen::Pr;
+    save(&ctx, &task).unwrap();
+    let worktree = worktree_on("me/merge");
+
+    let written = write_brief(
+        &ctx,
+        &BriefRequest {
+            worktree: worktree.path().display().to_string(),
+            base: "-".to_string(),
+            out: None,
+            language: None,
+            of: BriefOf::Task {
+                id: task.id.clone(),
+                key: None,
+                tracker: None,
+                parent: None,
+            },
+        },
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&written.path).unwrap();
+    assert!(text.contains("- Merge by: person"), "{text}");
 }
 
 /// A saved record to edit, with a stale `updatedAt` so a stamp shows.

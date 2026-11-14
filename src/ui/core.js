@@ -194,6 +194,7 @@ const AGENT_COL_OF_PHASE = {
   'pr-bots':'ai',
   review:'rev',
   report:'ai',
+  merge:'merge',
 };
 
 /* What a card says it waits for, by the person's column (`humanColOf`): the columns of the board that was removed are only these words now. */
@@ -241,6 +242,8 @@ function prColOf(t, phase) {
   const review = t.prStatus?.review;
   if (st === 'merged') return 'done';
   if (approvedOpenPr(t)) return 'merge';
+  // The worker handed the PR to the hub to merge: the hub is the one acting on it, whatever the review says.
+  if (phase === 'merge' && st === 'open') return 'merge';
   if (review === 'required' || phase === 'review') return 'rev';
   return 'ai';
 }
@@ -252,9 +255,9 @@ function prColOf(t, phase) {
       still セルフレビュー.
    3. An open plan gate, or the phase plan / implement, is 計画・実装.
    4. The phase self-review / verify is AIレビュー.
-   5. With a PR: merged is 完了, approved is マージ待ち, a review asked for (or the phase review) is コードレビュー待ち, else
+   5. With a PR: merged is 完了, approved (or handed to the hub to merge, the phase merge, while open) is マージ待ち, a review asked for (or the phase review) is コードレビュー待ち, else
       AIレビュー.
-   6. With no PR yet: the phase pr / pr-bots / report is AIレビュー, review is コードレビュー待ち; anything else is 計画・実装. */
+   6. With no PR yet: the phase pr / pr-bots / report is AIレビュー, merge is マージ待ち, review is コードレビュー待ち; anything else is 計画・実装. */
 function agentColOf(t, data = stateNow()) {
   if (!t) return 'before';
   if (t.status === 'backlog' || t.status === 'queued') return 'before';

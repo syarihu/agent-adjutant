@@ -579,7 +579,7 @@ pub(crate) struct FocusArgs {
 
 #[derive(Args)]
 pub(crate) struct PhaseArgs {
-    /// plan | implement | self-review | verify | pr | pr-bots | review | report
+    /// plan | implement | self-review | verify | pr | pr-bots | review | report | merge
     #[arg(long, value_name = "PHASE")]
     pub(crate) set: Option<String>,
     /// Default: the worktree this is run from

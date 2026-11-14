@@ -22,6 +22,7 @@ pub mod label {
     pub const STOP_AT: &str = "Stop at";
     pub const HANDOVER_NOTE: &str = "Handover note";
     pub const COPILOT_REVIEW: &str = "Copilot review";
+    pub const MERGE_BY: &str = "Merge by";
     pub const LANGUAGE: &str = "Language";
     pub const REPORT_TO: &str = "Report to";
     pub const VERIFY_COMMANDS: &str = "Verify commands";
@@ -29,7 +30,7 @@ pub mod label {
     /// Every line of a task brief, in the order written. Held by the tests, which is where
     /// the writer and the procedures are compared.
     #[cfg(test)]
-    pub const TASK_BRIEF: [&str; 12] = [
+    pub const TASK_BRIEF: [&str; 13] = [
         TASK,
         WORKSPACE,
         BASE_BRANCH,
@@ -39,6 +40,7 @@ pub mod label {
         STOP_AT,
         HANDOVER_NOTE,
         COPILOT_REVIEW,
+        MERGE_BY,
         LANGUAGE,
         REPORT_TO,
         VERIFY_COMMANDS,
@@ -46,7 +48,7 @@ pub mod label {
 
     /// The ones `adj-worker` names when it says which line decides something.
     #[cfg(test)]
-    pub const READ_BY_WORKER: [&str; 9] = [
+    pub const READ_BY_WORKER: [&str; 10] = [
         TASK,
         BASE_BRANCH,
         PARENT_TASK,
@@ -55,6 +57,7 @@ pub mod label {
         STOP_AT,
         HANDOVER_NOTE,
         COPILOT_REVIEW,
+        MERGE_BY,
         LANGUAGE,
     ];
 }
@@ -121,6 +124,8 @@ pub struct TaskBrief {
     /// The handover note, or `-`.
     pub handover: String,
     pub copilot_review: String,
+    /// Who merges the PR: `person` or `hub`.
+    pub merge: String,
     /// The language the person reads, or `-` when that is not known.
     pub language: String,
     pub verify: Vec<String>,
@@ -316,6 +321,14 @@ pub fn render_task(brief: &TaskBrief) -> String {
     );
     line(
         &mut out,
+        label::MERGE_BY,
+        &brief.merge,
+        Some(
+            "(who merges the PR. `person` leaves the merge to the person, as ever. `hub` has the hub merge it\nafter your `done`: you send `done` without the cleanup gate. A brief without this line reads as `person`)",
+        ),
+    );
+    line(
+        &mut out,
         label::LANGUAGE,
         &one_line(&brief.language),
         Some(LANGUAGE_GLOSS),
@@ -501,6 +514,7 @@ mod tests {
             stop_at: "plan".to_string(),
             handover: "-".to_string(),
             copilot_review: "ask".to_string(),
+            merge: "person".to_string(),
             language: "-".to_string(),
             verify: vec!["cargo test".to_string()],
         }
@@ -519,6 +533,7 @@ mod tests {
         assert_eq!(label::STOP_AT, "Stop at");
         assert_eq!(label::HANDOVER_NOTE, "Handover note");
         assert_eq!(label::COPILOT_REVIEW, "Copilot review");
+        assert_eq!(label::MERGE_BY, "Merge by");
         assert_eq!(label::LANGUAGE, "Language");
         assert_eq!(label::REPORT_TO, "Report to");
         assert_eq!(label::VERIFY_COMMANDS, "Verify commands");

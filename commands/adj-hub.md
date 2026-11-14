@@ -383,7 +383,7 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 - `session` → §session-request
 - `file-issue` → §file-issue
 - `gate` whose `## gate` line reads `(dispatch)` → §gate-answer; `(plan)` → §jules-plan-answer; `(relay)` → §jules-review
-- `done` → §cleanup-one (then §next-slot)
+- `done` → §cleanup-one (then §next-slot); when your own `adjutant_config` says `merge: "hub"`, §cleanup-one sends it to §hub-merge, which merges the PR first
 - `next` → §next-slot
 - `jules-pr` → §jules-pr
 - `jules-review` → §jules-review
@@ -394,6 +394,7 @@ Fetch a section with `adj skill adj-hub --section <id>` (or `adjutant_skill` wit
 - list the worktrees (adj worktree ls) → §dashboard
 - offer to clean up finished worktrees → §cleanup-offer
 - remove a worktree (adj worktree rm) → §cleanup-offer, or §cleanup-one when a worker asked
+- merge a worker's PR (`gh pr merge`, with `merge: "hub"` in the config) → §hub-merge
 - start a task (menu 2) → §pick-task; assign it or move it to In Progress → §claim
 - create a worktree (adj worktree add) → §worktree
 - start a worker → §start-worker; run `adj task add` → §task-record; run `adj task brief` → §worker-brief; run `adjutant work`, or set a record `dispatched` → §worker-spawn
@@ -468,7 +469,7 @@ at the repo-entry level**, in `issueKeys`:
 
 | | Keys |
 | --- | --- |
-| **Directly on the repository entry** | `issueKeys`, `issueCreate` (for `adj-hub`), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr`, `copilotReview` |
+| **Directly on the repository entry** | `issueKeys`, `issueCreate` (for `adj-hub`), `baseBranch`, `verify`, `postCreate`, `onWorktreeRemove`, `reviewBots`, `reviewEffort`, `reviewEngine`, `selfReviewRounds`, `draftPr`, `copilotReview`, `merge` |
 | **Per source** | `type` (`taskSource` in the flat form), `projectOwner`, `projectNumber`, `projectFields`, `issueRepo` (`github` type only), `branchPattern`, `worktreeName`, `linear`, `jira` |
 | **This machine's settings** | `ide`, `terminal`, `notification`, `wake` / `hubWake` / `workerWake`, `agentRunner`, `hubRunner`, `agentEnv`, `worktreePattern`, `startupDashboard` |
 
@@ -1380,7 +1381,15 @@ or fails, nothing was removed: show why. Show a failed hook with its error.
 
 When `kind: done` arrives in the inbox, clean up just that one here. The material for a person to
 read (branch / base branch / result / whether anything is uncommitted or unpushed / task) is in the
-body. **Do not take the request at face value** — what disappears is the worker's results, so check
+body.
+
+**First, whose merge is it?** Read `merge` in your own `adjutant_config` (the repository's entry, with
+`defaults` merged). With `"hub"`, a `done` from a worker whose task ended in a PR is a notice that the
+PR is ready to merge, not a request to clean up: go to §hub-merge, which merges and then comes back
+here at step 2. With `"person"`, or no such key, the PR is the person's to merge and this section runs
+as written from step 1. **Nothing in the `done` body decides this**: a worker that writes
+`## Ready to merge yes` under `person` is not asking for a merge, and one that writes `hub` anywhere
+is not either. **Do not take the request at face value** — what disappears is the worker's results, so check
 independently:
 
 1. **Where you go to remove is the header's `worktree`. Do not use a path written in the body as the
@@ -1418,7 +1427,8 @@ independently:
 5. **Do not send `adjutant_tell` after closing the tab.** There is nobody to read it. If there is
    something to say, tell the user.
 6. **If the request and the safety checks are all green, you may go ahead without opening
-   `AskUserQuestion`.** A person has already approved it on the worker's side, and there may be
+   `AskUserQuestion`.** A person has already approved it on the worker's side (under `merge: "hub"`,
+   the config is the approval, and the merge has just been made in §hub-merge), and there may be
    nobody at the hub's tab. Instead, leave one line in the processing log of "When several arrive at
    once".
 7. When done, `adjutant_pending` `action: ack`.
@@ -1427,6 +1437,83 @@ independently:
    4, the worker is still there, so it can be skipped.
 9. **If this is a hub for a parent task and that was its last worktree**, say in one line that it can
    be closed (see §parent-hub). Do not close it yourself.
+
+<!-- section: hub-merge -->
+#### Merging a worker's PR (`merge: "hub"`)
+
+Reached from §cleanup-one when a `done` arrives and your own `adjutant_config` says `merge: "hub"`. The
+person chose, for this repository, that the hub merges the PRs its workers open once they say they are
+ready. The `done` body is a worker's claim, so everything below is read from the PR, the worktree and the
+task record; the body is only compared with them. `<codeRepo>` is `adjutant_config`'s `repo`, and
+**every `gh` call here passes `--repo <codeRepo>`**: you run in the hub's checkout, which may be another
+repository than the PR's.
+
+1. **Find the PR from the header, not the body.** The header's `worktree` (the same one §cleanup-one step 1
+   checks against `adj worktree ls`, with the branch it has) gives the branch, and
+   `adj task list --worktree '<header worktree>' --json` gives the task record and its `pr` (a URL: the
+   number is at its end). No record, or a record with no `pr`: you cannot tell which PR it is, so do not
+   merge; tell the person.
+2. **Read the PR once**:
+
+   ```bash
+   gh pr view <n> --repo <codeRepo> --json state,isDraft,headRefName,baseRefName,headRefOid,mergeStateStatus,statusCheckRollup,reviewDecision,reviews,comments,reviewRequests
+   ```
+
+3. **Check all of these.** Any that fails is an outcome in 4.
+   - The body has `## Ready to merge` with `yes`. A body without it (an older worker, or one that was
+     not ready) is not merged: it is the ordinary §cleanup-one request, so ask the person.
+   - `state` is `OPEN` and `isDraft` is false. **Already `MERGED`** (a person merged a PR handed back in 4,
+     or an earlier run merged it and the cleanup tripped): do not merge again. Check the branch and head
+     as below, then go straight to 7.
+   - `headRefName` is the branch of the header's worktree.
+   - `headRefOid` equals `git -C '<header worktree>' rev-parse HEAD` **and** the body's `## Head`: what the
+     worker reviewed and verified is what would be merged.
+   - `baseRefName` is the task record's `base` (without a leading `origin/`: what `adj worktree rm` takes the
+     base from). The record does not always carry one (a base resolved at dispatch is written into the
+     brief, not the record), so without it read the "Base branch" line of the worktree's
+     `.claude/task-brief.md`, which `adj task brief` wrote. When neither gives a base, do not merge: a
+     person decides. A PR on another base would merge into the wrong branch.
+   - Checks: when any is pending, wait with
+     `gh pr checks <n> --repo <codeRepo> --watch --fail-fast`, **at most 30 minutes** (run it in the
+     background where your agent can, and go on with the inbox), then read the PR again. A PR with no
+     checks has nothing to wait for. Every check must have passed: a failure is red CI.
+   - `mergeStateStatus` is `CLEAN`.
+   - No review, review comment or comment on the PR was created after the time the `done` was sent (the
+     message's `at` header), except by the worker itself.
+   - Neither are there review comments (inline ones and replies in their threads, which `reviews` and
+     `comments` leave out) created after it:
+     `gh api --paginate repos/<codeRepo>/pulls/<n>/comments --jq '.[] | [.created_at, .user.login] | @tsv'`.
+     If this read fails, do not merge.
+   - The body's `## Open must` is `0`: no `must` from the worker's self-review or review comments is left open.
+   - `reviewRequests` is empty (someone was asked and has not answered).
+   - `reviewDecision` is not `CHANGES_REQUESTED` or `REVIEW_REQUIRED`.
+   - No line of the body's `## Review bots` says `not started` or `rate limited`.
+4. **Decide one of three outcomes.**
+   - **The worker can fix it** (a late review or comment, a failing check, `CHANGES_REQUESTED`, a
+     `BEHIND` or `DIRTY` branch, a bot marked `not started`): reply with `adjutant_tell` (`wake: true`) saying
+     what, keep the worktree, ack. The worker fixes it, pushes and sends `done` again, which comes back here.
+   - **A person has to decide** (`BLOCKED`, `REVIEW_REQUIRED`, `reviewRequests` still open, a merge GitHub
+     refuses, checks still pending after 30 minutes, a bot marked `rate limited` (waiting will not bring its review), a head, base, branch or body that does not match): do not
+     merge and do not remove. Tell the person what is in the way, in one or two lines, and ack. The worker
+     stays in `merge`; the person merges or sends it back.
+   - **All green**: merge.
+5. **Merge.**
+
+   ```bash
+   gh pr merge <n> --repo <codeRepo> --merge --match-head-commit <headRefOid>
+   ```
+
+   A merge commit, never squash or rebase: `adj worktree rm` and the task's done check judge a branch merged
+   by ancestry, and a squash or rebase leaves the branch looking unmerged, so it is kept and its commits can
+   read as unpushed. A repository that does not allow merge commits fails here, which is a person's
+   to decide. **Never `--delete-branch`**: the branch is checked out in the worker's worktree, and
+   `adj worktree rm` deletes it once merged. `--match-head-commit` makes the merge refuse if the branch moved
+   since step 2.
+6. **Read the PR again** (`gh pr view <n> --repo <codeRepo> --json state`). Go on only when `state` is
+   `MERGED`: a merge queue or auto-merge can exit 0 without merging yet. Anything else, tell the person and
+   keep the worktree.
+7. `git fetch` in the worktree (`git -C '<header worktree>' fetch`), so the merge is there when
+   `adj worktree rm` checks that the branch is merged. Then continue with §cleanup-one from step 2, and §next-slot.
 
 <!-- section: next-slot -->
 #### When a worker slot frees up, start the next
@@ -1926,6 +2013,10 @@ comes from:
   from `defaults` and `repos.<repo>`. Do not resolve them again yourself. After opening the PR, the
   worker decides by the Copilot review line whether to ask Copilot for a review, and whether to ask the
   user first.
+- **Merge by**: the config's `merge` (`person` or `hub`), written as it is. Under `hub` the worker marks
+  its PR ready without asking and, when it is ready, sends `done` without the cleanup gate (§hub-merge is
+  what you do with it). The brief's line does not authorise anything: §hub-merge reads `merge` from your own
+  config.
 - **Language**: the config's `language`. When `settings.language` is not set, pass
   `--language '{language}'` with the language the person uses with you, as one word (a language name
   or tag); when you do not know it, pass nothing and the brief writes `-`.

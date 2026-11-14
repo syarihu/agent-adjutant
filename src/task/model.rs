@@ -372,9 +372,9 @@ pub fn jules_pr_waits_on_person(pr_status: Option<&PrStatus>) -> bool {
 /// the sidebar's count both follow, and which the cards carry as `waitsOnPerson`.
 ///
 /// `phase` is what the task's worker record says: `None` when there is no record, `Some(None)`
-/// when there is one with no phase. A worker still in a phase other than `pr` / `pr-bots` is
-/// at work, so the card stays on the agent board. Otherwise a turn that is the person's puts
-/// it in their column, even while the worker's phase says `pr-bots`; a turn that is somebody
+/// when there is one with no phase. A worker still in a phase other than `pr` / `pr-bots` /
+/// `merge` is at work, so the card stays on the agent board. Otherwise a turn that is the
+/// person's puts it in their column, even while the worker's phase says `pr-bots` or `merge`; a turn that is somebody
 /// else's, or nobody's, keeps it out; and a PR whose turn says nothing (a draft, one nobody
 /// was asked to review, one not read yet) is decided the way it was before the turn was
 /// known: by the phase, or by the status when there is no record.
@@ -388,7 +388,7 @@ pub fn pr_waits_on_person(
         return false;
     }
     if let Some(phase) = phase
-        && !matches!(phase, Some("pr" | "pr-bots"))
+        && !matches!(phase, Some("pr" | "pr-bots" | "merge"))
     {
         return false;
     }

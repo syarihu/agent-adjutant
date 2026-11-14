@@ -402,6 +402,7 @@ fn resolve_settings(
             .filter(|s| !s.is_empty()),
         // Only a registered repo has these; `resolve_from_value` fills them in.
         copilot_review: CopilotReview::Ask,
+        merge: Merge::Person,
         verify: Vec::new(),
         review_engine: ReviewEngine::Auto,
         issue_keys: Map::new(),
@@ -745,6 +746,16 @@ pub fn resolve_from_value(
     {
         warnings.push(format!(
             "copilotReview {value} is not one of ask, always, never: treated as ask"
+        ));
+    }
+
+    // Anything but "hub" is read as `person`, which is the safe side: a typo must not hand
+    // the merge to the hub.
+    if let Some(value) = resolved.get("merge")
+        && !matches!(value.as_str(), Some("person" | "hub"))
+    {
+        warnings.push(format!(
+            "merge {value} is not one of person, hub: treated as person"
         ));
     }
 
