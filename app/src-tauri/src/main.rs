@@ -26,7 +26,7 @@ use settings::Level;
 use tauri::{
     AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuItemKind, Submenu},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu},
     webview::{NewWindowResponse, PageLoadEvent},
     window::{Color, Effect, EffectState, EffectsBuilder},
 };
@@ -62,6 +62,8 @@ struct AppState {
     port: Mutex<Option<u16>>,
     level: Mutex<Level>,
     translucency_items: Mutex<Vec<(Level, CheckMenuItem<tauri::Wry>)>>,
+    /// The page zoom the window shows the board at, 1 being 100%.
+    zoom: Mutex<f64>,
     discovering: AtomicBool,
     /// Whether the board's page has finished loading since the window was last sent to it, and when it was sent.
     loaded: AtomicBool,
@@ -185,6 +187,15 @@ fn focus_window(app: AppHandle) {
     show_main(&app);
 }
 
+/// Cmd++ from the board's page (shell.js): a menu accelerator names a physical key, so it cannot
+/// say "the key that types +" on every keyboard layout, and the page catches that one instead.
+#[tauri::command]
+fn zoom(app: AppHandle, direction: String) -> Result<(), String> {
+    let change = Zoom::from_key(&direction).ok_or("unknown zoom direction")?;
+    change_zoom(&app, change);
+    Ok(())
+}
+
 // ── Window ──
 
 fn show_main(app: &AppHandle) {
@@ -221,6 +232,54 @@ fn apply_translucency(window: &WebviewWindow, level: Level) {
     ));
 }
 
+/// Puts the page zoom on the window. WebKit keeps it on the view across loads, and it is put on
+/// again when a page loads all the same, so that what the window shows is always the saved zoom.
+fn apply_zoom(window: &WebviewWindow, zoom: f64) {
+    if let Err(e) = window.set_zoom(zoom) {
+        eprintln!("zoom: {e}");
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Zoom {
+    In,
+    Out,
+    Reset,
+}
+
+impl Zoom {
+    fn from_key(key: &str) -> Option<Zoom> {
+        match key {
+            "in" => Some(Zoom::In),
+            "out" => Some(Zoom::Out),
+            "reset" => Some(Zoom::Reset),
+            _ => None,
+        }
+    }
+
+    fn apply_to(self, zoom: f64) -> f64 {
+        match self {
+            Zoom::In => settings::zoom_in(zoom),
+            Zoom::Out => settings::zoom_out(zoom),
+            Zoom::Reset => 1.0,
+        }
+    }
+}
+
+/// Moves the zoom one step (or back to 100%), saves it and puts it on the window. The lock is held
+/// throughout, so that a menu click and a key from the page at once save and show in one order.
+fn change_zoom(app: &AppHandle, change: Zoom) {
+    let state = app.state::<AppState>();
+    let mut zoom = state.zoom.lock().unwrap();
+    *zoom = change.apply_to(*zoom);
+    if let Err(e) = settings::save_zoom(app, *zoom) {
+        eprintln!("settings: {e}");
+    }
+    if let Some(window) = app.get_webview_window(MAIN) {
+        apply_zoom(&window, *zoom);
+    }
+}
+
 /// The board's own URL, or one of the app's local pages: where the window may stay. Everything
 /// else goes to the default browser.
 fn allowed_in_window(app: &AppHandle, url: &Url) -> bool {
@@ -254,7 +313,7 @@ fn badge_count(title: &str) -> Option<i64> {
     digits.parse::<i64>().ok().filter(|n| *n > 0)
 }
 
-fn create_window(app: &AppHandle, level: Level) -> tauri::Result<()> {
+fn create_window(app: &AppHandle, level: Level, zoom: f64) -> tauri::Result<()> {
     let notification = NOTIFICATION_JS.replace(
         "__PERMISSION__",
         app.notification()
@@ -266,7 +325,7 @@ fn create_window(app: &AppHandle, level: Level) -> tauri::Result<()> {
 
     let on_navigation = app.clone();
     let on_new_window = app.clone();
-    WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
         .title("Adjutant")
         .inner_size(1440.0, 900.0)
         .min_inner_size(900.0, 600.0)
@@ -297,6 +356,7 @@ fn create_window(app: &AppHandle, level: Level) -> tauri::Result<()> {
             let _ = window.set_badge_count(badge_count(&title));
         })
         .build()?;
+    apply_zoom(&window, zoom);
     Ok(())
 }
 
@@ -419,6 +479,21 @@ fn build_menu(app: &AppHandle, level: Level) -> tauri::Result<Menu<tauri::Wry>> 
     }
     *app.state::<AppState>().translucency_items.lock().unwrap() = items;
 
+    // As in a browser. Cmd++ (the key that types +) is caught by the page: see the `zoom` command.
+    let zoom_items = [
+        MenuItem::with_id(app, "zoom:in", "拡大", true, Some("CmdOrCtrl+="))?,
+        MenuItem::with_id(app, "zoom:out", "縮小", true, Some("CmdOrCtrl+-"))?,
+        MenuItem::with_id(app, "zoom:reset", "実際のサイズ", true, Some("CmdOrCtrl+0"))?,
+    ];
+    let separator = PredefinedMenuItem::separator(app)?;
+    let append_to = |view: &Submenu<tauri::Wry>| -> tauri::Result<()> {
+        for item in &zoom_items {
+            view.append(item)?;
+        }
+        view.append(&separator)?;
+        view.append(&submenu)
+    };
+
     let view = menu.items()?.into_iter().find_map(|item| match item {
         MenuItemKind::Submenu(s) if s.text().is_ok_and(|t| t == "View") => Some(s),
         _ => None,
@@ -426,11 +501,13 @@ fn build_menu(app: &AppHandle, level: Level) -> tauri::Result<Menu<tauri::Wry>> 
     match view {
         Some(view) => {
             view.set_text("表示")?;
-            view.append(&submenu)?;
+            // Below what the default menu already has there (full screen), apart from it.
+            view.append(&PredefinedMenuItem::separator(app)?)?;
+            append_to(&view)?;
         }
         None => {
             let view = Submenu::with_id(app, "view", "表示", true)?;
-            view.append(&submenu)?;
+            append_to(&view)?;
             menu.append(&view)?;
         }
     }
@@ -438,6 +515,15 @@ fn build_menu(app: &AppHandle, level: Level) -> tauri::Result<Menu<tauri::Wry>> 
 }
 
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
+    if let Some(change) = event
+        .id()
+        .as_ref()
+        .strip_prefix("zoom:")
+        .and_then(Zoom::from_key)
+    {
+        change_zoom(app, change);
+        return;
+    }
     let Some(level) = event
         .id()
         .as_ref()
@@ -515,7 +601,8 @@ fn main() {
             notify,
             notification_permission,
             request_notification_permission,
-            focus_window
+            focus_window,
+            zoom
         ])
         .on_menu_event(on_menu_event)
         // The page's process died (memory pressure, a crash): nothing is loaded any more, and the
@@ -556,8 +643,15 @@ fn main() {
                     .level
                     .lock()
                     .unwrap();
+                let zoom = *webview
+                    .app_handle()
+                    .state::<AppState>()
+                    .zoom
+                    .lock()
+                    .unwrap();
                 if let Some(window) = webview.app_handle().get_webview_window(webview.label()) {
                     apply_translucency(&window, level);
+                    apply_zoom(&window, zoom);
                 }
             }
         })
@@ -572,6 +666,7 @@ fn main() {
                 port: Mutex::new(None),
                 level: Mutex::new(loaded.translucency),
                 translucency_items: Mutex::new(vec![]),
+                zoom: Mutex::new(loaded.zoom),
                 discovering: AtomicBool::new(false),
                 loaded: AtomicBool::new(false),
                 navigated_at: Mutex::new(Instant::now()),
@@ -584,7 +679,7 @@ fn main() {
                 .notification()
                 .on_action(move |performed| on_notification_action(&for_clicks, performed))?;
             handle.set_menu(build_menu(&handle, loaded.translucency)?)?;
-            create_window(&handle, loaded.translucency)?;
+            create_window(&handle, loaded.translucency, loaded.zoom)?;
             register_shortcut(&handle, loaded.shortcut.as_deref());
             connect(&handle);
             watch_server(&handle);

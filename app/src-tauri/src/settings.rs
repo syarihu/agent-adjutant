@@ -1,8 +1,9 @@
 //! The app's own settings file, `settings.json` in the app config directory.
 //!
-//! Keys: `adjPath` (the `adj` to run), `translucency` ("off" | "weak" | "strong") and `shortcut`
-//! (the global shortcut; `null` or "" turns it off). Read leniently: a key that is missing or
-//! malformed falls back to its default, so a hand edit never keeps the app from starting.
+//! Keys: `adjPath` (the `adj` to run), `translucency` ("off" | "weak" | "strong"), `shortcut`
+//! (the global shortcut; `null` or "" turns it off) and `zoom` (the board's page zoom, 1 is 100%).
+//! Read leniently: a key that is missing or malformed falls back to its default, so a hand edit
+//! never keeps the app from starting.
 
 use std::{
     fs,
@@ -55,11 +56,49 @@ impl Level {
     }
 }
 
+/// The page zoom steps the menu and its shortcuts move through, as a browser's do. A value written
+/// by hand between two of them is kept as it is, and the next zoom in or out goes to the next step.
+pub const ZOOM_STEPS: [f64; 13] = [
+    0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0,
+];
+pub const MIN_ZOOM: f64 = ZOOM_STEPS[0];
+pub const MAX_ZOOM: f64 = ZOOM_STEPS[ZOOM_STEPS.len() - 1];
+/// How close two zooms must be to count as the same step, so that 0.6700001 is not a step below 0.67.
+const ZOOM_EPSILON: f64 = 1e-6;
+
+/// A zoom read from the file: anything that is not a positive finite number is 100%, and a number
+/// outside the steps is brought back to the nearest end of them.
+pub fn clamp_zoom(zoom: f64) -> f64 {
+    if zoom.is_finite() && zoom > 0.0 {
+        zoom.clamp(MIN_ZOOM, MAX_ZOOM)
+    } else {
+        1.0
+    }
+}
+
+/// The next step above the zoom, or the largest step when there is none.
+pub fn zoom_in(zoom: f64) -> f64 {
+    ZOOM_STEPS
+        .into_iter()
+        .find(|step| *step > zoom + ZOOM_EPSILON)
+        .unwrap_or(MAX_ZOOM)
+}
+
+/// The next step below the zoom, or the smallest step when there is none.
+pub fn zoom_out(zoom: f64) -> f64 {
+    ZOOM_STEPS
+        .into_iter()
+        .rev()
+        .find(|step| *step < zoom - ZOOM_EPSILON)
+        .unwrap_or(MIN_ZOOM)
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub adj_path: Option<String>,
     pub translucency: Level,
     pub shortcut: Option<String>,
+    pub zoom: f64,
 }
 
 fn path(app: &AppHandle) -> Option<PathBuf> {
@@ -113,19 +152,34 @@ fn from_map(map: &Map<String, Value>) -> Settings {
         Some(Value::String(_)) | Some(Value::Null) => None,
         Some(_) => Some(DEFAULT_SHORTCUT.to_owned()),
     };
+    let zoom = map
+        .get("zoom")
+        .and_then(Value::as_f64)
+        .map_or(1.0, clamp_zoom);
     Settings {
         adj_path,
         translucency,
         shortcut,
+        zoom,
     }
 }
 
-/// Writes the translucency back into the file and leaves every other key (and any the app does
-/// not know) as the person wrote it.
+/// Each save writes its one key back and leaves every other key as the person wrote it.
 pub fn save_translucency(app: &AppHandle, level: Level) -> Result<(), String> {
+    save_key(app, "translucency", Value::String(level.key().into()))
+}
+
+pub fn save_zoom(app: &AppHandle, zoom: f64) -> Result<(), String> {
+    let value = serde_json::Number::from_f64(zoom).ok_or("倍率が数値ではありません")?;
+    save_key(app, "zoom", Value::Number(value))
+}
+
+/// Writes one key back into the file and leaves every other key (and any the app does not know)
+/// as the person wrote it.
+fn save_key(app: &AppHandle, key: &str, value: Value) -> Result<(), String> {
     let file = path(app).ok_or("設定ディレクトリが見つかりません")?;
     let mut map = read_map(app)?;
-    map.insert("translucency".into(), Value::String(level.key().into()));
+    map.insert(key.into(), value);
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -155,6 +209,7 @@ mod tests {
         assert_eq!(s.translucency, Level::Weak);
         assert_eq!(s.shortcut.as_deref(), Some(DEFAULT_SHORTCUT));
         assert_eq!(s.adj_path, None);
+        assert_eq!(s.zoom, 1.0);
     }
 
     #[test]
@@ -192,5 +247,51 @@ mod tests {
         let s = parse(r#"{"translucency": "lots", "adjPath": 3}"#);
         assert_eq!(s.translucency, Level::Weak);
         assert_eq!(s.adj_path, None);
+    }
+
+    #[test]
+    fn zoom_is_read_and_a_bad_one_falls_back() {
+        assert_eq!(parse(r#"{"zoom": 1.25}"#).zoom, 1.25);
+        assert_eq!(parse(r#"{"zoom": 2}"#).zoom, 2.0);
+        // Between two steps: kept as it is.
+        assert_eq!(parse(r#"{"zoom": 1.2}"#).zoom, 1.2);
+        // Outside the steps: the nearest end.
+        assert_eq!(parse(r#"{"zoom": 10}"#).zoom, MAX_ZOOM);
+        assert_eq!(parse(r#"{"zoom": 0.1}"#).zoom, MIN_ZOOM);
+        // Not a positive number: 100%.
+        for bad in [r#""big""#, "0", "-1", "null", "true", "[1]"] {
+            assert_eq!(parse(&format!(r#"{{"zoom": {bad}}}"#)).zoom, 1.0, "{bad}");
+        }
+        assert_eq!(clamp_zoom(f64::NAN), 1.0);
+        assert_eq!(clamp_zoom(f64::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn zoom_moves_through_the_steps() {
+        assert_eq!(zoom_in(1.0), 1.1);
+        assert_eq!(zoom_out(1.0), 0.9);
+        assert_eq!(zoom_in(0.67), 0.75);
+        assert_eq!(zoom_out(0.75), 0.67);
+        // From a value between two steps, to the next one on that side.
+        assert_eq!(zoom_in(1.2), 1.25);
+        assert_eq!(zoom_out(1.2), 1.1);
+        // At the ends, it stays.
+        assert_eq!(zoom_in(MAX_ZOOM), MAX_ZOOM);
+        assert_eq!(zoom_out(MIN_ZOOM), MIN_ZOOM);
+        // Every step is reached going up and going down.
+        let mut zoom = MIN_ZOOM;
+        let mut up = vec![zoom];
+        while zoom < MAX_ZOOM {
+            zoom = zoom_in(zoom);
+            up.push(zoom);
+        }
+        assert_eq!(up, ZOOM_STEPS);
+        let mut down = vec![zoom];
+        while zoom > MIN_ZOOM {
+            zoom = zoom_out(zoom);
+            down.push(zoom);
+        }
+        down.reverse();
+        assert_eq!(down, ZOOM_STEPS);
     }
 }
