@@ -6,6 +6,7 @@ use crate::board::{NEXT, Server, settings_now};
 use crate::infra::paths::same_path;
 use crate::kernel::config::Settings;
 use crate::kernel::worktree_state::GitState;
+use crate::lifecycle::worker::WorkerClose;
 use crate::mail;
 use crate::registry::{self, Context};
 use crate::task::{self, Executor, Status};
@@ -178,6 +179,31 @@ impl NotClosed {
     }
 }
 
+/// Why a `close` that was free closed no tab, from what it saw and the record read before it.
+///
+/// `Gone` says whether a process still holds the pid (`now`), so a pid handed to something else
+/// is told from one that exited even when this look was the first to find out.
+fn not_closed_after(
+    result: &WorkerClose,
+    recorded: &registry::Recorded<registry::WorkerIdentity>,
+) -> NotClosed {
+    let worker = match recorded {
+        registry::Recorded::Found(worker) => Some(worker),
+        _ => None,
+    };
+    match (result, worker) {
+        (WorkerClose::NoWorker, _) => NotClosed::NoRecord,
+        (WorkerClose::Gone { now: Some(now), .. }, Some(worker)) => NotClosed::PidReused {
+            pid: worker.pid,
+            now: now.clone(),
+            recorded: worker.started.clone().unwrap_or_default(),
+        },
+        (_, worker) => NotClosed::Exited {
+            pid: worker.map(|w| w.pid),
+        },
+    }
+}
+
 /// Branch removal or retention outcome.
 pub struct CleanUpBranch {
     pub name: String,
@@ -340,20 +366,16 @@ pub fn clean_up_worktree(
     let mut closed = false;
     if may_run {
         let result = crate::lifecycle::worker::close(settings, Path::new(worktree), false)?;
-        if !result.is_free() {
-            return Err("the session could not be closed; nothing was removed".to_string());
+        if let Some(why) = result.why_not_free() {
+            return Err(format!(
+                "the session could not be closed ({why}); nothing was removed"
+            ));
         }
-        closed = matches!(result, crate::lifecycle::worker::WorkerClose::Closed(_));
+        closed = matches!(result, WorkerClose::Closed(_));
         if !closed {
             // A free result that closed nothing: the record went, or the worker ended, between
             // the read above and `close`'s own.
-            not_closed = Some(match (result, &recorded) {
-                (crate::lifecycle::worker::WorkerClose::NoWorker, _) => NotClosed::NoRecord,
-                (_, registry::Recorded::Found(worker)) => NotClosed::Exited {
-                    pid: Some(worker.pid),
-                },
-                _ => NotClosed::Exited { pid: None },
-            });
+            not_closed = Some(not_closed_after(&result, &recorded));
         }
     }
     let not_closed_reason = not_closed.filter(|_| !closed).map(|n| n.describe());
@@ -743,6 +765,44 @@ mod tests {
                 reason: None,
             },
         }
+    }
+
+    fn identity(pid: u32, started: &str) -> registry::Recorded<registry::WorkerIdentity> {
+        registry::Recorded::Found(registry::WorkerIdentity {
+            pid,
+            started: Some(started.to_string()),
+            title: None,
+            terminal: None,
+        })
+    }
+
+    #[test]
+    fn a_pid_close_found_running_another_process_is_reused_and_not_exited() {
+        let recorded = identity(7, "Thu Jan  1 00:00:00 1970");
+        let reused = WorkerClose::Gone {
+            dry_run: false,
+            now: Some("Sun Nov 15 17:12:34 2026".to_string()),
+        };
+        assert_eq!(
+            not_closed_after(&reused, &recorded),
+            NotClosed::PidReused {
+                pid: 7,
+                now: "Sun Nov 15 17:12:34 2026".to_string(),
+                recorded: "Thu Jan  1 00:00:00 1970".to_string(),
+            }
+        );
+        let exited = WorkerClose::Gone {
+            dry_run: false,
+            now: None,
+        };
+        assert_eq!(
+            not_closed_after(&exited, &recorded),
+            NotClosed::Exited { pid: Some(7) }
+        );
+        assert_eq!(
+            not_closed_after(&WorkerClose::NoWorker, &recorded),
+            NotClosed::NoRecord
+        );
     }
 
     #[test]

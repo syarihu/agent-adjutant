@@ -14,7 +14,11 @@ pub enum WorkerClose {
     /// A record is there and cannot be read as naming a worker; nothing was cleared.
     Unreadable,
     /// The worker is gone and its record was (or, on a dry run, would be) cleared.
-    Gone { dry_run: bool },
+    ///
+    /// `now` is when the process holding the recorded pid started, or `None` when none runs:
+    /// "gone" is also what a pid handed to something else reads as, and a caller explaining it
+    /// has to be able to tell the two apart.
+    Gone { dry_run: bool, now: Option<String> },
     /// The worker is gone, but the record was not this call's to clear.
     GoneLeftAlone(registry::Cleared),
     /// Whether the worker's process is still running could not be established.
@@ -37,6 +41,35 @@ pub enum WorkerClose {
 }
 
 impl WorkerClose {
+    /// Why the worktree is not free of a worker, for a refusal to say; `None` when it is free.
+    pub fn why_not_free(&self) -> Option<String> {
+        Some(match self {
+            WorkerClose::NoWorker | WorkerClose::Gone { .. } | WorkerClose::Closed(_) => {
+                return None;
+            }
+            WorkerClose::Unreadable => "the worker record cannot be read".to_string(),
+            WorkerClose::CannotTell { pid } | WorkerClose::GoneUnknown { pid } => {
+                format!("whether pid {pid} is still running cannot be told")
+            }
+            WorkerClose::NotRun(done) => done.description.clone(),
+            WorkerClose::WouldClose(done) => format!("only a dry run: {}", done.description),
+            WorkerClose::StillRunning { pid } => {
+                format!("pid {pid} is still running after the close command")
+            }
+            WorkerClose::GoneLeftAlone(cleared) | WorkerClose::ClosedLeftAlone { cleared, .. } => {
+                match cleared {
+                    registry::Cleared::AnotherWorker => {
+                        "the worker record now names another worker".to_string()
+                    }
+                    registry::Cleared::Unreadable => {
+                        "the worker record cannot be read as naming anybody".to_string()
+                    }
+                    registry::Cleared::Yes => "the worker record was cleared".to_string(),
+                }
+            }
+        })
+    }
+
     /// Whether the worktree is free of a worker.
     ///
     /// `false` means a worker may still be sitting there. The caller is on its way to removing
@@ -77,7 +110,8 @@ pub fn close(settings: &Settings, worktree: &Path, dry_run: bool) -> Result<Work
         registry::Recorded::Found(worker) => worker,
     };
     let pid = worker.pid;
-    match registry::worker_liveness(&worker) {
+    let (first, now) = registry::worker_liveness_observed(&worker);
+    match first {
         registry::Liveness::Gone => {
             // The worker this record named is gone, so the record is the only thing left to
             // clear — and only while it is still that worker's.
@@ -86,7 +120,7 @@ pub fn close(settings: &Settings, worktree: &Path, dry_run: bool) -> Result<Work
                 false => registry::unregister_worker_if(worktree, &worker)?,
             };
             return Ok(match cleared {
-                registry::Cleared::Yes => WorkerClose::Gone { dry_run },
+                registry::Cleared::Yes => WorkerClose::Gone { dry_run, now },
                 other => WorkerClose::GoneLeftAlone(other),
             });
         }

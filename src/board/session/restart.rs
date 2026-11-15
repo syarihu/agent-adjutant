@@ -49,12 +49,11 @@ pub fn restart(server: &Server, id: &str) -> Result<Restarted, String> {
     let _restarting = Restarting::claim(&session.worktree, "the session")?;
     let was_running = registry::worker_status(worktree).present;
     let repo = server.ctx.repo.nwo.clone();
-    if !crate::lifecycle::worker::close(&ctx.settings, worktree, false)?.is_free() {
-        return Err(
-            "the session could not be closed (pid still running or its record unreadable); \
-             nothing was restarted"
-                .to_string(),
-        );
+    let closing = crate::lifecycle::worker::close(&ctx.settings, worktree, false)?;
+    if let Some(why) = closing.why_not_free() {
+        return Err(format!(
+            "the session could not be closed ({why}); nothing was restarted"
+        ));
     }
     let done = match resume_worker(
         &ctx,
