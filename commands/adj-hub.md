@@ -1407,9 +1407,10 @@ lives); and sets the worktree's `dispatched` tasks `done`, and its `pr` tasks `d
 branch is merged (otherwise they stay `pr`, and become `done` once the PR is seen merged). It never
 forces.
 
-Report what it printed: `removed`, `branch` (`deleted`, or `kept` with why), `tasks` set done,
-`keptTasks` left in `pr`, `taskErrors` and `hooks`. When it prints `removed: false` (with `reasons`)
-or fails, nothing was removed: show why. Show a failed hook with its error.
+Report what it printed: `removed`, `closed` (and, when it is false, `notClosedReason`: no tab was
+closed, so tell the person a worker's tab may have been left open), `branch` (`deleted`, or `kept`
+with why), `tasks` set done, `keptTasks` left in `pr`, `taskErrors` and `hooks`. When it prints
+`removed: false` (with `reasons`) or fails, nothing was removed: show why. Show a failed hook with its error.
 
 <!-- section: cleanup-one -->
 #### Cleaning up one worktree (asked by a worker)

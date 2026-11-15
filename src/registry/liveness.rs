@@ -330,25 +330,47 @@ pub fn worker_liveness(worker: &WorkerIdentity) -> Liveness {
 
 /// `worker_liveness`, asking `table` when the worker's process started.
 pub fn worker_liveness_with(table: &ProcessTable, worker: &WorkerIdentity) -> Liveness {
+    worker_liveness_observed_with(table, worker).0
+}
+
+/// `worker_liveness` with what was seen: when whatever holds the worker's pid started, or `None`
+/// when nothing does (or `ps` could not say).
+///
+/// For a caller that has to explain a `Gone`. "Nothing runs under that pid" and "the pid now
+/// belongs to something that started at another moment" are the same answer to the question
+/// and different things to tell a person, and the second is also what a start time compared
+/// wrongly looks like. One `ps` serves both the decision and the message, so that the message
+/// cannot describe a process the decision did not see.
+pub fn worker_liveness_observed(worker: &WorkerIdentity) -> (Liveness, Option<String>) {
+    worker_liveness_observed_with(&ProcessTable::each(), worker)
+}
+
+fn worker_liveness_observed_with(
+    table: &ProcessTable,
+    worker: &WorkerIdentity,
+) -> (Liveness, Option<String>) {
     match table.lstart(worker.pid) {
-        Answer::NoSuchProcess => Liveness::Gone,
-        Answer::CannotTell => Liveness::CannotTell,
-        Answer::Said(started) => match &worker.started {
-            Some(recorded) => match same_start(&started, recorded) {
-                Sameness::Same => Liveness::Alive,
-                // Same pid, another start time: the pid has been handed to something else,
-                // and the worker that recorded it is gone.
-                Sameness::Different => Liveness::Gone,
-                Sameness::CannotTell => Liveness::CannotTell,
-            },
-            // Something is running under that pid and nothing says it is this worker. The
-            // pid alone would answer `Alive` for whatever inherited the number, and this
-            // answer is what closes a tab and clears a worktree — so it is the same
-            // reading every other unanswerable question here gets. `holder` says `Alive`
-            // to the same record on purpose: the question there is whether a hub's name is
-            // free to take, and the cost of its two mistakes runs the other way.
-            None => Liveness::CannotTell,
-        },
+        Answer::NoSuchProcess => (Liveness::Gone, None),
+        Answer::CannotTell => (Liveness::CannotTell, None),
+        Answer::Said(started) => {
+            let liveness = match &worker.started {
+                Some(recorded) => match same_start(&started, recorded) {
+                    Sameness::Same => Liveness::Alive,
+                    // Same pid, another start time: the pid has been handed to something
+                    // else, and the worker that recorded it is gone.
+                    Sameness::Different => Liveness::Gone,
+                    Sameness::CannotTell => Liveness::CannotTell,
+                },
+                // Something is running under that pid and nothing says it is this worker.
+                // The pid alone would answer `Alive` for whatever inherited the number, and
+                // this answer is what closes a tab and clears a worktree — so it is the same
+                // reading every other unanswerable question here gets. `holder` says `Alive`
+                // to the same record on purpose: the question there is whether a hub's name
+                // is free to take, and the cost of its two mistakes runs the other way.
+                None => Liveness::CannotTell,
+            };
+            (liveness, Some(started))
+        }
     }
 }
 
@@ -534,6 +556,69 @@ fn c_form(text: &str) -> Option<StartKey> {
             month,
         },
     })
+}
+
+#[cfg(test)]
+mod worker_liveness_tests {
+    use super::*;
+
+    const C: &str = "Sun Nov 15 17:12:34 2026";
+    const JA: &str = "日 11/15 17:12:34 2026";
+
+    fn worker(started: &str) -> WorkerIdentity {
+        WorkerIdentity {
+            pid: 4242,
+            started: Some(started.to_string()),
+            title: None,
+            terminal: None,
+        }
+    }
+
+    fn table(started: &str) -> ProcessTable {
+        ProcessTable::fixed(Some(HashMap::from([(4242, started.to_string())])))
+    }
+
+    /// A record written under one locale and read under another is the same worker (#921).
+    #[test]
+    fn a_record_in_another_locale_still_names_the_live_worker() {
+        assert_eq!(
+            worker_liveness_with(&table(C), &worker(JA)),
+            Liveness::Alive
+        );
+        assert_eq!(
+            worker_liveness_with(&table(JA), &worker(C)),
+            Liveness::Alive
+        );
+    }
+
+    #[test]
+    fn another_second_is_another_process() {
+        assert_eq!(
+            worker_liveness_with(&table("Sun Nov 15 17:12:35 2026"), &worker(JA)),
+            Liveness::Gone
+        );
+    }
+
+    #[test]
+    fn an_unreadable_recorded_form_cannot_be_told() {
+        assert_eq!(
+            worker_liveness_with(&table(C), &worker("long ago")),
+            Liveness::CannotTell
+        );
+    }
+
+    #[test]
+    fn the_observed_start_is_given_only_when_a_process_holds_the_pid() {
+        let now = "Sun Nov 15 17:12:35 2026";
+        assert_eq!(
+            worker_liveness_observed_with(&table(now), &worker(JA)),
+            (Liveness::Gone, Some(now.to_string()))
+        );
+        assert_eq!(
+            worker_liveness_observed_with(&ProcessTable::fixed(Some(HashMap::new())), &worker(JA)),
+            (Liveness::Gone, None)
+        );
+    }
 }
 
 #[cfg(test)]

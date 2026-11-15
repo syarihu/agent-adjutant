@@ -44,6 +44,9 @@ pub struct RemoveSuccess {
     pub removed: bool,
     pub path: String,
     pub closed: bool,
+    /// Why no tab was closed, when `closed` is false: a worker's tab may have been left open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_closed_reason: Option<String>,
     pub branch: Option<RemoveBranchOutcome>,
     pub tasks: Vec<String>,
     pub kept_tasks: Vec<String>,
@@ -77,6 +80,8 @@ pub struct RemoveKept {
     pub removed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_closed_reason: Option<String>,
     pub reasons: Vec<Loss>,
     pub git: Option<GitState>,
 }
@@ -146,15 +151,18 @@ pub fn remove(ctx: &Context, request: RemoveRequest) -> Result<RemoveOutcome, St
             reasons,
             git,
             closed,
+            not_closed_reason,
         } => Ok(RemoveOutcome::Kept(RemoveKept {
             removed: false,
             closed,
+            not_closed_reason,
             reasons,
             git,
         })),
         CleanUpExecution::Removed(CleanUpRemoved {
             path,
             closed,
+            not_closed_reason,
             branch,
             tasks,
             kept_tasks,
@@ -184,6 +192,7 @@ pub fn remove(ctx: &Context, request: RemoveRequest) -> Result<RemoveOutcome, St
                 removed: true,
                 path,
                 closed,
+                not_closed_reason,
                 branch,
                 tasks,
                 kept_tasks,
@@ -506,5 +515,99 @@ mod tests {
         assert!(res.kept_tasks.is_empty());
         let after = task::get(&ctx.state, &ctx.repo.slug, &created.id).unwrap();
         assert_eq!(after.status, task::Status::Done);
+    }
+
+    fn clean_worktree(main: &Path, parent: &Path, name: &str) -> PathBuf {
+        let wt_path = parent.join(name);
+        run_git(
+            &[
+                "worktree",
+                "add",
+                "-b",
+                name,
+                wt_path.to_str().unwrap(),
+                "origin/main",
+            ],
+            main,
+        );
+        wt_path
+    }
+
+    fn remove_at(ctx: &Context, main: &Path, wt_path: &Path) -> RemoveSuccess {
+        let outcome = remove(
+            ctx,
+            RemoveRequest {
+                path: wt_path.to_string_lossy().to_string(),
+                branch: None,
+                cwd: Some(main.to_path_buf()),
+            },
+        )
+        .expect("remove should succeed");
+        let RemoveOutcome::Removed(res) = outcome else {
+            panic!("a clean merged worktree must be removed");
+        };
+        res
+    }
+
+    fn write_worker_record(wt_path: &Path, pid: u32, started: &str) {
+        let record = crate::registry::worker_record_path(wt_path);
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::fs::write(
+            record,
+            serde_json::json!({ "pid": pid, "psStarted": started }).to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn says_no_worker_was_recorded_when_no_tab_was_closed() {
+        let (_sandbox, _origin, main, ctx) = setup_test_repo();
+        let wt_parent = tempfile::tempdir().unwrap();
+        let wt_path = clean_worktree(main.path(), wt_parent.path(), "no-record-rm");
+
+        let res = remove_at(&ctx, main.path(), &wt_path);
+        assert!(!res.closed);
+        let reason = res.not_closed_reason.as_deref().expect("a reason");
+        assert!(reason.contains("no worker was recorded"), "{reason}");
+        let json = serde_json::to_value(&res).unwrap();
+        assert_eq!(json["notClosedReason"], reason);
+    }
+
+    /// The incident of #921: a live pid whose start time reads as another moment is taken for a
+    /// recycled one, and the removal has to say so rather than report `closed: false` alone.
+    #[test]
+    fn names_both_start_times_when_the_recorded_pid_runs_something_else() {
+        let (_sandbox, _origin, main, ctx) = setup_test_repo();
+        let wt_parent = tempfile::tempdir().unwrap();
+        let wt_path = clean_worktree(main.path(), wt_parent.path(), "reused-rm");
+        let pid = std::process::id();
+        let recorded = "Thu Jan  1 00:00:00 1970";
+        write_worker_record(&wt_path, pid, recorded);
+        let now = crate::registry::ps_started(pid).expect("ps knows this process");
+
+        let res = remove_at(&ctx, main.path(), &wt_path);
+        assert!(!res.closed);
+        assert!(!wt_path.exists());
+        let reason = res.not_closed_reason.expect("a reason");
+        assert!(reason.contains(&format!("pid {pid}")), "{reason}");
+        assert!(reason.contains(&now), "{reason}");
+        assert!(reason.contains(recorded), "{reason}");
+    }
+
+    #[test]
+    fn says_the_recorded_worker_exited_when_its_pid_is_gone() {
+        let (_sandbox, _origin, main, ctx) = setup_test_repo();
+        let wt_parent = tempfile::tempdir().unwrap();
+        let wt_path = clean_worktree(main.path(), wt_parent.path(), "exited-rm");
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        write_worker_record(&wt_path, pid, "Thu Jan  1 00:00:00 1970");
+
+        let res = remove_at(&ctx, main.path(), &wt_path);
+        assert!(!res.closed);
+        let reason = res.not_closed_reason.expect("a reason");
+        assert!(reason.contains(&format!("pid {pid}")), "{reason}");
+        assert!(reason.contains("already exited"), "{reason}");
     }
 }

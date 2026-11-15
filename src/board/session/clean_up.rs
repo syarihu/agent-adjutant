@@ -29,6 +29,8 @@ pub enum CleanUp {
         /// Whether the session was running and has been closed; `None` on the first look, which
         /// closes nothing.
         closed: Option<bool>,
+        /// Why no tab was closed, when `closed` is `Some(false)`.
+        not_closed_reason: Option<String>,
     },
     Removed(Removed),
 }
@@ -38,6 +40,8 @@ pub struct Removed {
     pub forced: bool,
     /// Whether the session was running and has been closed.
     pub closed: bool,
+    /// Why no tab was closed, when `closed` is false.
+    pub not_closed_reason: Option<String>,
     /// `None` when no branch is known for the session.
     pub branch: Option<BranchRemoval>,
     /// The tasks finished with the worktree.
@@ -121,6 +125,7 @@ pub enum CleanUpExecution {
         reasons: Vec<Loss>,
         git: Option<GitState>,
         closed: Option<bool>,
+        not_closed_reason: Option<String>,
     },
     Removed(CleanUpRemoved),
 }
@@ -130,11 +135,47 @@ pub struct CleanUpRemoved {
     pub path: String,
     pub forced: bool,
     pub closed: bool,
+    pub not_closed_reason: Option<String>,
     pub branch: Option<CleanUpBranch>,
     pub tasks: Vec<String>,
     pub kept_tasks: Vec<String>,
     pub task_errors: Vec<(String, String)>,
     pub hooks: Vec<HookRun>,
+}
+
+/// Why a removal closed no tab.
+///
+/// `closed: false` alone reads the same whether nothing was running or a live worker was
+/// taken for gone (#921), so the answer says which it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotClosed {
+    /// No worker was recorded in the worktree.
+    NoRecord,
+    /// The recorded worker's process is not running. `pid` is unknown when the record had
+    /// gone by the time it was looked at again.
+    Exited { pid: Option<u32> },
+    /// The recorded pid runs, but it started at another moment than the worker recorded.
+    PidReused {
+        pid: u32,
+        now: String,
+        recorded: String,
+    },
+}
+
+impl NotClosed {
+    pub fn describe(&self) -> String {
+        match self {
+            NotClosed::NoRecord => "no worker was recorded in the worktree".to_string(),
+            NotClosed::Exited { pid: Some(pid) } => {
+                format!("the recorded worker (pid {pid}) has already exited")
+            }
+            NotClosed::Exited { pid: None } => "the recorded worker has already exited".to_string(),
+            NotClosed::PidReused { pid, now, recorded } => format!(
+                "pid {pid} now belongs to a process started at {now}, not the recorded worker \
+                 (started {recorded}), so no tab was closed"
+            ),
+        }
+    }
 }
 
 /// Branch removal or retention outcome.
@@ -177,14 +218,17 @@ pub fn clean_up(server: &Server, id: &str, request: CleanUpRequest) -> Result<Cl
             reasons,
             git,
             closed,
+            not_closed_reason,
         } => CleanUp::Kept {
             reasons,
             git,
             closed,
+            not_closed_reason,
         },
         CleanUpExecution::Removed(r) => CleanUp::Removed(Removed {
             forced: r.forced,
             closed: r.closed,
+            not_closed_reason: r.not_closed_reason,
             branch: r.branch.map(|b| BranchRemoval {
                 name: b.name,
                 deleted: b.deleted,
@@ -256,12 +300,15 @@ pub fn clean_up_worktree(
             reasons,
             git: state.ok().flatten(),
             closed: None,
+            not_closed_reason: None,
         });
     }
     let mut state = state.ok().flatten();
 
     let main = Path::new(&repo.main);
-    let was_running = registry::worker_status(Path::new(worktree)).present;
+    // The record is read once: whether to close, and what to say when nothing was closed, are
+    // both decided on this one reading and not on two that could be of different workers.
+    let recorded = registry::read_worker(Path::new(worktree));
     // `close` finds the worktree free when no worker is there, so a stopped session is not
     // refused; `false` is a worker that may still be running, or a record that cannot be
     // read, and removing under either is what this must not do. Outside the dispatch lock,
@@ -269,17 +316,47 @@ pub fn clean_up_worktree(
     //
     // Only when something may be running: closing a worker that is gone clears its record, and
     // a removal that then fails would have taken the session's phase history for nothing.
-    let may_run = match registry::read_worker(Path::new(worktree)) {
-        registry::Recorded::Absent => false,
-        registry::Recorded::Unreadable => true,
-        registry::Recorded::Found(worker) => {
-            registry::worker_liveness(&worker) != registry::Liveness::Gone
-        }
+    let (may_run, mut not_closed) = match &recorded {
+        registry::Recorded::Absent => (false, Some(NotClosed::NoRecord)),
+        registry::Recorded::Unreadable => (true, None),
+        registry::Recorded::Found(worker) => match registry::worker_liveness_observed(worker) {
+            (registry::Liveness::Gone, Some(now)) => (
+                false,
+                Some(NotClosed::PidReused {
+                    pid: worker.pid,
+                    now,
+                    recorded: worker.started.clone().unwrap_or_default(),
+                }),
+            ),
+            (registry::Liveness::Gone, None) => (
+                false,
+                Some(NotClosed::Exited {
+                    pid: Some(worker.pid),
+                }),
+            ),
+            _ => (true, None),
+        },
     };
-    if may_run && !crate::lifecycle::worker::close(settings, Path::new(worktree), false)?.is_free()
-    {
-        return Err("the session could not be closed; nothing was removed".to_string());
+    let mut closed = false;
+    if may_run {
+        let result = crate::lifecycle::worker::close(settings, Path::new(worktree), false)?;
+        if !result.is_free() {
+            return Err("the session could not be closed; nothing was removed".to_string());
+        }
+        closed = matches!(result, crate::lifecycle::worker::WorkerClose::Closed(_));
+        if !closed {
+            // A free result that closed nothing: the record went, or the worker ended, between
+            // the read above and `close`'s own.
+            not_closed = Some(match (result, &recorded) {
+                (crate::lifecycle::worker::WorkerClose::NoWorker, _) => NotClosed::NoRecord,
+                (_, registry::Recorded::Found(worker)) => NotClosed::Exited {
+                    pid: Some(worker.pid),
+                },
+                _ => NotClosed::Exited { pid: None },
+            });
+        }
     }
+    let not_closed_reason = not_closed.filter(|_| !closed).map(|n| n.describe());
     // Looked at again now that nothing is running: a worker that committed between the first
     // look and its tab closing has made work the first look did not see, and `branch -D`
     // below would drop it.
@@ -296,7 +373,8 @@ pub fn clean_up_worktree(
             return Ok(CleanUpExecution::Kept {
                 reasons,
                 git: again.ok().flatten(),
-                closed: Some(was_running),
+                closed: Some(closed),
+                not_closed_reason,
             });
         }
         // What the branch and the tasks are decided on below: a worker that committed and
@@ -408,7 +486,8 @@ pub fn clean_up_worktree(
     Ok(CleanUpExecution::Removed(CleanUpRemoved {
         path: worktree.to_string(),
         forced: force,
-        closed: was_running,
+        closed,
+        not_closed_reason,
         branch,
         tasks: done,
         kept_tasks,
