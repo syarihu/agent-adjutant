@@ -101,6 +101,19 @@
   backdrop-filter: var(--app-blur);
 }
 
+/* A modal dialog's backdrop: the browser's is a dim with a backdrop blur (console-and-dialog.css). In the app's WebView that
+   blur came and went on its own (with no material, the rail and the right of the page turned sharp now and then while the list
+   column stayed blurred, and pausing the page's animations did not stop it), so here the page itself is blurred while a modal
+   is open and the backdrop only dims. The dialogs and the toasts (a popover) are left out: they are drawn sharp over it. A
+   filter makes its element the box that fixed descendants are placed in, so a popover fixed to the window inside the page
+   (the TODO's in the rail, a stack's in the main column) moves while blurred under the dim. A press outside closes both, so
+   that is only seen when a shortcut opens a dialog over one that is open. */
+[data-shell="app"] dialog::backdrop {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-shell="app"] body:has(> dialog:modal) > :not(dialog):not([popover]) { filter: blur(4px); }
+
 /* The display settings' row for the app's opacity (app-appearance.js): the slider takes the room between the label and
    the value. The section itself is hidden in a browser. */
 [data-shell="app"] #display-app .app-opacity { display: flex; align-items: center; gap: 8px; }
