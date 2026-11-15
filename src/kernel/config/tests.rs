@@ -342,6 +342,17 @@ fn autopilot_with_merge_person_in_one_layer_is_reported() {
     // A repository's merge over defaults' autopilot is a deliberate override, not a conflict.
     let (_, _, warnings) = autopilot_config(json!({"autopilot": true}), json!({"merge": "person"}));
     assert!(!warnings.iter().any(|w| w.contains("merge wins")));
+    // Defaults' merge loses to the repository's own autopilot: the hub does merge, so the
+    // defaults' conflict is not reported as if it still decided.
+    let (config, _, warnings) = autopilot_config(
+        json!({"autopilot": true, "merge": "person"}),
+        json!({"autopilot": true}),
+    );
+    assert_eq!(config.unwrap()["merge"], "hub");
+    assert!(
+        !warnings.iter().any(|w| w.contains("merge wins")),
+        "{warnings:?}"
+    );
 }
 
 #[test]

@@ -844,6 +844,7 @@ fn expand_autopilot(
         ));
         Value::String("person".to_string())
     };
+    let hub_merges = merge.as_str() == Some("hub");
     resolved.insert("merge".to_string(), merge);
     resolved.insert(
         "autopilot".to_string(),
@@ -851,7 +852,10 @@ fn expand_autopilot(
     );
 
     for (layer, name) in [(entry, "this repository's entry"), (defaults, "defaults")] {
-        if layer.get("autopilot") == Some(&Value::Bool(true))
+        // Only when that layer is the one that decided: a more specific layer's own
+        // `autopilot` may have turned the merge back to the hub.
+        if !hub_merges
+            && layer.get("autopilot") == Some(&Value::Bool(true))
             && layer.get("merge").and_then(Value::as_str) == Some("person")
         {
             warnings.push(format!(
