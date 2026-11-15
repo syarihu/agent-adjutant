@@ -101,7 +101,7 @@ to `hub`, so §hub-merge runs as written (unless `config.merge` says `person`).
 | Stop at where **you** write it: a Read-first reading, a report you file and queue (below), §request-start, a tab request with nothing said | Default `none`: pass `--stop-at none`. **Never with `--executor jules`** (refused; it keeps `plan`). |
 | A Stop at already on a record (a request with conditions, a task a person queued) or named in words (`diff`, `all`) | Kept. |
 | A report with an empty `## Scope` | File it (§request-file), then queue it: `adj task add --body - --issue-url '{url}' [--parent '{url}'] --done-when pr --stop-at none --executor worker --json < '{main}/.claude/task-request-{key}.md' && rm …`, then `adj task update --id {task_id} --status queued --no-hand-over`. **Never `adj task add --queue` from the hub** (it messages your own inbox). §next-slot starts it in order. |
-| §request-file Step 2, something similar | Clearly the same bug on `github`: comment on it, queue nothing. Otherwise, or `jira` (never edit a ticket's body on your own): file a new one naming the candidate, and queue that. |
+| §request-file Step 2, something similar | Clearly the same bug on `github`: comment on it, queue nothing. Otherwise, or `jira` (never edit a ticket's body on your own): file a new one naming the candidate, and queue it only when its Scope is empty (row above); a "file only" Scope stays filed. |
 | A board reading with no open point (§board-request step 5) | Skip the dispatch gate: `adj task update --id {task_id} --read --auto-start true`, then §board-request-run. An open point still waits on the gate. |
 | Before starting any task (§next-slot, §board-request-run) | The overlap check below. |
 
@@ -2461,7 +2461,7 @@ project = {project} AND text ~ "{word}" AND text ~ "{word}" ORDER BY updated DES
   reading the content, narrow `fields` to about `["summary","status","updated"]` (otherwise a huge
   JSON comes back; see `jira` in §task-sources).
 
-If something similar turns up, `AskUserQuestion`:
+If something similar turns up, `AskUserQuestion` (with `autopilot` on, decide it yourself instead: "When `autopilot` is on"):
 
 - **Add a comment to the existing #N** — the same bug. Add to it and go to Step 5 (§request-reply; starting, if asked,
   is done on the existing issue)
@@ -2627,7 +2627,8 @@ not answers. Run §board-request first. Without it, the request was answered whe
 
 #### Reading a request
 
-**Nothing is started, filed or created before the gate below is answered.**
+**Nothing is started, filed or created before the gate below is answered** (with `autopilot` on, a reading
+with no open point skips the gate: "When `autopilot` is on").
 
 1. Read `adj task show --id {task_id}`. If `status` is not `queued`, stop (as in "Running a
    request"). **Also require `needsReading: true` and no open `dispatch` gate for the task** (`adj
@@ -2680,7 +2681,8 @@ not answers. Run §board-request first. Without it, the request was answered whe
    If the issue cannot be read, the title stays the person's first line and the gate says so in
    `unsure`. If `adj task update` refuses a value (a bad worktree name fails the whole patch), that
    value becomes an open point and the update is run again without it, so the gate opens with that
-   point named in `unsure`. A record that has not been confirmed is never started. **If you stop
+   point named in `unsure`. A record that has not been confirmed is never started (under `autopilot`, a reading with no open point
+   is confirmed by the hub's own `--read`). **If you stop
    between this step and the gate, the record is still unread and has no gate, so the next pass
    (the slot refill lists it) reads it again — that is the recovery.** That pass is the slot refill
    (only when `settings.maxWorkers` is set) or the person pressing 「次を流す」 on the board.
