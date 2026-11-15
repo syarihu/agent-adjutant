@@ -91,17 +91,16 @@ Four rules the rest of this file leans on:
 
 ## When `autopilot` is on
 
-The person turned this repository over to the hub: tasks run from the queue to a merged PR with
-nobody at the board. Read `config.autopilot` in `adjutant_config` (not `settings`; `false` when not
+Tasks run from the queue to a merged PR with nobody at the board. Read `config.autopilot` in `adjutant_config` (not `settings`; `false` when not
 registered). **This table wins over any section that says otherwise.** `autopilot` presets `merge`
-to `hub`, so §hub-merge runs as written (unless `config.merge` says `person`).
+to `hub` (§hub-merge) unless `config.merge` says `person`.
 
 | Where | With `autopilot` |
 | --- | --- |
 | Stop at where **you** write it: a Read-first reading, a report you file and queue (below), §request-start, a tab request with nothing said | Default `none`: pass `--stop-at none`. **Never with `--executor jules`** (refused; it keeps `plan`). |
 | A Stop at already on a record (a request with conditions, a task a person queued) or named in words (`diff`, `all`) | Kept. |
-| A report with an empty `## Scope` | File it (§request-file), write a short summary of it to `{main}/.claude/task-request-{key}.md` with a file-writing tool, then queue it: `adj task add --body - --issue-url '{url}' [--parent '{url}'] --done-when pr --stop-at none --executor worker --json < '{main}/.claude/task-request-{key}.md' && rm …`, then `adj task update --id {task_id} --status queued --no-hand-over`. **Never `adj task add --queue` from the hub** (it messages your own inbox). §next-slot starts it in order. |
-| §request-file Step 2, something similar | Clearly the same bug on `github`: comment on it, queue nothing. Otherwise, or `jira` (never edit a ticket's body on your own): file a new one naming the candidate, and queue it only when its Scope is empty (row above); a "file only" Scope stays filed. |
+| A report with an empty `## Scope` | File it (§request-file), write a short summary of it to `{main}/.claude/task-request-{key}.md` with a file-writing tool, then queue it: `adj task add --body - --issue-url '{url}' [--parent '{url}'] --done-when pr --stop-at none --executor worker --json < '{main}/.claude/task-request-{key}.md' && rm …`, then `adj task update --id {task_id} --status queued --no-hand-over`. **Never `adj task add --queue` from the hub** (it messages your own inbox). §next-slot starts it in order (the pass once the inbox is empty runs it). |
+| §request-file Step 2, something similar | Clearly the same bug in an **open** `github` issue: comment on it, queue nothing. A closed one (it came back), otherwise, or `jira` (never edit a ticket's body on your own): file a new one naming the candidate, and queue it only when its Scope is empty (row above); a "file only" Scope stays filed. |
 | A board reading with no open point (§board-request step 5) | Skip the dispatch gate: `adj task update --id {task_id} --read --auto-start true`, then §board-request-run. An open point still waits on the gate. |
 | Before starting any task (§next-slot, §board-request-run) | The overlap check below. |
 
@@ -111,18 +110,18 @@ waits for a slot): the issue bodies and, when the other worker has a plan record
 `detail` (file names). Overlap: the same files or module, or one depends on the other. Decide from
 what is written; do not read code.
 
-- None: clear a `Waiting for task ` note (`--note ''`) and start.
+- None: drop a `Waiting for task …` note, keep any `(resume with --resume)`, start.
 - Overlap: do not start. `adj task update --id {task_id} --note 'Waiting for task {key}: overlaps {area}'`
-  (through a file if the text comes from the task). Keep the `Waiting for task ` start as written:
+  (via a file if the text is the task's), plus any `(resume with --resume)` the old note had. Keep the `Waiting for task ` start as written:
   `adj task next` skips by it. Then ask `adj task next --json` for another.
-- Each §next-slot pass starts by clearing the note of a held task (`adj task list --status queued --json`)
+- Each §next-slot pass starts by releasing (as "None") a held task (`adj task list --status queued --json`)
   whose blocking task is `done` or `cancelled`.
-- No stacking (#215) yet: an overlap always waits. §hub-merge's "a person decides" does not reach
-  §next-slot, so a later person merge is noticed at the next `done`, startup or 「次を流す」.
+- No stacking (#215) yet: an overlap always waits. A person's merge after §hub-merge's "a person
+  decides" is noticed at the next `done`, startup or 「次を流す」.
 
 **Still stops for a person**: failed `verify` and every §hub-merge "a person decides"; no
 `issueCreate.command`, or an interactive one the report cannot answer; a report for another repo; a
-`needs-user` or a question Found in cannot settle; §split-request; a Jules plan; an `autoStart: false`
+`needs-user` or a question Found in leaves open; §split-request; a Jules plan; an `autoStart: false`
 task's dispatch gate; a reading with an open point; editing a Jira ticket's body.
 
 ## Context — gather in the first block after starting
