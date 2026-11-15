@@ -179,28 +179,26 @@ impl NotClosed {
     }
 }
 
-/// Why a `close` that was free closed no tab, from what it saw and the record read before it.
+/// Why a `close` that was free closed no tab, from what that call itself read and compared.
 ///
-/// `Gone` says whether a process still holds the pid (`now`), so a pid handed to something else
-/// is told from one that exited even when this look was the first to find out.
-fn not_closed_after(
-    result: &WorkerClose,
-    recorded: &registry::Recorded<registry::WorkerIdentity>,
-) -> NotClosed {
-    let worker = match recorded {
-        registry::Recorded::Found(worker) => Some(worker),
-        _ => None,
-    };
-    match (result, worker) {
-        (WorkerClose::NoWorker, _) => NotClosed::NoRecord,
-        (WorkerClose::Gone { now: Some(now), .. }, Some(worker)) => NotClosed::PidReused {
-            pid: worker.pid,
+/// Nothing is taken from the record clean-up read earlier: another worker may have registered
+/// since, and a reason built from both would describe a comparison that never happened.
+fn not_closed_after(result: &WorkerClose) -> NotClosed {
+    match result {
+        WorkerClose::NoWorker => NotClosed::NoRecord,
+        WorkerClose::Gone {
+            pid,
+            recorded,
+            now: Some(now),
+            ..
+        } => NotClosed::PidReused {
+            pid: *pid,
             now: now.clone(),
-            recorded: worker.started.clone().unwrap_or_default(),
+            recorded: recorded.clone().unwrap_or_default(),
         },
-        (_, worker) => NotClosed::Exited {
-            pid: worker.map(|w| w.pid),
-        },
+        WorkerClose::Gone { pid, .. } => NotClosed::Exited { pid: Some(*pid) },
+        // Free, and not a close: nothing else reaches here.
+        _ => NotClosed::Exited { pid: None },
     }
 }
 
@@ -375,7 +373,7 @@ pub fn clean_up_worktree(
         if !closed {
             // A free result that closed nothing: the record went, or the worker ended, between
             // the read above and `close`'s own.
-            not_closed = Some(not_closed_after(&result, &recorded));
+            not_closed = Some(not_closed_after(&result));
         }
     }
     let not_closed_reason = not_closed.filter(|_| !closed).map(|n| n.describe());
@@ -767,24 +765,16 @@ mod tests {
         }
     }
 
-    fn identity(pid: u32, started: &str) -> registry::Recorded<registry::WorkerIdentity> {
-        registry::Recorded::Found(registry::WorkerIdentity {
-            pid,
-            started: Some(started.to_string()),
-            title: None,
-            terminal: None,
-        })
-    }
-
     #[test]
     fn a_pid_close_found_running_another_process_is_reused_and_not_exited() {
-        let recorded = identity(7, "Thu Jan  1 00:00:00 1970");
         let reused = WorkerClose::Gone {
             dry_run: false,
+            pid: 7,
+            recorded: Some("Thu Jan  1 00:00:00 1970".to_string()),
             now: Some("Sun Nov 15 17:12:34 2026".to_string()),
         };
         assert_eq!(
-            not_closed_after(&reused, &recorded),
+            not_closed_after(&reused),
             NotClosed::PidReused {
                 pid: 7,
                 now: "Sun Nov 15 17:12:34 2026".to_string(),
@@ -793,15 +783,38 @@ mod tests {
         );
         let exited = WorkerClose::Gone {
             dry_run: false,
+            pid: 7,
+            recorded: None,
             now: None,
         };
         assert_eq!(
-            not_closed_after(&exited, &recorded),
+            not_closed_after(&exited),
             NotClosed::Exited { pid: Some(7) }
         );
         assert_eq!(
-            not_closed_after(&WorkerClose::NoWorker, &recorded),
+            not_closed_after(&WorkerClose::NoWorker),
             NotClosed::NoRecord
+        );
+    }
+
+    /// The reason is about the worker `close` compared: whatever clean-up read before it (another
+    /// pid, another start time), what is named is `Gone`'s own, because nothing else is passed in.
+    #[test]
+    fn the_reason_names_the_worker_close_compared_not_the_earlier_read() {
+        let gone = WorkerClose::Gone {
+            dry_run: false,
+            pid: 7,
+            recorded: Some("Thu Jan  1 00:00:00 1970".to_string()),
+            now: Some("Sun Nov 15 17:12:34 2026".to_string()),
+        };
+        let reason = not_closed_after(&gone).describe();
+        assert!(
+            reason.contains("pid 7 ") && reason.contains("1970"),
+            "{reason}"
+        );
+        assert!(
+            !reason.contains("99") && !reason.contains("2006"),
+            "{reason}"
         );
     }
 

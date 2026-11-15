@@ -15,10 +15,16 @@ pub enum WorkerClose {
     Unreadable,
     /// The worker is gone and its record was (or, on a dry run, would be) cleared.
     ///
-    /// `now` is when the process holding the recorded pid started, or `None` when none runs:
-    /// "gone" is also what a pid handed to something else reads as, and a caller explaining it
-    /// has to be able to tell the two apart.
-    Gone { dry_run: bool, now: Option<String> },
+    /// `pid` and `recorded` are the worker this call read and compared, and `now` is when the
+    /// process holding that pid started, or `None` when none runs: "gone" is also what a pid
+    /// handed to something else reads as, and a caller explaining it has to be able to tell the
+    /// two apart — about the worker that was compared, not one read earlier.
+    Gone {
+        dry_run: bool,
+        pid: u32,
+        recorded: Option<String>,
+        now: Option<String>,
+    },
     /// The worker is gone, but the record was not this call's to clear.
     GoneLeftAlone(registry::Cleared),
     /// Whether the worker's process is still running could not be established.
@@ -120,7 +126,12 @@ pub fn close(settings: &Settings, worktree: &Path, dry_run: bool) -> Result<Work
                 false => registry::unregister_worker_if(worktree, &worker)?,
             };
             return Ok(match cleared {
-                registry::Cleared::Yes => WorkerClose::Gone { dry_run, now },
+                registry::Cleared::Yes => WorkerClose::Gone {
+                    dry_run,
+                    pid,
+                    recorded: worker.started.clone(),
+                    now,
+                },
                 other => WorkerClose::GoneLeftAlone(other),
             });
         }

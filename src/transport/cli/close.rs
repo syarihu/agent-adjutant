@@ -61,7 +61,7 @@ fn say(outcome: &WorkerClose, worktree: &std::path::Path, quiet: bool) {
             "the worker record in {} cannot be read as naming a worker, so nothing was cleared",
             worktree.display()
         ),
-        WorkerClose::Gone { dry_run, now } => {
+        WorkerClose::Gone { dry_run, now, .. } => {
             println!("no worker is running in {}", worktree.display());
             if let Some(now) = now {
                 println!("(its recorded pid now belongs to a process started at {now})");
