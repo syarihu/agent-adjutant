@@ -141,6 +141,13 @@ impl Executor {
 /// person has looked at the reason, so the hub's wording and this check have to be one string.
 pub const COULD_NOT_START: &str = "Could not start:";
 
+/// The start of the note the hub writes on a queued task it is holding back because it overlaps
+/// a task in progress (`autopilot`, "When `autopilot` is on" in the hub's procedure). `next` skips
+/// it, like `COULD_NOT_START`, but the hub clears it itself once the other task is done. It says
+/// "task" so that it cannot be taken for the hub's other waiting notes ("Waiting for a worker
+/// slot", "Waiting for confirmation to start"), which must stay startable.
+pub const WAITING_FOR_TASK: &str = "Waiting for task ";
+
 /// What a free worker slot should take, and what is waiting on a confirmation nobody has been
 /// asked for yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

@@ -189,6 +189,205 @@ fn an_unknown_merge_value_is_reported() {
     }
 }
 
+/// A registered repo's entry with `extra` merged in, for the autopilot tests.
+fn autopilot_config(defaults: Value, entry: Value) -> (Option<Value>, Settings, Vec<String>) {
+    resolve(
+        json!({"defaults": defaults, "repos": {"acme/app": app(entry)}}),
+        "acme/app",
+    )
+}
+
+#[test]
+fn autopilot_is_off_by_default_and_presets_merge_to_hub() {
+    let (config, settings, _) = autopilot_config(json!({}), json!({}));
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], false);
+    assert_eq!(config["merge"], "person");
+    assert!(!settings.autopilot);
+
+    let (config, settings, _) = autopilot_config(json!({}), json!({"autopilot": true}));
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], true);
+    assert_eq!(config["merge"], "hub");
+    assert_eq!(settings.merge, Merge::Hub);
+    assert!(settings.autopilot);
+
+    let (config, settings, _) = autopilot_config(json!({"autopilot": true}), json!({}));
+    assert_eq!(config.as_ref().unwrap()["merge"], "hub");
+    assert_eq!(config.unwrap()["autopilot"], true);
+    assert_eq!(settings.merge, Merge::Hub);
+}
+
+#[test]
+fn an_explicit_merge_beats_the_autopilot_preset_in_the_same_or_a_nearer_layer() {
+    // Same layer.
+    let (config, settings, _) =
+        autopilot_config(json!({}), json!({"autopilot": true, "merge": "person"}));
+    assert_eq!(config.as_ref().unwrap()["merge"], "person");
+    assert_eq!(config.unwrap()["autopilot"], true);
+    assert_eq!(settings.merge, Merge::Person);
+    // The repository's merge over defaults' autopilot.
+    let (config, _, _) = autopilot_config(json!({"autopilot": true}), json!({"merge": "person"}));
+    assert_eq!(config.unwrap()["merge"], "person");
+    // The repository's autopilot over defaults' merge.
+    let (config, _, _) = autopilot_config(json!({"merge": "person"}), json!({"autopilot": true}));
+    assert_eq!(config.unwrap()["merge"], "hub");
+    // Defaults' merge over defaults' autopilot is the same layer: merge wins.
+    let (config, _, _) = autopilot_config(json!({"autopilot": true, "merge": "person"}), json!({}));
+    assert_eq!(config.unwrap()["merge"], "person");
+    // Defaults' merge alone still works (#853).
+    let (config, _, _) = autopilot_config(json!({"merge": "hub"}), json!({}));
+    assert_eq!(config.unwrap()["merge"], "hub");
+}
+
+#[test]
+fn a_repository_can_turn_a_default_autopilot_off() {
+    let (config, settings, _) =
+        autopilot_config(json!({"autopilot": true}), json!({"autopilot": false}));
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], false);
+    assert_eq!(config["merge"], "person");
+    assert!(!settings.autopilot);
+    assert_eq!(settings.merge, Merge::Person);
+
+    // Off falls back to what defaults say about merge.
+    let (config, _, _) = autopilot_config(
+        json!({"autopilot": true, "merge": "hub"}),
+        json!({"autopilot": false}),
+    );
+    assert_eq!(config.unwrap()["merge"], "hub");
+}
+
+#[test]
+fn a_bad_merge_stays_person_under_autopilot_and_is_reported() {
+    let (config, settings, warnings) =
+        autopilot_config(json!({}), json!({"autopilot": true, "merge": "bogus"}));
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], true);
+    assert_eq!(config["merge"], "person");
+    assert_eq!(settings.merge, Merge::Person);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("merge") && w.contains("treated as person")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn a_null_is_a_set_but_invalid_value_and_no_default_comes_back_through_it() {
+    let (config, settings, warnings) =
+        autopilot_config(json!({"merge": "hub"}), json!({"merge": null}));
+    assert_eq!(config.unwrap()["merge"], "person");
+    assert_eq!(settings.merge, Merge::Person);
+    assert!(
+        warnings.iter().any(|w| w.contains("merge null")),
+        "{warnings:?}"
+    );
+
+    let (config, settings, warnings) =
+        autopilot_config(json!({"autopilot": true}), json!({"autopilot": null}));
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], false);
+    assert_eq!(config["merge"], "person");
+    assert!(!settings.autopilot);
+    assert_eq!(settings.merge, Merge::Person);
+    assert!(
+        warnings.iter().any(|w| w.contains("autopilot null")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn an_invalid_merge_is_written_back_as_person() {
+    for value in [json!("hubb"), json!(true), json!("Hub")] {
+        let (config, settings, _) = autopilot_config(json!({}), json!({ "merge": value }));
+        assert_eq!(config.unwrap()["merge"], "person", "{value}");
+        assert_eq!(settings.merge, Merge::Person);
+    }
+}
+
+#[test]
+fn a_non_boolean_autopilot_is_reported_and_read_as_off() {
+    for value in [json!("true"), json!(1), json!("hub")] {
+        let (config, settings, warnings) =
+            autopilot_config(json!({}), json!({ "autopilot": value }));
+        let config = config.unwrap();
+        assert_eq!(config["autopilot"], false, "{value}");
+        assert_eq!(config["merge"], "person", "{value}");
+        assert!(!settings.autopilot);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("autopilot") && w.contains("treated as false")),
+            "no warning for {value}: {warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn autopilot_with_merge_person_in_one_layer_is_reported() {
+    for (defaults, entry) in [
+        (json!({}), json!({"autopilot": true, "merge": "person"})),
+        (json!({"autopilot": true, "merge": "person"}), json!({})),
+    ] {
+        let (_, _, warnings) = autopilot_config(defaults, entry);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("autopilot") && w.contains("merge wins")),
+            "{warnings:?}"
+        );
+    }
+    // A repository's merge over defaults' autopilot is a deliberate override, not a conflict.
+    let (_, _, warnings) = autopilot_config(json!({"autopilot": true}), json!({"merge": "person"}));
+    assert!(!warnings.iter().any(|w| w.contains("merge wins")));
+    // Defaults' merge loses to the repository's own autopilot: the hub does merge, so the
+    // defaults' conflict is not reported as if it still decided.
+    let (config, _, warnings) = autopilot_config(
+        json!({"autopilot": true, "merge": "person"}),
+        json!({"autopilot": true}),
+    );
+    assert_eq!(config.unwrap()["merge"], "hub");
+    assert!(
+        !warnings.iter().any(|w| w.contains("merge wins")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn autopilot_without_max_workers_is_reported() {
+    let (_, _, warnings) = autopilot_config(json!({}), json!({"autopilot": true}));
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("autopilot") && w.contains("maxWorkers")),
+        "{warnings:?}"
+    );
+    let (_, _, warnings) = resolve(
+        json!({"maxWorkers": 2, "repos": {"acme/app": app(json!({"autopilot": true}))}}),
+        "acme/app",
+    );
+    assert!(
+        !warnings.iter().any(|w| w.contains("maxWorkers")),
+        "{warnings:?}"
+    );
+    let (_, _, warnings) = autopilot_config(json!({}), json!({}));
+    assert!(!warnings.iter().any(|w| w.contains("maxWorkers")));
+}
+
+#[test]
+fn an_unregistered_repo_is_never_on_autopilot() {
+    let (config, settings, warnings) = resolve(
+        json!({"defaults": {"autopilot": true}, "repos": {}}),
+        "acme/other",
+    );
+    assert!(config.is_none());
+    assert!(!settings.autopilot);
+    assert_eq!(settings.merge, Merge::Person);
+    assert!(!warnings.iter().any(|w| w.contains("maxWorkers")));
+}
+
 #[test]
 fn an_unknown_copilot_review_value_is_reported() {
     for value in [json!("alway"), json!(true)] {

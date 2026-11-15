@@ -176,13 +176,17 @@ pub struct Settings {
     /// to it in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Skipped when serialising, with the five below: the resolved `config` printed next to
+    /// Skipped when serialising, with the six below: the resolved `config` printed next to
     /// `settings` already carries these keys, and a second copy would be two answers to one
     /// question (see the note on `ide` in `defaults.rs`).
     #[serde(skip)]
     pub copilot_review: CopilotReview,
     #[serde(skip)]
     pub merge: Merge,
+    /// Whether the hub runs this repository's tasks end to end without a person. The resolved
+    /// `config` carries it too; the hub's procedure reads it from there.
+    #[serde(skip)]
+    pub autopilot: bool,
     /// Commands the worker runs before it reports. Empty for an unregistered repo.
     #[serde(skip)]
     pub verify: Vec<String>,
@@ -206,6 +210,10 @@ impl Settings {
     ) {
         self.copilot_review = CopilotReview::read(resolved.get("copilotReview"));
         self.merge = Merge::read(resolved.get("merge"));
+        self.autopilot = resolved
+            .get("autopilot")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         self.verify = resolved
             .get("verify")
             .and_then(Value::as_array)
@@ -251,6 +259,7 @@ impl Default for Settings {
             language: None,
             copilot_review: CopilotReview::Ask,
             merge: Merge::Person,
+            autopilot: false,
             verify: Vec::new(),
             review_engine: ReviewEngine::Auto,
             issue_keys: serde_json::Map::new(),

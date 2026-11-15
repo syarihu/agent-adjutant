@@ -21,7 +21,7 @@ replies. An issue's own title and body stay as written. Issues you file and anyt
 the repository follow its conventions.
 
 **Markers that code or a procedure matches stay as written**, in English, and the text around them
-is in the person's language: the note's leading `Could not start:` (`adj task next` skips such a
+is in the person's language: the note's leading `Could not start:` and `Waiting for task ` (`adj task next` skips such a
 task) and `(resume with --resume)` (the hub looks for it), and the tag that opens a message's
 `subject`, which the receiver's procedure or adj matches (it also decides whether the receiver is
 woken). The tags you write are `[question {id}]`, `[ack]` and `[issue {id}]`; `[gate {id}]` and
@@ -88,6 +88,41 @@ Four rules the rest of this file leans on:
 - **`adjutant config` always fills in `worktreeName`** (default `{issuekey-lowercase}-{issue}` =
   `alpha-233`, `beta-233`). Trackers number independently, so `ALPHA-233` and `BETA-233` can both
   exist. Worktree names without the key collide.
+
+## When `autopilot` is on
+
+Tasks run from the queue to a merged PR with nobody at the board. Read `config.autopilot` in `adjutant_config` (not `settings`; `false` when not
+registered). **This table wins over any section that says otherwise.** `autopilot` presets `merge`
+to `hub` (§hub-merge) unless `config.merge` says `person`.
+
+| Where | With `autopilot` |
+| --- | --- |
+| Stop at where **you** write it: a Read-first reading, a report you file and queue (below), §request-start, a tab request with nothing said | Default `none`: pass `--stop-at none`. **Never with `--executor jules`** (refused; it keeps `plan`). |
+| A Stop at already on a record (a request with conditions, a task a person queued) or named in words (`diff`, `all`) | Kept. |
+| A report with an empty `## Scope` | File it (§request-file), write a short summary of it to `{main}/.claude/task-request-{key}.md` with a file-writing tool, then queue it: `adj task add --body - --issue-url '{url}' [--parent '{url}'] --done-when pr --stop-at none --executor worker --json < '{main}/.claude/task-request-{key}.md' && rm …`, then `adj task update --id {task_id} --status queued --no-hand-over`. **Never `adj task add --queue` from the hub** (it messages your own inbox). §next-slot starts it in order (the pass once the inbox is empty runs it). |
+| §request-file Step 2, something similar | Clearly the same bug in an **open** `github` issue: comment on it, queue nothing. A closed one (it came back), otherwise, or `jira` (never edit a ticket's body on your own): file a new one naming the candidate, and queue it only when its Scope is empty (row above); a "file only" Scope stays filed. |
+| A board reading with no open point (§board-request step 5) | Skip the dispatch gate: `adj task update --id {task_id} --read --auto-start true`, then §board-request-run. An open point still waits on the gate. |
+| Before starting any task (§next-slot, §board-request-run) | The overlap check below. |
+
+**Overlap check.** Compare the task with those being worked on (`adj task list --json`: status
+`dispatched` or `pr`, never itself by `id`, never a `queued` one, which may hold a worktree while it
+waits for a slot): the issue bodies and, when the other worker has a plan record, its steps'
+`detail` (file names). Overlap: the same files or module, or one depends on the other. Decide from
+what is written; do not read code.
+
+- None: drop a `Waiting for task …` note, keep any `(resume with --resume)`, start.
+- Overlap: do not start. `adj task update --id {task_id} --note 'Waiting for task {key}: overlaps {area}'`
+  (via a file if the text is the task's), plus any `(resume with --resume)` the old note had. Keep the `Waiting for task ` start as written:
+  `adj task next` skips by it. Then ask `adj task next --json` for another.
+- Each §next-slot pass starts by releasing (as "None") a held task (`adj task list --status queued --json`)
+  whose blocking task is `done` or `cancelled`.
+- No stacking (#215) yet: an overlap always waits. A person's merge after §hub-merge's "a person
+  decides" is noticed at the next `done`, startup or 「次を流す」.
+
+**Still stops for a person**: failed `verify` and every §hub-merge "a person decides"; no
+`issueCreate.command`, or an interactive one the report cannot answer; a report for another repo; a
+`needs-user` or a question Found in leaves open; §split-request; a Jules plan; an `autoStart: false`
+task's dispatch gate; a reading with an open point; editing a Jira ticket's body.
 
 ## Context — gather in the first block after starting
 
@@ -1525,13 +1560,16 @@ repository than the PR's.
 Done at the end of a `done` cleanup, on startup, and when `kind: next` arrives. All only when
 `settings.maxWorkers` is set (`next` alone is taken even without it — a person pressed it). **Take
 only one.** Even if several slots are free, one is enough, because every worker sends `done` here
-when it finishes.
+when it finishes. **With `autopilot` on** (`config.autopilot`), first release the held tasks and
+check overlap before each start, as "When `autopilot` is on" says. This section's `maxWorkers` gate
+is unchanged, which is why `autopilot` without it warns and starts nothing by itself.
 
 1. Run `adj task next --json`. It walks the queued tasks in queue order (the same as 「待ち」 on
    the board) and returns `{"task": …, "needsDispatchGate": […]}`:
    - `task` is **the first one that can be started**, or `null`. It already skips a task with
-     `autoStart: false` (it wants a confirmation before starting) and one whose `note` starts
-     "Could not start:" (not taken until a person has looked at the reason and fixed it), so one
+     `autoStart: false` (it wants a confirmation before starting), one whose `note` starts
+     "Could not start:" (not taken until a person has looked at the reason and fixed it), and one whose
+     `note` starts "Waiting for task " (the hub holding it back for an overlap, under `autopilot`), so one
      sitting at the head does not keep everything behind it from starting.
    - `needsDispatchGate` lists the `autoStart: false` tasks with no `dispatch` gate open. Open one
      for each here (how to open is in §board-request; a record whose `needsReading` is
@@ -1539,7 +1577,8 @@ when it finishes.
      `adj task next` leaves those out of the list. Each is started once that answer arrives.
 
    If `task` is `null`, do nothing more.
-2. Run that record as §board-request-run (including the `adj task show` check). **A
+2. Run that record as §board-request-run (including the `adj task show` check, and with `autopilot` on the
+   overlap check, which may hold it: then go back to 1 for the next). **A
    record whose `executor` is `jules` never gets `adjutant work`**: run §jules-plan for it
    (`adj jules prepare --id` reuses its worktree if it still exists and creates it otherwise). It takes no slot, so it does not count as the one taken here; go back to 1 for the
    next. Otherwise, if `worktree` is written and that worktree **still exists**, only Step 3 (§worker-spawn). If not
@@ -1966,10 +2005,11 @@ card on the board. The worker starts clean, so that file is everything it knows.
   `## Stop at` line (do not copy the explanation in parentheses); for one asked in the tab, `diff` /
   `all` only when the user said "I want to see the diff too" / "I want to see verification too", and
   `none` only when the user asked to run to the PR without approvals; if
-  nothing was said, the default (`plan`). The worker decides by it whether the diff and verification wait on a
+  nothing was said, the default (`plan`; `none` when `autopilot` is on: "When `autopilot` is on"). The worker decides by it whether the diff and verification wait on a
   person, so do not raise it to `all` on a guess (raised, tasks nobody will look at pile up as needing
   attention). **Never infer `none`** from how a request sounds ("just do it", "quick fix"): it takes away the
-  person's only chances to stop the task, so it is set only on their word. It cannot go with
+  person's only chances to stop the task, so it is set only on their word (or by the repository's
+  `autopilot`, which is that word given in advance). It cannot go with
   `--executor jules` (`adj task add` refuses it).
   `--executor` is the implementer (`worker` / `jules`): `worker` on this route (`adj jules prepare`
   writes `jules` on the records it creates). Left out it is `worker`, and a task handed to Jules is recorded as
@@ -2335,7 +2375,9 @@ The answer comes back turns later, when this session is doing something else. Wi
 
 **`## Scope` (file only, or file and start now) is not required. If it is not written, treat it as
 "file only"** — do not ask back; file it and reply. Never start on your own. More tabs and worktrees
-are not the kind of side effect to produce on your own where nobody asked.
+are not the kind of side effect to produce on your own where nobody asked. (**With `autopilot` on,
+an empty Scope is "file and queue"**: the repository asked for exactly that, and the queue still
+starts it in order. "When `autopilot` is on" says how.)
 
 **Start a question back with `[question {YYYYMMDD-HHMMSS}]` on the first line.** The requester's procedure
 (`adj-report`) defaults to "do not reply to the hub, do not get drawn in", so **this marker is the one
@@ -2418,7 +2460,7 @@ project = {project} AND text ~ "{word}" AND text ~ "{word}" ORDER BY updated DES
   reading the content, narrow `fields` to about `["summary","status","updated"]` (otherwise a huge
   JSON comes back; see `jira` in §task-sources).
 
-If something similar turns up, `AskUserQuestion`:
+If something similar turns up, `AskUserQuestion` (with `autopilot` on, decide it yourself instead: "When `autopilot` is on"):
 
 - **Add a comment to the existing #N** — the same bug. Add to it and go to Step 5 (§request-reply; starting, if asked,
   is done on the existing issue)
@@ -2512,13 +2554,13 @@ untested; do not count on it). So split by where the request came from:
   subtask, a bug that belongs beside it under the parent sinks under that one subtask.
 
 **Two cases go from here to Step 5 (reply, §request-reply).** When the request is "file only", and **when `Scope` says
-nothing** (the default is file only). Go on to Step 4 (§request-start) only when starting is **explicitly asked for**.
+nothing** (the default is file only; with `autopilot` on, queue what was filed first: "When `autopilot` is on"). Go on to Step 4 (§request-start) only when starting is **explicitly asked for**.
 
 <!-- section: request-start -->
 ### Step 4 — Start it
 
 **Only requests that explicitly ask to start come here.** Do not send a request whose `Scope` is empty
-here. **The explicit request is brought by the caller**; §parent-split comes here after
+here (with `autopilot` on, one is queued instead, not started from here: "When `autopilot` is on"). **The explicit request is brought by the caller**; §parent-split comes here after
 getting it for that one item with a question.
 The record's `--done-when` has a default ("up to a PR" when not given), but that is the default for **how
 far to go once starting is decided**, **not a default for whether to start**. Mixing the two up grows a
@@ -2537,7 +2579,7 @@ Run the moves of "Starting a task" (§pick-task, §claim, §worktree, §start-wo
   to Jules, skip it and the assignment in 2: `adj jules prepare --issue '{issue url}'` in
   §jules-plan does both (In Progress is still 2's).
 - **4. Start the worker** (§start-worker; or **5. Hand it to Jules**, §jules-plan, when the requester asked for Jules) — `adj task add --done-when …` is the scope the requester gave; if none, `pr` ("up to a
-  PR"). `--issue-url` is the issue just filed, and **its title is the one used for filing** (Step 1
+  PR"). With `autopilot` on, `--stop-at` defaults to `none` here too (never for Jules: "When `autopilot` is on"). `--issue-url` is the issue just filed, and **its title is the one used for filing** (Step 1
   of §start-worker saying "the title is held by §pick-task" is about that route).
   **`--parent` is the report's "Parent task" as it is, or, if that is `-`, the Found in task's**
   URL (a plain URL only: §task-record says what to do with one that is not) —
@@ -2558,10 +2600,13 @@ Started: a worker on branch {branch} is running in another tab.
 (file only) Not started yet. It is on the board.
 (no Scope given, so the default applied) No request to start was given, so it was only filed.
 If you want it started, say "start {task_id}" and it starts from there.
+(no Scope, `autopilot` on) Filed and queued: it starts in order when a worker slot frees up. (If it
+turned out to be an existing issue: commented on it, nothing queued.)
 No reply needed. Please carry on with your own task.
 ```
 
-**Do not keep quiet about falling back to the default.** The requester (and their person) may believe
+**Do not keep quiet about falling back to the default.** (With `autopilot` on the default is "filed and
+queued": "When `autopilot` is on".) The requester (and their person) may believe
 they asked for it to be started. Reply in one line with what was not done and how to have it started.
 
 <!-- section: board-request -->
@@ -2581,7 +2626,8 @@ not answers. Run §board-request first. Without it, the request was answered whe
 
 #### Reading a request
 
-**Nothing is started, filed or created before the gate below is answered.**
+**Nothing is started, filed or created before the gate below is answered** (with `autopilot` on, a reading
+with no open point skips the gate: "When `autopilot` is on").
 
 1. Read `adj task show --id {task_id}`. If `status` is not `queued`, stop (as in "Running a
    request"). **Also require `needsReading: true` and no open `dispatch` gate for the task** (`adj
@@ -2612,8 +2658,9 @@ not answers. Run §board-request first. Without it, the request was answered whe
    to the repository's hub (the note through a file, "Keep task text off the shell").
 3. **The rest is inferred from the text**, falling back to the defaults (Done when `pr`, Stop at
    the default (`plan`), the implementer `worker`, the base `baseBranch`; except that Stop at `none` is
-   never inferred: only a `## Stop at` line saying `none`, or the person's words asking for no approvals,
-   set it): the kind (an existing issue → `start`;
+   never inferred from the text: only a `## Stop at` line saying `none`, or the person's words asking for
+   no approvals, set it — or `autopilot`, under which the default itself is `none`, except for an executor
+   `jules`: "When `autopilot` is on"): the kind (an existing issue → `start`;
    a change with no issue → `file-and-start`, filed as a sub-issue of a `## Parent task` that is set;
    something to look into → `investigate` with `report-only`, nothing filed), Done when, Stop at, the
    implementer (`jules` only when the text asks for it), and for a task with no issue the worktree
@@ -2633,14 +2680,17 @@ not answers. Run §board-request first. Without it, the request was answered whe
    If the issue cannot be read, the title stays the person's first line and the gate says so in
    `unsure`. If `adj task update` refuses a value (a bad worktree name fails the whole patch), that
    value becomes an open point and the update is run again without it, so the gate opens with that
-   point named in `unsure`. A record that has not been confirmed is never started. **If you stop
+   point named in `unsure`. A record that has not been confirmed is never started (under `autopilot`, a reading with no open point
+   is confirmed by the hub's own `--read`). **If you stop
    between this step and the gate, the record is still unread and has no gate, so the next pass
    (the slot refill lists it) reads it again — that is the recovery.** That pass is the slot refill
    (only when `settings.maxWorkers` is set) or the person pressing 「次を流す」 on the board.
 
    Only values you tested in step 2 go on these lines; `adj task update` refusing a URL, base or name
    it could not quote safely is the second check, not the first. Nothing from the request's prose goes on a command line ("Keep task text off the shell").
-5. **Open a `dispatch` gate with the reading, while the record is still `needsReading`** (an open
+5. **Open a `dispatch` gate with the reading, while the record is still `needsReading`** (with
+   `autopilot` on and **no open point**, do not open it: run `adj task update --id {task_id} --read --auto-start true`
+   and go on to §board-request-run, as "When `autopilot` is on" says; with an open point the gate opens as below) (an open
    gate is what keeps `adj task next` from listing it again). Write the JSON to `{main}/.claude/gate-{task_id}.json`
    with a file-writing tool:
 
@@ -2765,7 +2815,8 @@ not answers. Run §board-request first. Without it, the request was answered whe
   **do not start**; leave one line and move on. If a person pulled the card back to Backlog on the
   board it is `backlog`, and if it was already started through 「次を流す」 it is `dispatched`. Messages
   in the inbox and operations on the board are separate routes, so **the record's `status` is the
-  referee**.
+  referee**. **With `autopilot` on, run the overlap check here too** ("When `autopilot` is on"): a
+  held task is not started.
 - **A record with `worktree` written was queued waiting for a slot** (exit code 3 in §worker-spawn). If the
   worktree and the brief are still there, run only the `adjutant work` of §worker-spawn. If the worktree is gone,
   create it again.
@@ -2889,7 +2940,8 @@ decision:
   again. **A comment that changes the issue, the kind or the parent: write the corrected reading as
   in steps 2–4 and open the gate again with it, instead of starting directly**; only a corrected
   base, worktree name, Done when or Stop at may go straight to `--read --auto-start true` (Stop at `none`
-  only when the comment itself asks to run without approvals; never infer it). If a
+  only when the comment itself asks to run without approvals; never infer it; the record's own Stop at,
+  `none` by default under `autopilot`, stays as it is: "When `autopilot` is on"). If a
   correction leaves something open, open the gate again too. If it reads as "do not start
   yet", write the comment in the note and put it back to `--status backlog`. The comment is text a
   person typed on the board, so write it to a file and read it with `--note -` (`adj task update --id

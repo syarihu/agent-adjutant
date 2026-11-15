@@ -403,6 +403,7 @@ fn resolve_settings(
         // Only a registered repo has these; `resolve_from_value` fills them in.
         copilot_review: CopilotReview::Ask,
         merge: Merge::Person,
+        autopilot: false,
         verify: Vec::new(),
         review_engine: ReviewEngine::Auto,
         issue_keys: Map::new(),
@@ -674,6 +675,9 @@ pub fn resolve_from_value(
     let mut resolved = builtin_defaults();
     resolved.extend(defaults.clone());
     resolved.extend(entry.clone());
+    // Settles `merge` and `autopilot` together, before anything reads them, so the resolved
+    // config, `Settings` and the brief's "Merge by" cannot disagree.
+    expand_autopilot(&mut resolved, &defaults, &entry, &mut warnings);
 
     let mut sources = normalise_sources(&entry, &mut warnings);
     for key in std::iter::once("taskSource")
@@ -749,14 +753,11 @@ pub fn resolve_from_value(
         ));
     }
 
-    // Anything but "hub" is read as `person`, which is the safe side: a typo must not hand
-    // the merge to the hub.
-    if let Some(value) = resolved.get("merge")
-        && !matches!(value.as_str(), Some("person" | "hub"))
-    {
-        warnings.push(format!(
-            "merge {value} is not one of person, hub: treated as person"
-        ));
+    if settings.autopilot && settings.max_workers.is_none() {
+        warnings.push(
+            "autopilot is on but maxWorkers is not set: the hub will not start queued tasks on its own"
+                .to_string(),
+        );
     }
 
     // A github issue with no key has no branch name, so it silently drops out of the list.
@@ -779,6 +780,89 @@ pub fn resolve_from_value(
     }
 
     (true, Some(Value::Object(resolved)), settings, warnings)
+}
+
+/// `autopilot` is a preset for `merge`, and this is the one place the two are settled. The
+/// first that says something wins: the repository's own `merge`; else its `autopilot` (`true`
+/// is `hub`, `false` falls back to `defaults`' `merge`, else `person`); else `defaults`' `merge`;
+/// else `defaults`' `autopilot`; else `person`. `null` counts as set (and invalid), so a default never comes back through it.
+/// The answer is written back into `resolved`, so everything downstream reads one value.
+///
+/// A `merge` that is not `person` or `hub` is reported and written as `person`. A non-boolean `autopilot` is reported and read as `false`: a typo must not
+/// hand the merge to the hub.
+fn expand_autopilot(
+    resolved: &mut Map<String, Value>,
+    defaults: &Map<String, Value>,
+    entry: &Map<String, Value>,
+    warnings: &mut Vec<String>,
+) {
+    // A key that is there counts as set, `null` included: before `autopilot` a repository's
+    // `merge: null` overrode `defaults` and read as `person` with a warning, and a default must
+    // not come back through it.
+    fn set<'a>(layer: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
+        layer.get(key)
+    }
+    let mut read = |layer: &Map<String, Value>| match set(layer, "autopilot") {
+        None => None,
+        Some(Value::Bool(on)) => Some(*on),
+        Some(other) => {
+            warnings.push(format!(
+                "autopilot {other} is not true or false: treated as false"
+            ));
+            Some(false)
+        }
+    };
+    let entry_autopilot = read(entry);
+    let defaults_autopilot = read(defaults);
+
+    let hub = || Value::String("hub".to_string());
+    let merge = if let Some(merge) = set(entry, "merge") {
+        merge.clone()
+    } else if let Some(on) = entry_autopilot {
+        if on {
+            hub()
+        } else {
+            set(defaults, "merge")
+                .cloned()
+                .unwrap_or_else(|| Value::String("person".to_string()))
+        }
+    } else if let Some(merge) = set(defaults, "merge") {
+        merge.clone()
+    } else if defaults_autopilot == Some(true) {
+        hub()
+    } else {
+        Value::String("person".to_string())
+    };
+    // Anything but "hub" is read as `person`, which is the safe side: a typo must not hand
+    // the merge to the hub. The normalised value is what goes into the resolved map, so the
+    // config, `Settings` and the brief cannot disagree about it.
+    let merge = if matches!(merge.as_str(), Some("person" | "hub")) {
+        merge
+    } else {
+        warnings.push(format!(
+            "merge {merge} is not one of person, hub: treated as person"
+        ));
+        Value::String("person".to_string())
+    };
+    let hub_merges = merge.as_str() == Some("hub");
+    resolved.insert("merge".to_string(), merge);
+    resolved.insert(
+        "autopilot".to_string(),
+        Value::Bool(entry_autopilot.or(defaults_autopilot).unwrap_or(false)),
+    );
+
+    for (layer, name) in [(entry, "this repository's entry"), (defaults, "defaults")] {
+        // Only when that layer is the one that decided: a more specific layer's own
+        // `autopilot` may have turned the merge back to the hub.
+        if !hub_merges
+            && layer.get("autopilot") == Some(&Value::Bool(true))
+            && layer.get("merge").and_then(Value::as_str) == Some("person")
+        {
+            warnings.push(format!(
+                "autopilot is true but merge is \"person\" in {name}: merge wins, so the hub will not merge"
+            ));
+        }
+    }
 }
 
 /// The runtime entry point: the config file on disk, plus the one answer that does not come

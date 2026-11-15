@@ -17,6 +17,9 @@ pub fn builtin_defaults() -> Map<String, Value> {
         // Who merges the PR a worker opens. `person` leaves it to the person, as it always
         // was; `hub` lets the hub merge it once the worker reports it ready.
         "merge": "person",
+        // A preset for `merge` (and the switch the hub's procedure keys its end-to-end route on):
+        // `true` makes `merge` default to `hub`. `resolve_from_value` settles the two together.
+        "autopilot": false,
         "issueKeys": {},
         "verify": [],
         "postCreate": [],

@@ -122,3 +122,23 @@ AppleScript を使ってタブの作成、タイトルの設定、テキスト�
 - `"hub"`: hub がマージします。worker が PR の準備ができたと言うと（未対応の `must` の指摘がない、`verify` が通っている、レビュー bot への対応が済んでいる）、片付けの gate を開かずに `done` を送ります。hub は、PR が open で draft でなく、チェックがすべて通り、ベースに対して `CLEAN` で、`done` を送ったあとに何も足されていないときにマージします。マージはマージコミット（`gh pr merge --merge`）で、そのあと worktree を片付けます。hub が判断できないもの（レビューの返事待ち、GitHub が拒むマージ、30 分待ってもチェックが終わらない）は人に任せ、worker が直せるもの（CI の失敗、遅れて来たレビュー）は worker に差し戻します。
 
 `merge` は hub 自身の設定から読み、worker が書いた内容では決まりません。ほかの値は `warnings` に出て、`"person"` として扱われます。
+
+---
+
+## 人なしでタスクを流す（`autopilot`）
+
+`autopilot` はリポジトリごと（または `defaults`）に設定します。既定は `false` です。`true` にすると、hub がキューのタスクを、ボードの前に誰もいなくても、マージされた PR まで進めます。
+
+やること:
+
+- **`merge` の既定を `"hub"` にします。** 先に言及があったものが勝ちます。リポジトリ自身の `merge`、次にリポジトリの `autopilot`（`false` なら `defaults` の `merge`、なければ `"person"`）、次に `defaults` の `merge`、次に `defaults` の `autopilot`、どれもなければ `"person"` です。このため、`defaults` で `autopilot` を入れたうえで特定のリポジトリだけ切ることも、`merge: "person"` を残して hub に残りを任せることもできます。`adj config` には決まったあとの `merge` と `autopilot` が出ます。
+- **Stop at の既定を `none` にします。** hub が Stop at を書く場面（読み取る board の依頼、起票する報告、タブでの何も指定のない依頼）が対象です。レコードにすでにある Stop at と、人が名指ししたものはそのままで、Jules に渡すタスクは `plan` のままです。
+- **報告を起票してキューに入れます。** `## Scope` のない worker の報告は、起票だけでなくキューにも入ります。open な issue と明らかに同じバグなら、その issue へのコメントにします。キューが順に着手します（`maxWorkers` が必要です）。
+- **開始確認を省きます。** 読み取りに未解決の点がない board の依頼が対象です。
+- **進行中のタスクと重なるタスクを待たせます。** 着手の前に、hub は進行中のタスク（issue 本文と、相手 worker の plan の手順）と見比べます。重なっていれば `Waiting for task <key>: overlaps <area>` というメモを書き、`adj task next` はそのタスクを飛ばし、相手が done になるとメモを外します。相手のブランチに積むことはしません。
+
+それでも人が止めるもの: `verify` の失敗、hub が自分で判断できないマージ、`issueCreate.command` の欠落や対話式のもの、別リポジトリ宛ての報告、`needs-user` や報告だけでは決まらない質問、worker からのタスク分割の提案、Jules の plan、`autoStart: false` のタスクの開始確認、未解決の点がある読み取り、既存の Jira チケットへの追記です。
+
+`maxWorkers` のない `autopilot` は `warnings` に出ます。hub は空きがあるときにだけキューのタスクを始めるので、自分では始めません。同じ場所で `autopilot: true` と `merge: "person"` を並べた場合も出ます（`merge` が勝ちます）。`true` / `false` 以外の値は報告され、`false` として扱われます。登録のないリポジトリが autopilot になることはありません。
+
+まだないもの: board は `autopilot` を表示も切り替えもしません（設定ファイルだけが入口です）。一時停止はありません。hub はトラッカーから新しい仕事を拾いません。親タスクの hub はリポジトリの設定を読むだけで、独自の設定を持ちません。
