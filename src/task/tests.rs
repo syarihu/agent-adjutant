@@ -331,8 +331,10 @@ fn a_task_that_could_not_start_waits_for_a_person() {
     t3.note = Some("Waiting for confirmation to start".to_string());
 
     let gated = std::collections::HashSet::new();
-    let next_result = next(vec![t1, t2.clone(), t3], &gated);
+    let next_result = next(vec![t1, t2.clone(), t3.clone()], &gated);
     assert_eq!(next_result.task, Some(t2));
+    // Not taken for an overlap hold: only `Waiting for task ` is.
+    assert_eq!(next(vec![t3.clone()], &gated).task, Some(t3));
 }
 
 #[test]
