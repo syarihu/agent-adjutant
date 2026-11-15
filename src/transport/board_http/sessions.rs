@@ -202,6 +202,7 @@ pub(super) fn clean_up_session(server: &Server, id: &str, body: &[u8]) -> Result
             reasons,
             git,
             closed,
+            not_closed_reason,
         } => {
             let mut reply = json!({
                 "removed": false,
@@ -210,6 +211,9 @@ pub(super) fn clean_up_session(server: &Server, id: &str, body: &[u8]) -> Result
             });
             if let Some(closed) = closed {
                 reply["closed"] = json!(closed);
+            }
+            if let Some(reason) = not_closed_reason {
+                reply["notClosedReason"] = json!(reason);
             }
             Ok(reply)
         }
@@ -241,6 +245,9 @@ pub(super) fn clean_up_session(server: &Server, id: &str, body: &[u8]) -> Result
                 "tasks": done.tasks,
                 "hooks": hooks,
             });
+            if let Some(reason) = &done.not_closed_reason {
+                reply["notClosedReason"] = json!(reason);
+            }
             if !done.task_errors.is_empty() {
                 reply["taskErrors"] = done
                     .task_errors

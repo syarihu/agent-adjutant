@@ -1407,9 +1407,10 @@ lives); and sets the worktree's `dispatched` tasks `done`, and its `pr` tasks `d
 branch is merged (otherwise they stay `pr`, and become `done` once the PR is seen merged). It never
 forces.
 
-Report what it printed: `removed`, `branch` (`deleted`, or `kept` with why), `tasks` set done,
-`keptTasks` left in `pr`, `taskErrors` and `hooks`. When it prints `removed: false` (with `reasons`)
-or fails, nothing was removed: show why. Show a failed hook with its error.
+Report what it printed: `removed`, `closed` (and, when it is false, `notClosedReason`: no tab was
+closed, so tell the person a worker's tab may have been left open), `branch` (`deleted`, or `kept`
+with why), `tasks` set done, `keptTasks` left in `pr`, `taskErrors` and `hooks`. When it prints
+`removed: false` (with `reasons`) or fails, nothing was removed: show why. Show a failed hook with its error.
 
 <!-- section: cleanup-one -->
 #### Cleaning up one worktree (asked by a worker)
@@ -1456,6 +1457,9 @@ independently:
    runs `onWorktreeRemove`; and sets the tasks as said there. Do not run its steps by hand.
    If it exits non-zero, prints `removed: false`, or errors, treat that as a check tripping and go
    to 4 with its reason.
+   When it removed the worktree but printed `closed: false`, no tab was closed: carry
+   `notClosedReason` into 6's processing-log line and say the worker's tab may still be open, as
+   §cleanup-offer's report says.
 4. **If even one check trips, do not remove.** The worker is still alive, so reply with
    `adjutant_tell` (`wake: true`) saying "what tripped" and keep the worktree. The worker side decides again
    whether to clean up.
