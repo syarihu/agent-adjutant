@@ -53,3 +53,11 @@ test('the app clears the black xterm.css gives the terminal viewport', () => {
   assert.ok(selectors.includes('[data-shell="app"] .adj-terminal .xterm-viewport'));
   assert.match(css, /\.adj-terminal \.xterm-viewport \{ background-color: transparent; \}/);
 });
+
+test('in the app a modal blurs the page itself, and its backdrop only dims', () => {
+  assert.ok(selectors.includes('[data-shell="app"] dialog::backdrop'));
+  assert.match(css, /dialog::backdrop \{\s*-webkit-backdrop-filter: none;\s*backdrop-filter: none;\s*\}/);
+  // The dialogs and the toasts (a popover in the top layer) stay out of the blur.
+  assert.ok(selectors.includes('[data-shell="app"] body:has(> dialog:modal) > :not(dialog):not([popover])'));
+  assert.match(css, /body:has\(> dialog:modal\) > :not\(dialog\):not\(\[popover\]\) \{ filter: blur\(4px\); \}/);
+});
