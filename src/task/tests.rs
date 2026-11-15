@@ -336,6 +336,26 @@ fn a_task_that_could_not_start_waits_for_a_person() {
 }
 
 #[test]
+fn a_task_held_for_an_overlap_is_passed_over_without_blocking_the_queue() {
+    let mut held = sample();
+    held.id = "1".to_string();
+    held.status = Status::Queued;
+    held.note = Some(format!("{WAITING_FOR_TASK}ALPHA-12: overlaps the parser"));
+    let mut other = sample();
+    other.id = "2".to_string();
+    other.status = Status::Queued;
+
+    let gated = std::collections::HashSet::new();
+    let result = next(vec![held.clone(), other.clone()], &gated);
+    assert_eq!(result.task, Some(other));
+
+    // Once the hub clears the note it is first in line again.
+    held.note = Some(String::new());
+    let result = next(vec![held.clone()], &gated);
+    assert_eq!(result.task, Some(held));
+}
+
+#[test]
 fn a_task_that_could_not_start_is_not_asked_about_either() {
     let mut t1 = sample();
     t1.id = "1".to_string();

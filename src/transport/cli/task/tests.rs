@@ -11,6 +11,15 @@ fn the_prefix_the_queue_skips_is_the_one_the_hub_writes() {
     assert!(hub.contains(&written), "adj-hub never writes {written}");
 }
 
+/// Likewise for the hold the hub puts on a task that overlaps one in progress.
+#[test]
+fn the_prefix_for_a_held_task_is_the_one_the_hub_writes() {
+    let hub = crate::kernel::prompts::find("adj-hub").unwrap().raw_content;
+    let hub = hub.split_whitespace().collect::<Vec<_>>().join(" ");
+    let written = format!("'{}{{key}}: overlaps", task::WAITING_FOR_TASK);
+    assert!(hub.contains(&written), "adj-hub never writes {written}");
+}
+
 /// The procedures as one line of words, for text the file wraps.
 fn flowed(name: &str) -> String {
     let raw = crate::kernel::prompts::find(name).unwrap().raw_content;

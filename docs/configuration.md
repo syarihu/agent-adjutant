@@ -122,3 +122,23 @@ A config that sets only `terminal.spawn` keeps its own spawn, but focus, close a
 - `"hub"`: the hub merges it. When the worker says the PR is ready (no open `must` finding, `verify` passed, review bots handled), it sends `done` without the cleanup gate and the hub merges once the PR is open and not a draft, its checks have passed, it is `CLEAN` against its base, and nothing has been added to it since the `done` was sent. It merges with a merge commit (`gh pr merge --merge`), then removes the worktree. Anything it cannot settle itself (a review still owed, a merge GitHub refuses, checks still pending after 30 minutes) is left for the person; what the worker can fix (red CI, a late review) is sent back to it.
 
 The hub reads `merge` from its own config, not from what a worker writes. Any other value is reported in `warnings` and treated as `"person"`.
+
+---
+
+## Running Tasks Without a Person (`autopilot`)
+
+`autopilot` is set per repository (or under `defaults`) and is `false` unless you turn it on. With `true`, the hub takes a task from the queue to a merged PR with nobody at the board.
+
+What it does:
+
+- **Presets `merge` to `"hub"`.** The first of these that says something wins: the repository's own `merge`; else the repository's `autopilot` (`false` falls back to `defaults`' `merge`, else `"person"`); else `defaults`' `merge`; else `defaults`' `autopilot`; else `"person"`. So a repository can turn a default `autopilot` off, or keep `merge: "person"` while the hub does the rest. `adj config` shows the settled `merge` and `autopilot`.
+- **Defaults Stop at to `none`** where the hub writes it: a board request it reads, a report it files, a request in its tab with nothing said. A Stop at already on a record, or one the person named, is kept; a task handed to Jules keeps `plan`.
+- **Files and queues reports.** A worker's report with no `## Scope` is filed and queued instead of only filed. A report that is clearly the same bug as an open issue becomes a comment on it. The queue starts it in order (this needs `maxWorkers`).
+- **Skips the start check** for a board request whose reading has no open point.
+- **Holds a task that overlaps one in progress.** Before starting a task the hub compares it with the tasks in progress (the issue bodies, and the other worker's plan steps). On an overlap it writes the note `Waiting for task <key>: overlaps <area>`, `adj task next` passes over it, and the hub clears the note when the other task is done. Stacking on the other's branch is not used.
+
+What still stops for a person: failed `verify`; every merge the hub cannot settle itself; a missing or interactive `issueCreate.command`; a report for another repository; a `needs-user` or a question the report cannot settle; a worker's proposal to split its task; a Jules plan; the start check of a task with `autoStart: false`; a board reading with an open point; editing an existing Jira ticket.
+
+`autopilot` with no `maxWorkers` is reported in `warnings`: the hub only starts queued tasks when a slot is free, so it will not start them on its own. `autopilot: true` beside `merge: "person"` in one place is reported too (the `merge` wins). A value that is not `true` or `false` is reported and read as `false`. A repository that is not registered is never on autopilot.
+
+Not there yet: the board neither shows nor switches `autopilot`, and the config is the only place to set it; there is no pause; the hub does not pick new work from the tracker; a parent task's hub reads the repository's setting and has none of its own.

@@ -8,7 +8,9 @@ use super::*;
 /// A held task at the head must not keep everything behind it from starting, so a task
 /// with `autoStart: false` — or one the hub has not read yet (`needsReading`), whatever its
 /// `autoStart` says — is skipped until its gate is open, and a task with a note
-/// starting with "Could not start:" is skipped until a person has looked at it.
+/// starting with "Could not start:" is skipped until a person has looked at it. A note starting
+/// with "Waiting for task " (the hub holding a task that overlaps one in progress) is skipped the
+/// same way, until the hub clears it.
 pub fn next(tasks: Vec<Task>, gated: &std::collections::HashSet<String>) -> Next {
     let mut picked = None;
     let mut needs_dispatch_gate = Vec::new();
@@ -19,7 +21,7 @@ pub fn next(tasks: Vec<Task>, gated: &std::collections::HashSet<String>) -> Next
         if task
             .note
             .as_deref()
-            .is_some_and(|n| n.starts_with(COULD_NOT_START))
+            .is_some_and(|n| n.starts_with(COULD_NOT_START) || n.starts_with(WAITING_FOR_TASK))
         {
             continue;
         }

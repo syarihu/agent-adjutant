@@ -281,6 +281,89 @@ fn the_hub_merge_is_decided_by_the_config_and_not_by_the_done_body() {
     );
 }
 
+/// `autopilot` is the hub's own procedure, so it is in the core (a hub that has not fetched a
+/// section still follows it), keyed on the resolved config, and it queues a filed report without
+/// `adj task add --queue`, which would hand the task to the hub's own inbox.
+#[test]
+fn the_hub_has_an_autopilot_table_in_its_core() {
+    let hub = find("adj-hub").unwrap();
+    let core = parts(hub).0;
+    assert!(
+        core.contains("\n## When `autopilot` is on\n"),
+        "no autopilot section in the hub's core"
+    );
+    let table = flow(&section(core, "## When `autopilot` is on"));
+    assert!(
+        table.contains("`config.autopilot`") && table.contains("wins over any section"),
+        "the table is not keyed on the config or does not win: {table}"
+    );
+    assert!(
+        table.contains("`--stop-at none`") && table.contains("Never with `--executor jules`"),
+        "the Stop at default is missing or reaches Jules: {table}"
+    );
+    // The queueing step: backlog first, then queued without a hand-over.
+    assert!(
+        table.contains("--status queued --no-hand-over"),
+        "the queueing step does not queue without a hand-over: {table}"
+    );
+    assert!(
+        table.contains("Never `adj task add --queue` from the hub"),
+        "the table does not forbid --queue: {table}"
+    );
+    let add_with_queue = table
+        .match_indices("--queue")
+        .filter(|(at, _)| !table[..*at].ends_with("Never `adj task add "))
+        .count();
+    assert_eq!(add_with_queue, 0, "the table runs a --queue: {table}");
+    // The hold's marker is the one `adj task next` skips by.
+    assert!(
+        table.contains("'Waiting for task {key}: overlaps {area}'"),
+        "the hold note is not the one the queue skips: {table}"
+    );
+    for needle in [
+        "--read --auto-start true",
+        "An open point still waits on the gate",
+        "§hub-merge",
+        "Still stops for a person",
+    ] {
+        assert!(table.contains(needle), "the table lacks {needle}: {table}");
+    }
+}
+
+/// Every statement of the old defaults (Stop at `plan`, never `none`, file only, no gate) has to
+/// point at the table, or the hub reads two answers to one question.
+#[test]
+fn what_autopilot_changes_is_pointed_at_from_where_the_default_is_stated() {
+    let hub = find("adj-hub").unwrap();
+    let raw = hub.raw_content;
+    let pointer = "When `autopilot` is on";
+    let mut sections = std::collections::HashMap::new();
+    for s in parts(hub).1 {
+        sections.insert(s.id, flow(s.text));
+    }
+    for id in [
+        "task-record",
+        "request-read",
+        "request-file",
+        "request-start",
+        "board-request",
+        "gate-answer",
+        "next-slot",
+        "board-request-run",
+    ] {
+        assert!(
+            sections[id].contains(pointer),
+            "{id} states a default without pointing at the autopilot table"
+        );
+    }
+    // The marker `adj task next` skips by is listed with the other markers the hub keeps in English.
+    assert!(
+        flow(parts(hub).0).contains("`Waiting for task ` (`adj task next` skips such a task)"),
+        "the marker list does not name the hold"
+    );
+    assert!(raw.contains("Waiting for task "));
+}
+
 /// A worker runs inside a pane of the person's own tmux server, so `$TMUX` and `$TMUX_PANE` are
 /// set in its environment. When `$TMUX` is set, tmux talks to that server and ignores
 /// `TMUX_TMPDIR`. A worker cleaning up a test server with bare `tmux kill-server` would kill
