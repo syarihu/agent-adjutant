@@ -262,7 +262,9 @@ fn a_repository_can_turn_a_default_autopilot_off() {
 fn a_bad_merge_stays_person_under_autopilot_and_is_reported() {
     let (config, settings, warnings) =
         autopilot_config(json!({}), json!({"autopilot": true, "merge": "bogus"}));
-    assert_eq!(config.unwrap()["autopilot"], true);
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], true);
+    assert_eq!(config["merge"], "person");
     assert_eq!(settings.merge, Merge::Person);
     assert!(
         warnings
@@ -270,6 +272,39 @@ fn a_bad_merge_stays_person_under_autopilot_and_is_reported() {
             .any(|w| w.contains("merge") && w.contains("treated as person")),
         "{warnings:?}"
     );
+}
+
+#[test]
+fn a_null_is_a_set_but_invalid_value_and_no_default_comes_back_through_it() {
+    let (config, settings, warnings) =
+        autopilot_config(json!({"merge": "hub"}), json!({"merge": null}));
+    assert_eq!(config.unwrap()["merge"], "person");
+    assert_eq!(settings.merge, Merge::Person);
+    assert!(
+        warnings.iter().any(|w| w.contains("merge null")),
+        "{warnings:?}"
+    );
+
+    let (config, settings, warnings) =
+        autopilot_config(json!({"autopilot": true}), json!({"autopilot": null}));
+    let config = config.unwrap();
+    assert_eq!(config["autopilot"], false);
+    assert_eq!(config["merge"], "person");
+    assert!(!settings.autopilot);
+    assert_eq!(settings.merge, Merge::Person);
+    assert!(
+        warnings.iter().any(|w| w.contains("autopilot null")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn an_invalid_merge_is_written_back_as_person() {
+    for value in [json!("hubb"), json!(true), json!("Hub")] {
+        let (config, settings, _) = autopilot_config(json!({}), json!({ "merge": value }));
+        assert_eq!(config.unwrap()["merge"], "person", "{value}");
+        assert_eq!(settings.merge, Merge::Person);
+    }
 }
 
 #[test]

@@ -85,7 +85,8 @@ Append Q2's answer to the end of the body as `## Scope`. **Asking here is the po
 nobody at the hub's tab. If the hub had to ask, the report would sit there until the user came to
 that tab.
 
-**Leave this line out and it falls to "file only"** (the hub's default; it never starts on its own).
+**Leave this line out and it falls to "file only"** (the hub's default; it never starts on its own,
+except in a repository on `autopilot`, where the hub queues what it filed).
 Forget it on a request that wanted an immediate start, and the bug is filed and nothing more.
 
 ### 4. Hand it over

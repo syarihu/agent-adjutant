@@ -105,8 +105,9 @@ to `hub`, so §hub-merge runs as written (unless `config.merge` says `person`).
 | A board reading with no open point (§board-request step 5) | Skip the dispatch gate: `adj task update --id {task_id} --read --auto-start true`, then §board-request-run. An open point still waits on the gate. |
 | Before starting any task (§next-slot, §board-request-run) | The overlap check below. |
 
-**Overlap check.** Compare the task with every one in progress (`adj task list --json`: a `worktree`,
-not `done` or `cancelled`): the issue bodies and, when the other worker has a plan record, its steps'
+**Overlap check.** Compare the task with those being worked on (`adj task list --json`: status
+`dispatched` or `pr`, never itself by `id`, never a `queued` one, which may hold a worktree while it
+waits for a slot): the issue bodies and, when the other worker has a plan record, its steps'
 `detail` (file names). Overlap: the same files or module, or one depends on the other. Decide from
 what is written; do not read code.
 
@@ -2600,10 +2601,13 @@ Started: a worker on branch {branch} is running in another tab.
 (file only) Not started yet. It is on the board.
 (no Scope given, so the default applied) No request to start was given, so it was only filed.
 If you want it started, say "start {task_id}" and it starts from there.
+(no Scope, `autopilot` on) Filed and queued: it starts in order when a worker slot frees up. (If it
+turned out to be an existing issue: commented on it, nothing queued.)
 No reply needed. Please carry on with your own task.
 ```
 
-**Do not keep quiet about falling back to the default.** The requester (and their person) may believe
+**Do not keep quiet about falling back to the default.** (With `autopilot` on the default is "filed and
+queued": "When `autopilot` is on".) The requester (and their person) may believe
 they asked for it to be started. Reply in one line with what was not done and how to have it started.
 
 <!-- section: board-request -->

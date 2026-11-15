@@ -346,6 +346,7 @@ fn what_autopilot_changes_is_pointed_at_from_where_the_default_is_stated() {
         "request-read",
         "request-file",
         "request-start",
+        "request-reply",
         "board-request",
         "gate-answer",
         "next-slot",
