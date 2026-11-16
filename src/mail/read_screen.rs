@@ -146,23 +146,61 @@ fn working_marker(agent: Agent, line: &str) -> bool {
     }
 }
 
-/// `line` without the escape sequences `capture-pane -e` puts in it.
+/// `line` without the escape sequences `capture-pane -e` puts in it: control sequences
+/// (`ESC [ … m`), operating-system commands up to their BEL or `ESC \` terminator (the
+/// hyperlinks Claude draws, `ESC ] 8 ; ; url ESC \ text ESC ] 8 ; ; ESC \`, keep their text and
+/// lose the rest), a character-set designation (`ESC ( B`) and any other two-character escape
+/// (`ESC 7`).
 pub(super) fn strip_escapes(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
         if c != '\x1b' {
             out.push(c);
             continue;
         }
-        if chars.peek() == Some(&'[') {
-            chars.next();
-            // A control sequence ends at its first byte in @..~.
-            for c in chars.by_ref() {
-                if ('@'..='~').contains(&c) {
-                    break;
+        match chars.get(i) {
+            Some('[') => {
+                i += 1;
+                // A control sequence ends at its first byte in @..~.
+                while let Some(&c) = chars.get(i) {
+                    i += 1;
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
                 }
             }
+            Some(']') => {
+                i += 1;
+                while let Some(&c) = chars.get(i) {
+                    if c == '\x07' {
+                        i += 1;
+                        break;
+                    }
+                    if c == '\x1b' {
+                        // `ESC \` ends it. Any other `ESC` is a cut-off command's end, and the
+                        // start of the next sequence, which is read as one.
+                        if chars.get(i + 1) == Some(&'\\') {
+                            i += 2;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            Some('(' | ')') => {
+                i += 1;
+                if chars.get(i).is_some_and(|c| (' '..='~').contains(c)) {
+                    i += 1;
+                }
+            }
+            // Another two-character escape ends in a printable ASCII byte. Anything else after
+            // the ESC (a letter of another script, a control) is text and is kept.
+            Some(c) if (' '..='~').contains(c) => i += 1,
+            _ => {}
         }
     }
     out

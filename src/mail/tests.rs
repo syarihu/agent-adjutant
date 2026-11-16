@@ -918,12 +918,12 @@ fn a_screen_the_wake_gave_up_on_is_kept_private_and_named_in_what_is_told() {
         true,
         "the wake was not typed into the session (pid 9)",
     );
-    done.seen = Some("\x1b[2mfaint\x1b[0m line\nsecond line".to_string());
+    done.seen = Some("\x1b[2mfaint\x1b[0m \x1b]8;id=1;https://example.com\x1b\\link\x1b]8;;\x1b\\ line\nsecond line".to_string());
     let done = keep_seen_screen(state.path(), 9, done);
     let path = state.path().join("wake-screens/9.txt");
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        "faint line\nsecond line\n"
+        "faint link line\nsecond line\n"
     );
     #[cfg(unix)]
     {

@@ -987,6 +987,24 @@ fn a_spinner_over_only_chrome_is_a_turn_even_without_a_box() {
 }
 
 #[test]
+fn escapes_other_than_colours_leave_only_the_text() {
+    // An OSC 8 hyperlink ends with `ESC \\` or BEL; the text between stays.
+    let link = "see \x1b]8;id=1;https://example.com/a\x1b\\the docs\x1b]8;;\x1b\\ now";
+    assert_eq!(strip_escapes(link), "see the docs now");
+    let bel = "\x1b]8;;https://example.com\x07text\x1b]8;;\x07!";
+    assert_eq!(strip_escapes(bel), "text!");
+    assert_eq!(strip_escapes("\x1b[1mbold\x1b[0m"), "bold");
+    assert_eq!(strip_escapes("\x1b(Bx\x1b7y\x1b8z"), "xyz");
+    // Cut off in the middle of one, nothing is left over.
+    assert_eq!(strip_escapes("a\x1b]8;;http"), "a");
+    assert_eq!(strip_escapes("a\x1b"), "a");
+    // A command cut off by the next sequence leaves that one to be read, not its debris.
+    assert_eq!(strip_escapes("a\x1b]8;;url\x1b[31mtext\x1b[0m"), "atext");
+    // What follows a stray ESC and could not end an escape is text.
+    assert_eq!(strip_escapes("❯ \x1bあ"), "❯ あ");
+}
+
+#[test]
 fn a_confirmation_is_a_question_whatever_the_box_says() {
     let rule = "─".repeat(40);
     let text = format!("Overwrite the file? (y/n)\n{rule}\n❯\n{rule}\n");
