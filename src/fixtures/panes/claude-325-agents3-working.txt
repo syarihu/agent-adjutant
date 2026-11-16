@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Launch 3 background sub-agents in parallel in ONE message with the Agent tool (run_in_background
+  true). Each sub-agent only runs the Bash command python3 -c "import time; time.sleep(100)" once
+  and then says done. Do not wait for them; end your turn right after launching.
+
+⏺ 3 background agents launched (↓ to manage)
+   ├ Sleep task 1
+   ├ Sleep task 2
+   └ Sleep task 3
+
+
+
+
+✻ Working… (6s · ↓ 688 tokens)
+                                                                                  ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
+  ⏺ main
+  ◯ general-purpose  Sleep task 1                                                               0s
+  ◯ general-purpose  Sleep task 2                                                               0s
+  ◯ general-purpose  Sleep task 3                                                               0s
+@@adjutant:pane@@
+0	2	21

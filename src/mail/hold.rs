@@ -46,6 +46,7 @@ pub(crate) fn wait_for_row(
                 script: String::new(),
                 ran: false,
                 screen: true,
+                seen: None,
             });
         }
         wait(WAKE_READY_POLL);

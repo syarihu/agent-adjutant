@@ -310,6 +310,7 @@ fn the_reader_window_runs_review_run_in_its_own_directory() {
                 script: String::new(),
                 ran: true,
                 screen: false,
+                seen: None,
             },
             None,
         ))
@@ -398,6 +399,7 @@ fn a_fresh_reader_starts_with_no_read_through_left_by_an_earlier_one() {
                 script: String::new(),
                 ran: true,
                 screen: false,
+                seen: None,
             },
             None,
         ))

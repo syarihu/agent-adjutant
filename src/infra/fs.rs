@@ -250,8 +250,17 @@ fn write_json_as<T: Serialize + ?Sized>(
     value: &T,
     private: bool,
 ) -> Result<(), String> {
+    write_text_as(path, &render_json(value)?, private)
+}
+
+/// `write_json_private` for text that is not JSON: a screen kept for a person to read.
+pub(crate) fn write_text_private(path: &Path, text: &str) -> Result<(), String> {
+    write_text_as(path, text, true)
+}
+
+fn write_text_as(path: &Path, text: &str, private: bool) -> Result<(), String> {
     let parent = parent_dir(path)?;
-    let staged = stage_as(parent, &render_json(value)?, private)?;
+    let staged = stage_as(parent, text, private)?;
     std::fs::rename(&staged, path).map_err(|e| {
         let _ = std::fs::remove_file(&staged);
         format!("cannot write {}: {e}", path.display())

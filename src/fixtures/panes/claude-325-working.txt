@@ -1,0 +1,32 @@
+  A placeholder line of the reply.
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+  A placeholder line of the reply.
+
+✻ Worked for 16s · done 21:03
+
+❯ Write a 120 line poem about mountains, one short line per paragraph, no tools
+
+✶ Working… (2s · thinking)
+  ⎿  Tip: Use /config to change your default permission mode (including Plan Mode)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ [39m
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+@@adjutant:pane@@
+0	2	26

@@ -20,6 +20,24 @@ fn fixture(name: &str) -> &'static str {
             include_str!("../../fixtures/panes/claude-narrow-working-streaming.txt")
         }
         "claude-narrow-idle" => include_str!("../../fixtures/panes/claude-narrow-idle.txt"),
+        "claude-325-idle" => include_str!("../../fixtures/panes/claude-325-idle.txt"),
+        "claude-325-working" => include_str!("../../fixtures/panes/claude-325-working.txt"),
+        "claude-325-transcript" => include_str!("../../fixtures/panes/claude-325-transcript.txt"),
+        "claude-325-narrow-transcript" => {
+            include_str!("../../fixtures/panes/claude-325-narrow-transcript.txt")
+        }
+        "claude-325-agents2-idle" => {
+            include_str!("../../fixtures/panes/claude-325-agents2-idle.txt")
+        }
+        "claude-325-agents3-working" => {
+            include_str!("../../fixtures/panes/claude-325-agents3-working.txt")
+        }
+        "claude-325-agents3-idle" => {
+            include_str!("../../fixtures/panes/claude-325-agents3-idle.txt")
+        }
+        "claude-325-narrow-agents3-idle" => {
+            include_str!("../../fixtures/panes/claude-325-narrow-agents3-idle.txt")
+        }
         "agy-idle" => include_str!("../../fixtures/panes/agy-idle.txt"),
         "agy-idle-after-turn" => include_str!("../../fixtures/panes/agy-idle-after-turn.txt"),
         "agy-typing" => include_str!("../../fixtures/panes/agy-typing.txt"),
@@ -49,6 +67,30 @@ const FIXTURES: &[(Agent, &str, PaneState)] = &[
         PaneState::Working,
     ),
     (Agent::Claude, "claude-narrow-idle", PaneState::Idle),
+    (Agent::Claude, "claude-325-idle", PaneState::Idle),
+    (Agent::Claude, "claude-325-working", PaneState::Working),
+    (
+        Agent::Claude,
+        "claude-325-transcript",
+        PaneState::Transcript,
+    ),
+    (
+        Agent::Claude,
+        "claude-325-narrow-transcript",
+        PaneState::Transcript,
+    ),
+    (Agent::Claude, "claude-325-agents2-idle", PaneState::Idle),
+    (
+        Agent::Claude,
+        "claude-325-agents3-working",
+        PaneState::Working,
+    ),
+    (Agent::Claude, "claude-325-agents3-idle", PaneState::Idle),
+    (
+        Agent::Claude,
+        "claude-325-narrow-agents3-idle",
+        PaneState::Idle,
+    ),
     (Agent::Agy, "agy-idle", PaneState::Idle),
     (Agent::Agy, "agy-idle-after-turn", PaneState::Idle),
     (Agent::Agy, "agy-typing", PaneState::Typing),
@@ -737,6 +779,231 @@ fn a_prompt_with_a_lot_under_it_is_not_taken_for_the_input_box() {
     assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Unknown);
 }
 
+/// The agent-list rows under the box of `claude-325-agents3-working`, as drawn.
+const AGENT_ROW_3: &str = "  ◯ general-purpose  Sleep task 3";
+
+#[test]
+fn the_list_of_background_agents_is_not_counted_against_the_box() {
+    let screen = parse_pane_screen(fixture("claude-325-agents3-working"));
+    // Three agents are six non-blank rows under the box: the status line, the mode line,
+    // `⏺ main` and one row each.
+    let plain: Vec<_> = screen.text.lines().collect();
+    let bottom = plain
+        .iter()
+        .rposition(|l| l.starts_with("────"))
+        .expect("the box's bottom rule");
+    let under = plain[bottom + 1..]
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .count();
+    assert!(under > MAX_LINES_BELOW_INPUT, "{under}");
+    // And still the box, so what is above it is what the agent last wrote, and nothing is
+    // asked.
+    assert_eq!(
+        last_output_line(Agent::Claude, &screen).as_deref(),
+        Some("✻ Working… (6s · ↓ 688 tokens)")
+    );
+    for (name, last) in [
+        (
+            "claude-325-agents2-idle",
+            "✻ Waiting for 2 background agents to finish",
+        ),
+        (
+            "claude-325-agents3-idle",
+            "✻ Waiting for 3 background agents to finish",
+        ),
+        (
+            "claude-325-narrow-agents3-idle",
+            "✻ Waiting for 3 background agents to finish",
+        ),
+    ] {
+        let screen = parse_pane_screen(fixture(name));
+        assert_eq!(
+            last_output_line(Agent::Claude, &screen).as_deref(),
+            Some(last),
+            "{name}"
+        );
+    }
+    for (_, name, _) in FIXTURES.iter().filter(|(_, n, _)| n.contains("agents")) {
+        assert!(
+            pane_prompt(Agent::Claude, &parse_pane_screen(fixture(name))).is_none(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_foreign_row_in_the_agent_list_leaves_the_box_discarded() {
+    // The list is exempt only when every row of it is one: with something else among them
+    // nothing is, and six rows under a box is something drawn over it.
+    let text = fixture("claude-325-agents3-working");
+    let foreign = text
+        .lines()
+        .map(|l| {
+            if l.starts_with(AGENT_ROW_3) {
+                "  something else drawn here"
+            } else {
+                l
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(foreign, text);
+    assert_eq!(
+        pane_state(Agent::Claude, &parse_pane_screen(&foreign)),
+        PaneState::Unknown
+    );
+    // A `⏺ main` that is not the list's own row is no start of one either.
+    let quoted = text.replace("  ⏺ main", "  ⏺ maintenance notes");
+    assert_eq!(
+        pane_state(Agent::Claude, &parse_pane_screen(&quoted)),
+        PaneState::Unknown
+    );
+    // Nor is a list with the rows above it: only what runs to the bottom of the screen.
+    let above = text.replace("  ⏺ main", "  ◯ main");
+    assert_eq!(
+        pane_state(Agent::Claude, &parse_pane_screen(&above)),
+        PaneState::Unknown
+    );
+}
+
+#[test]
+fn the_ctrl_o_transcript_is_the_bottom_line_alone() {
+    let footer = "  Showing detailed transcript · ctrl+o to toggle · ? for shortcuts       verbose";
+    let state = |lines: &[&str]| pane_state(Agent::Claude, &screen_of(lines));
+    assert_eq!(state(&["some output", "", footer]), PaneState::Transcript);
+    assert_eq!(state(&["some output", footer, ""]), PaneState::Transcript);
+    // A line that quotes the words, with anything under it, is output.
+    assert_eq!(
+        state(&[footer, "some output", "", "  more output"]),
+        PaneState::Unknown
+    );
+    // Above a live box it is a line of the transcript.
+    let mut screen = parse_pane_screen(fixture("claude-325-idle"));
+    screen.text = format!("{footer}\n{}", screen.text);
+    assert_eq!(pane_state(Agent::Claude, &screen), PaneState::Idle);
+    // Only Claude Code has the view.
+    assert_eq!(
+        pane_state(Agent::Agy, &screen_of(&["some output", "", footer])),
+        PaneState::Unknown
+    );
+    assert!(
+        PaneState::Transcript
+            .why_not_typed()
+            .contains("ctrl+o transcript view is open")
+    );
+}
+
+#[test]
+fn the_transcript_is_known_before_an_echoed_menu_is_looked_for() {
+    // An echo of what the person once typed, in a screen with no box to put it above.
+    let text = fixture("claude-325-transcript").replacen(
+        "❯ Write a 120 line poem about oceans, one short line per paragraph, no tools",
+        "❯ 1. do this",
+        1,
+    );
+    assert!(text.contains("❯ 1. do this"));
+    assert_eq!(
+        pane_state(Agent::Claude, &parse_pane_screen(&text)),
+        PaneState::Transcript
+    );
+}
+
+#[test]
+fn a_spinner_over_only_chrome_is_a_turn_even_without_a_box() {
+    let rule = "─".repeat(40);
+    let spinner = "✻ Working… (6s · ↓ 688 tokens)";
+    let tip = "  ⎿ \u{a0}Tip: Use /config to change your default permission mode";
+    let mode = "  ⏵⏵ auto mode on (shift+tab to cycle)";
+    let hint = format!("{}◐ medium · /effort", " ".repeat(30));
+    let state = |lines: &[&str]| pane_state(Agent::Claude, &screen_of(lines));
+    assert_eq!(
+        state(&[
+            "output",
+            "",
+            spinner,
+            tip,
+            &hint,
+            &rule,
+            mode,
+            "",
+            "  ⏺ main",
+            "  ◯ general-purpose  one     1s · ↓ 1.2k tokens",
+            "  ◯ general-purpose  two     1s · ↓ 1.2k tokens",
+            "  ◯ general-purpose  three   1s · ↓ 1.2k tokens",
+            "  ◯ general-purpose  four    1s · ↓ 1.2k tokens"
+        ]),
+        PaneState::Working
+    );
+    // Without the list, too, and with the spinner on the last line.
+    assert_eq!(
+        state(&["output", "", spinner, &rule, mode]),
+        PaneState::Working
+    );
+    assert_eq!(state(&["output", "", spinner]), PaneState::Working);
+    // Anything else under it is not known.
+    assert_eq!(
+        state(&["output", spinner, "  something else", &rule, mode]),
+        PaneState::Unknown
+    );
+    assert_eq!(
+        state(&[
+            "output",
+            spinner,
+            &rule,
+            mode,
+            "",
+            "  ⏺ main",
+            "  some output"
+        ]),
+        PaneState::Unknown
+    );
+    assert_eq!(
+        state(&[
+            "output",
+            spinner,
+            &rule,
+            mode,
+            "  ⏺ main",
+            "  ◯ agent  1s",
+            "  text"
+        ]),
+        PaneState::Unknown
+    );
+    // No spinner line, or a finished turn's line, is not a turn.
+    assert_eq!(state(&["output", "", &rule, mode]), PaneState::Unknown);
+    assert_eq!(
+        state(&["✻ Worked for 4s · done 2:20", &rule, mode]),
+        PaneState::Unknown
+    );
+    // Only for Claude.
+    assert_eq!(
+        pane_state(
+            Agent::Agy,
+            &screen_of(&["output", "", spinner, &rule, mode])
+        ),
+        PaneState::Unknown
+    );
+}
+
+#[test]
+fn escapes_other_than_colours_leave_only_the_text() {
+    // An OSC 8 hyperlink ends with `ESC \\` or BEL; the text between stays.
+    let link = "see \x1b]8;id=1;https://example.com/a\x1b\\the docs\x1b]8;;\x1b\\ now";
+    assert_eq!(strip_escapes(link), "see the docs now");
+    let bel = "\x1b]8;;https://example.com\x07text\x1b]8;;\x07!";
+    assert_eq!(strip_escapes(bel), "text!");
+    assert_eq!(strip_escapes("\x1b[1mbold\x1b[0m"), "bold");
+    assert_eq!(strip_escapes("\x1b(Bx\x1b7y\x1b8z"), "xyz");
+    // Cut off in the middle of one, nothing is left over.
+    assert_eq!(strip_escapes("a\x1b]8;;http"), "a");
+    assert_eq!(strip_escapes("a\x1b"), "a");
+    // A command cut off by the next sequence leaves that one to be read, not its debris.
+    assert_eq!(strip_escapes("a\x1b]8;;url\x1b[31mtext\x1b[0m"), "atext");
+    // What follows a stray ESC and could not end an escape is text.
+    assert_eq!(strip_escapes("❯ \x1bあ"), "❯ あ");
+}
+
 #[test]
 fn a_confirmation_is_a_question_whatever_the_box_says() {
     let rule = "─".repeat(40);
@@ -913,6 +1180,32 @@ fn a_screen_that_is_not_recognised_is_not_typed_into() {
         done.description
     );
     assert_eq!(pane.count("send-keys"), 0);
+}
+
+#[test]
+fn the_screen_a_wake_gave_up_on_is_kept_only_when_it_was_not_recognised() {
+    // Forty rows, so the tail is a part of them.
+    let rows: Vec<String> = (0..40).map(|n| format!("row {n}")).collect();
+    let unknown = format!("{}\n@@adjutant:pane@@\n0\t2\t0\n", rows.join("\n"));
+    let done = FakePane::new(&[unknown]).wake(Agent::Claude, WAKE);
+    assert!(!done.ran, "{done:?}");
+    let seen = done.seen.expect("the screen it gave up on");
+    assert_eq!(seen.lines().count(), 20);
+    assert_eq!(seen.lines().next(), Some("row 20"));
+    assert_eq!(seen.lines().last(), Some("row 39"));
+    // Not what was read: a question, a turn, somebody typing, the transcript view.
+    for name in [
+        "claude-question",
+        "claude-working",
+        "claude-typing",
+        "claude-325-transcript",
+    ] {
+        let done = FakePane::new(&[fixture(name).to_string()]).wake(Agent::Claude, WAKE);
+        assert!(!done.ran, "{name}: {done:?}");
+        assert_eq!(done.seen, None, "{name}");
+    }
+    // And never in what the person is told.
+    assert!(!done.description.contains("row 39"), "{}", done.description);
 }
 
 #[test]

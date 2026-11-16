@@ -393,6 +393,7 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `dashboard-token`, `server.lock`, `server.log` | the resident's token, lock and log | board (`token.rs`, `daemon.rs`) |
 | `hub-titles/<slug>.json` | cached parent-task titles, with sub-issue progress and when they were read | board (`jobs/hub_titles.rs`) |
 | `wait-notified/<row id>-<since>`, `gate-notified/<slug>-<gate id>` | empty markers: whichever process makes one rings the configured `notification` for that wait or gate; ones older than a day are swept when the server starts | board (`jobs/wait_watch.rs`, `jobs/wait_watch/gates.rs`) |
+| `wake-screens/<pid>.txt` | the tail of the screen the built-in tmux wake gave up on because it did not recognise it, as the agent drew it with the escapes taken out, mode `0600`; one per pid, replaced by the next such wake; read by hand, nothing else reads it | mail (`deliver.rs`; `adj tmux wake` calls it too) |
 | `<worktree>/.claude/adjutant-worker.json`, `adjutant-worker-starting.json`, `adjutant-session.json` | worker record, starting marker, saved worker session | registry (`store.rs`) |
 | `<worktree>/.claude/adjutant-outbox.md` | messages to the worker | mail (`store.rs`) |
 | `<worktree>/.claude/task-brief.md` | the worker's brief | task (`write_brief.rs`) |

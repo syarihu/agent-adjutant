@@ -266,6 +266,7 @@ mod open_tab {
             script: String::new(),
             ran: true,
             screen: false,
+            seen: None,
         }
     }
 
