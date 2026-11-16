@@ -35,6 +35,32 @@ pub(crate) fn reached_after(
     }
 }
 
+/// Keep the screen a wake gave up on without recognising it, in `wake-screens/<pid>.txt` under
+/// the state dir, and say where in the description. It is the only way to see afterwards how
+/// a screen the reader does not know is drawn. The file is private, since the screen can hold
+/// anything the agent printed, and its text is left out of the description for the same
+/// reason. A wake that could not keep it is reported as it was: this is a trace, not a part of
+/// the wake.
+pub(crate) fn keep_seen_screen(
+    state: &Path,
+    pid: u32,
+    mut done: terminal::Performed,
+) -> terminal::Performed {
+    let Some(seen) = done.seen.take() else {
+        return done;
+    };
+    let plain: String = seen.lines().map(|l| strip_escapes(l) + "\n").collect();
+    let path = state.join("wake-screens").join(format!("{pid}.txt"));
+    if crate::infra::fs::write_text_private(&path, &plain).is_ok() {
+        done.description = format!(
+            "{} (the screen it saw is kept in {})",
+            done.description,
+            path.display()
+        );
+    }
+    done
+}
+
 /// What a wake in one direction is made with: the hook, the built-in line, the runner whose
 /// screen is read.
 fn wake_settings(settings: &Settings, to_hub: bool) -> (&Wake, &'static str, Option<&str>) {
@@ -147,6 +173,7 @@ pub fn wake_hub(ctx: &Context, subject: &str) -> Option<Result<terminal::Perform
                 look_before_typing(wake_agent(runner)),
                 false,
             )
+            .map(|done| keep_seen_screen(&ctx.state, pid, done))
         }
         None => Err("the hub has no process to find its tab by".to_string()),
     })
@@ -249,7 +276,8 @@ pub fn deliver_to_worker(
                     default_line,
                     look_before_typing(wake_agent(runner)),
                     false,
-                ),
+                )
+                .map(|done| keep_seen_screen(&ctx.state, pid, done)),
             }
         })
     });

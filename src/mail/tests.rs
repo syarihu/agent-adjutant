@@ -906,7 +906,59 @@ fn performed(ran: bool, screen: bool, description: &str) -> crate::infra::termin
         script: String::new(),
         ran,
         screen,
+        seen: None,
     }
+}
+
+#[test]
+fn a_screen_the_wake_gave_up_on_is_kept_private_and_named_in_what_is_told() {
+    let state = tempfile::tempdir().unwrap();
+    let mut done = performed(
+        false,
+        true,
+        "the wake was not typed into the session (pid 9)",
+    );
+    done.seen = Some("\x1b[2mfaint\x1b[0m line\nsecond line".to_string());
+    let done = keep_seen_screen(state.path(), 9, done);
+    let path = state.path().join("wake-screens/9.txt");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "faint line\nsecond line\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert_eq!(
+        done.description,
+        format!(
+            "the wake was not typed into the session (pid 9) (the screen it saw is kept in {})",
+            path.display()
+        )
+    );
+    assert!(!done.description.contains("second line"));
+    // The next wake of the same pid replaces it.
+    let mut again = performed(false, true, "d");
+    again.seen = Some("newer".to_string());
+    keep_seen_screen(state.path(), 9, again);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "newer\n");
+}
+
+#[test]
+fn a_wake_with_nothing_to_keep_or_nowhere_to_keep_it_is_told_as_it_was() {
+    let state = tempfile::tempdir().unwrap();
+    let plain = keep_seen_screen(state.path(), 9, performed(false, true, "d"));
+    assert_eq!(plain.description, "d");
+    assert!(!state.path().join("wake-screens").exists());
+    // A state dir that cannot take the file does not fail the wake or change what it says.
+    let blocked = state.path().join("not-a-dir");
+    std::fs::write(&blocked, "").unwrap();
+    let mut done = performed(false, true, "d");
+    done.seen = Some("screen".to_string());
+    let done = keep_seen_screen(&blocked, 9, done);
+    assert_eq!(done.description, "d");
 }
 
 #[test]

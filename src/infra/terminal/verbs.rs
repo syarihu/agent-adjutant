@@ -267,6 +267,7 @@ fn spawn_on_inner(
                     script: cmd,
                     ran: false,
                     screen: false,
+                    seen: None,
                 },
                 None,
             ));
@@ -278,6 +279,7 @@ fn spawn_on_inner(
                 script: cmd,
                 ran: true,
                 screen: false,
+                seen: None,
             },
             None,
         ));
@@ -308,6 +310,7 @@ fn spawn_on_inner(
                     script,
                     ran: false,
                     screen: false,
+                    seen: None,
                 },
                 None,
             ));
@@ -333,6 +336,7 @@ fn spawn_on_inner(
                 script,
                 ran: true,
                 screen: false,
+                seen: None,
             },
             pane,
         ));
@@ -356,6 +360,7 @@ fn spawn_on_inner(
                 script,
                 ran: false,
                 screen: false,
+                seen: None,
             },
             None,
         ));
@@ -367,6 +372,7 @@ fn spawn_on_inner(
             script,
             ran: true,
             screen: false,
+            seen: None,
         },
         None,
     ))
@@ -416,6 +422,7 @@ fn focus_on(
             script: cmd,
             ran: !dry_run,
             screen: false,
+            seen: None,
         });
     }
 
@@ -428,6 +435,7 @@ fn focus_on(
                 script: String::new(),
                 ran: false,
                 screen: false,
+                seen: None,
             });
         };
         let script = tmux_focus_script(socket, &pane.window_id, Some(&pane.pane_id));
@@ -437,6 +445,7 @@ fn focus_on(
                 script,
                 ran: false,
                 screen: false,
+                seen: None,
             });
         }
         let result = run_shell(&script);
@@ -449,6 +458,7 @@ fn focus_on(
             script,
             ran,
             screen: false,
+            seen: None,
         });
     }
 
@@ -458,6 +468,7 @@ fn focus_on(
             script: String::new(),
             ran: false,
             screen: false,
+            seen: None,
         });
     };
     let script = iterm_focus_script(&tty);
@@ -467,6 +478,7 @@ fn focus_on(
             script,
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     // A window that cannot be raised is not worth failing a send over.
@@ -476,6 +488,7 @@ fn focus_on(
         script,
         ran: true,
         screen: false,
+        seen: None,
     })
 }
 
@@ -556,6 +569,7 @@ fn close_on(
             script: String::new(),
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     let mut built_in = false;
@@ -581,6 +595,7 @@ fn close_on(
                             script: String::new(),
                             ran: false,
                             screen: false,
+                            seen: None,
                         });
                     }
                 }
@@ -599,6 +614,7 @@ fn close_on(
                             script: String::new(),
                             ran: false,
                             screen: false,
+                            seen: None,
                         });
                     }
                 }
@@ -611,6 +627,7 @@ fn close_on(
             script: command,
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     // Not swallowed the way `focus` and `wake` swallow their own failures. A window that
@@ -624,6 +641,7 @@ fn close_on(
             script: command,
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     Ok(Performed {
@@ -631,6 +649,7 @@ fn close_on(
         script: command,
         ran: true,
         screen: false,
+        seen: None,
     })
 }
 
@@ -663,6 +682,7 @@ pub fn set_title(
             script: String::new(),
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     let title = sanitise_title(title, "adjutant".to_string());
@@ -679,6 +699,7 @@ pub fn set_title(
                         script: String::new(),
                         ran: false,
                         screen: false,
+                        seen: None,
                     });
                 }
             },
@@ -693,6 +714,7 @@ pub fn set_title(
         script: command,
         ran: !dry_run,
         screen: false,
+        seen: None,
     })
 }
 
@@ -765,13 +787,24 @@ pub struct WakeRequest<'a> {
     pub dry_run: bool,
 }
 
-type MayType = Box<dyn Fn(&PaneScreen) -> Result<(), &'static str>>;
+/// Why the line may not be typed now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotTyped {
+    /// For whoever is told the wake did not happen.
+    pub why: &'static str,
+    /// Whether the screen is worth keeping if the wake gives up on it: when it was not
+    /// recognised, so that how it is drawn can be looked at later. A screen that was read
+    /// (a question, a turn running) says nothing more than `why`.
+    pub keep_screen: bool,
+}
+
+type MayType = Box<dyn Fn(&PaneScreen) -> Result<(), NotTyped>>;
 type HoldsJust = Box<dyn Fn(&PaneScreen, &str) -> bool>;
 
 /// How to read the woken session's pane before typing into it. Supplied by whoever knows
 /// what the session runs; `None` in a `WakeRequest` types without looking.
 pub struct LookBeforeTyping {
-    /// May the line be typed now? `Err` says why not, for whoever is told the wake did not happen.
+    /// May the line be typed now? `Err` says why not, and whether the screen is worth keeping.
     pub may_type: MayType,
     /// Does the prompt hold the typed line and nothing else?
     pub holds_just: HoldsJust,
@@ -867,6 +900,7 @@ fn wake_on(
             script: String::new(),
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     // A template is answered for by its exit status and nothing else — it is someone else's
@@ -905,6 +939,7 @@ fn wake_on(
                             script: String::new(),
                             ran: false,
                             screen: false,
+                            seen: None,
                         });
                     }
                 }
@@ -922,6 +957,7 @@ fn wake_on(
                             script: String::new(),
                             ran: false,
                             screen: false,
+                            seen: None,
                         });
                     }
                 }
@@ -934,6 +970,7 @@ fn wake_on(
             script: command,
             ran: false,
             screen: false,
+            seen: None,
         });
     }
     if let Some((socket, pane_id, look)) = look_at {
@@ -949,6 +986,7 @@ fn wake_on(
             script: command,
             ran: false,
             screen: false,
+            seen: None,
         }),
         // The built-in walks every iTerm2 window looking for one tty and quietly does
         // nothing when no tab has it — which is what a session in any other terminal looks
@@ -960,12 +998,14 @@ fn wake_on(
             script: command,
             ran: false,
             screen: false,
+            seen: None,
         }),
         Ok(_) => Ok(Performed {
             description: format!("woke the session (pid {pid})"),
             script: command,
             ran: true,
             screen: false,
+            seen: None,
         }),
     }
 }
@@ -1026,6 +1066,16 @@ pub(crate) fn lock_pane(
     }
 }
 
+/// How many of a screen's last lines are kept when the wake gives up on one it did not
+/// recognise: enough for the input box and what is drawn around it.
+const KEPT_SCREEN_LINES: usize = 20;
+
+/// The last `KEPT_SCREEN_LINES` lines of `text`.
+fn screen_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(KEPT_SCREEN_LINES)..].join("\n")
+}
+
 /// The built-in tmux wake for an agent whose screen is known: wait for its prompt to be
 /// empty, type the line, check that it landed at the prompt, and only then press Enter.
 ///
@@ -1051,6 +1101,7 @@ fn wake_after_looking(
         script: script.to_string(),
         ran: false,
         screen,
+        seen: None,
     };
     let mut waited = Duration::ZERO;
     // Held until this returns: from the first look to Enter, or to giving up.
@@ -1079,16 +1130,23 @@ fn wake_after_looking(
                 );
             }
         };
-        let why = match (look.may_type)(&screen) {
+        let not_typed = match (look.may_type)(&screen) {
             Ok(()) => break,
-            Err(why) => why,
+            Err(not_typed) => not_typed,
         };
         if waited >= WAKE_READY_BUDGET {
-            return refused(
-                format!("the wake was not typed into the session (pid {pid}): {why}"),
+            let mut done = refused(
+                format!(
+                    "the wake was not typed into the session (pid {pid}): {}",
+                    not_typed.why
+                ),
                 &capture,
                 true,
             );
+            if not_typed.keep_screen {
+                done.seen = Some(screen_tail(&screen.text));
+            }
+            return done;
         }
         wait(WAKE_READY_POLL);
         waited += WAKE_READY_POLL;
@@ -1130,6 +1188,7 @@ fn wake_after_looking(
             script,
             ran: true,
             screen: false,
+            seen: None,
         },
     }
 }

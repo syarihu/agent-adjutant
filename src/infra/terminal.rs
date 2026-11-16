@@ -41,6 +41,12 @@ pub struct Performed {
     /// built-in tmux wake could not confirm what it typed. Only then is the reason worth
     /// telling the person; every other failure is reported as it always was.
     pub screen: bool,
+    /// The tail of the screen the built-in tmux wake gave up on when it could not tell what the
+    /// screen was, as `capture-pane` drew it. Set for that one case only: it is what shows how
+    /// a screen the reader does not know is drawn, and it can hold anything the agent printed,
+    /// so it is not put in the text a person is told. Where it is kept is for the caller to
+    /// choose; this module does not know the state directory.
+    pub seen: Option<String>,
 }
 
 mod board_session;

@@ -83,6 +83,10 @@ pub fn wake(args: &TmuxWakeArgs) -> Result<(), String> {
         crate::mail::look_before_typing(agent),
         dry_run,
     )?;
+    // A screen it gave up on without recognising is kept as it is for a wake the hub or a
+    // worker asks for.
+    let performed =
+        crate::mail::keep_seen_screen(&crate::registry::state_root(None), args.pid, performed);
     if dry_run {
         println!("{}", performed.script);
         return Ok(());

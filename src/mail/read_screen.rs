@@ -5,7 +5,7 @@ use crate::infra::agent::Agent;
 use crate::infra::terminal::*;
 
 /// A box at the bottom of the screen with more than this under it is not an input box but
-/// something drawn over one.
+/// something drawn over one. The list of background agents under the box is not counted.
 pub(super) const MAX_LINES_BELOW_INPUT: usize = 5;
 
 /// What an agent's screen says it is doing.
@@ -22,6 +22,9 @@ pub enum PaneState {
     Working,
     /// The pane is scrolled back or searching (tmux copy mode); keys go to tmux, not the agent.
     CopyMode,
+    /// Claude Code's ctrl+o transcript view, which takes the place of the input box: keys typed
+    /// now go to the viewer, not to the prompt.
+    Transcript,
     /// None of the above could be told from the screen.
     Unknown,
 }
@@ -35,6 +38,9 @@ impl PaneState {
             PaneState::Typing => "there is text typed at its prompt",
             PaneState::Working => "it is in the middle of a turn",
             PaneState::CopyMode => "its pane is in tmux copy mode",
+            PaneState::Transcript => {
+                "the ctrl+o transcript view is open (press ctrl+o or esc in that tab to close it)"
+            }
             PaneState::Unknown => "its screen was not recognised",
         }
     }
@@ -141,7 +147,7 @@ fn working_marker(agent: Agent, line: &str) -> bool {
 }
 
 /// `line` without the escape sequences `capture-pane -e` puts in it.
-fn strip_escapes(line: &str) -> String {
+pub(super) fn strip_escapes(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
     while let Some(c) = chars.next() {
@@ -215,6 +221,38 @@ fn faint_after_glyph(raw: &str, glyph: char) -> bool {
     any
 }
 
+/// The bottom line of the ctrl+o transcript view, which has no input box: `Showing detailed
+/// transcript · ctrl+o to toggle · ? for shortcuts`, cut to the width in a narrow pane. Only
+/// that line counts, and only as the last one on screen: a transcript line that quotes the
+/// words is output.
+fn claude_transcript_footer(plain: &str) -> bool {
+    plain.trim().starts_with("Showing detailed transcript")
+}
+
+/// A row of the list Claude draws under the mode line while background agents run: the
+/// `⏺ main` row and one `◯ <agent> …` row for each of them.
+fn is_agent_row(plain: &str) -> bool {
+    plain.trim_start().starts_with(['⏺', '◯', '●', '○'])
+}
+
+/// Where the background-agent list begins in `lines`: a `⏺ main` row after which every row
+/// that is not blank is one of the list's. The list runs to the bottom of the screen, so a
+/// `⏺ main` followed by anything else (output that happens to start so) is not it.
+fn agent_list_start(lines: &[Line]) -> Option<usize> {
+    let main_row = |plain: &str| {
+        plain
+            .trim()
+            .strip_prefix("⏺ main")
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+    };
+    (0..lines.len()).find(|&at| {
+        main_row(&lines[at].plain)
+            && lines[at + 1..]
+                .iter()
+                .all(|l| l.plain.trim().is_empty() || is_agent_row(&l.plain))
+    })
+}
+
 /// A line that is a horizontal rule: the edge of the input box.
 fn is_border(plain: &str) -> bool {
     let line = plain.trim();
@@ -267,10 +305,11 @@ fn input_box(agent: Agent, lines: &[Line]) -> Option<InputBox> {
         let Some(bottom) = (top + 2..lines.len()).find(|&i| is_border(&lines[i].plain)) else {
             continue;
         };
-        let below = lines[bottom + 1..]
-            .iter()
-            .filter(|l| !l.plain.trim().is_empty())
-            .count();
+        // The list of background agents grows by a row for each of them, and is no sign of
+        // something drawn over the box, so it is not counted.
+        let under = &lines[bottom + 1..];
+        let shown = |rows: &[Line]| rows.iter().filter(|l| !l.plain.trim().is_empty()).count();
+        let below = shown(under) - agent_list_start(under).map_or(0, |at| shown(&under[at..]));
         if below > MAX_LINES_BELOW_INPUT {
             continue;
         }
@@ -304,6 +343,30 @@ struct Reading {
     typed: String,
 }
 
+/// Whether the last spinner line has nothing under it but what Claude draws around its box:
+/// rules, the mode line, the background-agent list, right-aligned hints and a tip. A turn is
+/// running, and the box is drawn in a way not known (so it was not found); anything else
+/// under the spinner is something this does not know, which is left unrecognised.
+fn claude_spinner_over_chrome(lines: &[Line]) -> bool {
+    let Some(spinner) = lines.iter().rposition(|l| claude_spinner(&l.plain)) else {
+        return false;
+    };
+    let under = &lines[spinner + 1..];
+    let list_from = agent_list_start(under).unwrap_or(under.len());
+    under[..list_from].iter().all(|l| {
+        let plain = l.plain.as_str();
+        let line = plain.trim();
+        let indent = plain.chars().take_while(|c| c.is_whitespace()).count();
+        line.is_empty()
+            || is_border(plain)
+            || claude_mode_line(line)
+            || indent >= RIGHT_ALIGNED_INDENT
+            || line
+                .strip_prefix('⎿')
+                .is_some_and(|rest| rest.trim_start().starts_with("Tip:"))
+    })
+}
+
 fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
     let reading = |state| Reading {
         state,
@@ -327,6 +390,12 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
         Agent::Agy => AGY_ASKING_HINTS,
         _ => CLAUDE_ASKING_HINTS,
     };
+    let bottom_line = lines.iter().rev().find(|l| !l.plain.trim().is_empty());
+    // The transcript view is looked for first: it draws no box, so a line of the transcript
+    // that echoes something the person typed (`❯ 1. do this`) would be taken for a menu.
+    if agent == Agent::Claude && bottom_line.is_some_and(|l| claude_transcript_footer(&l.plain)) {
+        return reading(PaneState::Transcript);
+    }
     let input = input_box(agent, &lines);
     // A pointed option is looked for only where a question would be drawn. Above a live input
     // box is the transcript, where an echo of what the person once typed (`❯ 1. do this`)
@@ -349,10 +418,10 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
         // is looked for after the questions above, which win, and only on the bottom line,
         // where the footer is drawn, as the mode line it is (output that only mentions the
         // keys is not one).
-        let bottom_line = lines.iter().rev().find(|l| !l.plain.trim().is_empty());
         if agent == Agent::Claude
-            && bottom_line
+            && (bottom_line
                 .is_some_and(|l| claude_mode_line(&l.plain) && claude_running_footer(&l.plain))
+                || claude_spinner_over_chrome(&lines))
         {
             return reading(PaneState::Working);
         }
@@ -535,7 +604,10 @@ pub fn look_before_typing(agent: Agent) -> Option<LookBeforeTyping> {
     Some(LookBeforeTyping {
         may_type: Box::new(move |screen| match pane_state(agent, screen) {
             PaneState::Idle => Ok(()),
-            state => Err(state.why_not_typed()),
+            state => Err(NotTyped {
+                why: state.why_not_typed(),
+                keep_screen: state == PaneState::Unknown,
+            }),
         }),
         holds_just: Box::new(move |screen, line| shows_typed_line(agent, screen, line)),
     })
