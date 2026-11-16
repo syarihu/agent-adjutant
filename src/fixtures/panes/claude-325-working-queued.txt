@@ -1,0 +1,32 @@
+
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+
+  A placeholder line of the reply.
+
+✻ Brewed for 44s · done 22:27
+
+❯ also say hello after that
+
+⏺ Hello!
+
+✻ Cooked for 1s · done 22:27
+
+❯ Write a 150 line poem about rivers, one short line per paragraph, no tools
+
+❯ then say goodbye
+  ctrl+x ctrl+s to send now
+
+✢ Working… (8s · thinking)
+  ⎿  Tip: Paste images into Claude Code using control+v (not cmd+v!)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ [2m[39mPress up to edit queued messages[0m
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+@@adjutant:pane@@
+0	2	26

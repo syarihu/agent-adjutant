@@ -25,6 +25,15 @@ background agents under the mode line:
                       under the box than `MAX_LINES_BELOW_INPUT` allows without the list left out
     325-agents3-idle  three background agents running, the turn over
     325-narrow-agents3-idle  the same at 52 columns
+    325-idle-quotes-footer   the turn over, its reply a line that says `esc to interrupt`
+    325-idle-quotes-spinner  the turn over, its reply quoting a spinner line (`✻ Pondering… (6s ·
+                      thinking)`), one at column 0 behind `⏺` and one indented under it
+    325-working-queued  a turn in progress with a message queued (typed and sent meanwhile); queued
+                      messages are drawn at column 0 above the spinner, the box shows `Press up to
+                      edit queued messages` faint
+    325-working-todos  a turn in progress with a task list (started with
+                      `CLAUDE_CODE_ENABLE_TASKS=1 CLAUDE_CODE_ENABLE_TODO_TOOLS=1`); the list is
+                      drawn indented under the spinner, which stays at column 0
 
 The three `narrow-` ones: Claude Code 2.1.300 at 52x30, fullscreen UI, started with
 `-n adjutant-read-<name> --permission-mode dontAsk`, so the session name is drawn in the box's
@@ -47,7 +56,9 @@ and working directory were replaced with placeholders; a custom status line, spi
 and question text were replaced with plain English; trailing spaces were trimmed. In the
 `claude-325-` ones the status line (which carried usage figures), the replies, the token counts
 of the agent rows and the tip about the terminal's own configuration were replaced or dropped;
-the rows, blanks and borders stay where they were drawn.
+the rows, blanks and borders stay where they were drawn. In the four that quote or queue, the
+spinner wording (a custom one) and the replies that were not about the point were replaced with
+plain English or the placeholder line; what the prompts and quotes say is as sent.
 
 When an agent release changes how it draws these, capture the screen again the same way
 rather than editing the files by hand.

@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Use TaskCreate to create 4 tasks (step one to four), then work them one at a time: mark in
+  progress, run bash "sleep 8", mark completed.
+
+⏺ Waiting 8 seconds · 3s
+  ⎿  $ sleep 8 (3s)
+     (ctrl+b ctrl+b (twice) to run in background)
+
+
+
+
+
+
+
+✳ step two… (22s · ↓ 775 tokens)
+  ⎿  ✔ step one
+     ◼ step two
+     ◻ step three
+     ◻ step four
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ [39m
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+@@adjutant:pane@@
+0	2	26

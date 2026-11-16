@@ -38,6 +38,18 @@ fn fixture(name: &str) -> &'static str {
         "claude-325-narrow-agents3-idle" => {
             include_str!("../../fixtures/panes/claude-325-narrow-agents3-idle.txt")
         }
+        "claude-325-idle-quotes-footer" => {
+            include_str!("../../fixtures/panes/claude-325-idle-quotes-footer.txt")
+        }
+        "claude-325-idle-quotes-spinner" => {
+            include_str!("../../fixtures/panes/claude-325-idle-quotes-spinner.txt")
+        }
+        "claude-325-working-queued" => {
+            include_str!("../../fixtures/panes/claude-325-working-queued.txt")
+        }
+        "claude-325-working-todos" => {
+            include_str!("../../fixtures/panes/claude-325-working-todos.txt")
+        }
         "agy-idle" => include_str!("../../fixtures/panes/agy-idle.txt"),
         "agy-idle-after-turn" => include_str!("../../fixtures/panes/agy-idle-after-turn.txt"),
         "agy-typing" => include_str!("../../fixtures/panes/agy-typing.txt"),
@@ -90,6 +102,26 @@ const FIXTURES: &[(Agent, &str, PaneState)] = &[
         Agent::Claude,
         "claude-325-narrow-agents3-idle",
         PaneState::Idle,
+    ),
+    (
+        Agent::Claude,
+        "claude-325-idle-quotes-footer",
+        PaneState::Idle,
+    ),
+    (
+        Agent::Claude,
+        "claude-325-idle-quotes-spinner",
+        PaneState::Idle,
+    ),
+    (
+        Agent::Claude,
+        "claude-325-working-queued",
+        PaneState::Working,
+    ),
+    (
+        Agent::Claude,
+        "claude-325-working-todos",
+        PaneState::Working,
     ),
     (Agent::Agy, "agy-idle", PaneState::Idle),
     (Agent::Agy, "agy-idle-after-turn", PaneState::Idle),
@@ -1481,4 +1513,127 @@ fn where_the_screen_is_not_read_nothing_is_captured() {
         assert_eq!(pane.count("capture-pane"), 0, "{:?}", pane.log.borrow());
         assert!(pane.waits.borrow().is_empty());
     }
+}
+
+// ── what counts as a running turn above and under the box ────────
+
+const BORDER: &str = "────────────────────────────────────────────────────────────────────────────────────────────────────";
+const MODE: &str = "  ⏵⏵ auto mode on (shift+tab to cycle)";
+
+/// A Claude screen: `above` the box, an empty box, `under` it (the mode line is added).
+fn claude_box(above: &[&str], under: &[&str]) -> PaneScreen {
+    let mut lines: Vec<&str> = above.to_vec();
+    lines.extend([BORDER, "❯\u{a0}", BORDER]);
+    lines.extend(under);
+    screen_of(&lines)
+}
+
+fn claude_state(above: &[&str], under: &[&str]) -> PaneState {
+    pane_state(Agent::Claude, &claude_box(above, under))
+}
+
+#[test]
+fn a_reply_quoting_the_footer_words_is_idle() {
+    assert_eq!(
+        claude_state(
+            &[
+                "⏺ press esc to interrupt to stop a turn",
+                "✻ Crunched for 2s · done 22:26",
+                ""
+            ],
+            &["  Opus 5.5", MODE]
+        ),
+        PaneState::Idle
+    );
+    // Right above the box, with nothing between.
+    assert_eq!(
+        claude_state(&["", "⏺ hit esc to interrupt"], &[MODE]),
+        PaneState::Idle
+    );
+}
+
+#[test]
+fn a_quoted_spinner_is_idle() {
+    // Indented under `⏺`, as Claude draws the rest of a reply.
+    assert_eq!(
+        claude_state(
+            &["⏺ Here:", "    ✻ Pondering… (6s · thinking)", ""],
+            &[MODE]
+        ),
+        PaneState::Idle
+    );
+    // A spinner followed by a row at column 0 before the box is not the live one.
+    assert_eq!(
+        claude_state(&["✻ Pondering… (6s · thinking)", "⏺ a reply", ""], &[MODE]),
+        PaneState::Idle
+    );
+    // At column 0 with a blank and the tip between, it is the live one.
+    assert_eq!(
+        claude_state(
+            &["✻ Pondering… (6s · thinking)", "  ⎿  Tip: Use /config", ""],
+            &[MODE]
+        ),
+        PaneState::Working
+    );
+}
+
+#[test]
+fn a_running_turn_with_only_an_indented_spinner_reads_idle() {
+    // Intended: the live spinner is drawn at column 0 in every capture. An indented one is
+    // a transcript line that quotes it, and typing into a running turn because of such a
+    // line would be worse than leaving a (never seen) indented live spinner for the next
+    // look at the pane.
+    assert_eq!(
+        claude_state(&["  ✻ Pondering… (6s · thinking)", ""], &[MODE]),
+        PaneState::Idle
+    );
+}
+
+#[test]
+fn the_whole_footer_words_under_the_box_are_a_running_turn() {
+    assert_eq!(
+        claude_state(
+            &["⏺ a reply", ""],
+            &["  Opus 5.5", "  ⏵⏵ auto mode on · esc to interrupt"]
+        ),
+        PaneState::Working
+    );
+}
+
+#[test]
+fn a_background_agent_row_quoting_the_footer_words_is_not_a_running_turn() {
+    assert_eq!(
+        claude_state(
+            &["⏺ a reply", ""],
+            &[
+                "  Opus 5.5",
+                MODE,
+                "",
+                "  ⏺ main",
+                "  ◯ general-purpose  press esc to interrupt to stop      37s · ↓ 1.2k tokens",
+            ]
+        ),
+        PaneState::Idle
+    );
+}
+
+#[test]
+fn a_queued_message_or_task_list_around_the_spinner_is_still_working() {
+    // As captured: queued messages are drawn above the spinner, the task list under it,
+    // indented, so the spinner is the first row at column 0 above the box.
+    assert_eq!(
+        claude_state(
+            &[
+                "❯ queued message",
+                "  ctrl+x ctrl+s to send now",
+                "",
+                "✳ step two… (22s · ↓ 775 tokens)",
+                "  ⎿  ✔ step one",
+                "     ◼ step two",
+                "",
+            ],
+            &[MODE]
+        ),
+        PaneState::Working
+    );
 }
