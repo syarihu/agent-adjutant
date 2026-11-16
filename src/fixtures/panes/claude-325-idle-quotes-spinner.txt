@@ -1,0 +1,32 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 (1M context) · Claude Plan
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Reply with exactly one line: press esc to interrupt to stop a turn. No tools.
+
+⏺ press esc to interrupt to stop a turn
+
+✻ Crunched for 2s · done 22:26
+
+❯ Reply with exactly two lines, nothing else, no tools. Line 1: ✻ Pondering… (6s · thinking)   Line
+  2: a blank-free line starting with two spaces then ✻ Pondering… (6s · thinking)
+
+⏺ ✻ Pondering… (6s · thinking)
+    ✻ Pondering… (6s · thinking)
+
+✻ Baked for 1s · done 22:26
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+@@adjutant:pane@@
+0	2	26

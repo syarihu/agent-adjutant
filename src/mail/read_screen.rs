@@ -115,7 +115,8 @@ fn claude_mode_line(line: &str) -> bool {
 /// all, and a turn taken for idle there is the lesser harm than an idle one taken for running.
 ///
 /// Only the footer's own row says so: a transcript line that reads like a cut footer (a diff
-/// or tool output quoting one) is not a turn, so callers look at the footer's row alone.
+/// or tool output quoting one) is not a turn, so callers look at the footer's row alone, under
+/// the box (`claude_turn_running`) or on the bottom line when there is no box.
 fn claude_running_footer(line: &str) -> bool {
     line.to_lowercase().contains("esc to interrupt") || claude_cut_running_footer(line)
 }
@@ -137,13 +138,42 @@ fn claude_cut_running_footer(line: &str) -> bool {
     cut.chars().count() >= 3 && "esc to interrupt".starts_with(&cut)
 }
 
-fn working_marker(agent: Agent, line: &str) -> bool {
-    let lower = line.to_lowercase();
-    match agent {
-        Agent::Claude => claude_spinner(line) || lower.contains("esc to interrupt"),
-        Agent::Agy => agy_spinner(line) || lower.trim_start().starts_with("esc to cancel"),
-        Agent::Generic => false,
+/// agy is working when a row of its screen carries its spinner or `esc to cancel`. Claude is
+/// read by `claude_turn_running` instead, which looks at where the signs are drawn.
+fn agy_working_marker(line: &str) -> bool {
+    agy_spinner(line)
+        || line
+            .to_lowercase()
+            .trim_start()
+            .starts_with("esc to cancel")
+}
+
+/// Whether a turn is running, for a Claude screen whose input box is found and empty.
+///
+/// The transcript above the box can quote what the signs look like (a reply that says `esc to
+/// interrupt`, a tool output holding a `✻ Pondering… (6s · thinking)` line), so the signs only
+/// count where Claude draws them, and a turn taken for idle is the worse harm than the other
+/// way round:
+/// - the footer, under the box and above the background-agent list (an agent row whose
+///   description quotes the words is not it);
+/// - the live spinner, which is at column 0 with only blank or indented rows (the tip, the
+///   terminal hint, right-aligned hints) between it and the box's top border. Transcript
+///   text is drawn indented under `⏺`/`⎿`/`❯`, so the first row at column 0 above the box
+///   is what decides: a spinner, or something else that ends the walk.
+fn claude_turn_running(lines: &[Line], input: &InputBox) -> bool {
+    let under = &lines[input.bottom + 1..];
+    let list_from = agent_list_start(under).unwrap_or(under.len());
+    if under[..list_from]
+        .iter()
+        .any(|l| claude_running_footer(&l.plain))
+    {
+        return true;
     }
+    lines[..input.top]
+        .iter()
+        .rev()
+        .find(|l| !l.plain.trim().is_empty() && !l.plain.starts_with(char::is_whitespace))
+        .is_some_and(|l| claude_spinner(&l.plain))
 }
 
 /// `line` without the escape sequences `capture-pane -e` puts in it: control sequences
@@ -471,13 +501,11 @@ fn read_pane(agent: Agent, screen: &PaneScreen) -> Reading {
             typed: input.text,
         };
     }
-    // The cut footer counts only under the box, where the footer is drawn; the spinner and the
-    // whole words count anywhere, as they always did.
-    let footer_cut = agent == Agent::Claude
-        && lines[input.bottom + 1..]
-            .iter()
-            .any(|l| claude_cut_running_footer(&l.plain));
-    if footer_cut || lines.iter().any(|l| working_marker(agent, &l.plain)) {
+    let working = match agent {
+        Agent::Claude => claude_turn_running(&lines, &input),
+        _ => lines.iter().any(|l| agy_working_marker(&l.plain)),
+    };
+    if working {
         return reading(PaneState::Working);
     }
     reading(PaneState::Idle)
