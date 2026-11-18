@@ -5,7 +5,9 @@
 # The app must be built with an identifier of its own, so that it neither hands itself over to an
 # Adjutant that is already running (the single-instance socket is named after the identifier) nor
 # reads the real app's settings:
+#   make app-deps
 #   (cd app/src-tauri && cargo tauri build --bundles app --config '{"identifier":"dev.syarihu.adjutant.demo"}')
+# With CARGO_TARGET_DIR set, pass the bundle it built as the argument.
 # Stop it with scripts/demo/stop.sh after quitting the app.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -28,8 +30,7 @@ source "$here/env.sh"
 # HOME is the demo's, so the app's settings live in the demo world too.
 conf="$HOME/Library/Application Support/$id"
 mkdir -p "$conf"
-cat > "$conf/settings.json" <<J
-{ "adjPath": "$DEMO_ROOT/bin/adj", "background": "material", "shortcut": null }
-J
+python3 -c 'import json,sys;json.dump({"adjPath":sys.argv[1],"background":"material","shortcut":None},open(sys.argv[2],"w"))' \
+  "$DEMO_ROOT/bin/adj" "$conf/settings.json"
 nohup "$bin" > "$DEMO_ROOT/app.log" 2>&1 &
 echo "app started (pid $!); quit it, then run scripts/demo/stop.sh"
