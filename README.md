@@ -137,6 +137,8 @@ See [Web Board & Resident Server](docs/board.md) for every view.
 
 On macOS the board can also run in its own window, with native notifications and a Dock badge: see [Native app (macOS)](docs/board.md#native-app-macos).
 
+![The macOS app, with the desktop showing through the window's background](docs/images/app-window.png)
+
 ---
 
 ## Core Concepts

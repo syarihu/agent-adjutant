@@ -31,6 +31,32 @@ language.
 | `boards-list` | 「工程」 in its list layout, a task on every stage, and switching to the columns |
 | `search-palette` | Finding a session with ⌘K and opening it |
 
+## Screenshots of the macOS app
+
+`docs/images/app-window.png` is the macOS app on the same world. `app.sh` builds a fresh world,
+seeds the board as `boards-list` and `review-others` do, and opens the app on it:
+
+```bash
+make app-deps   # the Tauri CLI 2, when cargo tauri is missing
+(cd app/src-tauri && cargo tauri build --bundles app --config '{"identifier":"dev.syarihu.adjutant.demo"}')
+scripts/demo/app.sh
+```
+
+With `CARGO_TARGET_DIR` set, the bundle is under it: pass its path to `app.sh`
+(`scripts/demo/app.sh "$CARGO_TARGET_DIR/release/bundle/macos/Adjutant.app"`).
+
+The app is built with an identifier of its own: with the real one it would hand itself over to an
+Adjutant that is already running, whose single-instance socket is named after the identifier.
+`app.sh` refuses an app with the real identifier. It runs the app under the demo's `HOME`, so the
+settings it reads (the demo's `adj`, the material background, no global shortcut) are the demo's.
+`env.sh` unsets `ZDOTDIR`, so the login shell the app runs to find `adj` reads no startup file of
+yours that could point it back at the real state.
+
+To show a gate, ask the repository hub in 「依頼する」 for
+`クーポンが有効期限の当日に使えないので直してほしい`: the scripted hub opens its start check, then the
+worker its plan. Take the screenshot of the whole screen, not of the window, so the desktop shows
+through the window's background, and crop the menu bar. Quit the app, then run `stop.sh`.
+
 ## How it works
 
 - `env.sh` points everything at `/tmp/adj-demo`: `ADJUTANT_STATE_DIR`, `ADJUTANT_CONFIG`, `HOME`,

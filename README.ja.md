@@ -137,6 +137,8 @@ worker が PR を出したら、読むだけの別の worker が先に読んで�
 
 macOS では、ネイティブ通知や Dock バッジの付いた専用ウィンドウでボードを開くこともできます。[ネイティブアプリ（macOS）](docs/board.ja.md#ネイティブアプリmacos)を参照してください。
 
+![macOS アプリ（ウィンドウの背景に壁紙が透けて見える）](docs/images/app-window.png)
+
 ---
 
 ## 基本概念
