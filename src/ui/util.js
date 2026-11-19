@@ -98,6 +98,8 @@ function md(src) {
     while (listStack.length > 1 && listStack[listStack.length - 1].indent > indent && indent < listStack[listStack.length - 2].indent + 2) closeList();
     const top = listStack[listStack.length - 1];
     if (top && indent < top.indent + 2 && top.tag === tag) {
+      // The list's depth is its latest item's, so an item under this one nests by this one's indent.
+      top.indent = indent;
       html += '</li>';
     } else {
       if (top && indent < top.indent + 2) closeList();
