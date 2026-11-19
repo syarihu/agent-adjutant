@@ -44,8 +44,9 @@ function workAskFoldedHtml(g, key, draft, expand = true) {
   const line = gateFocusLine(g.focus) || gateFocusLine(g.title);
   const button = draft ? '' : qcAnswerButtons(g).find(b => b.lead)?.html || '';
   return `<div class="qc-quick wk-ask-folded" data-qc-gate="${esc(key)}">${qcIcon('bolt')}<span class="qc-kind">${esc(kindOf(g.kind)[0])}</span>`
-    + `<b class="qc-quick-text">${esc(line)}</b><span class="qc-spacer"></span>${button}`
-    + (expand ? `<button type="button" class="btn-m3-text" data-wk-fold="${esc(key)}" aria-expanded="false">${qcIcon('expand_more')}<span>広げる</span></button>` : '') + '</div>';
+    + `<b class="qc-quick-text">${esc(line)}</b>`
+    + (button || expand ? `<span class="qc-spacer"></span><span class="qc-quick-btns">${button}`
+      + (expand ? `<button type="button" class="btn-m3-text" data-wk-fold="${esc(key)}" aria-expanded="false">${qcIcon('expand_more')}<span>広げる</span></button>` : '') + '</span>' : '') + '</div>';
 }
 
 /* The start check open: the card as one article under a bar that folds it. The card scrolls inside the sheet, and its foot stays. */

@@ -346,7 +346,7 @@ function quickRowHtml(g, ctx = {}) {
   const buttons = choices.length
     ? choices.map((c, i) => `<button type="button" class="pick ${i === Math.max(lead, 0) ? 'btn-m3-primary' : 'btn-m3-tonal'}" data-choice="${esc(c.id)}">${esc(c.label)}</button>`).join('')
     : (g.options || []).map(o => (BUTTONS[o] || (() => ''))(g)).join('');
-  return `<div class="qc-quick" data-qc-gate="${esc(qcKey(g, ctx))}">${qcIcon(qcQuickIcon(g))}<b class="qc-quick-text">${esc(line)}</b>${qcChips(g.facts)}<span class="qc-spacer"></span>${buttons}</div>`;
+  return `<div class="qc-quick" data-qc-gate="${esc(qcKey(g, ctx))}">${qcIcon(qcQuickIcon(g))}<b class="qc-quick-text">${esc(line)}</b>${qcChips(g.facts)}<span class="qc-spacer"></span><span class="qc-quick-btns">${buttons}</span></div>`;
 }
 
 /* The lines over a task's terminal: a quick question as its row, any other as a line that opens the card. `ctx` is the card's context, or a
@@ -357,6 +357,6 @@ function questionStripHtml(gates, ctx = {}) {
     if (g.quick) return quickRowHtml(g, c);
     const line = gateFocusLine(g.focus) || gateFocusLine(g.title);
     return `<div class="qc-strip">${qcIcon('front_hand')}<span class="qc-kind">${esc(kindOf(g.kind)[0])}</span><span class="qc-strip-text">${esc(line)}</span>`
-      + `<button type="button" class="btn-m3-tonal" data-qc-open-gate="${esc(qcKey(g, c))}">開いて答える</button></div>`;
+      + `<span class="qc-spacer"></span><span class="qc-quick-btns"><button type="button" class="btn-m3-tonal" data-qc-open-gate="${esc(qcKey(g, c))}">開いて答える</button></span></div>`;
   }).join('');
 }

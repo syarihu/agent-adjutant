@@ -79,7 +79,7 @@ function workPromptHtml(p, opts = {}) {
     buttons = `<button type="button" class="btn-m3-tonal qc-quick-act" data-wk-prompt-terminal="${esc(sessionId)}" data-wk-prompt-board="${esc(boardSlug)}"${busy ? ' disabled' : ''}>ターミナルで答える</button>`;
   }
 
-  return `<div class="qc-quick wk-prompt" data-wk-prompt-box="${esc(key)}">${qcIcon(icon)}<b class="qc-quick-text">${esc(text)}</b>${factHtml}<span class="qc-spacer"></span>${buttons}</div>`;
+  return `<div class="qc-quick wk-prompt" data-wk-prompt-box="${esc(key)}">${qcIcon(icon)}<b class="qc-quick-text">${esc(text)}</b>${factHtml}<span class="qc-spacer"></span><span class="qc-quick-btns">${buttons}</span></div>`;
 }
 
 /* A prompt waiting on a session as its own TODO row: question, buttons, and repository origin. */

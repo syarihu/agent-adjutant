@@ -89,6 +89,12 @@
 .qc-unsure { padding: 10px 14px; border-radius: var(--md-shape-corner-md); background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .qc-unsure > :first-child { margin-top: 0; }
 .qc-unsure > :last-child { margin-bottom: 0; }
+/* The markdown the boxes above draw (md(), util.js) has no `.body` around it, and the page's reset takes the indent off its lists: their
+   markers would sit on the box's edge or past it. A list is indented inside its box, a nested one under its item, and a long word or
+   URL wraps rather than running out of the box. */
+:is(.qc-unsure, .qc-ask, .qc-quote, .qc-goal, .qc-concl) :is(ul, ol) { margin: 4px 0; padding-left: 20px; }
+:is(.qc-unsure, .qc-ask, .qc-quote, .qc-goal, .qc-concl) :is(p, li), :is(#question-dialog, .wk-ask-scroll) .body :is(p, li) { overflow-wrap: anywhere; }
+:is(.qc-unsure, .qc-ask, .qc-quote, .qc-goal, .qc-concl, .body) li > :is(ul, ol) { margin: 2px 0 0; }
 .qc-file { margin: 14px 0 4px; font-size: 12.5px; font-weight: 700; }
 .qc-file code { font: 12px var(--font-mono); }
 

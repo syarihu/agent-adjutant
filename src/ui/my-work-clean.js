@@ -158,7 +158,7 @@ function workMergedAskHtml(a, { board, sid, text = workMergedAskText(a), busy = 
   const button = (act, cls, label) => `<button type="button" class="${cls} qc-quick-act" ${at} data-wk-ask-act="${act}"${busy ? ' disabled' : ''}>${label}</button>`;
   if (a.ask === 'dirty') {
     return `<div class="qc-quick wk-merged-ask bad">${qcIcon('warning')}<b class="qc-quick-text">${esc(`マージ済みですが、消えると困る変更があります（未 push ${a.unpushed} · 未コミット ${a.files}）`)}</b>`
-      + `<span class="qc-spacer"></span>${button('check', 'btn-m3-text', 'ターミナルで確かめる')}</div>`;
+      + `<span class="qc-spacer"></span><span class="qc-quick-btns">${button('check', 'btn-m3-text', 'ターミナルで確かめる')}</span></div>`;
   }
   return `<div class="qc-quick wk-merged-ask">${qcIcon('cleaning_services')}<b class="qc-quick-text">${esc(text)}</b>`
     + '<div class="qc-chips"><span class="qc-chip ok">未コミット 0</span><span class="qc-chip ok">未 push 0</span></div>'
