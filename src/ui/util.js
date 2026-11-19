@@ -78,12 +78,40 @@ function md(src) {
     }
   }
 
+  // Each open list is `{ tag, indent }`, and its last item stays open, so that a deeper item opens a list inside it.
+  function closeList() {
+    closePara();
+    html += `</li></${listStack.pop().tag}>`;
+  }
+
   function closeLists() {
     closePara();
-    while (listStack.length) {
-      html += `</${listStack.pop()}>`;
-    }
+    while (listStack.length) closeList();
   }
+
+  // An item `indent` columns in: an item two or more columns deeper than the open one starts a list inside it, a shallower one closes
+  // the lists it is not nested in, and one at the open list's depth is its sibling (a list of the other kind there takes its place).
+  function listItem(indent, tag, text) {
+    closePara();
+    closeTable();
+    // A shallower item closes the deeper lists, down to the one it is still nested in (or the outermost).
+    while (listStack.length > 1 && listStack[listStack.length - 1].indent > indent && indent < listStack[listStack.length - 2].indent + 2) closeList();
+    const top = listStack[listStack.length - 1];
+    if (top && indent < top.indent + 2 && top.tag === tag) {
+      // The list's depth is its latest item's, so an item under this one nests by this one's indent.
+      top.indent = indent;
+      html += '</li>';
+    } else {
+      if (top && indent < top.indent + 2) closeList();
+      listStack.push({ tag, indent });
+      html += `<${tag}>`;
+    }
+    html += `<li>${inlineMd(text)}`;
+  }
+
+  // The columns a line is indented by, a tab counting as four.
+  const indentOf = s => s.replace(/\t/g, '    ').length;
+  const LIST_ITEM = /^(\s*)(?:[-*+]|\d+\.)\s+/;
 
   function closeTable() {
     if (!inTable) return;
@@ -195,33 +223,21 @@ function md(src) {
 
     // Bullet list
     if ((m = raw.match(/^(\s*)([-*+])\s+(.*)$/))) {
-      closePara();
-      closeTable();
-      if (!listStack.length || listStack[listStack.length - 1] !== 'ul') {
-        closeLists();
-        listStack.push('ul');
-        html += '<ul>';
-      }
-      html += `<li>${inlineMd(m[3])}</li>`;
+      listItem(indentOf(m[1]), 'ul', m[3]);
       continue;
     }
 
     // Numbered list
     if ((m = raw.match(/^(\s*)(\d+)\.\s+(.*)$/))) {
-      closePara();
-      closeTable();
-      if (!listStack.length || listStack[listStack.length - 1] !== 'ol') {
-        closeLists();
-        listStack.push('ol');
-        html += '<ol>';
-      }
-      html += `<li>${inlineMd(m[3])}</li>`;
+      listItem(indentOf(m[1]), 'ol', m[3]);
       continue;
     }
 
-    // Blank line terminates paragraphs/blocks
+    // Blank line terminates paragraphs/blocks, but not a list whose next item follows it.
     if (!raw.trim()) {
-      closeAll();
+      const next = listStack.length ? lines.slice(idx + 1).find(l => l.trim()) : undefined;
+      if (next && LIST_ITEM.test(next)) closePara();
+      else closeAll();
       continue;
     }
 

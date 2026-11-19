@@ -28,6 +28,24 @@ test('md draws the markers it reads', () => {
   assert.ok(t.includes('<table>') && t.includes('<th>a</th>') && t.includes('<td>2</td>'), t);
 });
 
+test('md nests a list under the item it is indented under', () => {
+  assert.strictEqual(md('- a\n  - b\n    1. c\n- d'), '<ul><li>a<ul><li>b<ol><li>c</li></ol></li></ul></li><li>d</li></ul>');
+  // Back out to the list an item is still nested in, not to a new one at its depth.
+  assert.strictEqual(md('- a\n   - b\n  - c\n- d'), '<ul><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ul>');
+  // An item nests by the indent of the item above it, not of the first item of its list.
+  assert.strictEqual(md('- a\n   - b\n  - c\n    - d'), '<ul><li>a<ul><li>b</li><li>c<ul><li>d</li></ul></li></ul></li></ul>');
+  // A tab is four columns.
+  assert.strictEqual(md('- a\n\t- b'), '<ul><li>a<ul><li>b</li></ul></li></ul>');
+  // One column of indent is not a nested list, and the other kind at the same depth starts a list of its own.
+  assert.strictEqual(md('- a\n - b'), '<ul><li>a</li><li>b</li></ul>');
+  assert.strictEqual(md('1. a\n- b'), '<ol><li>a</li></ol><ul><li>b</li></ul>');
+});
+
+test('md keeps a list open across a blank line before its next item, and closes it before anything else', () => {
+  assert.strictEqual(md('- a\n\n  - b'), '<ul><li>a<ul><li>b</li></ul></li></ul>');
+  assert.strictEqual(md('- a\n\npara'), '<ul><li>a</li></ul><p>para</p>');
+});
+
 test('mdPlain drops inline and line markers', () => {
   assert.strictEqual(mdPlain('## Title'), 'Title');
   assert.strictEqual(mdPlain('a **b** *c* ~~d~~ `e`'), 'a b c d e');

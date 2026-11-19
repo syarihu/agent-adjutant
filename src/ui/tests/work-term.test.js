@@ -243,3 +243,30 @@ test('a folded start check draws the lead answer button: the kind\'s primary, or
   const none = fold({ ...dispatch, choices: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] });
   assert.ok(!none.includes('data-choice=') && !none.includes('data-act=') && none.includes('data-wk-fold='));
 });
+
+test('every line over the terminal has all its buttons in one group at its end, which the page puts on a line of its own', () => {
+  const workPromptHtml = vm.runInContext('workPromptHtml', ctx);
+  const prompt = { kind: 'permission', question: 'Proceed?', id: 'c1', options: [{ key: '1', label: 'Yes' }, { key: '2', label: 'No' }] };
+  const lines = {
+    quick: api.workTermAskHtml([quick], { ctxOf, keyOf }),
+    heavy: api.workTermAskHtml([heavy], { ctxOf, keyOf }),
+    folded: api.workTermAskHtml([dispatch], { ctxOf, keyOf, hub: true, folded: new Set(['s/d1']) }),
+    clean: api.workTermMergedHtml({ ask: 'clean', number: '12' }, { board: 'b1', sid: 's1' }),
+    dirty: api.workTermMergedHtml({ ask: 'dirty', number: '12', files: 1, unpushed: 0 }, { board: 'b1', sid: 's1' }),
+    prompt: workPromptHtml(prompt, { sessionId: 's1', boardSlug: 'b1' }),
+    unread: workPromptHtml({ ...prompt, options: [] }, { sessionId: 's1', boardSlug: 'b1' }),
+  };
+  for (const [name, html] of Object.entries(lines)) {
+    assert.equal(count(html, 'class="qc-quick-btns"'), 1, name);
+    const group = html.slice(html.indexOf('class="qc-quick-btns"'));
+    assert.ok(count(html, '<button') > 0 && count(group, '<button') === count(html, '<button'), name);
+    assert.ok(group.endsWith('</button></span></div>'), name);
+  }
+  const css = read('my-work.css');
+  assert.ok(css.includes('.wk-term-ask :is(.qc-quick, .qc-strip) > .qc-quick-btns { flex-basis: 100%; }'));
+});
+
+test('a start check folded with nothing to press has no empty button group to leave a blank line under it', () => {
+  const html = api.workTermAskHtml([dispatch], { ctxOf, keyOf, hub: true, foldAll: true, draftOf: () => 'wait' });
+  assert.ok(html.includes('wk-ask-folded') && !html.includes('qc-quick-btns') && !html.includes('<button'));
+});
