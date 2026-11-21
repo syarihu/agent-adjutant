@@ -65,7 +65,10 @@ redraw_box() {
   [ "$BOX_ON" = 1 ] && [ -n "${TMUX_PANE:-}" ] || return 0
   local cy rows y state=0 line
   cy=$(tmux display -p -t "$TMUX_PANE" '#{cursor_y}' 2>/dev/null) || return 0
-  mapfile -t rows < <(tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null)
+  rows=()
+  while IFS= read -r line; do rows+=("$line"); done < <(tmux capture-pane -p -t "$TMUX_PANE" 2>/dev/null)
+  # With no screen to read, nothing says where the box starts: leave it as it is.
+  [ "${#rows[@]}" -gt "$cy" ] || return 0
   for ((y = cy - 1; y >= 0; y--)); do
     line="${rows[y]:-}"
     if [[ "$line" =~ ^─+$ ]]; then
@@ -82,13 +85,15 @@ redraw_box() {
 trap redraw_box WINCH
 idle_prompt() { printf '\e7'; draw_box ""; }
 read_typed() { # read_typed VAR: wait for a line typed into the box, then clear the box
-  local line="" c more status
+  local line="" c more status poll=()
   local saved; saved=$(stty -g)
   stty -echo -icanon min 1 time 0
   # bash runs a trap only once `read` returns, so the wait for the first key is cut into short
-  # reads, and a resize is drawn while nothing is typed.
+  # reads, and a resize is drawn while nothing is typed. bash 3.2 takes no fraction of a second,
+  # so there the wait stays one read (3.2 runs the trap during it).
+  ((BASH_VERSINFO[0] >= 4)) && poll=(-t 0.2)
   while :; do
-    IFS= read -r -n1 -t 0.2 c; status=$?
+    IFS= read -r -n1 "${poll[@]}" c; status=$?
     [ "$status" -gt 128 ] && continue
     [ "$status" = 0 ] && [ -n "$c" ] || break
     line+="$c"
