@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # The Tauri CLI that bundles the macOS app. Keep in step with ci.yml, which bundles it on every PR.
+  TAURI_CLI_VERSION: "2.12.4"
+
 jobs:
   build:
     strategy:
@@ -58,11 +62,15 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-2-${{ runner.os }}-${{ runner.arch }}
+          key: tauri-cli-${{ env.TAURI_CLI_VERSION }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install the Tauri CLI
         if: matrix.app
-        run: cargo tauri --version 2>/dev/null || cargo install tauri-cli --version '^2' --locked
+        run: |
+          case "$(cargo tauri --version 2>/dev/null)" in
+          "tauri-cli $TAURI_CLI_VERSION") ;;
+          *) cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked --force ;;
+          esac
 
       - name: Build the app
         if: matrix.app

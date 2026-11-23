@@ -66,7 +66,7 @@ To start the resident server automatically across logins, create a LaunchAgent a
 
 - **What it adds**: a translucent window, native notifications, the number of items waiting on you as the Dock badge, and a global shortcut (default `Ctrl+Option+Cmd+B`) that shows or hides the window. A second launch focuses the running window, and the window remembers its size and position. The red button hides the window; `Cmd+Q` quits.
 - **Links**: only the board's own address stays in the window. Every other link, `target="_blank"` and `window.open` opens in the default browser.
-- **Install with Homebrew**: on macOS, `brew install syarihu/tap/agent-adjutant` puts `Adjutant.app` in the formula's prefix next to `adj`, built from the same release (releases after v0.6.0). Copy it to `/Applications` so Spotlight and Launchpad find it (Spotlight does not index a symbolic link). The copy does not follow `brew upgrade`: after an upgrade, copy it again, run `adj server restart`, and reopen the app.
+- **Install with Homebrew**: on macOS, `brew install syarihu/tap/agent-adjutant` also puts `Adjutant.app`, built from the same release as `adj`, in the formula's prefix (releases after v0.6.0). Copy it to `/Applications` so Spotlight and Launchpad find it (Spotlight does not index a symbolic link). The copy does not follow `brew upgrade`: after an upgrade, quit the app with `Cmd+Q` (the red button only hides it), copy it again, run `adj server restart`, and open the app.
 
   ```bash
   rm -rf /Applications/Adjutant.app

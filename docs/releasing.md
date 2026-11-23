@@ -89,14 +89,26 @@ prefix. Change `install`, add to `caveats` and `test`:
   end
 ```
 
-In `caveats`, on macOS only (`if OS.mac?`), add:
+Build `caveats` from the existing text and a macOS-only part. An `if` written inside the heredoc would be
+printed as text, so add the second heredoc in Ruby:
 
-```text
-The macOS app is in #{opt_prefix}/Adjutant.app. Copy it to /Applications so Spotlight and Launchpad
-find it:
-  rm -rf /Applications/Adjutant.app
-  ditto #{opt_prefix}/Adjutant.app /Applications/Adjutant.app
-After brew upgrade, copy it again and reopen the app.
+```ruby
+  def caveats
+    s = <<~EOS
+      ...the existing text...
+    EOS
+    if OS.mac?
+      s += <<~EOS
+
+        The macOS app is in #{opt_prefix}/Adjutant.app. Copy it to /Applications so Spotlight and
+        Launchpad find it:
+          rm -rf /Applications/Adjutant.app
+          ditto "#{opt_prefix}/Adjutant.app" /Applications/Adjutant.app
+        After brew upgrade, quit the app with Cmd+Q, copy it again, run adj server restart and open it.
+      EOS
+    end
+    s
+  end
 ```
 
 In `test`:
@@ -112,5 +124,8 @@ Why it looks like this:
 - The app is in the formula and not in a cask, because a formula download is not quarantined: the ad-hoc
   signature (`bundle.macOS.signingIdentity` `"-"` in `app/src-tauri/tauri.conf.json`) is enough, with no
   Developer ID or notarization. A cask would be quarantined.
+- The test runs `codesign --verify` on the installed copy, because Homebrew may rewrite Mach-O files in
+  the keg after install, which would break the bundle's seal. On the first release with the app, run
+  `brew install` and `brew test` (step 5) before announcing it.
 - The caveats copy the app instead of linking it, because Spotlight does not index a symbolic link to
   an app.

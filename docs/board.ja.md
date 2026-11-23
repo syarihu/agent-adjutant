@@ -66,7 +66,7 @@ adj server restart [--port <port>] [--open]
 
 - **ブラウザにない機能**: 半透明のウィンドウ、ネイティブ通知、確認待ちの件数の Dock バッジ、ウィンドウを出し入れするグローバルショートカット（既定は `Ctrl+Option+Cmd+B`）。2つ目を起動すると動いているウィンドウが前に出て、ウィンドウは大きさと位置を覚えます。赤いボタンはウィンドウを隠すだけで、終了は `Cmd+Q` です。
 - **リンク**: ウィンドウに残るのはボード自身のアドレスだけです。ほかのリンク、`target="_blank"`、`window.open` は既定のブラウザで開きます。
-- **Homebrew で入れる**: macOS では、`brew install syarihu/tap/agent-adjutant` で、同じリリースからビルドした `Adjutant.app` が formula の prefix に `adj` と並んで入ります（v0.6.0 より後のリリースから）。Spotlight と Launchpad から開けるように、`/Applications` にコピーしてください（Spotlight はシンボリックリンクを拾いません）。コピーは `brew upgrade` で更新されません。アップグレードしたら、コピーし直してから `adj server restart` を実行し、アプリを開き直します。
+- **Homebrew で入れる**: macOS では、`brew install syarihu/tap/agent-adjutant` で、`adj` と同じリリースからビルドした `Adjutant.app` も formula の prefix に入ります（v0.6.0 より後のリリースから）。Spotlight と Launchpad から開けるように、`/Applications` にコピーしてください（Spotlight はシンボリックリンクを拾いません）。コピーは `brew upgrade` で更新されません。アップグレードしたら、アプリを `Cmd+Q` で終了し（赤いボタンはウィンドウを隠すだけです）、コピーし直してから `adj server restart` を実行して、アプリを開きます。
 
   ```bash
   rm -rf /Applications/Adjutant.app
