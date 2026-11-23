@@ -30,6 +30,7 @@ reinstall:
 
 check:
 	./scripts/check-layering.sh
+	./scripts/check-app-version.sh
 	./scripts/test-check-move-only.sh
 	for f in src/ui/*.js; do node --check "$$f" || exit 1; done
 	node --test src/ui/tests/*.test.js

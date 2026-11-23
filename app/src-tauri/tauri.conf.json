@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Adjutant",
-  "version": "0.1.0",
   "identifier": "dev.syarihu.adjutant",
   "build": {
     "frontendDist": "../dist"
@@ -26,7 +25,8 @@
       "icons/icon.png"
     ],
     "macOS": {
-      "minimumSystemVersion": "14.0"
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-"
     }
   }
 }

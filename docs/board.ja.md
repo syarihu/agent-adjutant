@@ -66,7 +66,17 @@ adj server restart [--port <port>] [--open]
 
 - **ブラウザにない機能**: 半透明のウィンドウ、ネイティブ通知、確認待ちの件数の Dock バッジ、ウィンドウを出し入れするグローバルショートカット（既定は `Ctrl+Option+Cmd+B`）。2つ目を起動すると動いているウィンドウが前に出て、ウィンドウは大きさと位置を覚えます。赤いボタンはウィンドウを隠すだけで、終了は `Cmd+Q` です。
 - **リンク**: ウィンドウに残るのはボード自身のアドレスだけです。ほかのリンク、`target="_blank"`、`window.open` は既定のブラウザで開きます。
-- **ビルドとインストール**: Rust が必要です。`cargo tauri` が見つからないとき、`make app` は先に Tauri CLI 2 を入れます（`cargo install tauri-cli --version '^2' --locked`。`make app-deps` で単独でも実行できます）。入っている 2.x はそのまま使います。ほかのメジャーバージョンの Tauri CLI は置き換えず、`make app` は置き換えるためのコマンドを表示して止まります。アプリは署名していないので、初回は右クリック → 開く で起動します。
+- **Homebrew で入れる**: macOS では、`brew install syarihu/tap/agent-adjutant` で、`adj` と同じリリースからビルドした `Adjutant.app` も formula の prefix に入ります（v0.6.0 より後のリリースから）。Spotlight と Launchpad から開けるように、`/Applications` にコピーしてください（Spotlight はシンボリックリンクを拾いません）。コピーは `brew upgrade` で更新されません。アップグレードしたら、アプリを `Cmd+Q` で終了し（赤いボタンはウィンドウを隠すだけです）、コピーし直してからサーバーを再起動して（`adj server restart`。上の LaunchAgent で動かしているなら `launchctl kickstart -k gui/$(id -u)/adj.server`）、アプリを開きます。
+
+  ```bash
+  # 先に隣へコピーするので、コピーに失敗しても入っているアプリは残る
+  rm -rf /Applications/Adjutant.app.new
+  ditto "$(brew --prefix agent-adjutant)/Adjutant.app" /Applications/Adjutant.app.new &&
+    rm -rf /Applications/Adjutant.app &&
+    mv /Applications/Adjutant.app.new /Applications/Adjutant.app
+  ```
+
+- **ビルドとインストール**: Rust が必要です。`cargo tauri` が見つからないとき、`make app` は先に Tauri CLI 2 を入れます（`cargo install tauri-cli --version '^2' --locked`。`make app-deps` で単独でも実行できます）。入っている 2.x はそのまま使います。ほかのメジャーバージョンの Tauri CLI は置き換えず、`make app` は置き換えるためのコマンドを表示して止まります。アプリは Developer ID のない ad-hoc 署名だけです。手元でビルドしたものと Homebrew から入れたものには quarantine が付かないので、Gatekeeper に止められずに開けます。
 
   ```bash
   make app            # app/src-tauri/target/release/bundle/macos/Adjutant.app を作る

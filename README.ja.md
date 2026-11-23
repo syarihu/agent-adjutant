@@ -26,6 +26,7 @@
 
 ```bash
 brew install syarihu/tap/agent-adjutant # `adjutant` と短縮版 `adj` が入ります。tmux と gh も一緒に入ります
+                                        # （macOS では v0.6.0 より後のリリースから Adjutant.app も入ります。docs/board.ja.md を参照）
 gh auth login
 adjutant install-mcp                    # Claude Code に MCP サーバーを登録（user スコープ）
 #   Antigravity (agy) なら: adjutant install-mcp --target agy
