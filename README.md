@@ -26,7 +26,7 @@ The mechanical parts (deriving the hub's name, resolving the config, opening a t
 
 ```bash
 brew install syarihu/tap/agent-adjutant # installs `adjutant` and the short `adj`; tmux and gh come with it
-                                        # (on macOS, releases after v0.6.0 also install Adjutant.app: see docs/board.md)
+                                        # (from v0.7.0 it also installs Adjutant.app on macOS: see docs/board.md)
 gh auth login
 adjutant install-mcp                    # registers the MCP server with Claude Code (user scope)
 #   or: adjutant install-mcp --target agy   (Antigravity)
