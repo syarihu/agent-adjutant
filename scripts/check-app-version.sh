@@ -23,12 +23,4 @@ if grep -q '"version"' app/src-tauri/tauri.conf.json; then
   status=1
 fi
 
-# CI bundles the app on every PR to catch what would break the release, so both use one Tauri CLI.
-ci_cli=$(sed -n 's/^ *TAURI_CLI_VERSION: "\(.*\)"/\1/p' .github/workflows/ci.yml)
-release_cli=$(sed -n 's/^ *TAURI_CLI_VERSION: "\(.*\)"/\1/p' .github/workflows/release.yml)
-if [ -z "$ci_cli" ] || [ "$ci_cli" != "$release_cli" ]; then
-  echo "TAURI_CLI_VERSION is \"$ci_cli\" in ci.yml but \"$release_cli\" in release.yml: set both to one version." >&2
-  status=1
-fi
-
 exit "$status"

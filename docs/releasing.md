@@ -10,7 +10,9 @@ workflow builds the binaries, but nothing updates the formula.
    tarball; `make check` fails while the two differ). Run `cargo build` at the root and in
    `app/src-tauri` so both `Cargo.lock` files follow. Commit it as "Bump version to X.Y.Z" and merge to
    `main`.
-2. Tag the merge commit on `main` as `vX.Y.Z` and push the tag. Wait for the Release workflow
+2. Run `make app` on `main` first: CI does not bundle the app, and a bundle that fails in the Release
+   workflow keeps the release from being published for every platform. Then tag the merge commit on
+   `main` as `vX.Y.Z` and push the tag. Wait for the Release workflow
    (`.github/workflows/release.yml`) to finish. Check that the release has the four tarballs
    (`agent-adjutant-{aarch64,x86_64}-apple-darwin.tar.gz` and
    `agent-adjutant-{aarch64,x86_64}-unknown-linux-gnu.tar.gz`) and `checksums.txt`. The two macOS
