@@ -102,9 +102,11 @@ printed as text, so add the second heredoc in Ruby:
 
         The macOS app is in #{opt_prefix}/Adjutant.app. Copy it to /Applications so Spotlight and
         Launchpad find it:
-          rm -rf /Applications/Adjutant.app
-          ditto "#{opt_prefix}/Adjutant.app" /Applications/Adjutant.app
-        After brew upgrade, quit the app with Cmd+Q, copy it again, run adj server restart and open it.
+          rm -rf /Applications/Adjutant.app.new
+          ditto "#{opt_prefix}/Adjutant.app" /Applications/Adjutant.app.new &&
+            rm -rf /Applications/Adjutant.app &&
+            mv /Applications/Adjutant.app.new /Applications/Adjutant.app
+        After brew upgrade, quit the app with Cmd+Q, copy it again, restart the server and open the app.
       EOS
     end
     s
