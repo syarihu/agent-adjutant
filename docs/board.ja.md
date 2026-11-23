@@ -66,7 +66,7 @@ adj server restart [--port <port>] [--open]
 
 - **ブラウザにない機能**: 半透明のウィンドウ、ネイティブ通知、確認待ちの件数の Dock バッジ、ウィンドウを出し入れするグローバルショートカット（既定は `Ctrl+Option+Cmd+B`）。2つ目を起動すると動いているウィンドウが前に出て、ウィンドウは大きさと位置を覚えます。赤いボタンはウィンドウを隠すだけで、終了は `Cmd+Q` です。
 - **リンク**: ウィンドウに残るのはボード自身のアドレスだけです。ほかのリンク、`target="_blank"`、`window.open` は既定のブラウザで開きます。
-- **Homebrew で入れる**: macOS では、`brew install syarihu/tap/agent-adjutant` で、`adj` と同じリリースからビルドした `Adjutant.app` も formula の prefix に入ります（v0.6.0 より後のリリースから）。Spotlight と Launchpad から開けるように、`/Applications` にコピーしてください（Spotlight はシンボリックリンクを拾いません）。コピーは `brew upgrade` で更新されません。アップグレードしたら、アプリを `Cmd+Q` で終了し（赤いボタンはウィンドウを隠すだけです）、コピーし直してからサーバーを再起動して（`adj server restart`。上の LaunchAgent で動かしているなら `launchctl kickstart -k gui/$(id -u)/adj.server`）、アプリを開きます。
+- **Homebrew で入れる**: macOS では、`brew install syarihu/tap/agent-adjutant` で、`adj` と同じリリースからビルドした `Adjutant.app` も formula の prefix に入ります（v0.7.0 から）。Spotlight と Launchpad から開けるように、`/Applications` にコピーしてください（Spotlight はシンボリックリンクを拾いません）。コピーは `brew upgrade` で更新されません。アップグレードしたら、アプリを `Cmd+Q` で終了し（赤いボタンはウィンドウを隠すだけです）、コピーし直してからサーバーを再起動して（`adj server restart`。上の LaunchAgent で動かしているなら `launchctl kickstart -k gui/$(id -u)/adj.server`）、アプリを開きます。
 
   ```bash
   # 先に隣へコピーするので、コピーに失敗しても入っているアプリは残る
