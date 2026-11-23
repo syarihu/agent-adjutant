@@ -6,12 +6,15 @@ workflow builds the binaries, but nothing updates the formula.
 
 ## Steps
 
-1. Bump `version` in `Cargo.toml` and run `cargo build` so `Cargo.lock` follows. Commit it as
-   "Bump version to X.Y.Z" and merge to `main`.
+1. Bump `version` in `Cargo.toml` and in `app/src-tauri/Cargo.toml` (the macOS app ships in the same
+   tarball; `make check` fails while the two differ). Run `cargo build` at the root and in
+   `app/src-tauri` so both `Cargo.lock` files follow. Commit it as "Bump version to X.Y.Z" and merge to
+   `main`.
 2. Tag the merge commit on `main` as `vX.Y.Z` and push the tag. Wait for the Release workflow
    (`.github/workflows/release.yml`) to finish. Check that the release has the four tarballs
    (`agent-adjutant-{aarch64,x86_64}-apple-darwin.tar.gz` and
-   `agent-adjutant-{aarch64,x86_64}-unknown-linux-gnu.tar.gz`) and `checksums.txt`.
+   `agent-adjutant-{aarch64,x86_64}-unknown-linux-gnu.tar.gz`) and `checksums.txt`. The two macOS
+   tarballs also hold `Adjutant.app`.
 3. In `syarihu/homebrew-tap`, update `Formula/agent-adjutant.rb`. Change the version in the four URLs and
    in the two `assert_match "adjutant X.Y.Z"` lines of the test. Change the four `sha256` values using
    `checksums.txt`: each tarball name maps to one `on_macos` / `on_linux` branch (`aarch64` is the
@@ -21,6 +24,8 @@ workflow builds the binaries, but nothing updates the formula.
    gh release download vX.Y.Z -R syarihu/agent-adjutant -p checksums.txt -O -
    ```
 
+   For the first release whose macOS tarballs hold `Adjutant.app`, also make the changes in
+   [The macOS app in the formula](#the-macos-app-in-the-formula).
    For the first release that contains #789, also add the `depends_on` lines and the `caveats` in
    [The formula's dependencies and caveats](#the-formulas-dependencies-and-caveats).
 
@@ -69,3 +74,43 @@ Why it looks like this:
 
 `adj server start` only starts the board. A check for what is missing before start is tracked in #790.
 When it ships, the caveats and the README may say so.
+
+## The macOS app in the formula
+
+From the first release whose macOS tarballs hold `Adjutant.app`, the formula installs the app into its
+prefix. Change `install`, add to `caveats` and `test`:
+
+```ruby
+  def install
+    bin.install "adjutant"
+    bin.install "adj"
+    # Tarballs before the app shipped have no Adjutant.app.
+    prefix.install "Adjutant.app" if OS.mac? && File.exist?("Adjutant.app")
+  end
+```
+
+In `caveats`, on macOS only (`if OS.mac?`), add:
+
+```text
+The macOS app is in #{opt_prefix}/Adjutant.app. Copy it to /Applications so Spotlight and Launchpad
+find it:
+  rm -rf /Applications/Adjutant.app
+  ditto #{opt_prefix}/Adjutant.app /Applications/Adjutant.app
+After brew upgrade, copy it again and reopen the app.
+```
+
+In `test`:
+
+```ruby
+    if OS.mac?
+      system "codesign", "--verify", "--deep", "--strict", "#{prefix}/Adjutant.app"
+    end
+```
+
+Why it looks like this:
+
+- The app is in the formula and not in a cask, because a formula download is not quarantined: the ad-hoc
+  signature (`bundle.macOS.signingIdentity` `"-"` in `app/src-tauri/tauri.conf.json`) is enough, with no
+  Developer ID or notarization. A cask would be quarantined.
+- The caveats copy the app instead of linking it, because Spotlight does not index a symbolic link to
+  an app.
