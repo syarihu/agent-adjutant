@@ -182,6 +182,13 @@ body.board-side .wk-term-head { padding-right: 44px; }
 button.wk-head-main { cursor: pointer; }
 button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-head-main[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+/* A heading whose main part is a button (a parent's) tones as a whole on hover and selection, as a row does, so its count, chips and fold
+   sit inside the tone. The heading is opaque (a repository's sticks), so the hover tone is mixed over the surface. */
+.wk-head:has(> button.wk-head-main) { border-radius: var(--md-shape-corner-md); }
+.wk-head:has(> button.wk-head-main):hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-hover), var(--md-sys-color-surface)); }
+.wk-head:has(> .wk-head-main[aria-current="true"]) { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--md-shape-corner-lg); }
+.wk-head:has(> .wk-head-main[aria-current="true"]):hover { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) var(--md-sys-state-hover), var(--md-sys-color-secondary-container)); }
+.wk-head > button.wk-head-main:is(:hover, [aria-current="true"]) { background: transparent; }
 .wk-head-name { min-width: 0; overflow-wrap: anywhere; font: var(--md-sys-typescale-title-small); }
 .wk-head-name .key { font-family: var(--font-mono); margin-right: 6px; color: var(--md-sys-color-primary); }
 .wk-head-sub { font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; }
@@ -295,13 +302,16 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-branch { font-family: var(--font-mono); }
 .wk-line { font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .wk-row[aria-current="true"] .wk-line { color: inherit; }
-/* What the row waits on is a tonal chip: the warning tone for a decision, the error tone for a permission its agent asks in the terminal. */
+/* What the row waits on is a tonal chip: the warning tone for a decision, the error tone for a permission its agent asks in the terminal.
+   One line, cut with an ellipsis (the full text is the chip's title): a pill that wrapped would grow into a blob. A block, not a flex box,
+   so text-overflow applies; the icon is an inline box on the line. */
 .wk-gate, .wk-line.ask {
-  display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin-top: 2px; padding: 2px 10px 2px 6px;
+  display: block; width: fit-content; max-width: 100%; box-sizing: border-box; margin-top: 2px; padding: 2px 10px 2px 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal;
   font: var(--md-sys-typescale-label-small); font-weight: 700; border-radius: var(--md-shape-corner-full);
   background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container);
 }
-.wk-gate::before, .wk-line.ask::before { font-family: 'Material Symbols Outlined'; font-size: 15px; font-weight: normal; line-height: 1; }
+.wk-gate::before, .wk-line.ask::before { display: inline-block; margin-right: 4px; vertical-align: -3px; font-family: 'Material Symbols Outlined'; font-size: 15px; font-weight: normal; line-height: 1; }
 .wk-gate::before { content: 'rate_review'; content: 'rate_review' / ''; }
 .wk-line.ask::before { content: 'pending_actions'; content: 'pending_actions' / ''; }
 .wk-row.permission .wk-line.ask { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
@@ -317,9 +327,27 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 #wk-groups .wk-body > :is(.wk-row, .wk-band-row) { position: relative; margin-bottom: 1px; }
 #wk-groups .wk-body > :is(.wk-row, .wk-band-row)::after { content: ''; position: absolute; left: var(--wk-text-col); right: 0; bottom: -1px; height: 1px; background: var(--wk-rule); }
 #wk-groups .wk-body > :is(.wk-row, .wk-band-row):last-child::after,
-#wk-groups .wk-body > :is(.wk-row:is(:hover, [aria-current="true"]), .wk-band-row:has(> .wk-row:is(:hover, [aria-current="true"])))::after,
-#wk-groups .wk-body > :is(.wk-row, .wk-band-row):has(+ .wk-row:is(:hover, [aria-current="true"]), + .wk-band-row > .wk-row:is(:hover, [aria-current="true"]))::after { opacity: 0; }
+#wk-groups .wk-body > :is(.wk-row:is(:hover, [aria-current="true"]), .wk-band-row:is(:hover, :has(> .wk-row[aria-current="true"])))::after,
+#wk-groups .wk-body > :is(.wk-row, .wk-band-row):has(+ .wk-row:is(:hover, [aria-current="true"]), + .wk-band-row:hover, + .wk-band-row > .wk-row[aria-current="true"])::after { opacity: 0; }
 .wk-band-row .wk-row { flex: 1; min-width: 0; width: auto; }
+/* A row with things beside it (its buttons, the lines under it, or the count and fold of the hub that heads a group) is one container:
+   hover, selection and press tone the container, not the row button inside it, so nothing it holds sits outside the tone.
+   A PR row of 「他の人の PR」 lays its buttons over its row (.ov-row-wrap) and keeps the tone on the row. */
+:is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead) {
+  border-radius: var(--md-shape-corner-md);
+  transition:
+    border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial),
+    transform var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial),
+    background-color var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects);
+}
+:is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead) .wk-row:is(:hover, :active, [aria-current="true"], [aria-current="true"]:hover) { background: transparent; transform: none; }
+:is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead):hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-hover), transparent); }
+:is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead):has(.wk-row:active) { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-pressed), transparent); transform: scale(.98); }
+:is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead):has(.wk-row[aria-current="true"]) { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--md-shape-corner-lg); }
+:is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead):has(.wk-row[aria-current="true"]):hover { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) var(--md-sys-state-hover), var(--md-sys-color-secondary-container)); }
+/* The hub's row inside a group's head: the head is the container, so the row's own wrapper draws nothing (the class is doubled to
+   outweigh the container rules above). */
+.wk-hubhead > .wk-band-row.wk-band-row:is(:hover, :has(.wk-row:active), :has(.wk-row[aria-current="true"])) { background: transparent; transform: none; }
 /* The line under a merged row: what removing its worktree would lose, and the button when nothing would be. */
 .wk-band-row.wk-clean-row { flex-wrap: wrap; row-gap: 0; }
 .wk-clean-row .wk-row { flex: 1 1 0; }
@@ -328,15 +356,20 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-clean-line .material-symbols-outlined { font-size: 15px; flex: none; }
 .wk-clean.bad { color: var(--md-sys-color-error); }
 .wk-clean-btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
-/* A hub that heads a group: its row, then its count and fold at the right end; the tasks it runs are indented under its text. */
-.wk-hubhead { display: flex; align-items: center; min-width: 0; }
+/* A hub that heads a group: its row, then its count and fold at the right end, in line with the row's first line (its icon), so lines
+   under the row (unread requests, why a wake typed nothing) do not pull them down; the tasks it runs are indented under its text. */
+.wk-hubhead { display: flex; align-items: flex-start; min-width: 0; }
 .wk-hubhead > .wk-head { display: contents; }
-.wk-hubhead .wk-fold { order: 4; margin: 0 2px 0 0; }
-.wk-hubhead > .wk-band-row { order: 2; flex: 1; min-width: 0; padding: 0; }
+.wk-hubhead .wk-fold { order: 4; margin: 8px 4px 0 0; }
+.wk-hubhead > :is(.wk-band-row, .wk-row) { order: 2; flex: 1; min-width: 0; }
+.wk-hubhead > .wk-band-row { padding: 0; }
 /* With no count under it, the fold that comes out on hover would sit over the row's own buttons: the row leaves it room. */
-#wk-groups .wk-hubhead:not(:has(.wk-count)) > .wk-band-row { margin-right: 32px; }
-.wk-hubhead .wk-count, .wk-hubhead .wk-sum { order: 3; margin-right: 6px; }
-.wk-hubhead .wk-count { margin-right: 4px; padding: 0; min-width: 0; background: transparent; font: var(--md-sys-typescale-label-large); color: var(--md-sys-color-outline); }
+#wk-groups .wk-hubhead:not(:has(.wk-count)) > :is(.wk-band-row, .wk-row) { margin-right: 32px; }
+.wk-hubhead .wk-sum { order: 3; margin: 13px 6px 0 0; }
+/* The count is as wide as the fold, so the fold that takes its place on hover covers it and stays inside the head. */
+.wk-hubhead .wk-count { order: 3; margin: 12px 4px 0 0; padding: 0; min-width: 28px; background: transparent; font: var(--md-sys-typescale-label-large); color: var(--md-sys-color-outline); }
+/* On the selected head's tone the quiet outline colour would not read: the count takes the tone's text colour, as the row's text does. */
+.wk-hubhead:has(.wk-row[aria-current="true"]) .wk-count { color: inherit; }
 .wk-kids { margin-left: calc(var(--wk-text-col) - 8px); }
 /* Requests waiting unread in a hub's inbox: a line of its own under the row, in the warning tone, with the button that starts the hub. */
 .wk-inbox-req { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 8px 4px 36px; padding: 4px 8px;
@@ -359,7 +392,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 /* The reason a wake typed nothing takes a line of its own under the row; empty, it takes no line (it stays in the markup so that its text is announced). */
 .wk-hub-row > .wk-hub-why { flex-basis: 100%; }
 .wk-hub-row > .wk-hub-why:empty { flex-basis: 0; }
-.wk-acts { flex: none; display: inline-flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+.wk-acts { flex: none; display: inline-flex; flex-direction: column; gap: 2px; padding: 6px 4px 0 0; }
 .wk-act {
   display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; cursor: pointer;
   padding: 3px; border-radius: 50%; color: var(--md-sys-color-on-surface-variant);
@@ -375,13 +408,13 @@ button.wk-head-main:hover { background: var(--wk-hover); }
   #wk-groups .wk-hubhead { position: relative; }
   #wk-groups .wk-head.repo .wk-fold, #wk-groups .wk-hubhead .wk-fold { position: absolute; right: 4px; opacity: 0; }
   #wk-groups .wk-head.repo .wk-fold { top: 1px; }
-  #wk-groups .wk-hubhead .wk-fold { top: calc(50% - 14px); margin: 0; }
+  #wk-groups .wk-hubhead .wk-fold { top: 8px; margin: 0; }
   #wk-groups .wk-head.repo:is(:hover, :focus-within) .wk-fold, #wk-groups .wk-hubhead:is(:hover, :focus-within) .wk-fold { opacity: 1; }
   #wk-groups .wk-head.repo:is(:hover, :focus-within) .wk-count, #wk-groups .wk-hubhead:is(:hover, :focus-within) .wk-count { visibility: hidden; }
   #wk-groups .wk-head.repo .wk-count { margin-right: 0; }
   #wk-groups .wk-head.repo .wk-head-main { margin-right: auto; }
   #wk-groups .wk-acts { opacity: 0; transition: opacity var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects); }
-  #wk-groups .wk-band-row:is(:hover, :focus-within) .wk-acts { opacity: 1; }
+  #wk-groups :is(.wk-band-row, .wk-hubhead):is(:hover, :focus-within) .wk-acts { opacity: 1; }
 }
 .wk-ctx { display: inline-flex; align-items: center; gap: 4px; }
 .wk-ctx-bar { width: 38px; height: 4px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
@@ -412,8 +445,8 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 @keyframes wk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .wk-glyph.working, .wk-glyph.restarting { animation: none; }
-  .wk-row, .wk-row .wk-glyph, .wk-fold, .wk-fold .material-symbols-outlined, .wk-act, .wk-acts, #wk-groups .wk-acts { transition: none; }
-  .wk-row:active { transform: none; }
+  .wk-row, .wk-row .wk-glyph, .wk-fold, .wk-fold .material-symbols-outlined, .wk-act, .wk-acts, #wk-groups .wk-acts, :is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead) { transition: none; }
+  .wk-row:active, :is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead):has(.wk-row:active) { transform: none; }
 }
 
 /* The rate limits, pinned to the bottom of the list column. */
