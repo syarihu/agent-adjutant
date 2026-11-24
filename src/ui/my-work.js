@@ -1808,7 +1808,9 @@ function toggleWorkFold(key) {
   if (typeof Element.prototype.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return apply();
   const css = getComputedStyle(document.documentElement);
   const duration = parseFloat(css.getPropertyValue('--md-sys-motion-spring-fast-spatial-duration')) || 350;
-  const easing = css.getPropertyValue('--md-sys-motion-spring-fast-spatial').trim() || 'ease';
+  // An engine that cannot parse the spring's linear() would make animate() throw: it gets a plain ease.
+  const spring = css.getPropertyValue('--md-sys-motion-spring-fast-spatial').trim();
+  const easing = spring && CSS.supports('transition-timing-function', spring) ? spring : 'ease';
   const run = (el, from, to, done) => {
     el.style.overflow = 'hidden';
     const anim = el.animate([from, to], { duration, easing });
@@ -1828,6 +1830,9 @@ function toggleWorkFold(key) {
     // Closing: the body shrinks away, then the list is drawn without it (also when the list was drawn again meanwhile and the body is gone).
     const body = bodyOf();
     if (!body) return apply();
+    // What is inside is about to go: it takes no focus while it shrinks, and focus inside it moves to the fold button.
+    if (body.contains(document.activeElement)) wk('wk-list').querySelector(`[data-wk-fold="${CSS.escape(key)}"]`)?.focus();
+    body.inert = true;
     return run(body, { height: `${body.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }, apply);
   }
   // Opening: the list is drawn with the body, which then grows from nothing.

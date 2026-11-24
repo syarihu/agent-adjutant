@@ -40,3 +40,20 @@ test('the rule between rows is drawn under a plain row as well as under a wrappe
   assert.ok(rule, 'the divider rule is found');
   assert.match(rule[1], /\.wk-body\s*>\s*:is\(\.wk-row,\s*\.wk-band-row\)::after/, 'it covers a bare .wk-row and a .wk-band-row');
 });
+
+test('no selector nests :has() inside :has(), which CSS does not allow', () => {
+  // Walk each selector's parentheses, remembering which open ones are a :has(.
+  const nests = selector => {
+    const open = [];
+    for (let i = 0; i < selector.length; i++) {
+      if (selector[i] === '(') {
+        const has = selector.slice(Math.max(0, i - 4), i) === ':has';
+        if (has && open.includes(true)) return true;
+        open.push(has);
+      } else if (selector[i] === ')') open.pop();
+    }
+    return false;
+  };
+  assert.ok(nests('.a:has(+ :is(.b, .c:has(> .d)))'), 'the check sees a nested :has()');
+  for (const [, selector] of css.matchAll(/([^{}]+)\{[^{}]*\}/g)) assert.ok(!nests(selector), `${selector.trim()} nests :has()`);
+});

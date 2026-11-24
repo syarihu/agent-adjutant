@@ -318,7 +318,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 #wk-groups .wk-body > :is(.wk-row, .wk-band-row)::after { content: ''; position: absolute; left: var(--wk-text-col); right: 0; bottom: -1px; height: 1px; background: var(--wk-rule); }
 #wk-groups .wk-body > :is(.wk-row, .wk-band-row):last-child::after,
 #wk-groups .wk-body > :is(.wk-row:is(:hover, [aria-current="true"]), .wk-band-row:has(> .wk-row:is(:hover, [aria-current="true"])))::after,
-#wk-groups .wk-body > :is(.wk-row, .wk-band-row):has(+ :is(.wk-row:is(:hover, [aria-current="true"]), .wk-band-row:has(> .wk-row:is(:hover, [aria-current="true"]))))::after { opacity: 0; }
+#wk-groups .wk-body > :is(.wk-row, .wk-band-row):has(+ .wk-row:is(:hover, [aria-current="true"]), + .wk-band-row > .wk-row:is(:hover, [aria-current="true"]))::after { opacity: 0; }
 .wk-band-row .wk-row { flex: 1; min-width: 0; width: auto; }
 /* The line under a merged row: what removing its worktree would lose, and the button when nothing would be. */
 .wk-band-row.wk-clean-row { flex-wrap: wrap; row-gap: 0; }
@@ -412,7 +412,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 @keyframes wk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .wk-glyph.working, .wk-glyph.restarting { animation: none; }
-  .wk-row, .wk-row .wk-glyph, .wk-fold, .wk-fold .material-symbols-outlined, .wk-act, .wk-acts { transition: none; }
+  .wk-row, .wk-row .wk-glyph, .wk-fold, .wk-fold .material-symbols-outlined, .wk-act, .wk-acts, #wk-groups .wk-acts { transition: none; }
   .wk-row:active { transform: none; }
 }
 
