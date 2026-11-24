@@ -738,11 +738,11 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   const meta = [
     workAwayChip(r.away),
     ...(parent ? workParentMeta(parent) : []),
-    s.branch && !r.isHub ? esc(s.branch) : '',
+    s.branch && !r.isHub ? { html: esc(s.branch), cls: 'wk-branch' } : '',
     ...inbox,
     idle ? esc(idle) : '',
     r.isHub ? esc(r.word || workHubWord(st)) : '',
-  ].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (merged ? workMergedEnd(prNumber) : diff ? `<span class="wk-end">${diff}</span>` : '');
+  ].filter(Boolean).map(x => typeof x === 'string' ? `<span>${x}</span>` : `<span class="${x.cls}">${x.html}</span>`).join('') + (merged ? workMergedEnd(prNumber) : diff ? `<span class="wk-end">${diff}</span>` : '');
   // The gate is first unless the worker went on past it; its line is drawn either way, for it can still be answered.
   const first = gateFirst(s, data);
   const askText = a.request ? requestText(s) : (s.prompt ? workPromptText(s.prompt, s) : '');
@@ -1792,15 +1792,61 @@ function renderWorkTabs() {
   renderOthersStaleDot();
 }
 
+/* Folds or opens a group, with its body sliding in or out. Folding animates first and then renders, as the body is gone from the markup
+   once folded; opening renders first and then animates the new body. Without motion (reduced motion, or no Element.animate) it is just
+   the toggle. The inline overflow lives only as long as the animation: the stylesheet must not set it on a group (see my-work.css). */
+let workFoldBusy = false;
+function toggleWorkFold(key) {
+  const apply = () => {
+    const at = prefs.workFolded.indexOf(key);
+    if (at >= 0) prefs.workFolded.splice(at, 1); else prefs.workFolded.push(key);
+    savePrefs();
+    renderWorkList();
+  };
+  const bodyOf = () => wk('wk-list').querySelector(`[data-wk-g="${CSS.escape(key)}"] > .wk-body`);
+  if (workFoldBusy) return;
+  if (typeof Element.prototype.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return apply();
+  const css = getComputedStyle(document.documentElement);
+  const duration = parseFloat(css.getPropertyValue('--md-sys-motion-spring-fast-spatial-duration')) || 350;
+  // An engine that cannot parse the spring's linear() would make animate() throw: it gets a plain ease.
+  const spring = css.getPropertyValue('--md-sys-motion-spring-fast-spatial').trim();
+  const easing = spring && CSS.supports('transition-timing-function', spring) ? spring : 'ease';
+  const run = (el, from, to, done) => {
+    el.style.overflow = 'hidden';
+    const anim = el.animate([from, to], { duration, easing });
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      el.style.overflow = '';
+      workFoldBusy = false;
+      done();
+    };
+    workFoldBusy = true;
+    anim.onfinish = end;
+    anim.oncancel = end;
+  };
+  if (!prefs.workFolded.includes(key)) {
+    // Closing: the body shrinks away, then the list is drawn without it (also when the list was drawn again meanwhile and the body is gone).
+    const body = bodyOf();
+    if (!body) return apply();
+    // What is inside is about to go: it takes no focus while it shrinks, and focus inside it moves to the fold button.
+    if (body.contains(document.activeElement)) wk('wk-list').querySelector(`[data-wk-fold="${CSS.escape(key)}"]`)?.focus();
+    body.inert = true;
+    return run(body, { height: `${body.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }, apply);
+  }
+  // Opening: the list is drawn with the body, which then grows from nothing.
+  apply();
+  const body = bodyOf();
+  if (body) run(body, { height: '0px', opacity: 0 }, { height: `${body.scrollHeight}px`, opacity: 1 }, () => {});
+}
+
 wk('wk-list').addEventListener('click', e => {
   let b;
   if (e.target.closest('[data-wk-read-all]')) return workReadAll();
   if ((b = e.target.closest('[data-wk-read]'))) return workMarkRow(b.dataset.wkRead, { read: workServerNow(), left: workServerNow() });
   if ((b = e.target.closest('[data-wk-fold]'))) {
-    const at = prefs.workFolded.indexOf(b.dataset.wkFold);
-    if (at >= 0) prefs.workFolded.splice(at, 1); else prefs.workFolded.push(b.dataset.wkFold);
-    savePrefs();
-    return renderWorkList();
+    return toggleWorkFold(b.dataset.wkFold);
   }
   if ((b = e.target.closest('[data-wk-wake]'))) {
     const c = work.hubsByKey.get(b.dataset.wkWake);

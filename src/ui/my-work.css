@@ -147,33 +147,33 @@ body.board-side .wk-term-head { padding-right: 44px; }
 .org-item[aria-checked="false"] .org-check { visibility: hidden; }
 .org-item-count.zero { visibility: hidden; }
 .wk-list-scroll[hidden] { display: none; }
-.wk-list-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 12px; }
+/* The text column of a row (its icon and gap): where the rule between rows starts and where a hub's tasks are indented to. */
+.wk-list-scroll { --wk-text-col: 46px; --wk-rule: var(--md-sys-color-outline-variant); flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
 .wk-empty { padding: 14px 8px; font-size: 12.5px; color: var(--md-sys-color-outline); }
 .wk-empty-none { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 30px 12px; text-align: center; color: var(--md-sys-color-on-surface-variant); }
 .wk-empty-none .material-symbols-outlined { font-size: 32px; }
 
 /* Headers: an owner, a repository, a parent issue, a box, a box's repository. They fold. */
-/* Each group is a card around its heading and rows, a step stronger per level and the same from the third on. */
-.wk-group {
-  --wk-card-bg: var(--wk-card-1); --wk-card-line: var(--wk-card-line-1);
-  margin-top: 10px; background: var(--wk-card-bg);
-  border: 1px solid var(--wk-card-line); border-radius: var(--md-shape-corner-md);
-}
-.wk-group .wk-group { --wk-card-bg: var(--wk-card-2); --wk-card-line: var(--wk-card-line-2); margin-top: 6px; }
-.wk-group .wk-group .wk-group { --wk-card-bg: var(--wk-card-3); --wk-card-line: var(--wk-card-line-3); }
-/* No overflow on a card: it would become the scroll container and the repository heading would stop sticking. */
+/* Groups are told apart by whitespace, a bold heading with a rule under it and indentation, not by boxes: no fill, no outline. */
+.wk-group { margin-top: 0; }
+#wk-groups > .wk-group, #ov-groups > .wk-group { padding-top: 22px; }
+#wk-groups > .wk-group:first-child, #ov-groups > .wk-group:first-child { padding-top: 10px; }
+/* No overflow on a group: it would become the scroll container and the repository heading would stop sticking. */
 .wk-head {
-  display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px;
-  background: var(--wk-card-bg); border-bottom: 1px solid var(--wk-card-line);
-  border-radius: calc(var(--md-shape-corner-md) - 1px) calc(var(--md-shape-corner-md) - 1px) 0 0;
+  display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px;
+  background: var(--md-sys-color-surface);
 }
-/* A folded card is its heading alone. */
-.wk-head:last-child { border-bottom: 0; border-radius: calc(var(--md-shape-corner-md) - 1px); }
-/* Takes the card's own opaque colour, so the rows scrolling under a stuck heading do not show through. */
-.wk-head.repo { position: sticky; top: 0; z-index: 2; }
+/* Opaque, so the rows scrolling under a stuck heading do not show through. */
+.wk-head.repo { position: sticky; top: 0; z-index: 2; padding: 4px 4px 8px 8px; margin-bottom: 4px; box-shadow: inset 0 -1px 0 var(--wk-rule); }
 .wk-head.owner .wk-head-name { font-weight: 900; }
-.wk-fold { flex: none; display: inline-flex; border: 0; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: 50%; }
-.wk-fold .material-symbols-outlined { font-size: 18px; transition: transform .15s; }
+.wk-fold {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; background: transparent;
+  color: var(--md-sys-color-on-surface-variant); cursor: pointer; padding: 2px; border-radius: var(--md-shape-corner-full);
+  transition: background-color var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects);
+}
+.wk-fold:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
+.wk-fold:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-hover), transparent); }
+.wk-fold .material-symbols-outlined { font-size: 18px; transition: transform var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial); }
 .wk-fold[aria-expanded="false"] .material-symbols-outlined { transform: rotate(-90deg); }
 .wk-head-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left; border: 0;
@@ -182,21 +182,33 @@ body.board-side .wk-term-head { padding-right: 44px; }
 button.wk-head-main { cursor: pointer; }
 button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-head-main[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.wk-head-name { min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; font-weight: 800; line-height: 1.35; }
+.wk-head-name { min-width: 0; overflow-wrap: anywhere; font: var(--md-sys-typescale-title-small); }
 .wk-head-name .key { font-family: var(--font-mono); margin-right: 6px; color: var(--md-sys-color-primary); }
 .wk-head-sub { font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; }
 .wk-next { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); cursor: pointer; white-space: nowrap; }
 .wk-next input { margin: 0; cursor: pointer; }
-.wk-count { flex: none; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; }
-.wk-body { padding: 3px 4px 4px; }
+.wk-count {
+  flex: none; min-width: 24px; padding: 2px 8px; text-align: center; white-space: nowrap; font: var(--md-sys-typescale-label-medium);
+  color: var(--md-sys-color-on-surface-variant); border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-surface-container-highest);
+}
+/* A repository heading: the folder icon, a bold name and a quiet count beside it, the fold at the right end. */
+.wk-head.repo .wk-head-main { flex: 0 1 auto; padding: 0; }
+.wk-head.repo .wk-head-name { display: inline-flex; align-items: center; gap: 10px; font: var(--md-sys-typescale-title-medium-emphasized); color: var(--md-sys-color-on-surface); }
+.wk-head.repo .wk-head-name::before { content: 'folder'; content: 'folder' / ''; font-family: 'Material Symbols Outlined'; font-weight: normal; font-size: 20px; color: var(--md-sys-color-on-surface-variant); width: 28px; text-align: center; }
+.wk-head.repo .wk-count { margin-right: auto; padding: 0; min-width: 0; background: transparent; font: var(--md-sys-typescale-label-large); color: var(--md-sys-color-outline); }
+.wk-head.repo .wk-fold { order: 9; }
+/* Chips and badges share the pill shape and the small label type. */
+.wk-away, .wk-tag, .wk-stack, .wk-head-inbox {
+  display: inline-flex; align-items: center; padding: 0 8px; border-radius: var(--md-shape-corner-full); font: var(--md-sys-typescale-label-small); font-weight: 700;
+}
 /* What the hub's inbox holds, on the heading of the group it heads: the warning tone, with its own text so contrast holds in dark mode. */
-.wk-head-inbox { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 11px; font-weight: 700; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
+.wk-head-inbox { margin-left: 6px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 /* The hubs of a folded heading are chips on it, beside the heading's own button; opened, they are rows below. */
 .wk-hubs { flex: none; display: inline-flex; flex-wrap: wrap; gap: 4px; max-width: 55%; justify-content: flex-end; }
 .wk-hub {
-  display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: var(--md-shape-corner-full); cursor: pointer;
   border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-highest);
-  color: var(--md-sys-color-on-surface); font: inherit; font-size: 11px; font-weight: 700; line-height: 1.5;
+  color: var(--md-sys-color-on-surface); font: var(--md-sys-typescale-label-small); font-weight: 700;
 }
 .wk-hub .material-symbols-outlined { font-size: 14px; }
 .wk-hub:hover { background: var(--wk-hover); }
@@ -207,9 +219,9 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-hub-word { font-weight: 600; }
 /* The wake button of a hub that has unseen messages: a sibling of its chip, and the reason it did not wake under both. */
 .wk-hub-wake {
-  display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px; border-radius: 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px; border-radius: var(--md-shape-corner-full); cursor: pointer;
   border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-highest);
-  color: var(--md-sys-color-on-surface); font: inherit; font-size: 11px; font-weight: 700; line-height: 1.5;
+  color: var(--md-sys-color-on-surface); font: var(--md-sys-typescale-label-small); font-weight: 700;
 }
 .wk-hub-wake .material-symbols-outlined { font-size: 14px; }
 .wk-hub-wake:hover:not(:disabled) { background: var(--wk-hover); }
@@ -223,7 +235,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 /* A hub's row has the mark in its title line, which has its own gap. */
 .wk-title .hub-title-mark { margin: 0 4px 0 0; }
 /* Waiting on the person: the warning tone while it is new, a quiet one once it was read. */
-.wk-hub-wait { display: inline-flex; align-items: center; gap: 1px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); color: var(--md-sys-color-on-surface-variant); }
+.wk-hub-wait { display: inline-flex; align-items: center; gap: 1px; padding: 0 5px; border-radius: var(--md-shape-corner-full); border: 1px solid var(--md-sys-color-outline); color: var(--md-sys-color-on-surface-variant); }
 .wk-hub-wait.new { border-color: transparent; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .wk-hub-wait .material-symbols-outlined { font-size: 13px; }
 /* What a folded header still says: how many rows are in each state. */
@@ -243,18 +255,25 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-bar i.pr, .wk-dot.pr { background: var(--md-sys-color-tertiary); }
 .wk-bar i.working, .wk-dot.working { background: var(--md-sys-color-primary); }
 .wk-bar i.not-started { background: var(--md-sys-color-outline-variant); }
-.wk-stack { font-size: 10.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.wk-stack { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
 
-/* A row: the state icon, then what the session is and says. */
+/* A row: the state icon, then what the session is and says. Flat; hover and selection draw a rounded tone, and a press shrinks it a little. */
 .wk-row {
-  display: flex; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; text-align: left;
-  padding: 7px 8px; border: 0; border-radius: var(--md-shape-corner-sm); background: transparent;
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; min-width: 0; text-align: left;
+  padding: 8px; border: 0; border-radius: var(--md-shape-corner-md); background: transparent;
   color: var(--md-sys-color-on-surface); cursor: pointer; font: inherit;
+  transition:
+    border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial),
+    transform var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial),
+    background-color var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects);
 }
-.wk-row:hover { background: var(--wk-hover); }
-.wk-row[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.wk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wk-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
+.wk-row:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-hover), transparent); }
+.wk-row:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-pressed), transparent); transform: scale(.98); }
+.wk-row:focus-visible { outline: 3px solid var(--md-sys-color-secondary); outline-offset: 2px; }
+.wk-row[aria-current="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--md-shape-corner-lg); }
+.wk-row[aria-current="true"]:hover { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) var(--md-sys-state-hover), var(--md-sys-color-secondary-container)); }
+.wk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.wk-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font: var(--md-sys-typescale-label-small); color: var(--md-sys-color-on-surface-variant); }
 .wk-sep { opacity: .7; }
 .wk-who { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
 .wk-agent-icon { font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
@@ -264,29 +283,42 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-hk { font-weight: 700; color: var(--md-sys-color-tertiary); }
 .wk-row[aria-current="true"] .wk-hk { color: inherit; }
 .wk-row[aria-current="true"] .wk-agent, .wk-row[aria-current="true"] .wk-meta { color: inherit; }
-.wk-title { overflow-wrap: anywhere; font-size: 12.5px; font-weight: 600; line-height: 1.35; }
-/* A row that waits on the person tints its title and the line that says what for: warning for a decision, error for a permission
-   its agent asks in the terminal; a finished row's title is the colour of its ✓. Scoped to the row's state class, so the other
-   lists that reuse .wk-row are untouched. */
-.wk-row.waiting .wk-title, .wk-row.waiting .wk-gate { color: var(--md-sys-color-warning); }
-.wk-row.permission .wk-title, .wk-row.permission .wk-line.ask { color: var(--md-sys-color-error); }
-.wk-row.done .wk-title { color: var(--md-sys-color-success); }
-.wk-tag { font-size: 10.5px; font-weight: 800; padding: 0 6px; border-radius: 8px; margin-right: 6px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.wk-meta { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; color: var(--md-sys-color-on-surface-variant); font-family: var(--font-mono); }
-.wk-meta .sub { font-family: inherit; color: var(--md-sys-color-tertiary); }
+/* The state is told by the icon's container, not by the colour of the title. */
+.wk-title { overflow-wrap: anywhere; font: var(--md-sys-typescale-title-small); }
+.wk-tag { margin-right: 6px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.wk-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); }
+.wk-meta .sub { color: var(--md-sys-color-tertiary); }
 .wk-row[aria-current="true"] .wk-meta .sub { color: inherit; }
 .wk-meta .wk-end { margin-left: auto; }
 .wk-meta .add { color: var(--md-sys-color-success); }
 .wk-meta .del { color: var(--md-sys-color-error); }
-.wk-line { font-size: 11px; font-family: var(--font-mono); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
-.wk-line.ask { color: var(--md-sys-color-warning); }
-.wk-line.tree { color: var(--md-sys-color-tertiary); }
+.wk-branch { font-family: var(--font-mono); }
+.wk-line { font: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.wk-row[aria-current="true"] .wk-line { color: inherit; }
+/* What the row waits on is a tonal chip: the warning tone for a decision, the error tone for a permission its agent asks in the terminal. */
+.wk-gate, .wk-line.ask {
+  display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin-top: 2px; padding: 2px 10px 2px 6px;
+  font: var(--md-sys-typescale-label-small); font-weight: 700; border-radius: var(--md-shape-corner-full);
+  background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container);
+}
+.wk-gate::before, .wk-line.ask::before { font-family: 'Material Symbols Outlined'; font-size: 15px; font-weight: normal; line-height: 1; }
+.wk-gate::before { content: 'rate_review'; content: 'rate_review' / ''; }
+.wk-line.ask::before { content: 'pending_actions'; content: 'pending_actions' / ''; }
+.wk-row.permission .wk-line.ask { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.wk-row.permission .wk-line.ask::before { content: 'gpp_maybe'; content: 'gpp_maybe' / ''; }
+.wk-line.tree { font-family: var(--font-mono); color: var(--md-sys-color-tertiary); }
 /* What the agent last said, on one line; and the line of a parked row. */
-.wk-line.msg { font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
-.wk-line.parked { font-family: inherit; font-weight: 700; color: var(--md-sys-color-outline); }
+.wk-line.msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+.wk-line.parked { font-weight: 700; color: var(--md-sys-color-outline); }
 .wk-row[aria-current="true"] .wk-line.parked { color: inherit; }
 /* The rows of 新着: the row, and its buttons beside it. */
-.wk-band-row { display: flex; align-items: flex-start; gap: 2px; min-width: 0; }
+.wk-band-row { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+/* An inset rule between the rows, from the text column on; it gives way around a hovered or selected row, which draws its own tone. */
+#wk-groups .wk-body > :is(.wk-row, .wk-band-row) { position: relative; margin-bottom: 1px; }
+#wk-groups .wk-body > :is(.wk-row, .wk-band-row)::after { content: ''; position: absolute; left: var(--wk-text-col); right: 0; bottom: -1px; height: 1px; background: var(--wk-rule); }
+#wk-groups .wk-body > :is(.wk-row, .wk-band-row):last-child::after,
+#wk-groups .wk-body > :is(.wk-row:is(:hover, [aria-current="true"]), .wk-band-row:has(> .wk-row:is(:hover, [aria-current="true"])))::after,
+#wk-groups .wk-body > :is(.wk-row, .wk-band-row):has(+ .wk-row:is(:hover, [aria-current="true"]), + .wk-band-row > .wk-row:is(:hover, [aria-current="true"]))::after { opacity: 0; }
 .wk-band-row .wk-row { flex: 1; min-width: 0; width: auto; }
 /* The line under a merged row: what removing its worktree would lose, and the button when nothing would be. */
 .wk-band-row.wk-clean-row { flex-wrap: wrap; row-gap: 0; }
@@ -296,13 +328,16 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-clean-line .material-symbols-outlined { font-size: 15px; flex: none; }
 .wk-clean.bad { color: var(--md-sys-color-error); }
 .wk-clean-btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 1px; }
-/* A hub that heads a group: its row beside the fold button, the tasks it runs indented below it. */
-.wk-hubhead { display: flex; align-items: flex-start; min-width: 0; }
+/* A hub that heads a group: its row, then its count and fold at the right end; the tasks it runs are indented under its text. */
+.wk-hubhead { display: flex; align-items: center; min-width: 0; }
 .wk-hubhead > .wk-head { display: contents; }
-.wk-hubhead .wk-fold { order: 1; align-self: center; margin-left: 4px; }
-.wk-hubhead > .wk-band-row { order: 2; flex: 1; min-width: 0; padding: 3px 4px; }
-.wk-hubhead .wk-count, .wk-hubhead .wk-sum { order: 3; align-self: center; margin-right: 6px; }
-.wk-kids { margin-left: 14px; padding-left: 4px; border-left: 2px solid var(--wk-card-line); }
+.wk-hubhead .wk-fold { order: 4; margin: 0 2px 0 0; }
+.wk-hubhead > .wk-band-row { order: 2; flex: 1; min-width: 0; padding: 0; }
+/* With no count under it, the fold that comes out on hover would sit over the row's own buttons: the row leaves it room. */
+#wk-groups .wk-hubhead:not(:has(.wk-count)) > .wk-band-row { margin-right: 32px; }
+.wk-hubhead .wk-count, .wk-hubhead .wk-sum { order: 3; margin-right: 6px; }
+.wk-hubhead .wk-count { margin-right: 4px; padding: 0; min-width: 0; background: transparent; font: var(--md-sys-typescale-label-large); color: var(--md-sys-color-outline); }
+.wk-kids { margin-left: calc(var(--wk-text-col) - 8px); }
 /* Requests waiting unread in a hub's inbox: a line of its own under the row, in the warning tone, with the button that starts the hub. */
 .wk-inbox-req { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 8px 4px 36px; padding: 4px 8px;
   border-radius: 8px; font-size: 11.5px; background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
@@ -328,19 +363,39 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-act {
   display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; cursor: pointer;
   padding: 3px; border-radius: 50%; color: var(--md-sys-color-on-surface-variant);
+  transition: background-color var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects);
 }
+.wk-acts .wk-act { width: 32px; height: 32px; }
 .wk-act:hover, .wk-act:focus-visible { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
 .wk-act .material-symbols-outlined { font-size: 18px; }
 .wk-head .wk-act { flex: none; }
-.wk-gate { display: block; font-size: 11.5px; font-weight: 700; color: var(--md-sys-color-warning); overflow-wrap: anywhere; }
+/* The fold and the row's buttons come out on hover (or keyboard focus); until then a heading shows its count in the fold's place. Without hover they stay out. */
+@media (hover: hover) {
+  /* Hidden, not removed: the fold stays a tab stop over the count, and focusing it brings it out. */
+  #wk-groups .wk-hubhead { position: relative; }
+  #wk-groups .wk-head.repo .wk-fold, #wk-groups .wk-hubhead .wk-fold { position: absolute; right: 4px; opacity: 0; }
+  #wk-groups .wk-head.repo .wk-fold { top: 1px; }
+  #wk-groups .wk-hubhead .wk-fold { top: calc(50% - 14px); margin: 0; }
+  #wk-groups .wk-head.repo:is(:hover, :focus-within) .wk-fold, #wk-groups .wk-hubhead:is(:hover, :focus-within) .wk-fold { opacity: 1; }
+  #wk-groups .wk-head.repo:is(:hover, :focus-within) .wk-count, #wk-groups .wk-hubhead:is(:hover, :focus-within) .wk-count { visibility: hidden; }
+  #wk-groups .wk-head.repo .wk-count { margin-right: 0; }
+  #wk-groups .wk-head.repo .wk-head-main { margin-right: auto; }
+  #wk-groups .wk-acts { opacity: 0; transition: opacity var(--md-sys-motion-spring-fast-effects-duration) var(--md-sys-motion-spring-fast-effects); }
+  #wk-groups .wk-band-row:is(:hover, :focus-within) .wk-acts { opacity: 1; }
+}
 .wk-ctx { display: inline-flex; align-items: center; gap: 4px; }
 .wk-ctx-bar { width: 38px; height: 4px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
 .wk-ctx-bar i { display: block; height: 100%; background: var(--md-sys-color-primary); }
 .wk-ctx.warn .wk-ctx-bar i { background: var(--md-sys-color-warning); }
 .wk-ctx.crit .wk-ctx-bar i { background: var(--md-sys-color-error); }
 
-/* State icons: Material Symbols in the M3 roles. */
+/* State icons: Material Symbols in the M3 roles. In a row the icon sits in a tonal container whose colour and shape answer its state. */
 .wk-glyph { flex: none; font-size: 20px; line-height: 1; margin-top: 1px; }
+.wk-row .wk-glyph {
+  display: grid; place-items: center; width: 28px; height: 28px; margin-top: 0; font-size: 18px;
+  border-radius: var(--md-shape-corner-full); background: var(--md-sys-color-surface-container-highest);
+  transition: border-radius var(--md-sys-motion-spring-fast-spatial-duration) var(--md-sys-motion-spring-fast-spatial);
+}
 .wk-glyph.waiting { color: var(--md-sys-color-warning); }
 .wk-glyph.permission { color: var(--md-sys-color-error); }
 .wk-glyph.hubicon { animation: none; font-variation-settings: normal; }
@@ -349,8 +404,17 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-glyph.seen { color: var(--md-sys-color-success); opacity: .45; }
 .wk-glyph.failed { color: var(--md-sys-color-error); }
 .wk-glyph.stopped, .wk-glyph.idle, .wk-glyph.unknown, .wk-glyph.ended, .wk-glyph.none { color: var(--md-sys-color-on-surface-variant); }
+.wk-row .wk-glyph.waiting { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); border-radius: var(--md-shape-corner-md); }
+.wk-row .wk-glyph.permission, .wk-row .wk-glyph.failed { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); border-radius: var(--md-shape-corner-md); }
+.wk-row .wk-glyph.done { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
+.wk-row .wk-glyph.seen { color: var(--md-sys-color-success); opacity: 1; }
+.wk-row .wk-glyph.working, .wk-row .wk-glyph.restarting { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 @keyframes wk-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .wk-glyph.working, .wk-glyph.restarting { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .wk-glyph.working, .wk-glyph.restarting { animation: none; }
+  .wk-row, .wk-row .wk-glyph, .wk-fold, .wk-fold .material-symbols-outlined, .wk-act, .wk-acts, #wk-groups .wk-acts { transition: none; }
+  .wk-row:active { transform: none; }
+}
 
 /* The rate limits, pinned to the bottom of the list column. */
 .wk-rate { flex: none; padding: 8px 14px; border-top: 1px solid var(--md-sys-color-outline-variant); font-size: 11px; color: var(--md-sys-color-on-surface-variant); display: flex; flex-direction: column; gap: 4px; }
@@ -477,7 +541,7 @@ button.wk-head-main:hover { background: var(--wk-hover); }
 .wk-glyph.parked { color: var(--md-sys-color-on-surface-variant); }
 
 /* 離れていた間に (#556): the count on a row, and the timeline above the summary. */
-.wk-away { font-weight: 800; padding: 0 6px; border-radius: 8px; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.wk-away { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 .wk-away-list li.last .what, .wk-away-list li.left .what { color: var(--md-sys-color-on-surface-variant); }
 .wk-away-list li.now .at { color: var(--md-sys-color-primary); font-weight: 800; }
 .wk-away-who { font-weight: 800; margin-right: 6px; }

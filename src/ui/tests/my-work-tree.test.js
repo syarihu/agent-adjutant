@@ -1006,6 +1006,12 @@ test('a row that is not merged shows no PR number, and one that is merged shows 
   }
 });
 
+test('the branch in a row\'s meta is its own span, so that it can be set in monospace', () => {
+  const html = rowOf(plainRow({ s: { present: true, agent: 'claude', branch: 'feature/x', agentSession: {} } }));
+  assert.ok(html.includes('<span class="wk-branch">feature/x</span>'));
+  assert.ok(!html.includes('<span><span class="wk-branch"'));
+});
+
 test('an unmerged row has its uncommitted diff at the end of the meta', () => {
   const html = rowOf(plainRow({ s: { present: true, agent: 'claude', branch: 'feat/x', uncommitted: { insertions: 3, deletions: 1 }, agentSession: {} } }));
   assert.ok(/<span class="wk-end"><span class="add">\+3<\/span> <span class="del">-1<\/span><\/span>/.test(html));
