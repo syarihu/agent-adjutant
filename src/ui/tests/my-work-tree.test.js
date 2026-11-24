@@ -88,6 +88,7 @@ vm.runInContext([
   cut(/^const workIdleLabel = [^\n]*;/m),
   cut(/^const WORK_GATE_WAIT = \{[\s\S]*?^\};/m),
   cut(/^const workGateWait = [^\n]*;/m),
+  cut(/^const workChipHtml = [^\n]*;/m),
   cut(/^function workRepoMenuHtml[\s\S]*?^}/m),
   cut(/^const workRepoLabel = [^\n]*;/m),
   cut(/^const WORK_EMPTY_HTML = [^\n]*;/m),
@@ -1042,7 +1043,7 @@ test('a gate says what it waits for by its kind, and a row waiting on a decision
   assert.strictEqual(w('result'), '調査結果の確認を待っています');
   assert.strictEqual(w('nothing'), 'gateの確認を待っています');
   const html = itemHtml({ ...hubItem(), isHub: false, id: 'k', key: 'k', st: 'waiting', s: { present: true, agent: 'claude', waiting: { kind: 'plan' }, agentSession: {} } }, 'tree');
-  assert.ok(html.includes('class="wk-row waiting"') && html.includes('<span class="wk-gate">who</span>') && !html.includes('pending_actions'));
+  assert.ok(html.includes('class="wk-row waiting"') && html.includes('<span class="wk-gate" title="who">who</span>') && !html.includes('pending_actions'));
 });
 
 test('a row whose agent asks for a permission has the command in the error line', () => {
@@ -1051,7 +1052,7 @@ test('a row whose agent asks for a permission has the command in the error line'
   ctx.requestText = () => 'Bash: npm test';
   try {
     const html = itemHtml({ ...hubItem(), isHub: false, id: 'k', key: 'k', st: 'permission', s: { present: true, agent: 'claude', agentSession: { request: { tool: 'Bash' } } } }, 'tree');
-    assert.ok(html.includes('class="wk-row permission"') && html.includes('<span class="wk-line ask">Bash: npm test</span>'));
+    assert.ok(html.includes('class="wk-row permission"') && html.includes('<span class="wk-line ask" title="Bash: npm test">Bash: npm test</span>'));
   } finally {
     ctx.agentStateOf = state;
     ctx.requestText = text;
@@ -1509,4 +1510,12 @@ test('with two remainder segments the bar splits the cap between them by grow, a
   const one = run('workBarHtml(p)', { p: { children: kids('merged'), total: 12, closed: 1 } });
   assert.strictEqual(one.match(/style=/g)?.length, 1);
   assert.ok(one.includes('style="flex:10 1 min(calc(9 * var(--wk-gap)), calc((100% - 2 * var(--wk-gap)) / 2 * 10 / 11))"'));
+});
+
+test('a state chip escapes its text in its title and its body', () => {
+  const was = ctx.esc;
+  try {
+    const html = run('workChipHtml(cls, text)', { cls: 'wk-line ask', text: 'Bash: echo "<a & b>"', esc: realEsc });
+    assert.strictEqual(html, '<span class="wk-line ask" title="Bash: echo &quot;&lt;a &amp; b&gt;&quot;">Bash: echo &quot;&lt;a &amp; b&gt;&quot;</span>');
+  } finally { ctx.esc = was; }
 });

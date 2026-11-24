@@ -746,7 +746,7 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
   // The gate is first unless the worker went on past it; its line is drawn either way, for it can still be answered.
   const first = gateFirst(s, data);
   const askText = a.request ? requestText(s) : (s.prompt ? workPromptText(s.prompt, s) : '');
-  const asks = !first && agentStateOf(s) === 'permission' && askText ? `<span class="wk-line ask">${esc(askText)}</span>` : '';
+  const asks = !first && agentStateOf(s) === 'permission' && askText ? workChipHtml('wk-line ask', askText) : '';
   // In 新着 a row says what the agent last said when it asks for nothing, and a hub's row does wherever it is. A parked row says so wherever it is listed.
   const said = (band || r.isHub) && !asks && !first && a.lastMessage ? workSaidHtml(a.lastMessage) : '';
   const parked = !s.waiting ? workParkedHtml(r) : '';
@@ -755,7 +755,7 @@ function workRowHtml(r, cell = '', band = false, named = false, parent = null) {
     ? subs.slice(0, WORK_SUBAGENTS_SHOWN).map(x => `<span class="wk-line tree">${esc(`└ ${x.type || 'サブエージェント'}${x.activity ? ` ${x.activity}` : ''}`)}</span>`).join('')
       + (subs.length > WORK_SUBAGENTS_SHOWN ? `<span class="wk-line tree">${esc(`└ ほか ${subs.length - WORK_SUBAGENTS_SHOWN} 件`)}</span>` : '') : '';
   // A worker stopped at a gate looks done to its agent: the line is what says the ball is the person's.
-  const gate = s.waiting ? `<span class="wk-gate">${esc(workGateWho(s.waiting.kind, task, !first))}</span>` : '';
+  const gate = s.waiting ? workChipHtml('wk-gate', workGateWho(s.waiting.kind, task, !first)) : '';
   const pKind = s.prompt?.kind;
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell} title="${esc(sessionTip(s, st, data))}">
     ${r.isHub ? workGlyphHtml(st, ' hubicon', 'hub', pKind) : workGlyphHtml(st, '', null, pKind)}<span class="wk-main">
@@ -822,6 +822,8 @@ const WORK_GATE_WAIT = {
   relay: 'Jules に回す指摘の確認を待っています',
 };
 const workGateWait = kind => WORK_GATE_WAIT[kind] || `${kindOf(kind)[0]}の確認を待っています`;
+/* A row's state chip: the stylesheet keeps it to one line and cuts it, so its full text is its title too. */
+const workChipHtml = (cls, text) => `<span class="${cls}" title="${esc(text)}">${esc(text)}</span>`;
 /* The line of a gate on a row: what it waits for, marked when the worker went on past it, or that it is parked (the gate stays open and answerable). */
 const workGateWho = (kind, task, passed = false) => parkOf(task) ? `置いている — ${parkLabel(parkOf(task))}`
   : `${workGateWait(kind)}${passed ? '（答えないまま進行中）' : ''}`;
@@ -837,8 +839,8 @@ function workTurnRowHtml(r, cell = '', band = false) {
   const meta = [workAwayChip(r.away), idle ? esc(idle) : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('') + (workMerged(r) ? workMergedEnd(prNumber) : '');
   const gate = r.live.find(i => i.kind === 'gate');
   const pr = r.live.find(i => i.kind === 'pr');
-  const lines = (gate ? `<span class="wk-gate">${esc(workGateWho(gate.gate, r.task))}</span>` : '')
-    + (pr ? `<span class="wk-line ask">${esc(WORK_PR_NOW[pr.turn] || 'PR があなたの番です')}</span>` : '');
+  const lines = (gate ? workChipHtml('wk-gate', workGateWho(gate.gate, r.task)) : '')
+    + (pr ? workChipHtml('wk-line ask', WORK_PR_NOW[pr.turn] || 'PR があなたの番です') : '');
   const st = r.st === 'parked' ? 'parked' : 'waiting';
   return `<button type="button" class="wk-row ${st}" data-wk="${esc(r.key)}"${cell}>
     ${r.isHub ? workGlyphHtml(st, ' hubicon', 'hub') : workGlyphHtml(st)}<span class="wk-main">

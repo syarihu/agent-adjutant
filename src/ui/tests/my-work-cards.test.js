@@ -57,3 +57,46 @@ test('no selector nests :has() inside :has(), which CSS does not allow', () => {
   assert.ok(nests('.a:has(+ :is(.b, .c:has(> .d)))'), 'the check sees a nested :has()');
   for (const [, selector] of css.matchAll(/([^{}]+)\{[^{}]*\}/g)) assert.ok(!nests(selector), `${selector.trim()} nests :has()`);
 });
+
+const ruleOf = (selector, where = css) => [...where.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find(m => m[1].trim() === selector)?.[2];
+
+test('a row with things beside it is toned as one container, so its count, fold and buttons sit inside the tone', () => {
+  const box = ':is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead)';
+  assert.ok(ruleOf(`${box}:hover`), 'hover tones the container');
+  assert.match(ruleOf(`${box}:has(.wk-row[aria-current="true"])`) || '', /background:\s*var\(--md-sys-color-secondary-container\)/, 'selection tones the container');
+  assert.match(ruleOf(`${box} .wk-row:is(:hover, :active, [aria-current="true"], [aria-current="true"]:hover)`) || '', /background:\s*transparent/, 'the row inside draws no tone of its own');
+  // The hub's own wrapper inside a group's head stays clear, or the head would be toned twice.
+  assert.ok([...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some(m => /^\.wk-hubhead > \.wk-band-row/.test(m[1].trim()) && /background:\s*transparent/.test(m[2])));
+});
+
+test('the count of a hub that heads a group is as wide as the fold that takes its place on hover', () => {
+  const count = ruleOf('.wk-hubhead .wk-count') || '';
+  const fold = ruleOf('.wk-fold') || '';
+  const width = fold.match(/(?:^|[;\s])width:\s*(\d+px)/)?.[1];
+  assert.ok(width, 'the fold has a width');
+  assert.match(count, new RegExp(`min-width:\\s*${width}`));
+});
+
+test('a row\'s state chip stays on one line and is cut with an ellipsis', () => {
+  const chip = ruleOf('.wk-gate, .wk-line.ask') || '';
+  assert.match(chip, /white-space:\s*nowrap/);
+  assert.match(chip, /text-overflow:\s*ellipsis/);
+  assert.match(chip, /overflow:\s*hidden/);
+  assert.match(chip, /max-width:\s*100%/);
+  // text-overflow does not cut the text of a flex box.
+  assert.doesNotMatch(chip, /display:\s*inline-flex/);
+});
+
+test('reduced motion stills a row container with a selector as specific as the one that animates it', () => {
+  const box = ':is(.wk-band-row:not(.ov-row-wrap), .wk-hubhead)';
+  const reduced = css.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?\n)\}/g)?.join('\n') || '';
+  const rules = [...reduced.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => [m[1].split(',').map(x => x.trim()), m[2]]);
+  // A selector is split on its commas, so the container's :is( list comes back joined.
+  const has = (sel, prop) => rules.some(([sels, body]) => sels.join(', ').includes(sel) && new RegExp(`${prop}:\\s*none`).test(body));
+  assert.ok(has(box, 'transition'), 'the container transition is turned off');
+  assert.ok(has(`${box}:has(.wk-row:active)`, 'transform'), 'the container press does not scale');
+});
+
+test('the count of a selected hub head takes the selection tone\'s text colour', () => {
+  assert.match(ruleOf('.wk-hubhead:has(.wk-row[aria-current="true"]) .wk-count') || '', /color:\s*inherit/);
+});
