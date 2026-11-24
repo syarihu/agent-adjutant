@@ -1511,3 +1511,11 @@ test('with two remainder segments the bar splits the cap between them by grow, a
   assert.strictEqual(one.match(/style=/g)?.length, 1);
   assert.ok(one.includes('style="flex:10 1 min(calc(9 * var(--wk-gap)), calc((100% - 2 * var(--wk-gap)) / 2 * 10 / 11))"'));
 });
+
+test('a state chip escapes its text in its title and its body', () => {
+  const was = ctx.esc;
+  try {
+    const html = run('workChipHtml(cls, text)', { cls: 'wk-line ask', text: 'Bash: echo "<a & b>"', esc: realEsc });
+    assert.strictEqual(html, '<span class="wk-line ask" title="Bash: echo &quot;&lt;a &amp; b&gt;&quot;">Bash: echo &quot;&lt;a &amp; b&gt;&quot;</span>');
+  } finally { ctx.esc = was; }
+});
