@@ -224,8 +224,22 @@ pub fn notify_clients(root: &Path) -> Clients {
     latest
 }
 
-/// Remove the files of servers that have not heard from a client for a day. Best effort.
+/// Remove the files of servers that have not heard from a client for a day. Best effort. A file
+/// is left alone while its process (the pid in its name) is alive or cannot be told apart from
+/// one: its owner may have just rewritten it.
 fn prune_old_clients(root: &Path, now: i64) {
+    prune_old_clients_with(root, now, &process_is_gone);
+}
+
+/// Whether `ps` says there is no process `pid`. Not being able to ask is not an answer.
+fn process_is_gone(pid: u32) -> bool {
+    matches!(
+        super::liveness::ps_answer(pid, "lstart"),
+        super::liveness::Answer::NoSuchProcess
+    )
+}
+
+fn prune_old_clients_with(root: &Path, now: i64, gone: &dyn Fn(u32) -> bool) {
     let own = own_file(root);
     for entry in std::fs::read_dir(notify_clients_dir(root))
         .into_iter()
@@ -236,7 +250,15 @@ fn prune_old_clients(root: &Path, now: i64) {
         if path == own || path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
-        // An unreadable file is left alone: it may be a newer version's.
+        // A file whose process is not known to be gone is left alone, and so is one that is
+        // unreadable: it may be a newer version's.
+        let owner = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| stem.parse::<u32>().ok());
+        if !owner.is_some_and(gone) {
+            continue;
+        }
         let Some(record) = read_json(&path) else {
             continue;
         };

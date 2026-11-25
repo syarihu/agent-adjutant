@@ -369,6 +369,10 @@ function ringNotices(list) {
     // A wait or gate follows 確認待ち, as the page's own rings do; it is off the queue either way.
     if (!notifyNoticeRings(notice, pageRings())) continue;
     if (notifyRungHas(rungTags, tag, Date.now())) continue;
+    // Quiet as the page's own rings are: the row on screen, a parked task. Only when the document has the event.
+    const match = notifyTagEntryMatch(tag);
+    const entry = match ? notifyEntryOf(match) : null;
+    if (entry && notifyQuiet(entry, work.open?.id, document.visibilityState === 'visible')) continue;
     const n = showNotification(title, { body, tag });
     n.onclick = () => { window.focus(); try { n.close(); } catch {} };
   }

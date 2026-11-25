@@ -9,7 +9,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::{RETRY_SECS, Ring, WaitWatch, built_in_ring, claim, route, safe_name};
+use super::{
+    RETRY_SECS, Ring, WaitWatch, built_in_ring, claim, queued_or_released, route, safe_name,
+};
 use crate::board::{Server, settings_now};
 use crate::gate::{self, Gate};
 use crate::infra::clock::utc_stamp;
@@ -143,7 +145,7 @@ impl WaitWatch {
             if ring == Ring::Queue {
                 // The app or page that is open on another process cannot see this gate.
                 let repo = &server.ctx.repo;
-                let _ = crate::registry::enqueue_notice_tagged(
+                let queued = crate::registry::enqueue_notice_tagged(
                     root,
                     &repo.nwo,
                     &notify::repo_title(&repo.repo),
@@ -151,6 +153,11 @@ impl WaitWatch {
                     now,
                     Some(&gate_tag(&slug, &gate.id)),
                 );
+                // Not queued: the claim is given back and the gate is not handled, so that a
+                // later round rings it.
+                if !queued_or_released(queued, &gate_marker(root, &slug, &gate.id)) {
+                    continue;
+                }
             }
             if ring == Ring::Now {
                 let repo = &server.ctx.repo;

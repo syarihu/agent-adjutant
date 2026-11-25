@@ -10,7 +10,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js', 'my-work-no
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { notifyNoticeRings, notifyWaitTag, notifyGateTag, notifyOwnNotifier, notifyRungHas, notifyRungAdd, notifyRungPrune, notifyCanRing, notifyAppHolds, notifyNotices, notifyNoticeContent, notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyEffective, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
+const { notifyTagEntryMatch, notifyNoticeRings, notifyWaitTag, notifyGateTag, notifyOwnNotifier, notifyRungHas, notifyRungAdd, notifyRungPrune, notifyCanRing, notifyAppHolds, notifyNotices, notifyNoticeContent, notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyEffective, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const DEFAULTS = { waiting: true, done: false, failed: true, review: true };
@@ -101,6 +101,22 @@ test('a wait is named by its row and moment alone, a gate keeps its hub', () => 
   notifyRungAdd(rung, notifyGateTag('acme-widget', 'g7'), 10);
   assert.strictEqual(notifyRungHas(rung, notifyGateTag('acme-widget', 'g7'), 11), true);
   assert.strictEqual(notifyRungHas(rung, notifyGateTag('acme-parent', 'g7'), 11), false);
+});
+
+test('a wait or gate notice finds its entry by its tag, any other notice has none', () => {
+  const gated = entry('t1', [], { gates: [{ key: 'acme-widget/g7' }] });
+  const waiting = entry('t2', [], { session: { id: 'worker-a', agentSession: { sessionId: 'row-1' } } });
+  const other = entry('t3', []);
+  const gate = notifyTagEntryMatch('gate-acme-widget/g7');
+  assert.deepStrictEqual([gated, waiting, other].map(gate), [true, false, false]);
+  // The same id on another hub is another gate.
+  assert.strictEqual(notifyTagEntryMatch('gate-acme-parent/g7')(gated), false);
+  const wait = notifyTagEntryMatch('wait-row-1/1700');
+  assert.deepStrictEqual([gated, waiting, other].map(wait), [false, true, false]);
+  for (const tag of [null, undefined, 'notice-a', 'mail-x', 'wait-nosince']) assert.strictEqual(notifyTagEntryMatch(tag), null, String(tag));
+  // The page's quiet check then applies to it: the row open on screen is not rung for.
+  assert.strictEqual(notifyQuiet(waiting, 't2', true), true);
+  assert.strictEqual(notifyQuiet(waiting, 't2', false), false);
 });
 
 test('a notice for a wait or gate follows the waiting setting, any other is rung as before', () => {

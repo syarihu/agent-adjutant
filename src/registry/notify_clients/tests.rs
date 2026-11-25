@@ -93,13 +93,29 @@ fn a_sighting_is_visible_at_once_and_written_only_when_it_has_moved() {
 }
 
 #[test]
-fn the_files_of_servers_gone_for_a_day_are_removed() {
+fn the_files_of_dead_servers_not_heard_from_for_a_day_are_removed() {
     let dir = tempfile::tempdir().unwrap();
+    let file = |name: &str| notify_clients_dir(dir.path()).join(name);
     put(dir.path(), "11.json", 100, 0);
     put(dir.path(), "12.json", 90_000, 0);
-    note_notify_client(dir.path(), Client::Page, true, 100_000);
-    assert!(!notify_clients_dir(dir.path()).join("11.json").exists());
-    assert!(notify_clients_dir(dir.path()).join("12.json").exists());
+    // Old, but its process is alive: its owner may have just rewritten it.
+    put(dir.path(), "13.json", 100, 0);
+    // Not a pid at all.
+    put(dir.path(), "x.json", 100, 0);
+    prune_old_clients_with(dir.path(), 100_000, &|pid| pid != 13);
+    assert!(!file("11.json").exists());
+    assert!(file("12.json").exists(), "heard from within a day");
+    assert!(file("13.json").exists(), "its process is alive");
+    assert!(file("x.json").exists(), "no pid to ask about");
+}
+
+#[test]
+fn a_process_that_is_gone_is_told_from_one_that_is_alive() {
+    assert!(!process_is_gone(std::process::id()));
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    assert!(process_is_gone(pid));
 }
 
 #[test]

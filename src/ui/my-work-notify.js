@@ -109,6 +109,18 @@ function notifyGateTag(slug, id) {
   return `gate-${slug}/${id}`;
 }
 
+/* The test for the work entry a wait or gate notice (by its tag) is about, or null for any other notice: so that the page applies
+   the same quiet check as for its own rings (the row on screen, a parked task) when it can resolve the event. A gate is found by
+   its hub and id, a wait by the ledger row of the session. */
+function notifyTagEntryMatch(tag) {
+  if (typeof tag !== 'string') return null;
+  const gate = /^gate-([^/]*)\/(.+)$/.exec(tag);
+  if (gate) return e => notifyGateMatch(e, gate[1], gate[2], null);
+  const wait = /^wait-(.+)\/\d+$/.exec(tag);
+  if (wait) return e => e.session?.agentSession?.sessionId === wait[1];
+  return null;
+}
+
 /* Whether a notice from the server is rung by a client that has `rings` (pageRings: permission and 確認待ち on). A notice for a
    wait or gate follows the 確認待ち setting as the page's own rings do, so one queued while another server still thought the
    preference was on (it counts for up to 90 seconds) is dropped; any other (mail, `adj notify`) is rung as it was. */

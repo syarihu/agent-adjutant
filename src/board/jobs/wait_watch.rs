@@ -275,6 +275,16 @@ fn wait_tag(key: &Key) -> String {
     format!("wait-{}/{}", key.0, key.1)
 }
 
+/// Whether a notice was queued. When it was not, this process's claim `marker` is removed, so
+/// that the wait is not taken for rung and another round (or process) can ring it.
+fn queued_or_released(queued: Result<String, String>, marker: &Path) -> bool {
+    if queued.is_ok() {
+        return true;
+    }
+    let _ = std::fs::remove_file(marker);
+    false
+}
+
 /// What a wait the claim said to ring is, with `notification` unset: the claim only settles that
 /// this process is the one to act on it, and the route says how. The target client reads another
 /// process (`Queue`), has 確認待ち off (`Drop`), or nobody is open (`Notifier`, the command).
@@ -528,6 +538,7 @@ impl WaitWatch {
         let mut held: HashSet<Key> = HashSet::new();
         let mut later: HashSet<Key> = HashSet::new();
         let mut later_client: HashSet<Key> = HashSet::new();
+        let mut retry: HashSet<Key> = HashSet::new();
         let mut announced: Vec<(String, Picked)> = Vec::new();
         let mut rings: Vec<String> = Vec::new();
         let (servers, mut complete) = boards();
@@ -585,8 +596,10 @@ impl WaitWatch {
                         }
                     }
                     Ring::Queue => {
-                        // Claimed above, so queued once: the client that takes it rings it.
-                        let _ = crate::registry::enqueue_notice_tagged(
+                        // Claimed above, so queued once: the client that takes it rings it. A
+                        // notice that could not be queued gives the claim back and leaves the
+                        // wait unsettled, so that a later round tries again.
+                        let queued = crate::registry::enqueue_notice_tagged(
                             root,
                             &repo.nwo,
                             &notify::repo_title(&repo.repo),
@@ -594,6 +607,9 @@ impl WaitWatch {
                             now,
                             Some(&wait_tag(&picked.key)),
                         );
+                        if !queued_or_released(queued, &marker_path(root, &picked.key)) {
+                            retry.insert(picked.key.clone());
+                        }
                     }
                     Ring::Later => {
                         if built_in {
@@ -617,6 +633,7 @@ impl WaitWatch {
                 .iter()
                 .chain(&later)
                 .chain(&later_client)
+                .chain(&retry)
                 .cloned()
                 .collect();
             state
@@ -927,6 +944,24 @@ mod tests {
         assert!(watch.left_to_client(&command, WaitRoute::Notifier, 150));
         assert!(!watch.left_to_client(&command, WaitRoute::Leave, 191));
         assert!(!watch.left_to_client(&Hook::Off, WaitRoute::Leave, 191));
+    }
+
+    #[test]
+    fn a_notice_that_could_not_be_queued_gives_the_claim_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = marker_path(dir.path(), &key("row-1", 1700));
+        assert!(claim(&marker));
+        assert!(queued_or_released(Ok("id".into()), &marker));
+        assert!(marker.exists(), "a queued notice keeps its claim");
+        assert!(!queued_or_released(Err("disk full".into()), &marker));
+        assert!(!marker.exists());
+        // Released: the next round's claim succeeds again.
+        assert!(claim(&marker));
+        // Nothing to remove is not an error.
+        assert!(!queued_or_released(
+            Err("x".into()),
+            &dir.path().join("absent")
+        ));
     }
 
     #[test]
