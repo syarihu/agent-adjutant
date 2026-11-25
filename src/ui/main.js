@@ -87,7 +87,10 @@ function setView(v) {
   if (screenChanged && motionBooted) {
     if (!motionCalm()) {
       const g = id => document.getElementById(id);
-      motionEnter(v === 'work' ? [g('wk-list'), g('task-panel')] : [g(v === 'todo' ? 'todo-view' : 'board-view')]);
+      // The side list of the screen and its main area; `#work-view` hosts the terminal, so it only fades.
+      if (v === 'work') { motionEnter([g('wk-list'), g('task-panel')]); motionEnter([g('work-view')], { fade: true }); }
+      else if (v === 'todo') motionEnter([g('todo-list'), g('todo-view')]);
+      else motionEnter([g('side-boards'), g('board-view')]);
     }
   }
 }

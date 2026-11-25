@@ -102,13 +102,16 @@ function motionLayer() {
 /* Whether a rect is on screen at all (an element in a column scrolled out of sight is not worth flying to). */
 const motionOnScreen = r => !!r && r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
 
-/* A screen comes into view: it rises a little while it fades in. `els` are the containers shown; never the terminal's host (a transform
-   there would confuse the terminal's size). */
-function motionEnter(els) {
+/* A screen comes into view: it rises a little while it fades in. `els` are the containers shown (hidden ones are skipped). `fade`
+   makes it opacity only, for what hosts the terminal: a transform there would show in xterm's fit. */
+function motionEnter(els, { fade = false } = {}) {
   const easing = motionEasing('effects');
   for (const el of els) {
-    if (!el || el.hidden) continue;
-    motionAnimate(el, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing });
+    // getClientRects, not offsetParent: a shown panel that is position: fixed (the narrow layout) has no offsetParent either.
+    if (!el || el.hidden || !el.getClientRects().length) continue;
+    const from = fade ? { opacity: 0 } : { opacity: 0, transform: 'translateY(12px)' };
+    const to = fade ? { opacity: 1 } : { opacity: 1, transform: 'none' };
+    motionAnimate(el, [from, to], { duration: 240, easing });
   }
 }
 
