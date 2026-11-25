@@ -18,7 +18,7 @@
 @keyframes mo-pop-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
 @keyframes mo-from-right { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
 @keyframes mo-from-left { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
-@keyframes mo-drop { from { opacity: 0; transform: translateY(-4px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes mo-drop { from { opacity: 0; transform: translateY(-8px) scale(.95); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes mo-bump { 0% { transform: scale(1); } 40% { transform: scale(1.3); } 100% { transform: scale(1); } }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -34,7 +34,7 @@
   .qd-layer.mo-from-right { animation: mo-from-right 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
   .qd-layer.mo-from-left { animation: mo-from-left 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
   /* The menus and popovers that open on hover or a press: the organisation switch, the repository filter, the TODO's and a stack's
-     popover. Each turns from display: none, so this runs on every open; refilling one while open does not replay it. Short, since
-     the pointer is already waiting on it, and closing stays instant. */
-  .org-menu, .wk-repo-menu, .todo-pop { transform-origin: top center; animation: mo-drop 180ms var(--md-sys-motion-spring-fast-effects) backwards; }
+     popover. Each turns from display: none, so this runs on every open; refilling one while open does not replay it. A soft,
+     decelerating drop out of a slight blur (M3's emphasized-decelerate curve); closing stays instant. */
+  .org-menu, .wk-repo-menu, .todo-pop { transform-origin: top center; animation: mo-drop 320ms cubic-bezier(.05, .7, .1, 1) backwards; }
 }
