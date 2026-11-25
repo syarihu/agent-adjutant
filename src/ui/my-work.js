@@ -274,6 +274,9 @@ function renderWorkBadge() {
     box.textContent = n;
     box.classList.toggle('zero', !n);
   }
+  // The rail's count going up bumps it, not the first one read, nor one of another organisation (nor before the document is here).
+  if (!work.doc) motionForget('rail-work');
+  else if (motionCountedUp('rail-work', String(currentOrg()), counts[0][1])) replayClass(el, 'mo-bump', 300);
   renderRailToggle();
   renderDocTitle();
   // What waits in the other organisations is the switch's badge.
@@ -1150,12 +1153,44 @@ function workSelectFirst() {
   } else go({ board: 'all', view: 'work', task: null, pane: 'detail' });
 }
 
+/* ── Motion on the list (motion.js): a row that was not there rises in; a row whose state changed bumps its glyph once, and rings
+   when the turn is now the person's. What a row was is kept per row (`row key → state`) and compared only with the drawing of the
+   same list: another organisation, repository, fold, or entering the view (setView) starts over. The glyph is moved through
+   Element.animate on `scale` and `box-shadow`, which leaves the spin (a CSS animation on the same element) running. */
+const WORK_MOTION_GLYPH = row => {
+  const g = row.querySelector('.wk-glyph');
+  return g ? [...g.classList].find(c => WORK_GLYPH[c]) || '' : '';
+};
+const WORK_HUMAN_TURN = new Set(['waiting', 'permission']);
+function workMotion() {
+  const root = wk('wk-groups');
+  if (!root || !work.doc || view !== 'work' || motionCalm()) return motionForget('work');
+  const rows = new Map();
+  for (const el of root.querySelectorAll('button.wk-row[data-wk]')) rows.set(el.dataset.wk, el);
+  const next = new Map([...rows].map(([key, el]) => [key, WORK_MOTION_GLYPH(el)]));
+  const sig = [currentOrg(), prefs.workRepo, [...prefs.workFolded].sort().join(',')].join('|');
+  const diff = stageDiff(motionTrack('work', sig, next), next);
+  const rowOf = key => rows.get(key);
+  for (const key of diff.appeared.slice(0, 12)) { const el = rowOf(key); if (el && !motionHolds(el)) replayClass(el, 'mo-row-in', 400, { cutOnFocus: true }); }
+  const easing = motionEasing('spatial');
+  const warn = getComputedStyle(document.documentElement).getPropertyValue('--md-sys-color-warning').trim();
+  for (const { key, to } of diff.moved) {
+    const glyph = rowOf(key)?.querySelector('.wk-glyph');
+    if (!glyph || !to) continue;
+    motionAnimate(glyph, [{ scale: '1' }, { scale: '1.18', offset: .4 }, { scale: '1' }], { duration: 300, easing });
+    if (WORK_HUMAN_TURN.has(to) && warn) {
+      motionAnimate(glyph, [{ boxShadow: `0 0 0 0 ${warn}` }, { boxShadow: '0 0 0 10px transparent' }], { duration: 900, iterations: 2, easing: 'ease-out' });
+    }
+  }
+}
+
 function renderWorkList() {
   renderWorkRepoFilter();
   renderWorkTools();
   drawWorkList();
   // Whatever redrew the list (a fold, the other grouping) must not lose the mark.
   markWorkSelection();
+  workMotion();
   // The box is set apart from the markup, so a toggle does not redraw the list.
   for (const box of wk('wk-list').querySelectorAll('[data-wk-advance]')) box.checked = !!prefs.reviewNext;
 }

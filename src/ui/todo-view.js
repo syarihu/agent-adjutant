@@ -136,12 +136,29 @@ function todoDrawBadge(items) {
   if (!badge) return;
   badge.textContent = items.count;
   badge.classList.toggle('zero', items.count === 0);
+  // Going up bumps it; not the first count read, nor another organisation's, nor one before the work document is here.
+  if (!work.doc) motionForget('rail-todo');
+  else if (motionCountedUp('rail-todo', String(currentOrg()), items.count)) replayClass(badge, 'mo-bump', 300);
 }
 
 function todoDrawList(items) {
   const el = document.getElementById('todo-list');
   todoSetHtml('list', el, `<h2 class="todo-head">あなたの番<span class="rail-badge${items.count ? '' : ' zero'}">${items.count}</span></h2>`
     + `<div class="todo-scroll">${todoListOf(items, todo.sel)}</div>`);
+  todoMotion(el);
+}
+
+/* A row that was not in the list rises in (motion.js). The list is compared only with the drawing of the same organisation and the same
+   boards read: the boards come one after another, and each one that arrives is not the person's news (entering the view starts over
+   in setView). */
+function todoMotion(el) {
+  if (motionCalm() || !work.doc) return motionForget('todo');
+  // Every kind of row by its own key: the gates to read (data-todo-sel), and the quick questions, terminal prompts and cleanup
+  // questions (data-todo-key).
+  const rows = new Map([...el.querySelectorAll('.todo-row[data-todo-sel], .todo-quick[data-todo-key]')].map(r => [r.dataset.todoSel ?? r.dataset.todoKey, r]));
+  const sig = [currentOrg(), Object.keys(todo.boards).length].join('|');
+  const fresh = diffKeys(motionTrack('todo', sig, new Set(rows.keys())), rows.keys());
+  for (const key of fresh.slice(0, 12)) { const r = rows.get(key); if (!motionHolds(r)) replayClass(r, 'mo-row-in', 400, { cutOnFocus: true }); }
 }
 
 function todoEmptyCardHtml(items) {

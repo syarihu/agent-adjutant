@@ -1,0 +1,40 @@
+/* ── Motion: the keyframes that are classes (motion.js has the rest, which it plays through Element.animate) ──────────────────
+   Loaded after board.css and my-work.css so that it wins over their rules. Everything that moves is inside the
+   no-preference query: with reduced motion asked for, none of it exists. Durations and easings are the M3 motion tokens. */
+
+/* What the clones and bursts fly in (motion.js): over everything, taking no pointer. */
+#motion-layer { position: fixed; inset: 0; z-index: 90; pointer-events: none; overflow: hidden; }
+.mo-ghost-row {
+  display: flex; align-items: center; padding: 0 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  background: var(--md-sys-color-surface-container-lowest); border-radius: var(--md-shape-corner-sm);
+  box-shadow: var(--md-elevation-3); font-weight: 600; font-size: 13px; color: var(--md-sys-color-on-surface);
+}
+.mo-burst { position: fixed; pointer-events: none; }
+.mo-burst-check { position: absolute; left: 10px; top: 8px; font-size: 22px; color: var(--md-sys-color-success); font-variation-settings: 'FILL' 1; }
+.mo-confetti { position: absolute; left: 20px; top: 20px; width: 6px; height: 9px; border-radius: 2px; }
+
+@keyframes mo-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes mo-toast { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes mo-pop-in { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes mo-from-right { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes mo-from-left { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+@keyframes mo-drop { from { opacity: 0; transform: translateY(-8px) scale(.95); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes mo-bump { 0% { transform: scale(1); } 40% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* A row that was not in the list before (D3), and a toast that was not showing (C5). */
+  .mo-row-in { animation: mo-rise 400ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  .toast.mo-toast-in { animation: mo-toast 400ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  /* The rail's count going up (C4). */
+  .mo-bump { animation: mo-bump 300ms var(--md-sys-motion-spring-fast-spatial); }
+  /* A dialog opening (D1): `display` turns from none, so the keyframes run on open. The backdrop and the blur behind are not animated,
+     and closing is instant; focus lands as the dialog opens, the animation does not wait for it. */
+  dialog[open] { animation: mo-pop-in 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  /* The layer that becomes the top of the dialog stack (D2): from the right going on, from the left coming back. */
+  .qd-layer.mo-from-right { animation: mo-from-right 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  .qd-layer.mo-from-left { animation: mo-from-left 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  /* The menus and popovers that open on hover or a press: the organisation switch, the repository filter, the TODO's and a stack's
+     popover. Each turns from display: none, so this runs on every open; refilling one while open does not replay it. A soft,
+     decelerating drop out of a slight blur (M3's emphasized-decelerate curve); closing stays instant. */
+  .org-menu, .wk-repo-menu, .todo-pop { transform-origin: top center; animation: mo-drop 320ms cubic-bezier(.05, .7, .1, 1) backwards; }
+}

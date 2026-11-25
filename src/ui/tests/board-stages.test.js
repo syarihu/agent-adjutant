@@ -371,7 +371,7 @@ test('the column width pref is a number in its range, else the default', () => {
 
 test('a drawing asked for during a column drag is held, and made once when the drag ends', () => {
   const board = read('board.js');
-  const pieces = [cut(board, /^function renderBoard\(\) \{[\s\S]*?\n\}\n/m), cut(board, /^let colDrag = false[^\n]*\n/m), cut(board, /^function flushBoardRender\(\) \{[\s\S]*?\n\}\n/m)];
+  const pieces = [cut(board, /^function renderBoard\(\) \{[\s\S]*?\n\}\n/m), cut(board, /^let colDrag = false[^\n]*\n/m), cut(board, /^const boardMotion = [^\n]*\n/m), cut(board, /^function flushBoardRender\(\) \{[\s\S]*?\n\}\n/m)];
   const local = vm.createContext({ document: { addEventListener() {} }, drawn: 0 });
   vm.runInContext(`function drawBoard() { drawn++; }\n${pieces.join('\n')}`, local);
   const run2 = code => vm.runInContext(code, local);

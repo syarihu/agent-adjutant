@@ -327,6 +327,7 @@ onOrgChange(() => {
   navEpoch++;
   allRound = false;
   state = Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
+  boardMotionCached();
   render();
   refreshAllBoards(true);
 });
