@@ -111,7 +111,7 @@ function motionEnter(els, { fade = false } = {}) {
     if (!el || el.hidden || !el.getClientRects().length) continue;
     const from = fade ? { opacity: 0 } : { opacity: 0, transform: 'translateY(12px)' };
     const to = fade ? { opacity: 1 } : { opacity: 1, transform: 'none' };
-    motionAnimate(el, [from, to], { duration: 240, easing });
+    motionAnimate(el, [from, to], { duration: 500, easing });
   }
 }
 
