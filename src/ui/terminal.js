@@ -105,6 +105,18 @@ function openTerminalLink(event, uri) {
   window.open(uri, '_blank', 'noopener,noreferrer');
 }
 
+/* xterm sends a plain CR for both Enter and Shift+Enter, so the agent inside would submit its prompt
+   where the person asked for a new line. ESC CR (what Option+Enter sends) is read by Claude Code as a
+   newline, and tmux passes it on without `extended-keys`, which a CSI u sequence would need.
+   The handler sees keydown, keypress and keyup: the keydown sends, and the keypress that follows it
+   must be swallowed or xterm would still send the CR. */
+const SHIFT_ENTER_SEQUENCE = '\x1b\r';
+function shiftEnterKey(e) {
+  if (e.isComposing || e.keyCode === 229) return null;
+  if (e.key !== 'Enter' || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return null;
+  return e.type === 'keydown' ? 'send' : 'swallow';
+}
+
 /* `base` is the board's path; a view across boards, where `BASE` is empty, names the board of
    the session. `path` is the socket's path when it is not a board session's (a PR's reader: it may carry a query). */
 function mountSessionTerminal(container, { sessionId, path = null, onEnd, base = BASE, focus = true } = {}) {
@@ -152,8 +164,18 @@ function mountSessionTerminal(container, { sessionId, path = null, onEnd, base =
     term.loadAddon(new WebLinksAddon.WebLinksAddon(openTerminalLink, { urlRegex: TERMINAL_URL }));
     term.unicode.activeVersion = '11';
     term.open(container);
-    // On macOS Cmd+K opens the session search even here; every other key, Ctrl+K (readline's kill-line) included, is the agent's.
-    term.attachCustomKeyEventHandler(e => !(IS_MAC && isPaletteShortcut(e, true) && openPaletteFromKey(e)));
+    // On macOS Cmd+K opens the session search even here; Shift+Enter sends a newline for the agent (see shiftEnterKey); every other key, Ctrl+K (readline's kill-line) included, is the agent's.
+    term.attachCustomKeyEventHandler(e => {
+      if (IS_MAC && isPaletteShortcut(e, true) && openPaletteFromKey(e)) return false;
+      const shiftEnter = shiftEnterKey(e);
+      if (!shiftEnter) return true;
+      if (shiftEnter === 'send') {
+        e.preventDefault();
+        // `ws` is checked directly: it is set a few lines below, after the handler is attached.
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(SHIFT_ENTER_SEQUENCE));
+      }
+      return false;
+    });
     fit.fit();
 
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
