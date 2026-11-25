@@ -22,14 +22,14 @@
 
 @media (prefers-reduced-motion: no-preference) {
   /* A row that was not in the list before (D3), and a toast that was not showing (C5). */
-  .mo-row-in { animation: mo-rise 200ms var(--md-sys-motion-spring-fast-effects) backwards; }
-  .toast.mo-toast-in { animation: mo-toast 200ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  .mo-row-in { animation: mo-rise 400ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  .toast.mo-toast-in { animation: mo-toast 400ms var(--md-sys-motion-spring-fast-effects) backwards; }
   /* The rail's count going up (C4). */
   .mo-bump { animation: mo-bump 300ms var(--md-sys-motion-spring-fast-spatial); }
   /* A dialog opening (D1): `display` turns from none, so the keyframes run on open. The backdrop and the blur behind are not animated,
      and closing is instant; focus lands as the dialog opens, the animation does not wait for it. */
-  dialog[open] { animation: mo-pop-in 200ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  dialog[open] { animation: mo-pop-in 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
   /* The layer that becomes the top of the dialog stack (D2): from the right going on, from the left coming back. */
-  .qd-layer.mo-from-right { animation: mo-from-right 220ms var(--md-sys-motion-spring-fast-effects) backwards; }
-  .qd-layer.mo-from-left { animation: mo-from-left 220ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  .qd-layer.mo-from-right { animation: mo-from-right 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
+  .qd-layer.mo-from-left { animation: mo-from-left 300ms var(--md-sys-motion-spring-fast-effects) backwards; }
 }

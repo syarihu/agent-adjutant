@@ -77,7 +77,7 @@ const dialogStack = (() => {
     layer.onClose?.(layer);
     // The layer under comes back from the left. It is hidden until `showTop`, so the animation starts as it shows.
     const under = core.top() && layerEl(core.top().key);
-    if (under) replayClass(under, 'mo-from-left', 220);
+    if (under) replayClass(under, 'mo-from-left', 300);
     showTop();
   }
 
@@ -141,7 +141,7 @@ const dialogStack = (() => {
     core.push(layer);
     // A layer going on over another comes in from the right; the first one has the dialog's own entrance. Set before the others are
     // hidden, cleared by replayClass once it has played, so a later layer coming back does not replay this one.
-    if (core.depth() > 1) replayClass(layerEl(layer.key), 'mo-from-right', 220);
+    if (core.depth() > 1) replayClass(layerEl(layer.key), 'mo-from-right', 300);
     if (!dlg().open) { applyWide(); dlg().showModal(); }
     showTop();
     return true;

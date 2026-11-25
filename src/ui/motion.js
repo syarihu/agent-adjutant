@@ -118,7 +118,7 @@ function motionEnter(els, { fade = false } = {}) {
 /* The cards or rows that came to the board pop in. */
 function motionPopIn(els) {
   const easing = motionEasing('effects');
-  for (const el of els) motionAnimate(el, [{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing });
+  for (const el of els) motionAnimate(el, [{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 400, easing });
 }
 
 /* A card that changed stage flies from where it was to where it is now (`from`, `to`: rects). It flies as a clone in the fixed layer,
@@ -127,7 +127,7 @@ function motionPopIn(els) {
 function motionFly(el, from, to, ghost = false) {
   const dx = from.left - to.left, dy = from.top - to.top;
   if (!dx && !dy) return 0;
-  const duration = 350;
+  const duration = 500;
   const clone = ghost ? document.createElement('div') : el.cloneNode(true);
   if (ghost) {
     clone.className = 'mo-ghost-row';
