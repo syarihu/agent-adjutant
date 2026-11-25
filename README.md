@@ -206,7 +206,7 @@ Configuration lives at `~/.config/adjutant/config.json` (`$XDG_CONFIG_HOME` and 
 | `agentRunner` | `claude ...` | Command template used to start worker agents |
 | `hubRunner` | `claude ...` | Command template used to start repository hubs |
 | `reviewerRunner` | `claude ...` | Command template used to start sandboxed PR readers (AI 下読み) |
-| `notification` | `terminal-notifier` / `osascript` | Command template for desktop notifications |
+| `notification` | the open app or board page, else `terminal-notifier` | Command template for desktop notifications. Unset, it goes to the desktop app or a board page when one is open, else to `terminal-notifier` if installed, else nowhere |
 | `maxWorkers` | no limit | Maximum concurrent workers allowed per checkout |
 | `hubAutoResumeHours` | `3` | Hours within which `adj hub` automatically resumes the previous conversation |
 | `stuckAfterMinutes` | `120` | Flags task cards red if a worker stays in one phase without progress |

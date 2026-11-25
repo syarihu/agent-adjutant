@@ -1,16 +1,23 @@
 //! Ringing the configured `notification` for a gate that opens while no page that may notify is
 //! open. With one open, the page rings the gate itself (`checkNewGates`), so nothing is claimed
 //! and the gate is looked at again next round, in case the page lapses while it is still open.
+//! With `notification` unset the target is the app, else a page, wherever it is open: a client of
+//! another process cannot see this hub's gates, so a notice is queued for it (once, behind the
+//! gate's marker), and nothing rings when its 確認待ち is off.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::{RETRY_SECS, Ring, WaitWatch, claim, route, safe_name};
+use super::{
+    RETRY_SECS, Ring, WaitWatch, built_in_ring, claim, queued_or_released, route, safe_name,
+};
 use crate::board::{Server, settings_now};
 use crate::gate::{self, Gate};
 use crate::infra::clock::utc_stamp;
 use crate::infra::notify;
+use crate::infra::terminal::Hook;
+use crate::registry::WaitRoute;
 
 /// What the gate sweep has looked at.
 #[derive(Default)]
@@ -59,6 +66,13 @@ fn gate_message(gate: &Gate) -> String {
     }
 }
 
+/// What the page rings a gate under (`gate-` and the ref `<board slug>/<gate id>`, `checkNewGates`
+/// in core.js): a notice queued for it carries the same, so a page that also reads the gate from
+/// its own board's state shows one of the two.
+fn gate_tag(slug: &str, id: &str) -> String {
+    format!("gate-{slug}/{id}")
+}
+
 /// Where the claim on one gate is kept, as `marker_path` does for a wait: a gate id is only
 /// unique within its hub.
 fn gate_marker(root: &Path, slug: &str, id: &str) -> PathBuf {
@@ -92,7 +106,14 @@ impl WaitWatch {
             gates.handled.retain(|key| open.contains(key));
             pending_gates(&listed, &since, &gates.handled)
         };
-        if pending.is_empty() || self.page_fresh(now) {
+        // Rung by nobody here while a client is open to ring it, whatever the board's
+        // `notification` is; which clients leave it to is a board's setting, asked below.
+        let wait_at = crate::registry::wait_route(
+            crate::registry::notify_clients(root),
+            crate::registry::local_notify_clients(root),
+            now,
+        );
+        if pending.is_empty() || (wait_at == WaitRoute::Leave && self.page_fresh(now)) {
             return Vec::new();
         }
         let (servers, complete) = boards();
@@ -108,13 +129,40 @@ impl WaitWatch {
                 }
                 continue;
             };
+            // Left to a client that is open: not claimed, so that it is rung here if they lapse.
+            let settings = settings_now(server);
+            if self.left_to_client(&settings.notification, wait_at, now) {
+                continue;
+            }
             let (ring, _) = route(false, false, false, || {
                 claim(&gate_marker(root, &slug, &gate.id))
             });
+            let ring = if matches!(settings.notification, Hook::BuiltIn) {
+                built_in_ring(ring, wait_at)
+            } else {
+                ring
+            };
+            if ring == Ring::Queue {
+                // The app or page that is open on another process cannot see this gate.
+                let repo = &server.ctx.repo;
+                let queued = crate::registry::enqueue_notice_tagged(
+                    root,
+                    &repo.nwo,
+                    &notify::repo_title(&repo.repo),
+                    &gate_message(&gate),
+                    now,
+                    Some(&gate_tag(&slug, &gate.id)),
+                );
+                // Not queued: the claim is given back and the gate is not handled, so that a
+                // later round rings it.
+                if !queued_or_released(queued, &gate_marker(root, &slug, &gate.id)) {
+                    continue;
+                }
+            }
             if ring == Ring::Now {
                 let repo = &server.ctx.repo;
                 if let Some(command) = notify::repo_command(
-                    &settings_now(server).notification,
+                    &settings.notification,
                     &repo.nwo,
                     &repo.repo,
                     &gate_message(&gate),
@@ -183,6 +231,11 @@ mod tests {
         );
         let result = gate("g", Kind::Result, "/w/b", "Found it", "20260101T000000Z");
         assert_eq!(gate_message(&result), "b opened a result gate: Found it");
+    }
+
+    #[test]
+    fn a_queued_gate_is_named_as_the_page_names_its_own() {
+        assert_eq!(gate_tag("acme-widget", "g7"), "gate-acme-widget/g7");
     }
 
     #[test]

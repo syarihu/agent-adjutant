@@ -625,8 +625,11 @@ function checkNewEnds(fetchedAt) {
       okRepos: (work.doc.repos || []).filter(r => !r.error).map(r => r.nwo) });
   endState = result;
   const { events } = result;
+  // Only the ringing is held back for the app: the ends above were learned either way, so closing the app does not ring them.
   if (!(window.Notification && Notification.permission === 'granted')) return;
   for (const { kind, entry, key } of events) {
+    // Held back for the app unless this board has a notifier of its own.
+    if (appHolds(entry.board)) continue;
     const { title, body } = notifyContent(kind, entry);
     const n = new Notification(title, { body, tag: `adj-${kind}-${key}` });
     n.onclick = () => openNotified(entry, n);

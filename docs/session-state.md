@@ -464,13 +464,29 @@ is listed so the ledger carries what it will need.
   incomplete, for up to a minute. Each board still records the notice for its own page, which
   notifies on its own, but one channel rings per wait: every page request carries
   `X-Adjutant-Notify` (`1` when the browser allows notifications and 確認待ち is on, else `0`), and
-  the process notes it on `/api/boards` (the resident) or `/api/state` (a board served alone). A
-  `1` within the last 90 seconds (a hidden tab polls about once a minute) makes the page the
+  the desktop app adds `X-Adjutant-Shell: app`. The process notes it on `/api/boards` (the resident) or `/api/state` (a board served alone), in memory
+  and, for a `notification` that is unset, in the process's own file under `<state>/notify-clients/<pid>.json` (`pageAt`, `appAt`;
+  rewritten when a value has moved by 10 seconds; the latest of every file is what counts, so a board served beside the resident
+  agrees with it). A request counts as the app only with `X-Adjutant-Shell: app` and a client that can show notifications
+  (`X-Adjutant-Can-Notify: 1`, the browser's permission; an older page's `X-Adjutant-Notify: 1` implies it): an app that
+  cannot does not silence a browser. Each kind keeps two stamps, `pageAt`/`appAt` (can show: what the app-open answer, `adj notify` and mail follow) and
+  `pageWaitsAt`/`appWaitsAt` (`X-Adjutant-Notify: 1`, 確認待ち on too: what waits and gates follow); a file without the second pair reads as never.
+  With `notification` unset a wait or gate is routed by `registry::wait_route`: the target is the app if its `appAt` is fresh anywhere, else a page;
+  with the target's waits stamp not fresh nothing rings; with this process's own stamp of that kind fresh (the client reads this process's boards) it is left to the client;
+  otherwise a notice is queued for it, once, behind the wait or gate marker, and with no target `terminal-notifier` rings it. A
+  `1` within the last 90 seconds (a hidden tab polls about once a minute) makes the page (with a configured `notification`, of this process) the
   channel: a new wait is listed but neither claimed nor rung, and is looked at again each round
-  once the page lapses, when the configured command rings it if the row still waits. A `0` or a request without the header changes nothing, so turning 確認待ち off hands waits and gates back to the configured command within about 90 seconds, and a browser that cannot ring never makes the server ring beside one that can. Gates are rung the same way (`wait_watch/gates.rs`, markers under
+  once the page lapses, when the configured command rings it if the row still waits. With `notification` unset and neither open, a wait or gate is rung through `terminal-notifier` if it is installed and not at all if it is not (there is no `osascript` fallback). A `0` or a request without the header changes nothing, so turning 確認待ち off hands waits and gates back to the configured command within about 90 seconds, and a browser that cannot ring never makes the server ring beside one that can. Gates are rung the same way (`wait_watch/gates.rs`, markers under
   `<state>/gate-notified/`), for those that open after the watch started and are still open when
-  no page is fresh. Freshness is per process, so a board served alone beside the resident can
-  still win a marker and ring while the resident's page rings too. The open-terminal check is per process: a terminal open on one board does
+  no page is fresh. With a configured command freshness is per process, so a board served alone beside the resident can
+  still win a marker and ring while the resident's page rings too; with `notification` unset it is read from every process's file.
+  The same poll answers with `X-Adjutant-App-Open` (`1`/`0`: the browser page rings nothing while it is `1`) and, when notices are queued,
+  `X-Adjutant-Notices` (a JSON array of `{id, title, message, nwo, tag?}`, ASCII only). The poll also names, in `X-Adjutant-Own-Notifier` (a JSON array of board slugs, `""` for a board served alone, sent only when there are any), the boards whose `notification` is a command or `false`: the page holds its rings back for the app per board, and not for these, so such a board rings or not exactly as before even while the app is open, and one repository's command does not turn the app off for the others. Only a repository with `notification` unset ever queues a notice, so notices are handed out whatever the other repositories say. A notice for a wait or gate carries the `tag` the page rings that event under (`wait-<row id>/<since>`, which names the wait and not the board that saw it, since one worker's wait can be seen from its repository's board and a parent hub's; `gate-<hub slug>/<id>`, since a gate id is only unique within its hub; in `registry::Notice`, an old record has none), and the page keeps the tags it rang in the last 10 minutes (at most 200; a board served alone says its own slug in `X-Adjutant-Board-Slug` so its page names its gates the same way) and skips a notice or its own ring that repeats one. A notice for a wait or gate is also dropped (it is off the queue either way) while the receiving page has 確認待ち off, for the queuing server may still count the preference as on for up to 90 seconds; mail and `adj notify` notices ring as before, so a wait queued by a second server process is not shown twice beside the page's own ring: in headers because `/api/boards` is a bare array and
+  a notice is not a change of the state. A message from `adj send`, `adj tell`, a gate answer or `adj notify` with `notification`
+  unset and the app or a page open is queued as `<state>/notices/<id>.json` instead of run (`registry::notify_person`); the app, or
+  with no app a page that can ring, takes it with its next poll (a rename, so exactly one poll gets each), and rings it with
+  `new Notification(title, {body, tag: 'notice-<id>'})`. A notice not taken within 100 seconds is taken by the server's watch
+  and rung through `terminal-notifier` if installed, else dropped. The open-terminal check is per process: a terminal open on one board does
   not stop another process that wins the claim. The announcement runs the configured `notification` (`"{name} is waiting:
   {request}"`, or `"{name} is asking: {question}"` for an AskUserQuestion), and `/api/state` and
   `/api/boards` carry every wait as `waits`. On the resident server the page lists each as a 新着 item of its session's row in

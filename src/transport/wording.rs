@@ -7,7 +7,7 @@ use crate::infra::terminal;
 use crate::kernel::prompts;
 use crate::lifecycle::review::{AskError, CloseError, TaskAskError};
 use crate::mail::{wake_holds_for_session, wake_looks_at_screen};
-use crate::registry::Context;
+use crate::registry::{Client, Context, Notified, Plan};
 use crate::task::{self, Checked, PrState};
 
 /// `refresh`'s answer as the MCP tool and the board hand it on: sorted by what happened, so
@@ -91,6 +91,47 @@ pub const WORKER_NOT_RUNNING: &str =
 
 /// Why opening a worktree in the editor was refused, as the CLI and the board both say it.
 pub const IDE_NOT_SET: &str = "ide is not set: put your editor command in the config's ide key";
+
+/// What `adj notify` says on stderr when it did not run a command line, so that the words are
+/// right for each way that happens: the notification was turned off, it was queued for the
+/// desktop app or a board page that is open, or `notification` is unset and nobody is open and
+/// there is no `terminal-notifier`. None of them is a failure of what was being announced.
+pub fn notify_outcome(done: &Notified, title: &str, message: &str) -> String {
+    let what = format!("({title}: {message})");
+    match done {
+        Notified::Off => format!("adjutant: notification is turned off {what}"),
+        Notified::Queued(client) => format!(
+            "adjutant: queued for {}, which shows it {what}",
+            client_name(*client)
+        ),
+        Notified::NoNotifier => format!("adjutant: {NO_NOTIFIER} {what}"),
+        Notified::Ran => String::new(),
+    }
+}
+
+/// `notify_outcome`, for a dry run: what would happen.
+pub fn notify_plan(plan: &Plan, title: &str, message: &str) -> String {
+    let what = format!("({title}: {message})");
+    match plan {
+        Plan::Off => format!("adjutant: notification is turned off {what}"),
+        Plan::Queue(client) => format!(
+            "adjutant: would queue it for {}, which shows it {what}",
+            client_name(*client)
+        ),
+        Plan::NoNotifier => format!("adjutant: {NO_NOTIFIER} {what}"),
+        Plan::Run(command) => command.clone(),
+    }
+}
+
+const NO_NOTIFIER: &str = "no board page or desktop app is open and there is no terminal-notifier \
+     to run, so nothing was shown";
+
+fn client_name(client: Client) -> &'static str {
+    match client {
+        Client::App => "the desktop app",
+        Client::Page => "the open board page",
+    }
+}
 
 /// `adj gate open --json`, and the MCP tool's answer: the same object, so the procedure can
 /// branch on it the same way whichever it used.
@@ -424,6 +465,19 @@ mod tests {
             WORKER_NOT_RUNNING,
             "The worker is not running; it will read this the next time it starts."
         );
+    }
+
+    #[test]
+    fn the_notify_words_say_what_actually_happened() {
+        let said = |done| notify_outcome(&done, "t", "m");
+        assert!(said(Notified::Queued(Client::App)).contains("queued for the desktop app"));
+        assert!(said(Notified::Queued(Client::Page)).contains("open board page"));
+        assert!(said(Notified::Off).contains("turned off"));
+        let none = said(Notified::NoNotifier);
+        assert!(none.contains("no terminal-notifier"), "{none}");
+        assert!(!none.contains("configured"), "{none}");
+        assert_eq!(said(Notified::Ran), "");
+        assert_eq!(notify_plan(&Plan::Run("tn".into()), "t", "m"), "tn");
     }
 
     #[test]

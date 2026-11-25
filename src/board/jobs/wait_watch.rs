@@ -5,10 +5,14 @@
 //! terminal, and the board shows it only to whoever has the board open. This watches the agent
 //! session ledger on the board's own clock: a row that has said `waiting` for a few seconds is
 //! announced once, unless that session's terminal is open on the board. One channel rings per
-//! event: the page's own desktop notification while a page that may notify is open (see
-//! `page_seen`), the configured `notification` otherwise. A wait is not claimed while the page
-//! is fresh; if the page lapses and the session still waits, the configured command rings it
-//! then, a late reminder rather than silence. A gate that opens is rung the same way
+//! event: the client's own desktop notification while the desktop app or a board page that may
+//! notify is open, the notifier otherwise. With `notification` unset, the target is the app if one
+//! is open on any server process (`registry::notify_clients`), else a page, else none. It rings
+//! the wait itself when it polls this process, a notice is queued for it when it polls another
+//! one (that process does not show this board), and nothing rings when its 確認待ち is off; with
+//! neither open the notifier is `terminal-notifier` if it is installed; with a command configured it is a page of this process (see `page_seen`) and the
+//! notifier is that command. A wait is not claimed while a client is open; if it lapses and the
+//! session still waits, the notifier rings it then, a late reminder rather than silence. A gate that opens is rung the same way
 //! (`gates.rs`). `/api/state` and `/api/boards` carry every such wait as `waits`, which the page
 //! lists in 「いまの仕事」 on a resident server and marks on the session's card on a board served
 //! alone. A wait that was not announced (it was already up when the watch started, or its
@@ -24,7 +28,9 @@ use std::time::Duration;
 
 use crate::board::view::{board_sessions, socket_key};
 use crate::board::{Server, Session, WaitNotice, settings_now, target_of};
+use crate::infra::terminal::Hook;
 use crate::infra::{clock::now_secs, notify, shell};
+use crate::registry::{WaitRoute, fresh, local_notify_clients, notify_clients, wait_route};
 
 mod gates;
 
@@ -55,17 +61,11 @@ struct State {
     /// The waits listed but left to the page's own notification while it is fresh: neither
     /// claimed nor rung, and not looked for again until the page lapses.
     page_held: HashSet<Key>,
+    /// The same for a wait left to the desktop app or a board page of any server process, which
+    /// is what `notification` unset leaves it to (`registry::notify_clients`).
+    client_held: HashSet<Key>,
     /// What the gate sweep has looked at.
     gates: gates::GateState,
-}
-
-/// How long after its last poll a page that may notify still counts as open. A hidden tab is
-/// throttled to about one poll a minute, so this has to outlast that.
-pub const PAGE_FRESH_SECS: i64 = 90;
-
-/// Whether a page seen at `at` is still open at `now`; `0` is never seen.
-fn fresh(at: i64, now: i64) -> bool {
-    at > 0 && now - at <= PAGE_FRESH_SECS
 }
 
 /// What is known of the waits, shared by every board of the process.
@@ -234,6 +234,9 @@ enum Ring {
     No,
     /// The configured notification, now.
     Now,
+    /// A notice in the shared queue, for the app or page that is open on another process and so
+    /// cannot see this board: `notification` unset only.
+    Queue,
     /// The page, while it is fresh: left unclaimed, so that the configured notification takes
     /// it if the page lapses first.
     Later,
@@ -260,6 +263,36 @@ fn route(seeded: bool, open: bool, page: bool, claim: impl FnOnce() -> bool) -> 
         (Ring::Now, false)
     } else {
         (Ring::No, false)
+    }
+}
+
+/// What the page rings a wait under (`notifyWaitTag` in my-work-notify.js: `wait-<ledger row
+/// id>/<since>`). It names the wait and not who observed it: one worker's wait can be seen from
+/// its repository's board and from a parent hub's, and a notice queued for it must be the same
+/// event the page rings from either. The row id is the agent's session id, which the markers
+/// already take as unique across boards.
+fn wait_tag(key: &Key) -> String {
+    format!("wait-{}/{}", key.0, key.1)
+}
+
+/// Whether a notice was queued. When it was not, this process's claim `marker` is removed, so
+/// that the wait is not taken for rung and another round (or process) can ring it.
+fn queued_or_released(queued: Result<String, String>, marker: &Path) -> bool {
+    if queued.is_ok() {
+        return true;
+    }
+    let _ = std::fs::remove_file(marker);
+    false
+}
+
+/// What a wait the claim said to ring is, with `notification` unset: the claim only settles that
+/// this process is the one to act on it, and the route says how. The target client reads another
+/// process (`Queue`), has 確認待ち off (`Drop`), or nobody is open (`Notifier`, the command).
+fn built_in_ring(ring: Ring, route: WaitRoute) -> Ring {
+    match (ring, route) {
+        (Ring::Now, WaitRoute::Queue(_)) => Ring::Queue,
+        (Ring::Now, WaitRoute::Drop) => Ring::No,
+        (ring, _) => ring,
     }
 }
 
@@ -348,6 +381,21 @@ fn claim(path: &Path) -> bool {
 
 /// Run each command on a thread of its own, and do not look at the result: a notifier that
 /// fails or hangs must not stop the watch or the board showing the wait.
+/// The commands that ring the notices no desktop app or board page took in time (a window that
+/// closed, or a server that stopped, between the notice being queued and being taken), each
+/// once, with the built-in notifier: `terminal-notifier` when it is installed, nothing when it
+/// is not. Several servers run this, and taking a notice is a rename, so one of them gets it.
+fn expired_notice_commands(
+    root: &Path,
+    now: i64,
+    built_in: &dyn Fn(&str, &str) -> Option<String>,
+) -> Vec<String> {
+    crate::registry::take_expired_notices(root, now)
+        .iter()
+        .filter_map(|notice| built_in(&notice.title, &notice.message))
+        .collect()
+}
+
 fn spawn_all(commands: Vec<String>) {
     for command in commands {
         std::thread::spawn(move || {
@@ -387,7 +435,8 @@ impl WaitWatch {
     /// gates. A page that may not is not noted and does not clear what another page noted: two
     /// browsers can differ, and one that cannot ring must not make the server ring beside the
     /// one that can. The configured notification takes over once the last such poll is older
-    /// than `PAGE_FRESH_SECS`.
+    /// than `PAGE_FRESH_SECS`. This is for a configured `notification`; with it unset the
+    /// answer is every server process's, read from `registry::notify_clients`.
     pub fn page_seen(&self, now: i64) {
         self.page_at.fetch_max(now, Ordering::Relaxed);
     }
@@ -395,6 +444,18 @@ impl WaitWatch {
     /// Whether a page that may notify is open: it polled within `PAGE_FRESH_SECS`.
     fn page_fresh(&self, now: i64) -> bool {
         fresh(self.page_at.load(Ordering::Relaxed), now)
+    }
+
+    /// Whether the wait or gate of a board whose `notification` is `hook` is left to a client
+    /// that is open. With `notification` unset that is the target client (the app, else a page)
+    /// when it polls this process (`route`, read once for the round); a configured command, or
+    /// `false`, is left only to a page of this process, as it always was.
+    fn left_to_client(&self, hook: &Hook, route: WaitRoute, now: i64) -> bool {
+        if matches!(hook, Hook::BuiltIn) {
+            route == WaitRoute::Leave
+        } else {
+            self.page_fresh(now)
+        }
     }
 
     /// Watch for as long as the process lives. `root` is the ledger's state directory, `slugs`
@@ -414,6 +475,7 @@ impl WaitWatch {
                 let now = now_secs();
                 spawn_all(self.gate_round(root, &slugs(), &boards, now));
                 self.round(root, &boards, now);
+                spawn_all(expired_notice_commands(root, now, &notify::default_command));
             }));
             std::thread::sleep(EVERY);
         }
@@ -425,6 +487,7 @@ impl WaitWatch {
             return;
         };
         let page = self.page_fresh(now);
+        let wait_at = wait_route(notify_clients(root), local_notify_clients(root), now);
         let (due, quiet) = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let still: HashSet<&Key> = waiting.iter().collect();
@@ -432,6 +495,7 @@ impl WaitWatch {
             state.quiet.retain(|key| still.contains(key));
             state.held.retain(|key, _| still.contains(key));
             state.page_held.retain(|key| still.contains(key));
+            state.client_held.retain(|key| still.contains(key));
             for notices in state.notices.values_mut() {
                 notices.retain(|(key, _)| still.contains(key));
             }
@@ -446,11 +510,13 @@ impl WaitWatch {
             }
             // The waits left to the page are not looked for again while it stays fresh, so that
             // they do not have the boards listed every round.
-            let skip = if page {
-                state.page_held.clone()
-            } else {
-                HashSet::new()
-            };
+            let mut skip = HashSet::new();
+            if page {
+                skip.extend(state.page_held.iter().cloned());
+            }
+            if wait_at == WaitRoute::Leave {
+                skip.extend(state.client_held.iter().cloned());
+            }
             (
                 due(
                     &waiting,
@@ -471,6 +537,8 @@ impl WaitWatch {
         let mut matched: HashSet<Key> = HashSet::new();
         let mut held: HashSet<Key> = HashSet::new();
         let mut later: HashSet<Key> = HashSet::new();
+        let mut later_client: HashSet<Key> = HashSet::new();
+        let mut retry: HashSet<Key> = HashSet::new();
         let mut announced: Vec<(String, Picked)> = Vec::new();
         let mut rings: Vec<String> = Vec::new();
         let (servers, mut complete) = boards();
@@ -501,9 +569,16 @@ impl WaitWatch {
                     .target
                     .as_deref()
                     .is_some_and(|key| self.is_open(key));
-                let (ring, is_quiet) = route(quiet.contains(&picked.key), open, page, || {
+                let built_in = matches!(settings.notification, Hook::BuiltIn);
+                let left = self.left_to_client(&settings.notification, wait_at, now);
+                let (ring, is_quiet) = self::route(quiet.contains(&picked.key), open, left, || {
                     claim(&marker_path(root, &picked.key))
                 });
+                let ring = if built_in {
+                    built_in_ring(ring, wait_at)
+                } else {
+                    ring
+                };
                 let mut picked = picked;
                 picked.notice.quiet = is_quiet;
                 // The page's notice is this board's own, whoever wins the claim: a browser
@@ -520,8 +595,28 @@ impl WaitWatch {
                             rings.push(command);
                         }
                     }
+                    Ring::Queue => {
+                        // Claimed above, so queued once: the client that takes it rings it. A
+                        // notice that could not be queued gives the claim back and leaves the
+                        // wait unsettled, so that a later round tries again.
+                        let queued = crate::registry::enqueue_notice_tagged(
+                            root,
+                            &repo.nwo,
+                            &notify::repo_title(&repo.repo),
+                            &message(&picked.notice.name, picked.notice.request.as_deref()),
+                            now,
+                            Some(&wait_tag(&picked.key)),
+                        );
+                        if !queued_or_released(queued, &marker_path(root, &picked.key)) {
+                            retry.insert(picked.key.clone());
+                        }
+                    }
                     Ring::Later => {
-                        later.insert(picked.key.clone());
+                        if built_in {
+                            later_client.insert(picked.key.clone());
+                        } else {
+                            later.insert(picked.key.clone());
+                        }
                     }
                     Ring::No => {}
                 }
@@ -534,7 +629,13 @@ impl WaitWatch {
             // one that belongs to no session this process lists is not looked for again. After
             // an incomplete one they are tried again next round. A wait left to the page is not
             // done with: it is looked at again once the page lapses.
-            let unsettled: HashSet<Key> = held.union(&later).cloned().collect();
+            let unsettled: HashSet<Key> = held
+                .iter()
+                .chain(&later)
+                .chain(&later_client)
+                .chain(&retry)
+                .cloned()
+                .collect();
             state
                 .handled
                 .extend(settled(&due, &matched, &unsettled, complete, now));
@@ -543,8 +644,12 @@ impl WaitWatch {
                 if !later.contains(key) {
                     state.page_held.remove(key);
                 }
+                if !later_client.contains(key) {
+                    state.client_held.remove(key);
+                }
             }
             state.page_held.extend(later);
+            state.client_held.extend(later_client);
             for key in held.difference(&matched) {
                 state.held.insert(key.clone(), now);
             }
@@ -811,9 +916,7 @@ mod tests {
 
     #[test]
     fn a_page_is_open_for_ninety_seconds_after_it_was_seen() {
-        assert!(!fresh(0, 100));
-        assert!(fresh(100, 190));
-        assert!(!fresh(100, 191));
+        assert_eq!(crate::registry::PAGE_FRESH_SECS, 90);
         let watch = WaitWatch::default();
         assert!(!watch.page_fresh(100));
         watch.page_seen(100);
@@ -822,6 +925,83 @@ mod tests {
         watch.page_seen(90);
         assert!(watch.page_fresh(190));
         assert!(!watch.page_fresh(191));
+    }
+
+    #[test]
+    fn only_a_configured_command_is_left_to_this_process_s_page() {
+        let watch = WaitWatch::default();
+        watch.page_seen(100);
+        let command = Hook::Command("say".into());
+        // Unset: left only when the target client polls this process.
+        assert!(watch.left_to_client(&Hook::BuiltIn, WaitRoute::Leave, 150));
+        assert!(!watch.left_to_client(&Hook::BuiltIn, WaitRoute::Notifier, 150));
+        assert!(!watch.left_to_client(
+            &Hook::BuiltIn,
+            WaitRoute::Queue(crate::registry::Client::App),
+            150
+        ));
+        assert!(!watch.left_to_client(&Hook::BuiltIn, WaitRoute::Drop, 150));
+        assert!(watch.left_to_client(&command, WaitRoute::Notifier, 150));
+        assert!(!watch.left_to_client(&command, WaitRoute::Leave, 191));
+        assert!(!watch.left_to_client(&Hook::Off, WaitRoute::Leave, 191));
+    }
+
+    #[test]
+    fn a_notice_that_could_not_be_queued_gives_the_claim_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = marker_path(dir.path(), &key("row-1", 1700));
+        assert!(claim(&marker));
+        assert!(queued_or_released(Ok("id".into()), &marker));
+        assert!(marker.exists(), "a queued notice keeps its claim");
+        assert!(!queued_or_released(Err("disk full".into()), &marker));
+        assert!(!marker.exists());
+        // Released: the next round's claim succeeds again.
+        assert!(claim(&marker));
+        // Nothing to remove is not an error.
+        assert!(!queued_or_released(
+            Err("x".into()),
+            &dir.path().join("absent")
+        ));
+    }
+
+    #[test]
+    fn a_queued_wait_is_named_as_the_page_names_its_own() {
+        assert_eq!(wait_tag(&key("row-1", 1700)), "wait-row-1/1700");
+    }
+
+    #[test]
+    fn a_claimed_wait_is_queued_dropped_or_rung_by_the_route() {
+        use crate::registry::Client;
+        assert_eq!(
+            built_in_ring(Ring::Now, WaitRoute::Queue(Client::Page)),
+            Ring::Queue
+        );
+        assert_eq!(built_in_ring(Ring::Now, WaitRoute::Drop), Ring::No);
+        assert_eq!(built_in_ring(Ring::Now, WaitRoute::Notifier), Ring::Now);
+        // A claim lost to another process stays lost.
+        assert_eq!(
+            built_in_ring(Ring::No, WaitRoute::Queue(Client::App)),
+            Ring::No
+        );
+        assert_eq!(built_in_ring(Ring::Later, WaitRoute::Leave), Ring::Later);
+    }
+
+    #[test]
+    fn a_notice_nobody_took_is_rung_by_the_notifier_once() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::registry::enqueue_notice(dir.path(), "o/r", "adjutant / r", "done", 100).unwrap();
+        let notifier = |title: &str, message: &str| Some(format!("tn {title} {message}"));
+        let at = 100 + crate::registry::NOTICE_EXPIRY_SECS;
+        assert!(expired_notice_commands(dir.path(), at - 1, &notifier).is_empty());
+        assert_eq!(
+            expired_notice_commands(dir.path(), at, &notifier),
+            ["tn adjutant / r done"]
+        );
+        assert!(expired_notice_commands(dir.path(), at, &notifier).is_empty());
+        // Without terminal-notifier it is dropped, not kept for ever.
+        crate::registry::enqueue_notice(dir.path(), "o/r", "t", "m", 100).unwrap();
+        assert!(expired_notice_commands(dir.path(), at, &|_, _| None).is_empty());
+        assert!(crate::registry::take_expired_notices(dir.path(), at).is_empty());
     }
 
     #[test]

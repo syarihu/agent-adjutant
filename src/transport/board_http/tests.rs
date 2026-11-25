@@ -1459,6 +1459,13 @@ fn a_session_waiting_on_a_prompt_is_rung_for_and_opens_in_the_work_view() {
         // The page says on every request whether it rings, so the server rings only when it does not.
         "'X-Adjutant-Notify'",
         "notifyPageRings(",
+        // The app says it is the app, and a browser page rings nothing while the app is open.
+        "'X-Adjutant-Shell'",
+        "'X-Adjutant-Can-Notify'",
+        "notifyAppHolds(",
+        "X-Adjutant-Notices",
+        "X-Adjutant-Board-Slug",
+        "notifyNoticeRings(",
     ] {
         assert!(UI_HTML.contains(piece), "the page lacks {piece}");
     }

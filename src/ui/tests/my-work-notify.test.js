@@ -10,7 +10,7 @@ for (const file of ['util.js', 'my-work-seen.js', 'my-work-away.js', 'my-work-no
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), ctx, { filename: file });
 }
 const plain = x => JSON.parse(JSON.stringify(x));
-const { notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyEffective, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
+const { notifyTagEntryMatch, notifyNoticeRings, notifyWaitTag, notifyGateTag, notifyOwnNotifier, notifyRungHas, notifyRungAdd, notifyRungPrune, notifyCanRing, notifyAppHolds, notifyNotices, notifyNoticeContent, notifyPageRings, notifyPendingFinal, notifyGateMatch, notifyWaitMatch, notifyPrefs, notifyEffective, notifyQuiet, notifyEndEvents, notifyContent, notifyTrimMessage, notifyReviewContent } = ctx;
 
 const T0 = Date.UTC(2026, 9, 1) / 1000;
 const DEFAULTS = { waiting: true, done: false, failed: true, review: true };
@@ -27,6 +27,136 @@ test('the page rings waits and gates only with permission and the waiting toggle
   assert.strictEqual(notifyPageRings('default', { waiting: true }), false);
   assert.strictEqual(notifyPageRings('granted', { waiting: false }), false);
   assert.strictEqual(notifyPageRings('granted', undefined), false);
+});
+
+test('the page can notify with permission alone, whatever the waiting toggle says', () => {
+  assert.strictEqual(notifyCanRing('granted'), true);
+  assert.strictEqual(notifyCanRing('denied'), false);
+  assert.strictEqual(notifyCanRing('default'), false);
+  assert.strictEqual(notifyCanRing(undefined), false);
+  // Permission with 確認待ち off: it can notify, it does not ring waits.
+  assert.strictEqual(notifyCanRing('granted') && notifyPageRings('granted', { waiting: false }), false);
+});
+
+test('a browser page is silent while the app is open, and the app is never silenced by itself', () => {
+  assert.strictEqual(notifyAppHolds(false, true), true);
+  assert.strictEqual(notifyAppHolds(false, false), false);
+  assert.strictEqual(notifyAppHolds(true, true), false);
+  assert.strictEqual(notifyAppHolds(true, false), false);
+  // A header that was never read is not an open app.
+  assert.strictEqual(notifyAppHolds(false, undefined), false);
+  assert.strictEqual(notifyAppHolds(false, 'true'), false);
+});
+
+test('the notices the server hands over are read back, and anything else is no notice', () => {
+  const raw = JSON.stringify([{ id: 'a-1', title: 'adjutant / widget', message: '確認待ち', nwo: 'acme/widget' }, { id: 'a-2', title: 't' }]);
+  assert.deepStrictEqual(plain(notifyNotices(raw)), [
+    { id: 'a-1', title: 'adjutant / widget', message: '確認待ち', tag: null },
+    { id: 'a-2', title: 't', message: '', tag: null },
+  ]);
+  // The server writes non-ASCII as escapes: they read back as the text.
+  assert.strictEqual(notifyNotices('[{"id":"x","title":"t","message":"\\u78ba\\u8a8d"}]')[0].message, '確認');
+  for (const bad of ['', 'not json', '{}', 'null', '[1, "x", null]', '[{"id":"","title":"t"}]', '[{"id":"a"}]', '[{"id":1,"title":"t"}]']) {
+    assert.deepStrictEqual(plain(notifyNotices(bad)), [], bad);
+  }
+});
+
+test('a notice carries the tag the page rings its own event under, and an old one has none', () => {
+  const [a, b] = notifyNotices(JSON.stringify([{ id: 'a', title: 't', tag: 'gate-acme/g7' }, { id: 'b', title: 't' }]));
+  assert.strictEqual(a.tag, 'gate-acme/g7');
+  assert.strictEqual(b.tag, null);
+  assert.strictEqual(notifyNoticeContent(a).tag, 'gate-acme/g7');
+  assert.strictEqual(notifyNoticeContent(b).tag, 'notice-b');
+});
+
+test('an event is rung once whichever of the page and the notice comes second', () => {
+  const rung = new Map();
+  const T = 1_000_000;
+  assert.strictEqual(notifyRungHas(rung, 'gate-acme/g7', T), false);
+  notifyRungAdd(rung, 'gate-acme/g7', T);
+  assert.strictEqual(notifyRungHas(rung, 'gate-acme/g7', T + 1000), true);
+  assert.strictEqual(notifyRungHas(rung, 'gate-acme/g8', T + 1000), false);
+  // Other hubs' gates of the same id are other events.
+  assert.strictEqual(notifyRungHas(rung, 'gate-beta/g7', T + 1000), false);
+  // Forgotten after ten minutes.
+  assert.strictEqual(notifyRungHas(rung, 'gate-acme/g7', T + 10 * 60 * 1000 + 1), false);
+});
+
+test('the set is bounded, dropping the oldest', () => {
+  const rung = new Map();
+  for (let i = 0; i < 250; i++) notifyRungAdd(rung, 'wait-a/' + i + '/1', 5000 + i);
+  assert.strictEqual(rung.size, 200);
+  assert.strictEqual(rung.has('wait-a/0/1'), false);
+  assert.strictEqual(rung.has('wait-a/249/1'), true);
+});
+
+test('a wait is named by its row and moment alone, a gate keeps its hub', () => {
+  assert.strictEqual(notifyWaitTag('row-1', 1700), 'wait-row-1/1700');
+  assert.strictEqual(notifyGateTag('acme-widget', 'g7'), 'gate-acme-widget/g7');
+  // One wait seen from two boards is one event; two hubs' gates with the same id are two.
+  const rung = new Map();
+  notifyRungAdd(rung, notifyWaitTag('row-1', 1700), 10);
+  assert.strictEqual(notifyRungHas(rung, notifyWaitTag('row-1', 1700), 11), true);
+  assert.strictEqual(notifyRungHas(rung, notifyWaitTag('row-1', 1701), 11), false);
+  notifyRungAdd(rung, notifyGateTag('acme-widget', 'g7'), 10);
+  assert.strictEqual(notifyRungHas(rung, notifyGateTag('acme-widget', 'g7'), 11), true);
+  assert.strictEqual(notifyRungHas(rung, notifyGateTag('acme-parent', 'g7'), 11), false);
+});
+
+test('a wait or gate notice finds its entry by its tag, any other notice has none', () => {
+  const gated = entry('t1', [], { gates: [{ key: 'acme-widget/g7' }] });
+  const waiting = entry('t2', [], { session: { id: 'worker-a', agentSession: { sessionId: 'row-1' } } });
+  const other = entry('t3', []);
+  const gate = notifyTagEntryMatch('gate-acme-widget/g7');
+  assert.deepStrictEqual([gated, waiting, other].map(gate), [true, false, false]);
+  // The same id on another hub is another gate.
+  assert.strictEqual(notifyTagEntryMatch('gate-acme-parent/g7')(gated), false);
+  const wait = notifyTagEntryMatch('wait-row-1/1700');
+  assert.deepStrictEqual([gated, waiting, other].map(wait), [false, true, false]);
+  for (const tag of [null, undefined, 'notice-a', 'mail-x', 'wait-nosince']) assert.strictEqual(notifyTagEntryMatch(tag), null, String(tag));
+  // The page's quiet check then applies to it: the row open on screen is not rung for.
+  assert.strictEqual(notifyQuiet(waiting, 't2', true), true);
+  assert.strictEqual(notifyQuiet(waiting, 't2', false), false);
+});
+
+test('a notice for a wait or gate follows the waiting setting, any other is rung as before', () => {
+  const tagged = tag => ({ id: 'a', title: 't', message: '', tag });
+  for (const tag of ['wait-row-1/1700', 'gate-acme/g7']) {
+    assert.strictEqual(notifyNoticeRings(tagged(tag), true), true, tag);
+    assert.strictEqual(notifyNoticeRings(tagged(tag), false), false, tag);
+  }
+  // Mail and `adj notify` carry no such tag, or one of their own.
+  for (const tag of [null, undefined, 'notice-a', 'mail-x']) {
+    assert.strictEqual(notifyNoticeRings(tagged(tag), false), true, String(tag));
+    assert.strictEqual(notifyNoticeRings(tagged(tag), true), true, String(tag));
+  }
+});
+
+test('a board with a notifier of its own is not held back for the app, the others are', () => {
+  const own = ['acme-cmd'];
+  assert.strictEqual(notifyAppHolds(false, true, 'acme-cmd', own), false);
+  assert.strictEqual(notifyAppHolds(false, true, 'acme-app', own), true);
+  assert.strictEqual(notifyAppHolds(false, false, 'acme-app', own), false);
+  assert.strictEqual(notifyAppHolds(true, true, 'acme-app', own), false);
+  // A board served alone is "".
+  assert.strictEqual(notifyAppHolds(false, true, '', ['']), false);
+  assert.strictEqual(notifyAppHolds(false, true, '', []), true);
+  // What belongs to no board is held while the app is open.
+  assert.strictEqual(notifyAppHolds(false, true, null, []), true);
+  assert.strictEqual(notifyAppHolds(false, true, null, own), true);
+  assert.strictEqual(notifyAppHolds(false, true, undefined, undefined), true);
+});
+
+test('the boards with a notifier of their own are read from the header, and garbage is none', () => {
+  assert.deepStrictEqual(plain(notifyOwnNotifier('["a","b"]')), ['a', 'b']);
+  assert.deepStrictEqual(plain(notifyOwnNotifier('[""]')), ['']);
+  assert.deepStrictEqual(plain(notifyOwnNotifier('["a",1,null]')), ['a']);
+  for (const bad of ['', 'x', '{}', 'null', '3']) assert.deepStrictEqual(plain(notifyOwnNotifier(bad)), [], bad);
+});
+
+test('a notice shows its title and message, tagged by its id', () => {
+  assert.deepStrictEqual(plain(notifyNoticeContent({ id: 'a-1', title: 'adjutant / widget', message: 'done' })),
+    { title: 'adjutant / widget', body: 'done', tag: 'notice-a-1' });
 });
 
 test('the settings default to waiting, failed and review, and garbage is the default', () => {

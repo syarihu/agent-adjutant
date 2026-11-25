@@ -206,7 +206,7 @@ gate には Web ボードから直接回答できるほか、worker のターミ
 | `agentRunner` | `claude ...` | worker エージェントを起動するコマンドテンプレート |
 | `hubRunner` | `claude ...` | リポジトリ hub を起動するコマンドテンプレート |
 | `reviewerRunner` | `claude ...` | PR の読み手（AI 下読み）を起動するコマンドテンプレート |
-| `notification` | `terminal-notifier` / `osascript` | デスクトップ通知のコマンドテンプレート |
+| `notification` | 開いているアプリかボードの画面、なければ `terminal-notifier` | デスクトップ通知のコマンドテンプレート。未設定のときは、デスクトップアプリかボードの画面が開いていればそちらが鳴らし、なければ `terminal-notifier`（入っていれば）、それも無ければ通知しません |
 | `maxWorkers` | 制限なし | チェックアウトごとの同時稼働 worker の上限数 |
 | `hubAutoResumeHours` | `3` | `adj hub` 実行時に前回の会話を自動再開する有効時間（時間単位） |
 | `stuckAfterMinutes` | `120` | worker が同一フェーズにとどまっている場合にカードを赤色表示するまでの分数 |

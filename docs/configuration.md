@@ -104,13 +104,23 @@ A config that sets only `terminal.spawn` keeps its own spawn, but focus, close a
 
 `notification` template placeholders: `{title}`, `{message}`, `{nwo}` (the repository name `owner/name`).
 
-- **macOS Priority**: Prefers `terminal-notifier` (allowing click-to-activate terminal behavior) and falls back to `osascript`.
-- **Linux**: Set `"notification": "notify-send {title} {message}"`.
+- **Unset (the default)**: one channel rings, chosen in this order:
+  1. The desktop app, if it polled within 90 seconds and can show notifications: only the app rings, as a native notification.
+  2. Otherwise a board page in a browser that polled within 90 seconds and has notification permission: only that page rings.
+  3. Otherwise `terminal-notifier` (click-to-activate terminal behavior), if it is installed. If it is not, nothing rings: there is no `osascript` fallback, because macOS credits that to Script Editor.
+
+  Whether a client is "open" depends on the browser's notification permission alone, not on the 確認待ち setting. A browser page rings nothing while the app is open.
+
+  Waits and gates follow the same order but also need that client's 確認待ち on. If the target client polls the same server process that watches the board, it rings them itself; if it is open on another server process (it cannot see this board), the server queues a notice for it, once. With the target's 確認待ち off, a wait or gate rings nowhere. "Open" is read from every board server on the machine, not only the one the page talks to. An app window that macOS throttles for more than 90 seconds (hidden, say) counts as closed, so a browser page that is open may ring meanwhile.
+  
+  With neither open, a wait or a gate that needs you is still on the board's TODO when you next look, but a message from `adjutant send` / `adjutant tell` or `adj notify` is not kept: it is shown only if `terminal-notifier` is installed. A message queued for the app or a page that is not taken within about 100 seconds (the window closed, say) is rung through `terminal-notifier` if installed, and dropped otherwise.
+- **A configured command**: runs as it always did, and `false` turns notifications off. Neither looks at the app or the page, except that a wait or a gate is left to a board page of the same server while one is open.
+- **Linux**: Set `"notification": "notify-send {title} {message}"`. With a board page open, an unset `notification` queues for the page.
 - **Trigger Conditions**:
   - Direct messages via `adjutant send` / `adjutant tell`
   - Sessions waiting on permission prompts or user questions for more than a few seconds
   - Newly opened gates
-  - Note: Notifications are suppressed if a web board tab is open and actively polling.
+  - Note: With `notification` unset, the app or board page that is open rings them (see above). With a command configured, they are suppressed while a web board tab of that server is open and polling.
 
 ---
 
