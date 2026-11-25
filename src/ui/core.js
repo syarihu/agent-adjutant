@@ -90,7 +90,8 @@ delete prefs.workTab;
 prefs.othersRepo = typeof prefs.othersRepo === 'string' ? prefs.othersRepo.toLowerCase() : '';
 prefs.workFolded = Array.isArray(prefs.workFolded) ? prefs.workFolded.filter(k => typeof k === 'string') : [];
 // Which of the page's desktop notifications ring (my-work-notify.js). With 確認待ち on and the browser's permission the page
-// rings waits and gates itself and the server's `notification` stays silent for them; see pageRings.
+// rings waits and gates itself and the server's `notification` stays silent for them; see pageRings. A browser page rings no wait, gate or end
+// while the desktop app is open (appHolds); review requests are not held back, since only the page that synced learns of them.
 prefs.notify = notifyPrefs(prefs.notify);
 // The board's view: the list (the default) or the columns, and whether the list groups 「セルフレビュー」 by parent Issue.
 prefs.boardView = prefs.boardView === 'cols' ? 'cols' : 'list';
@@ -340,16 +341,71 @@ const ideReady = () => stateNow().ideConfigured !== false;
 const ideTitle = () => ideReady() ? 'IDEでworktreeを開く' : 'エディタが未設定です（押すと設定方法を表示します）';
 
 /* Whether this page shows desktop notifications for waits and gates. Sent with every request, so that the server rings its
-   own `notification` for them only when no page that does is open. */
+   own `notification` for them only when no client that does is open. */
+/* Whether this page can show a desktop notification at all, whatever the 確認待ち toggle says. */
+const canNotify = () => 'Notification' in window && notifyCanRing(Notification.permission);
 const pageRings = () => 'Notification' in window && notifyPageRings(Notification.permission, prefs.notify);
 
 /* `api`, against any board of this server: `base` is that board's root, as `BASE` is this
    page's own. The token is the same for every board on the machine. */
+/* Whether this page is the desktop app's webview (app/src-tauri/src/js/shell.js stamps `data-shell="app"` on <html>). */
+const isAppShell = () => document.documentElement.getAttribute('data-shell') === 'app';
+
+/* Whether the desktop app is open, as the server last said (`X-Adjutant-App-Open`, read from every server process). In a browser
+   page it silences the page's own desktop notifications: the app rings them. */
+let appOpen = false;
+/* The boards (slugs; "" for a board served alone) that have a notifier of their own, as the server last said (`X-Adjutant-Own-Notifier`). */
+let ownNotifier = [];
+/* Whether the app rings in this page's place for the board `slug`: not for one that has a notifier of its own. */
+const appHolds = slug => notifyAppHolds(isAppShell(), appOpen, slug, ownNotifier);
+
+/* A notice the server queued for whichever client is open (mail and `adj notify` with `notification` unset): rung here once,
+   since taking it is what removes it from the queue. */
+function ringNotices(list) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  for (const notice of list) {
+    const { title, body, tag } = notifyNoticeContent(notice);
+    // A wait or gate this page rang from its own state a moment ago (or will): once.
+    // A wait or gate follows 確認待ち, as the page's own rings do; it is off the queue either way.
+    if (!notifyNoticeRings(notice, pageRings())) continue;
+    if (notifyRungHas(rungTags, tag, Date.now())) continue;
+    const n = showNotification(title, { body, tag });
+    n.onclick = () => { window.focus(); try { n.close(); } catch {} };
+  }
+}
+
+/* This board's own slug, as a board served alone says it (`X-Adjutant-Board-Slug`): its page's gates carry no slug of their own,
+   and a gate id is only unique within its hub. */
+let boardSlug = '';
+/* What an event is rung under, the same as the server's notice for it (my-work-notify.js notifyWaitTag, notifyGateTag). */
+const eventTag = item => item.gate ? notifyGateTag(item.gate._slug || boardSlug, item.gate.id) : notifyWaitTag(item.wait.agentSessionId, item.wait.since);
+
+/* What was rung lately, by tag (my-work-notify.js notifyRungHas): the page's own wait and gate rings and the server's notices share it. */
+const rungTags = new Map();
+function showNotification(title, options) {
+  notifyRungAdd(rungTags, options.tag, Date.now());
+  return new Notification(title, options);
+}
+
+/* What every answer carries about notifications, taken here so that no caller can miss a notice the server has already
+   taken off the queue. The headers are not in the body, so a notice does not make a state look changed. */
+function takeNotifyHeaders(res) {
+  const open = res.headers.get('X-Adjutant-App-Open');
+  if (open !== null) appOpen = open === '1';
+  if (open !== null) ownNotifier = notifyOwnNotifier(res.headers.get('X-Adjutant-Own-Notifier') || '[]');
+  const slug = res.headers.get('X-Adjutant-Board-Slug');
+  if (slug !== null) boardSlug = slug;
+  const raw = res.headers.get('X-Adjutant-Notices');
+  if (raw) ringNotices(notifyNotices(raw));
+}
+
 async function boardApi(base, path, options = {}) {
+  const shell = isAppShell() ? { 'X-Adjutant-Shell': 'app' } : {};
   const res = await fetch(base + path, {
     ...options,
-    headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { 'X-Adjutant-Token': TOKEN, 'X-Adjutant-Notify': pageRings() ? '1' : '0', 'X-Adjutant-Can-Notify': canNotify() ? '1' : '0', ...shell, 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
+  takeNotifyHeaders(res);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `${res.status}`), { status: res.status, why: data.why || null, problems: Array.isArray(data.problems) ? data.problems : null });
   return data;
@@ -447,8 +503,11 @@ function flushNotifyPending(fetchedAt = null) {
 
 /* Ring a gate or a wait (`item`: {gate} or {wait}) the person is to be told of. `final` is the retry. */
 function ringWaiting(item, final) {
-  if (!pageRings()) return;
   const { gate: g, wait: w } = item;
+  if (!pageRings() || appHolds((g || w)._slug || '')) return;
+  // The same event may reach this page as a server's notice too (ringNotices): whichever comes second is skipped.
+  const tag = eventTag(item);
+  if (notifyRungHas(rungTags, tag, Date.now())) return;
   // A retry (an item that was queued) is for what is still open: answered or gone meanwhile, it is not rung.
   if ((final || item.at) && !(g ? seenGateIds?.has(item.ref) : seenWaitKeys?.has(item.ref))) return;
   const entry = !multiBoard || !work.doc ? null : notifyEntryOf(g
@@ -459,7 +518,7 @@ function ringWaiting(item, final) {
     if (notifyQuiet(entry, work.open?.id, document.visibilityState === 'visible')) return;
     const content = g ? notifyContent('gate', entry, { gate: g.title, label: kindOf(g.kind)[0] })
       : notifyContent('permission', entry, { request: w.request ? requestText({ agentSession: { request: w.request } }) : 'ターミナルで入力を待っています' });
-    const n = new Notification(content.title, { body: content.body, tag: g ? 'gate-' + item.ref : 'wait-' + item.ref });
+    const n = showNotification(content.title, { body: content.body, tag });
     n.onclick = () => openNotified(entry, n);
     return;
   }
@@ -467,9 +526,9 @@ function ringWaiting(item, final) {
   if (g) {
     const [label] = kindOf(g.kind);
     const wtName = baseName(g.worktree);
-    const n = new Notification(`【${label}】${g.title}`, {
+    const n = showNotification(`【${label}】${g.title}`, {
       body: wtName ? `${wtName} から確認依頼が届きました` : '確認依頼が届きました',
-      tag: 'gate-' + item.ref,
+      tag,
     });
     n.onclick = () => {
       window.focus();
@@ -479,9 +538,9 @@ function ringWaiting(item, final) {
   }
   // The board's own wording (sessions.js), from a session shaped like the ones it reads.
   const asked = { agentSession: { request: w.request } };
-  const n = new Notification(`【${permissionLabel(asked)}】${w.name}`, {
+  const n = showNotification(`【${permissionLabel(asked)}】${w.name}`, {
     body: w.request ? requestText(asked) : 'ターミナルで入力を待っています',
-    tag: 'wait-' + item.ref,
+    tag,
   });
   n.onclick = () => {
     window.focus();

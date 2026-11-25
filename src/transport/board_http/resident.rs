@@ -10,6 +10,7 @@ use crate::infra::ws;
 
 use super::assets::{UI_HTML, vendor_asset};
 use super::auth::{page_rings, refuse};
+use super::notify_poll::{json_with, own_notifier, poll_headers};
 use super::routes::{Route, decode_segment, no_such_route, route};
 use crate::board::Resident;
 use crate::board::review::{CloseRefused, RequestRefused};
@@ -129,20 +130,21 @@ pub(super) fn route_resident(
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/boards") => {
             // The request the page rings from: it says whether it may. A page that may not is not noted.
+            let now = now_secs();
             if page_rings(req) {
-                resident.waits.page_seen(now_secs());
+                resident.waits.page_seen(now);
             }
-            http::json(
+            // Who is open, and the notices queued for the one that is, ride in headers.
+            let mut boards = boards(&resident.root, resident.port, &resident.token);
+            for board in &mut boards {
+                board.waits = resident.waits.notices(&board.slug);
+            }
+            let own = own_notifier(boards.iter().map(|b| (b.slug.as_str(), b.nwo.as_str())));
+            let headers = poll_headers(&resident.root, req, now, &own);
+            json_with(
                 out,
-                200,
-                &serde_json::to_string(&{
-                    let mut boards = boards(&resident.root, resident.port, &resident.token);
-                    for board in &mut boards {
-                        board.waits = resident.waits.notices(&board.slug);
-                    }
-                    boards
-                })
-                .unwrap_or_default(),
+                &serde_json::to_string(&boards).unwrap_or_default(),
+                &headers,
             )
         }
         // What the resident last found on the machine, for the banner and `adj server status`.

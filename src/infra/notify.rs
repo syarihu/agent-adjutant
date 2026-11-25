@@ -3,9 +3,12 @@
 //! Four moments need it: a worker finishing and wanting hands-on verification, a report
 //! arriving for a hub nobody is watching, and a session that has waited a few seconds on a
 //! permission prompt or a question with nobody at its terminal, or a gate that opens
-//! (`board::jobs::wait_watch`, which leaves both to the board page while a page that may notify
-//! is open). All are "come back to this tab", and all are useless if the channel is one the person does not
-//! look at — hence a template rather than a hardcoded notifier.
+//! (`board::jobs::wait_watch`, which leaves both to the desktop app or board page while one
+//! that may notify is open). All are "come back to this tab", and all are useless if the channel
+//! is one the person does not look at — hence a template rather than a hardcoded notifier.
+//!
+//! This module only builds the command line. Who is open to ring it instead (the desktop app or
+//! a board page) is `registry::notify_person`'s question, asked before this one.
 
 use crate::infra::shell::on_path;
 use crate::infra::template::{Sub, contains_placeholder, render, sh_quote};
@@ -15,16 +18,12 @@ use crate::infra::terminal::Hook;
 /// which is the thing `notification` exists to replace on a machine running something else.
 const DEFAULT_ACTIVATE: &str = "com.googlecode.iterm2";
 
-/// A notification only interrupts if it makes a noise; a silent banner in the corner is the
-/// same as no notification for someone who has walked away from the machine.
-///
-/// `terminal-notifier` when it is installed, `osascript` when it is not. The order is not a
-/// preference: macOS credits a notification posted by command-line `osascript` to Script
-/// Editor, so the banner arrives from an app nobody asked for and clicking it opens an empty
-/// Script Editor rather than the session that wanted attention. The fallback is still worth
-/// having — a banner you cannot usefully click beats no banner — so this follows the same
-/// "use it if it is there" rule as the other optional neighbours rather than making a brew
-/// install a hard requirement.
+/// What `notification` unset runs: `terminal-notifier` when it is installed, and nothing when it
+/// is not. There is no further fallback. The only other command-line route on macOS is
+/// `osascript`, which the system credits to Script Editor: the banner arrives from an app nobody
+/// asked for, and clicking it opens an empty Script Editor rather than the session that wanted
+/// attention. Nothing is better than that, and the desktop app or a board page, when one is
+/// open, rings the notification with its own name and click (`registry::notify_person`).
 pub fn default_command(title: &str, message: &str) -> Option<String> {
     // Checked before the platform, so that a test reaching the built-in fails on Linux CI too,
     // where this would quietly return `None`, and not only on the one machine that rings.
@@ -38,11 +37,7 @@ pub fn default_command(title: &str, message: &str) -> Option<String> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    Some(if on_path("terminal-notifier") {
-        terminal_notifier_command(title, message)
-    } else {
-        osascript_command(title, message)
-    })
+    on_path("terminal-notifier").then(|| terminal_notifier_command(title, message))
 }
 
 #[cfg(test)]
@@ -83,25 +78,9 @@ fn terminal_notifier_command(title: &str, message: &str) -> String {
     )
 }
 
-fn osascript_command(title: &str, message: &str) -> String {
-    let script = format!(
-        "display notification {} with title {} sound name \"Glass\"",
-        applescript_string(message),
-        applescript_string(title)
-    );
-    format!("osascript -e {}", sh_quote(&script))
-}
-
-fn applescript_string(text: &str) -> String {
-    let escaped = text
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', " ");
-    format!("\"{escaped}\"")
-}
-
 /// The command line that would deliver this notification, or `None` when there is none to
-/// deliver — because the user turned it off, or because this platform has no built-in.
+/// deliver — because the user turned it off, or because there is no built-in on this machine
+/// (not macOS, or no `terminal-notifier`).
 /// `None` is not a failure: a missing notification never justifies failing the thing it was
 /// announcing.
 pub fn command(hook: &Hook, nwo: &str, title: &str, message: &str) -> Option<String> {
@@ -125,7 +104,12 @@ pub fn command(hook: &Hook, nwo: &str, title: &str, message: &str) -> Option<Str
 /// raises on its own. The title sentence lives here rather than at each call site so that
 /// `{title}` and `{nwo}` cannot end up describing different repositories.
 pub fn repo_command(hook: &Hook, nwo: &str, repo: &str, message: &str) -> Option<String> {
-    command(hook, nwo, &format!("adjutant / {repo}"), message)
+    command(hook, nwo, &repo_title(repo), message)
+}
+
+/// The title of a notification about `repo`.
+pub fn repo_title(repo: &str) -> String {
+    format!("adjutant / {repo}")
 }
 
 /// Whether this notifier has to be told which repository the message is about. `adjutant
@@ -233,19 +217,6 @@ mod tests {
     }
 
     #[test]
-    fn a_message_cannot_break_out_of_the_applescript_string() {
-        let cmd = osascript_command("adjutant", "he said \"go\"\nrm -rf /");
-        let out = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd.replace("osascript -e", "printf %s"))
-            .output()
-            .unwrap();
-        let script = String::from_utf8_lossy(&out.stdout).to_string();
-        assert!(script.contains("he said \\\"go\\\" rm -rf /"), "{script}");
-        assert_eq!(script.lines().count(), 1, "{script}");
-    }
-
-    #[test]
     fn a_message_cannot_break_out_of_the_notifier_arguments() {
         let cmd = terminal_notifier_command("adjutant / widget", "it's $(rm -rf /) done");
         assert_eq!(
@@ -259,10 +230,12 @@ mod tests {
     fn off_is_a_different_answer_from_unset() {
         assert_eq!(command(&Hook::Off, "acme/widget", "t", "m"), None);
         let _allowed = allow_built_in_for_test();
-        // Unset still tries the platform's own notifier, wherever there is one.
+        // Unset is `terminal-notifier` when it is installed, and nothing when it is not:
+        // there is no fallback, because the only other route on macOS is `osascript`, which
+        // the system credits to Script Editor.
         assert_eq!(
             command(&Hook::BuiltIn, "acme/widget", "t", "m").is_some(),
-            cfg!(target_os = "macos")
+            cfg!(target_os = "macos") && on_path("terminal-notifier")
         );
     }
 

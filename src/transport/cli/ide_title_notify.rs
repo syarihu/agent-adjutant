@@ -32,6 +32,13 @@ pub fn set_title(args: &TitleArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// The state directory a notification is queued in and who is open is read from: the one the
+/// running board server reads (`resident_root`), so that a relative `ADJUTANT_STATE_DIR` names
+/// the same directory for the two whether or not this was typed inside a repository.
+fn notify_state_root(here: Option<&crate::kernel::identity::RepoInfo>) -> std::path::PathBuf {
+    crate::board::resident_root(here)
+}
+
 pub fn notify_user(args: &NotifyArgs) -> Result<(), String> {
     let title = args.title.as_str();
     let message = args.message.as_str();
@@ -48,22 +55,34 @@ pub fn notify_user(args: &NotifyArgs) -> Result<(), String> {
             "adjutant: the notification template asks for {{nwo}} but this is not a repository — pass --repo owner/name"
         );
     }
-    let Some(command) = notify::command(
-        &settings.notification,
-        nwo.as_deref().unwrap_or_default(),
-        title,
-        message,
-    ) else {
-        // No notifier is a fact about the machine, not a failure of the thing being
-        // announced. Say it on stderr and carry on.
-        eprintln!("adjutant: no notifier is configured ({title}: {message})");
-        return Ok(());
-    };
+    let state = notify_state_root(crate::board::checkout_here().as_ref());
+    let nwo = nwo.as_deref().unwrap_or_default();
     if args.dry_run {
-        println!("{command}");
+        // Says what would happen and does it not: a queued notice would be taken by a page.
+        match crate::registry::plan_notification(
+            &state,
+            &settings.notification,
+            nwo,
+            title,
+            message,
+        ) {
+            crate::registry::Plan::Run(command) => println!("{command}"),
+            plan => eprintln!(
+                "{}",
+                crate::transport::wording::notify_plan(&plan, title, message)
+            ),
+        }
         return Ok(());
     }
-    crate::infra::shell::run_shell(&command)?;
+    // A missing notifier is a fact about the machine, not a failure of the thing being
+    // announced. It is said on stderr and the command carries on.
+    let done = crate::registry::notify_person(&state, &settings.notification, nwo, title, message)?;
+    if done != crate::registry::Notified::Ran {
+        eprintln!(
+            "{}",
+            crate::transport::wording::notify_outcome(&done, title, message)
+        );
+    }
     Ok(())
 }
 
@@ -163,4 +182,39 @@ pub fn worktree_path(args: &WorktreePathArgs) -> Result<(), String> {
         .unwrap_or_default()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod notify_root_tests {
+    use super::*;
+
+    /// A relative state directory is the main checkout's of the repository this was typed in,
+    /// and outside any repository the working directory's: what the server resolves it to.
+    #[test]
+    fn notify_reads_the_state_directory_the_server_reads() {
+        let sandbox = crate::testing::Sandbox::empty();
+        let _state = crate::testing::EnvVar::set(
+            &sandbox,
+            crate::infra::env::STATE_DIR_ENV,
+            "relative-state",
+        );
+        let checkout = tempfile::tempdir().unwrap();
+        let repo = crate::kernel::identity::RepoInfo {
+            main: checkout.path().to_string_lossy().to_string(),
+            nwo: "acme/widget".to_string(),
+            repo: "widget".to_string(),
+            hub: None,
+            slug: "acme-widget".to_string(),
+            hub_name: "adjutant-acme-widget".to_string(),
+            nwo_source: "dirname",
+        };
+        assert_eq!(
+            notify_state_root(Some(&repo)),
+            checkout.path().join("relative-state")
+        );
+        assert_eq!(
+            notify_state_root(None),
+            std::env::current_dir().unwrap().join("relative-state")
+        );
+    }
 }

@@ -122,6 +122,17 @@ pub(crate) fn boards_dir(root: &Path) -> PathBuf {
     root.join("boards")
 }
 
+/// One file per server process, each holding when that process last heard from the board page
+/// and from the desktop app. Written by the process that heard, read by every other.
+pub(super) fn notify_clients_dir(root: &Path) -> PathBuf {
+    root.join("notify-clients")
+}
+
+/// Notices waiting for a board page or the app to ring them, one `<id>.json` each.
+pub(super) fn notices_dir(root: &Path) -> PathBuf {
+    root.join("notices")
+}
+
 pub(super) fn server_record_path(root: &Path) -> PathBuf {
     root.join("server.json")
 }

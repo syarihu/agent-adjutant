@@ -82,7 +82,9 @@ fixtures.
 - `registry`: who is running and where. `Context` (repo, settings, resolved config, state dir),
   addressing, hub and worker records, `hub_status` / `worker_status`, saved sessions, the agent
   session ledger (what each agent's hooks last said, and its sweep), liveness,
-  worker slots, the claim and dispatch locks, and the board address book and server record. It
+  worker slots, the claim and dispatch locks, the board address book and server record, and which
+  client (the desktop app or a board page) is open to ring a notification, with the queue of notices
+  for it (`notify_person` decides where a notification goes). It
   names no task or gate and holds none of their records.
 - `mail`: inbox (worker to hub), outbox (hub to worker), delivery and wake, `pending`, `ack`,
   `list_hubs`, and `read_screen` (reading an agent's screen before typing into it). A message to a
@@ -306,7 +308,7 @@ sequenceDiagram
     Store-->>Deliver: Delivery (path, present)
     Deliver->>Deliver: should_wake_hub decides wake_needed, unless wake is given
     Deliver->>Term: Posted::follow_up, terminal::wake if present and wake_needed
-    Deliver->>Term: notify::repo_command if announce and wake_needed
+    Deliver->>Term: registry::notify_person if announce and wake_needed (queued for the open app or page, else notify::command)
     Deliver-->>Caller: DeliveryOutcome (path, reached)
     Caller->>Caller: match Reached, then word it
 ```
@@ -392,6 +394,8 @@ against the main checkout and it travels as `Context.state`. Config is separate:
 | `cleanup-<pid>-<time>-<n>/` | files set aside only when the first `git worktree remove` refuses; removed once the worktree is gone or the files are put back, and left only if they could not be | board (`session/clean_up.rs`) |
 | `dashboard-token`, `server.lock`, `server.log` | the resident's token, lock and log | board (`token.rs`, `daemon.rs`) |
 | `hub-titles/<slug>.json` | cached parent-task titles, with sub-issue progress and when they were read | board (`jobs/hub_titles.rs`) |
+| `notify-clients/<pid>.json` | one file per server process: when it last heard from a board page and the desktop app that can show notifications (`pageAt`, `appAt`) and from those with 確認待ち on too (`pageWaitsAt`, `appWaitsAt`), unix seconds, rewritten at most every 10 seconds; readers take the latest of every file; files untouched for a day are removed | registry (`notify_clients.rs`) |
+| `notices/<id>.json` | a notification queued for the open app or board page (`id`, `title`, `message`, `nwo`, `createdAt`, and `tag` for a wait or gate, the name the page rings that event under); taken by renaming to `<id>.taken`, so exactly one taker gets it; one not taken within 100 seconds is rung by the board's watch through `terminal-notifier` | registry (`notices.rs`, `notify_dispatch.rs`), board (`jobs/wait_watch.rs`) |
 | `wait-notified/<row id>-<since>`, `gate-notified/<slug>-<gate id>` | empty markers: whichever process makes one rings the configured `notification` for that wait or gate; ones older than a day are swept when the server starts | board (`jobs/wait_watch.rs`, `jobs/wait_watch/gates.rs`) |
 | `wake-screens/<pid>.txt` | the tail of the screen the built-in tmux wake gave up on because it did not recognise it, as the agent drew it with the escapes taken out, mode `0600`; one per pid, replaced by the next such wake; read by hand, nothing else reads it | mail (`deliver.rs`; `adj tmux wake` calls it too) |
 | `<worktree>/.claude/adjutant-worker.json`, `adjutant-worker-starting.json`, `adjutant-session.json` | worker record, starting marker, saved worker session | registry (`store.rs`) |

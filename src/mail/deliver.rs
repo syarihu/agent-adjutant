@@ -223,16 +223,8 @@ impl Posted {
 
         let reached = reached_after(delivery.present, wake_needed, || wake_hub(ctx, &subject));
 
-        if announce
-            && wake_needed
-            && let Some(command) = notify::repo_command(
-                &ctx.settings.notification,
-                &ctx.repo.nwo,
-                &ctx.repo.repo,
-                &subject,
-            )
-        {
-            let _ = crate::infra::shell::run_shell(&command);
+        if announce && wake_needed {
+            announce_to_person(ctx, &subject);
         }
         DeliveryOutcome {
             path: delivery.path,
@@ -281,16 +273,21 @@ pub fn deliver_to_worker(
             }
         })
     });
-    if wake_needed
-        && !matches!(reached, Reached::Woken)
-        && let Some(command) = notify::repo_command(
-            &ctx.settings.notification,
-            &ctx.repo.nwo,
-            &ctx.repo.repo,
-            subject,
-        )
-    {
-        let _ = crate::infra::shell::run_shell(&command);
+    if wake_needed && !matches!(reached, Reached::Woken) {
+        announce_to_person(ctx, subject);
     }
     Ok(DeliveryOutcome { path, reached })
+}
+
+/// Tell the person `message` about this repository: through the desktop app or a board page
+/// when one is open and `notification` is unset, else as `notification` says. A failure to
+/// notify never fails the delivery it announces.
+fn announce_to_person(ctx: &Context, message: &str) {
+    let _ = crate::registry::notify_person(
+        &ctx.state,
+        &ctx.settings.notification,
+        &ctx.repo.nwo,
+        &notify::repo_title(&ctx.repo.repo),
+        message,
+    );
 }

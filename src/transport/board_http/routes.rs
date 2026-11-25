@@ -15,6 +15,7 @@ use super::handlers::{
     focus_hub, hand_to_worker, nudge_hub, read_hub_title, refresh_tasks, relay_findings,
     review_findings, start_parent_hub, update_task, wake_hub,
 };
+use super::notify_poll::{BOARD_SLUG_HEADER, json_with, poll_headers};
 use super::report::serve_report;
 use super::sessions::{
     answer_prompt_answer, clean_up_session, git_of_session, keep_session_answer,
@@ -312,12 +313,31 @@ pub(super) fn route(server: &Server, req: &Request, out: &mut impl Write) -> std
         Route::State { sessions, lines } => {
             // A board served alone is where the page rings from; under the resident that is
             // `/api/boards`, and the page's polls of one board say nothing new.
-            if !server.resident && page_rings(req) {
-                server.waits.page_seen(now_secs());
-            }
+            let now = now_secs();
+            let headers = if server.resident {
+                Vec::new()
+            } else {
+                if page_rings(req) {
+                    server.waits.page_seen(now);
+                }
+                // A board served alone is the page's only board, and the page names it "".
+                let own: Vec<String> = if matches!(
+                    crate::board::settings_now(server).notification,
+                    crate::infra::terminal::Hook::BuiltIn
+                ) {
+                    Vec::new()
+                } else {
+                    vec![String::new()]
+                };
+                let mut headers = poll_headers(&server.ctx.state, req, now, &own);
+                // The page of a board served alone qualifies its own gates with this (a gate id is only
+                // unique within its hub).
+                headers.push((BOARD_SLUG_HEADER, server.ctx.repo.slug.clone()));
+                headers
+            };
             let document = state(server, sessions, lines);
             match serde_json::to_string(&document) {
-                Ok(body) => http::json(out, 200, &body),
+                Ok(body) => json_with(out, &body, &headers),
                 Err(e) => http::json(out, 500, &json!({ "error": e.to_string() }).to_string()),
             }
         }

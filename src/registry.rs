@@ -1,6 +1,7 @@
 //! Who is running, and where: hub and worker records, saved sessions, the agent session ledger,
 //! liveness, worker slots and markers, the claim and dispatch locks, addressing, `Context`, and
-//! the board address book and server record.
+//! the board address book and server record, and which client is open to ring a notification
+//! (the desktop app or a board page), the queue of notices for it and where a notification goes.
 //!
 //! Names `infra` and `kernel` and nothing else. `store` is private: the paths and raw reads
 //! behind the records are this module's own, and other modules ask through the typed reads.
@@ -30,6 +31,9 @@ mod keep_cleanup;
 mod liveness;
 mod mark_removing;
 mod model;
+mod notices;
+mod notify_clients;
+mod notify_dispatch;
 mod record_agent_event;
 mod register;
 mod relink;
@@ -52,6 +56,9 @@ pub use keep_cleanup::*;
 pub use liveness::*;
 pub use mark_removing::*;
 pub use model::*;
+pub use notices::*;
+pub use notify_clients::*;
+pub use notify_dispatch::*;
 pub use record_agent_event::*;
 pub use register::*;
 pub use relink::*;
