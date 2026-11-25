@@ -428,6 +428,8 @@ function flushBoardRender() {
   colDrag = false;
   if (!boardRenderPending) return;
   boardRenderPending = false;
+  // What changed while the drawing was held is not shown as arriving: the person has been looking at the drag.
+  boardMotion.skip = true;
   drawBoard();
 }
 // However the drag ends, even with no pointerup (a lost capture), the held drawing is made.
@@ -452,7 +454,69 @@ function focusByClue(item, clue) {
   return same.find(x => all.indexOf(x) === clue.index) || same[0] || null;
 }
 
+/* ── Motion on the board (motion.js): a card that arrives pops in, one that changes stage flies to its new place, one that is finished
+   is celebrated. What changed is read from the tasks' stages (`slug|id` → stage), never from the cards. A drawing is only compared with
+   the one before when it is of the same thing: another board, organisation, drawing (columns or list), the older 完了 folded in or out,
+   or another screen all just store the new stages, as does the first drawing and the one after a drag that held the drawing back. */
+const boardMotion = { map: null, sig: '', skip: false, cached: false };
+
+/* Said where the page draws what it kept (a board switch, 「すべて」 from its cache, an organisation change) before a fresh read:
+   the stages that come next are those of that read, and what happened while the person was away is not news. */
+function boardMotionCached() { boardMotion.cached = true; }
+
+function boardStageMap() {
+  const map = new Map();
+  for (const t of [...(state.tasks || []), ...(state.hubTasks || [])]) map.set(`${slugKeyOf(t)}|${t.id}`, agentColOf(t));
+  return map;
+}
+
+/* Called before the board is drawn, while the cards of the last drawing are still there: what changed, and where the cards that move
+   were. Null when nothing is to be played. */
+function boardMotionPlan() {
+  const next = boardStageMap();
+  const sig = [navEpoch, currentOrg(), prefs.boardView, showOlderDone, view].join('|');
+  const shown = document.getElementById('board-view')?.offsetParent !== null;
+  const prev = boardMotion.map;
+  // A draw of kept data (「すべて」 before its round has answered), and the first one after it, only store the stages: a baseline is
+  // only trusted between two fresh states.
+  const cachedNow = scopeAll() && !allRound;
+  const afterCached = boardMotion.cached;
+  boardMotion.cached = cachedNow;
+  const same = !boardMotion.skip && shown && sig === boardMotion.sig && !afterCached && !cachedNow;
+  boardMotion.map = next;
+  boardMotion.sig = sig;
+  boardMotion.skip = false;
+  if (!same || motionCalm()) return null;
+  const diff = stageDiff(prev, next);
+  if (!diff.appeared.length && !diff.moved.length) return null;
+  const itemOf = key => { const i = key.lastIndexOf('|'); return boardItemOf(key.slice(i + 1), key.slice(0, i)); };
+  const from = new Map();
+  for (const m of diff.moved) { const el = itemOf(m.key); if (el) from.set(m.key, el.getBoundingClientRect()); }
+  return { diff, from, itemOf };
+}
+
+/* Called after the board is drawn, the scroll and the focus put back. At most a few cards fly: a bulk change is not a show. */
+function boardMotionPlay(plan) {
+  if (!plan || motionCalm()) return;
+  const { diff, from, itemOf } = plan;
+  const MAX = 6;
+  motionPopIn(diff.appeared.slice(0, MAX).map(itemOf).filter(el => el && motionOnScreen(el.getBoundingClientRect())));
+  const done = new Set(diff.finished);
+  let flown = 0;
+  for (const m of diff.moved) {
+    const el = itemOf(m.key);
+    const was = from.get(m.key);
+    const now = el?.getBoundingClientRect();
+    if (!el || !motionOnScreen(now)) continue;
+    // Off screen before, it did not leave anything to fly from: it comes as a new card.
+    const delay = was && motionOnScreen(was) && flown < MAX ? motionFly(el, was, now, el.classList.contains('list-row')) : 0;
+    if (delay) flown++; else motionPopIn([el]);
+    if (done.has(m.key)) motionCelebrate(now, delay ? delay - 130 : 0);
+  }
+}
+
 function drawBoard() {
+  const motion = boardMotionPlan();
   const list = prefs.boardView !== 'cols';
   // Before the head hides the drawing being left: a hidden one reads a scroll of 0.
   rememberBoardScroll();
@@ -484,6 +548,7 @@ function drawBoard() {
   if (listResizing) document.querySelector(`#board-list .list-col-resize[data-lc-h="${listResizing}"]`)?.focus({ preventScroll: true });
   if (more) document.querySelector('#boards .more, #boards [data-more-done]')?.focus({ preventScroll: true });
   syncStackPop();
+  boardMotionPlay(motion);
 }
 
 /* Open the panel of a gate, where the person is: a gate is named by its board and id, since two boards

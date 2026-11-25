@@ -127,11 +127,15 @@ function renderOthersCount() {
   if (!prefs.useReviews) {
     badge.textContent = '0';
     badge.classList.add('zero');
+    motionForget('rail-review');
     return;
   }
   const n = othersWaiting(othersRecords(), todoInScope()).length;
   badge.textContent = n;
   badge.classList.toggle('zero', n === 0);
+  // Going up bumps it; not the first count read, nor another organisation's.
+  if (!others.doc) motionForget('rail-review');
+  else if (motionCountedUp('rail-review', String(currentOrg()), n)) replayClass(badge, 'mo-bump', 300);
 }
 // Another organisation was selected: the count, the list and the empty middle are of that one.
 onOrgChange(() => {

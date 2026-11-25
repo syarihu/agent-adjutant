@@ -16,6 +16,9 @@ function toastPush(list, item, now, max = TOAST_MAX) {
   return [{ ...item, at: now }, ...rest].slice(0, max);
 }
 
+/* What makes two toasts the same one. */
+const toastKey = t => `${t.err ? 1 : 0}\u0000${t.text}\u0000${t.sub}`;
+
 /* A toast is over once its time is up. */
 const toastLive = (list, now) => list.filter(t => now - t.at < (t.err ? TOAST_ERR_MS : TOAST_MS));
 
@@ -30,8 +33,11 @@ function drawToasts() {
   // A redraw replaces the buttons: the one a keyboard was on gets the focus back (the same toast, found by its text).
   const on = host.contains(document.activeElement) ? drawn[Number(document.activeElement.dataset.toastClose)] : null;
   const back = on ? toasts.findIndex(t => t.text === on.text && t.sub === on.sub && t.err === on.err) : -1;
+  // Only a toast that was not in the last drawing comes in with motion; one drawn again (another expired, the dialog moved it) does not replay.
+  const shown = new Set(drawn.map(toastKey));
+  const enter = t => !shown.has(toastKey(t)) && !motionCalm();
   drawn = toasts;
-  host.innerHTML = toasts.map((t, i) => `<div class="toast${t.err ? ' err' : ''}" role="${t.err ? 'alert' : 'status'}">` +
+  host.innerHTML = toasts.map((t, i) => `<div class="toast${t.err ? ' err' : ''}${enter(t) ? ' mo-toast-in' : ''}" role="${t.err ? 'alert' : 'status'}">` +
     `<div class="toast-body"><div class="toast-text">${esc(t.text)}</div>${t.sub ? `<div class="toast-sub">${esc(t.sub)}</div>` : ''}</div>` +
     `<button type="button" class="tool-btn" data-toast-close="${i}" aria-label="閉じる"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>`).join('');
   // A popover is in the top layer: shown again on each note, it sits above whatever else is there (the question dialog calls note()).

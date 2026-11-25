@@ -67,6 +67,8 @@ function createContext(extra = {}) {
     cut(utilSrc, /^let viewData = null;[\s\S]*?\n\}/m).replace('let viewData =', 'var viewData =').replace('const stateNow =', 'var stateNow ='),
     // ref prefixes and checkers
     'const WORK_GATE_REF = "gate:";',
+    // switchBoard tells the board's motion that it drew kept data; not under test here.
+    'function boardMotionCached() {}',
     cut(coreSrc, /^const HUB_REF = 'hub:';[\s\S]*?const isTaskRef = [^\n]*;/m),
     // nav helpers
     cut(navSrc, /^const hubTaskOf = [^\n]*;/m),

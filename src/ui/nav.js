@@ -261,6 +261,7 @@ function switchBoard() {
   // 「すべて」 shows what it last read while the new round is on its way.
   allRound = false;
   state = scopeAll() && Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
+  boardMotionCached();
 }
 
 /* From 「レビュー」 to 「いまの仕事」 with nothing selected: the view did not change, so `setView` does not bring back the session
@@ -281,6 +282,7 @@ function leaveWork(prev) {
   if (prev.view !== 'work' || nav.view === 'work' || !scopeAll()) return;
   allRound = false;
   state = Object.keys(boardStates).length ? mergeStates(readBoards(), Math.floor(Date.now() / 1000)) : emptyState();
+  boardMotionCached();
 }
 
 function go(patch = {}, { replace = false } = {}) {

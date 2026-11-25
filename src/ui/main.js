@@ -30,9 +30,16 @@ document.addEventListener('cancel', e => {
   if (e.target.matches?.('dialog') && inSessionTerminal(document.activeElement)) e.preventDefault();
 }, true);
 
+let motionScreen = null, motionBooted = false;
 function setView(v) {
   const prev = view;
   view = v;
+  // What a list remembers of its last drawing is dropped on entering it, before it is drawn, so its rows are not all "new".
+  // Which screen is shown: 「いまの仕事」 and 「レビュー」 are both view 'work', told apart by nav.list.
+  const screen = v === 'work' ? `work:${nav.list}` : v;
+  const screenChanged = screen !== motionScreen;
+  motionScreen = screen;
+  if (screenChanged) { motionForget('work'); motionForget('todo'); }
   const boardView = document.getElementById('board-view');
   const todoView = document.getElementById('todo-view');
 
@@ -72,6 +79,16 @@ function setView(v) {
   } else {
     if (/^#(task|gate|sessions?)(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     render();
+  }
+
+  // Only when the screen changed: `drawScreen` calls this on every address change (each row selected in 「いまの仕事」). The terminal
+  // is never moved.
+  // Not before the first navigation is done: the page opening on the work view or the TODO is not a change of screen.
+  if (screenChanged && motionBooted) {
+    if (!motionCalm()) {
+      const g = id => document.getElementById(id);
+      motionEnter(v === 'work' ? [g('wk-list'), g('task-panel')] : [g(v === 'todo' ? 'todo-view' : 'board-view')]);
+    }
   }
 }
 
@@ -168,6 +185,7 @@ async function boot() {
   navApplying = false;
   // Draws the screen the address names and starts its first poll.
   applyNav(true);
+  motionBooted = true;
   updateNotifyButton();
   applyReviewsPref(false);
   // The server holds no clock, so the page carries one: it asks, nothing pushes.
