@@ -1168,7 +1168,7 @@ function workMotion() {
   const sig = [currentOrg(), prefs.workRepo, [...prefs.workFolded].sort().join(',')].join('|');
   const diff = stageDiff(motionTrack('work', sig, next), next);
   const rowOf = key => rows.get(key);
-  for (const key of diff.appeared.slice(0, 12)) { const el = rowOf(key); if (el) replayClass(el, 'mo-row-in', 400); }
+  for (const key of diff.appeared.slice(0, 12)) { const el = rowOf(key); if (el && !motionHolds(el)) replayClass(el, 'mo-row-in', 400, { cutOnFocus: true }); }
   const easing = motionEasing('spatial');
   const warn = getComputedStyle(document.documentElement).getPropertyValue('--md-sys-color-warning').trim();
   for (const { key, to } of diff.moved) {

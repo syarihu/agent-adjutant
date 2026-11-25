@@ -500,7 +500,8 @@ function boardMotionPlay(plan) {
   if (!plan || motionCalm()) return;
   const { diff, from, itemOf } = plan;
   const MAX = 6;
-  motionPopIn(diff.appeared.slice(0, MAX).map(itemOf).filter(el => el && motionOnScreen(el.getBoundingClientRect())));
+  // A card holding the keyboard focus stays as it is: an entrance from opacity 0 would take its focus ring away.
+  motionPopIn(diff.appeared.slice(0, MAX).map(itemOf).filter(el => el && !motionHolds(el) && motionOnScreen(el.getBoundingClientRect())));
   const done = new Set(diff.finished);
   let flown = 0;
   for (const m of diff.moved) {
@@ -509,8 +510,9 @@ function boardMotionPlay(plan) {
     const now = el?.getBoundingClientRect();
     if (!el || !motionOnScreen(now)) continue;
     // Off screen before, it did not leave anything to fly from: it comes as a new card.
-    const delay = was && motionOnScreen(was) && flown < MAX ? motionFly(el, was, now, el.classList.contains('list-row')) : 0;
-    if (delay) flown++; else motionPopIn([el]);
+    const held = motionHolds(el);
+    const delay = !held && was && motionOnScreen(was) && flown < MAX ? motionFly(el, was, now, el.classList.contains('list-row')) : 0;
+    if (delay) flown++; else if (!held) motionPopIn([el]);
     if (done.has(m.key)) motionCelebrate(now, delay ? delay - 130 : 0);
   }
 }

@@ -1,8 +1,11 @@
 /* ── Motion: short, playful, never in the way ────────────────────────────────────────────────────────────────────────────────────
    What the page animates (a view rising, a card arriving, a card changing stage, a badge counting up, a toast, a dialog) shares this
    file's parts. The rules every motion keeps: nothing delays a click or hides content longer than the motion lasts, and with
-   `prefers-reduced-motion: reduce` (or no Element.animate) nothing is added at all: no class, no clone, no animate() call
-   (`motionCalm`). The keyframes that are classes live in motion.css, inside a no-preference query.
+   `prefers-reduced-motion: reduce` nothing moves at all. Without Element.animate the motion driven from here is skipped (no class,
+   no clone, no animate() call: `motionCalm`), while the entrances that are CSS alone (dialogs, menus) still follow the media query.
+   The keyframes that are classes live in motion.css, inside a no-preference query. A board card's or a list row's entrance
+   (from opacity 0) is not played on one holding the keyboard focus (`motionHolds`), and one that takes the focus while it plays is
+   cut short: its focus ring would vanish. (The dialogs' CSS entrance is not guarded.)
    Nothing here touches the DOM when the script is read, so the tests can load it. */
 
 /* Whether the page must stay still: reduced motion is asked for, or the engine cannot animate. */
@@ -25,11 +28,22 @@ function motionAnimate(el, frames, options) {
   try { return el.animate(frames, options); } catch { return null; }
 }
 
+/* Whether `el` has the keyboard focus, itself or inside it. */
+const motionHolds = el => !!el && !!document.activeElement && el.contains(document.activeElement);
+
+/* What each element's replays are still waiting on: el → (class → how to stop that replay). */
+const motionReplays = new WeakMap();
+
 /* Plays the keyframes of class `cls` on `el` once, again if it is already running: the class is taken off, the page is made to
    notice, and it is put back. It is taken off at animationend, or after `ms` plus a little when that event never comes (the element
-   was hidden, the animation cancelled), so a stale class cannot replay later. */
-function replayClass(el, cls, ms = 400) {
+   was hidden, the animation cancelled), so a stale class cannot replay later. A replay of the same class first ends the one before
+   it, whose timer would otherwise take the class off in the middle of the new one. `cutOnFocus` ends it as soon as the element or
+   something in it takes the focus. */
+function replayClass(el, cls, ms = 400, { cutOnFocus = false } = {}) {
   if (!el || motionCalm()) return;
+  let mine = motionReplays.get(el);
+  if (!mine) motionReplays.set(el, mine = new Map());
+  mine.get(cls)?.();
   el.classList.remove(cls);
   void el.offsetWidth;
   el.classList.add(cls);
@@ -37,10 +51,15 @@ function replayClass(el, cls, ms = 400) {
   const end = () => {
     clearTimeout(timer);
     el.removeEventListener('animationend', onEnd);
+    el.removeEventListener('focusin', end);
     el.classList.remove(cls);
+    if (mine.get(cls) === end) mine.delete(cls);
   };
   const onEnd = e => { if (e.target === el) end(); };
+  mine.set(cls, end);
   el.addEventListener('animationend', onEnd);
+  // For an entrance from opacity 0 on something that can take the focus: the focus ring must not be under the fade.
+  if (cutOnFocus) el.addEventListener('focusin', end);
   timer = setTimeout(end, ms + 100);
 }
 
@@ -118,7 +137,20 @@ function motionEnter(els, { fade = false } = {}) {
 /* The cards or rows that came to the board pop in. */
 function motionPopIn(els) {
   const easing = motionEasing('effects');
-  for (const el of els) motionAnimate(el, [{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 400, easing });
+  for (const el of els) {
+    const anim = motionAnimate(el, [{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 400, easing });
+    if (anim) motionCutOnFocus(el, () => anim.cancel(), 400);
+  }
+}
+
+/* Runs `cut` once if `el` (or something in it) takes the focus within `ms`; the listener goes either way after that. */
+function motionCutOnFocus(el, cut, ms) {
+  let timer = null;
+  const stop = () => { clearTimeout(timer); el.removeEventListener('focusin', onFocus); };
+  const onFocus = () => { stop(); cut(); };
+  el.addEventListener('focusin', onFocus);
+  timer = setTimeout(stop, ms + 100);
+  return stop;
 }
 
 /* A card that changed stage flies from where it was to where it is now (`from`, `to`: rects). It flies as a clone in the fixed layer,
@@ -147,8 +179,11 @@ function motionFly(el, from, to, ghost = false) {
   const flight = motionAnimate(clone, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration, easing });
   if (!flight) { clone.remove(); return 0; }
   // The real card shows as the clone lands, and is never hidden past the flight.
-  motionAnimate(el, [{ opacity: 0 }, { opacity: 0, offset: .7 }, { opacity: 1 }], { duration });
-  const end = () => clone.remove();
+  const fade = motionAnimate(el, [{ opacity: 0 }, { opacity: 0, offset: .7 }, { opacity: 1 }], { duration });
+  let stopWatch = () => {};
+  const end = () => { stopWatch(); clone.remove(); };
+  // The card takes the focus mid-flight (a Tab): it is shown at once, and the clone goes, so the focus ring is on the card.
+  stopWatch = motionCutOnFocus(el, () => { fade?.cancel(); flight.cancel(); end(); }, duration + 300);
   flight.onfinish = end;
   flight.oncancel = end;
   setTimeout(end, duration + 300);

@@ -158,7 +158,7 @@ function todoMotion(el) {
   const rows = new Map([...el.querySelectorAll('.todo-row[data-todo-sel], .todo-quick[data-todo-key]')].map(r => [r.dataset.todoSel ?? r.dataset.todoKey, r]));
   const sig = [currentOrg(), Object.keys(todo.boards).length].join('|');
   const fresh = diffKeys(motionTrack('todo', sig, new Set(rows.keys())), rows.keys());
-  for (const key of fresh.slice(0, 12)) replayClass(rows.get(key), 'mo-row-in', 400);
+  for (const key of fresh.slice(0, 12)) { const r = rows.get(key); if (!motionHolds(r)) replayClass(r, 'mo-row-in', 400, { cutOnFocus: true }); }
 }
 
 function todoEmptyCardHtml(items) {
